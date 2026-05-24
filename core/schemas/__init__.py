@@ -27,7 +27,7 @@ from core.schemas.approval import ApprovalDecision, ApprovalHistory
 from core.schemas.tool_selection import ToolRecommendation, ToolSelection
 from core.schemas.artifact_manifest import ArtifactRecord, ArtifactManifest
 from core.schemas.run_context import RunContext
-from core.schemas.safety import SafetyCheck, SafetyReport
+from core.schemas.safety import SafetyCheck, SafetyReport, SafetyAssessment
 from core.schemas.execution_summary import EvidenceItem, ExecutionSummary
 from core.schemas.assistance import AssistanceRecord, AssistanceHistory
 from core.schemas.activity_log import ActivityEvent, ActivityLog
@@ -35,7 +35,7 @@ from core.schemas.blocker import Blocker, BlockerRegister
 from core.schemas.progress import ProgressItem, ProgressTracker
 from core.schemas.self_assessment import SelfAssessmentFinding, SelfAssessment
 from core.schemas.project_status import ProjectStatus
-from core.schemas.cleanup import CleanupCandidate, CleanupReport
+from core.schemas.cleanup import CleanupPolicy, CleanupCandidate, CleanupReport
 from core.schemas.ai_resilience import AIProviderStatus, AIFallbackEvent, AIResilienceReport
 from core.schemas.admin_feedback import AdminNotification, AdminFeedbackCenter
 from core.schemas.media_evidence import MediaEvidenceItem, MediaEvidenceCollection
@@ -80,6 +80,7 @@ __all__ = [
     "RunContext",
     "SafetyCheck",
     "SafetyReport",
+    "SafetyAssessment",
     "EvidenceItem",
     "ExecutionSummary",
     "AssistanceRecord",
@@ -95,6 +96,7 @@ __all__ = [
     "SelfAssessment",
     "ProjectStatus",
     # Ops
+    "CleanupPolicy",
     "CleanupCandidate",
     "CleanupReport",
     "AIProviderStatus",

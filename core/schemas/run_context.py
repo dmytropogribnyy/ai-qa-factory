@@ -14,7 +14,8 @@ class RunContext(SchemaMixin):
     project_id: str
     run_id: str = ""
     workflow: str = ""
-    mode: str = "mock"
+    mode: str = "unknown"       # workflow/runtime mode, e.g. "auto", "step", "dry_run"
+    llm_mode: str = "mock"      # LLM execution mode: "mock" or "real"
     approved: bool = False
     flags: List[str] = field(default_factory=list)
     source_platform: str = "unknown"

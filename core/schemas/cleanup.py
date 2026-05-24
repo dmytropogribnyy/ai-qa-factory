@@ -9,6 +9,25 @@ from core.schemas.base import SchemaMixin
 
 
 @dataclass
+class CleanupPolicy(SchemaMixin):
+    """Retention and cleanup policy for a project. All defaults are safe (preserve everything)."""
+
+    project_id: str = ""
+    enabled: bool = False
+    retention_days: int = 30
+    preserve_client_outputs: bool = True
+    preserve_evidence: bool = True
+    preserve_latest_state: bool = True
+    preserve_git_tracked_files: bool = True
+    dry_run_required: bool = True
+    notes: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> CleanupPolicy:
+        return super().from_dict(data)
+
+
+@dataclass
 class CleanupCandidate(SchemaMixin):
     """One file or artifact flagged as a cleanup candidate."""
 

@@ -352,15 +352,23 @@ class TestArtifactManifest:
 class TestRunContext:
     def test_defaults(self):
         rc = RunContext(project_id="p1")
-        assert rc.mode == "mock"
+        assert rc.mode == "unknown"
+        assert rc.llm_mode == "mock"
         assert rc.approved is False
         assert rc.flags == []
 
+    def test_mode_and_llm_mode_are_independent(self):
+        rc = RunContext(project_id="p1", mode="auto", llm_mode="real")
+        assert rc.mode == "auto"
+        assert rc.llm_mode == "real"
+
     def test_roundtrip(self):
-        rc = RunContext(project_id="p1", workflow="test-design", mode="real", approved=True, flags=["--require-real-llm"])
+        rc = RunContext(project_id="p1", workflow="test-design", mode="step", llm_mode="real", approved=True, flags=["--require-real-llm"])
         d = rc.to_dict()
         rc2 = RunContext.from_dict(d)
         assert rc2.workflow == "test-design"
+        assert rc2.mode == "step"
+        assert rc2.llm_mode == "real"
         assert rc2.approved is True
         assert "--require-real-llm" in rc2.flags
 
@@ -672,6 +680,122 @@ class TestAnalyticsReport:
 
 
 # ---------------------------------------------------------------------------
+# Alignment tests — Phase 1B schema contract corrections
+# ---------------------------------------------------------------------------
+
+class TestSafetyAssessmentAlias:
+    def test_safety_assessment_is_alias_for_safety_report(self):
+        from core.schemas.safety import SafetyAssessment, SafetyReport
+        assert SafetyAssessment is SafetyReport
+
+    def test_safety_assessment_importable_from_package(self):
+        from core.schemas import SafetyAssessment
+        assert SafetyAssessment is not None
+
+    def test_safety_assessment_constructs_and_roundtrips(self):
+        from core.schemas import SafetyAssessment, SafetyCheck
+        sa = SafetyAssessment(project_id="p1", all_passed=False,
+                              checks=[SafetyCheck(rule_id="r1", passed=False)])
+        d = sa.to_dict()
+        sa2 = SafetyAssessment.from_dict(d)
+        assert sa2.all_passed is False
+        assert sa2.checks[0].rule_id == "r1"
+
+
+class TestCleanupPolicy:
+    def test_safe_defaults(self):
+        from core.schemas.cleanup import CleanupPolicy
+        p = CleanupPolicy(project_id="p1")
+        assert p.enabled is False
+        assert p.retention_days == 30
+        assert p.preserve_client_outputs is True
+        assert p.preserve_evidence is True
+        assert p.preserve_latest_state is True
+        assert p.preserve_git_tracked_files is True
+        assert p.dry_run_required is True
+        assert p.notes == []
+
+    def test_roundtrip(self):
+        from core.schemas.cleanup import CleanupPolicy
+        p = CleanupPolicy(project_id="p1", retention_days=7, notes=["test note"])
+        p2 = CleanupPolicy.from_dict(p.to_dict())
+        assert p2.retention_days == 7
+        assert p2.notes == ["test note"]
+        assert p2.dry_run_required is True
+
+    def test_importable_from_package(self):
+        from core.schemas import CleanupPolicy
+        assert CleanupPolicy is not None
+
+
+class TestRunContextModeSeparation:
+    def test_mode_default_is_not_mock(self):
+        from core.schemas.run_context import RunContext
+        rc = RunContext(project_id="p1")
+        assert rc.mode != "mock"
+        assert rc.mode == "unknown"
+
+    def test_llm_mode_default_is_mock(self):
+        from core.schemas.run_context import RunContext
+        rc = RunContext(project_id="p1")
+        assert rc.llm_mode == "mock"
+
+    def test_mode_and_llm_mode_independent_roundtrip(self):
+        from core.schemas.run_context import RunContext
+        rc = RunContext(project_id="p1", mode="dry_run", llm_mode="real")
+        rc2 = RunContext.from_dict(rc.to_dict())
+        assert rc2.mode == "dry_run"
+        assert rc2.llm_mode == "real"
+
+
+class TestWorkRequestCoreFields:
+    def test_all_qa_first_fields_exist(self):
+        from core.schemas.work_request import WorkRequest
+        w = WorkRequest(project_id="p1")
+        assert hasattr(w, "request_title")
+        assert hasattr(w, "request_summary")
+        assert hasattr(w, "client_context")
+        assert hasattr(w, "inputs")
+        assert hasattr(w, "desired_outcome")
+        assert hasattr(w, "constraints")
+        assert hasattr(w, "assumptions")
+        assert hasattr(w, "missing_information")
+
+    def test_qa_first_fields_default_to_empty(self):
+        from core.schemas.work_request import WorkRequest
+        w = WorkRequest(project_id="p1")
+        assert w.request_title == ""
+        assert w.request_summary == ""
+        assert w.client_context == ""
+        assert w.inputs == []
+        assert w.desired_outcome == ""
+        assert w.constraints == []
+        assert w.assumptions == []
+        assert w.missing_information == []
+
+    def test_roundtrip_with_qa_fields(self):
+        from core.schemas.work_request import WorkRequest
+        w = WorkRequest(
+            project_id="p1",
+            request_title="Build smoke tests",
+            desired_outcome="Passing CI on every deploy",
+            constraints=["No production testing", "Playwright only"],
+            missing_information=["Staging URL not provided"],
+        )
+        w2 = WorkRequest.from_dict(w.to_dict())
+        assert w2.request_title == "Build smoke tests"
+        assert w2.desired_outcome == "Passing CI on every deploy"
+        assert "Playwright only" in w2.constraints
+        assert w2.missing_information == ["Staging URL not provided"]
+
+    def test_legacy_fields_still_work(self):
+        from core.schemas.work_request import WorkRequest
+        w = WorkRequest(project_id="p1", title="Legacy title", source_platform="upwork")
+        assert w.title == "Legacy title"
+        assert w.source_platform == "upwork"
+
+
+# ---------------------------------------------------------------------------
 # __init__ re-exports
 # ---------------------------------------------------------------------------
 
@@ -689,7 +813,7 @@ class TestPackageExports:
             s.BlockerRegister, s.Blocker,
             s.ProgressTracker, s.ProgressItem,
             s.SelfAssessment, s.SelfAssessmentFinding,
-            s.CleanupReport, s.CleanupCandidate,
+            s.CleanupPolicy, s.CleanupReport, s.CleanupCandidate,
             s.AIResilienceReport, s.AIProviderStatus, s.AIFallbackEvent,
             s.AdminFeedbackCenter, s.AdminNotification,
             s.MediaEvidenceCollection, s.MediaEvidenceItem,
@@ -697,6 +821,7 @@ class TestPackageExports:
             s.ExecutionSummary, s.EvidenceItem,
             s.DeliveryPlan, s.DeliveryItem,
             s.QualityRubric, s.QualityCriterion,
+            s.SafetyAssessment,
         ]
         assert all(c is not None for c in classes)
 

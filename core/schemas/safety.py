@@ -58,3 +58,7 @@ class SafetyReport(SchemaMixin):
             checks=checks,
             evaluated_at=data.get("evaluated_at", datetime.now(timezone.utc).isoformat()),
         )
+
+
+# Compatibility alias — original Phase 1B contract named the summary class SafetyAssessment.
+SafetyAssessment = SafetyReport
