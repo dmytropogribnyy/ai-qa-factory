@@ -69,10 +69,30 @@ Risk levels 2–6 require explicit approval before proceeding:
 | Any read against production | `production_read_only` | `--approve` + written client scope |
 | Test payment flows | `payment_or_auth` | `--approve` + sandbox confirmation in writing |
 | Test auth flows (login, session, token) | `payment_or_auth` | `--approve` + test account confirmation |
+| Use a credential reference in a test run | `payment_or_auth` | `--approve` + `CredentialUseApproval` record |
+| Auth flow execution against staging | `payment_or_auth` | `--approve` + `AuthFlowPlan.approved = True` |
+| Password reset, 2FA, email verification, account settings | `payment_or_auth` | `--approve` + explicit scope per flow type |
+| Billing or payment flow testing | `payment_or_auth` | `--approve` + sandbox confirmation in writing |
+| Auth check against production | `production_read_only` | `--approve` + written client scope + read-only confirmed |
 | Security testing (injection, bypass) | `security_sensitive` | `--approve` + written authorization |
+| Destructive account actions (delete, change password, modify billing) | `security_sensitive` | Blocked by default — requires separate destructive-scope approval |
 
 **Currently implemented approval mechanism:** `--approve` flag on the CLI.  
 **Planned:** `approve-action` command with per-action approval records.
+
+### Credential-specific approval gates (schema-only in Phase 1B-auth)
+
+These gates are encoded in `core/schemas/credentials.py` and `core/schemas/auth_flow.py`. Runtime enforcement is planned for a later phase.
+
+| Gate | Default | Override requirement |
+|---|---|---|
+| `CredentialReference.requires_approval_before_use` | `True` | Explicit `CredentialUseApproval` with `approved = True` |
+| `CredentialReference.approved_for_use` | `False` | Must be set via approval decision |
+| `CredentialPolicy.allow_credential_use` | `False` | Must be explicitly enabled per project |
+| `CredentialPolicy.allow_production_credentials` | `False` | Written client scope + production read-only approval |
+| `AuthFlowPlan.blocked` | `True` | Must be unblocked via explicit approval |
+| `AuthFlowPlan.safe_to_execute` | `False` | Set to True only after all approval gates pass |
+| `AuthFlowStep.allowed_in_production` | `False` | Production read-only approval required |
 
 ---
 

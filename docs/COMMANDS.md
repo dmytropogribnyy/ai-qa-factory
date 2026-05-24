@@ -382,6 +382,108 @@ python main.py doctor
 python main.py doctor --project-id <id>
 ```
 
+### `auth-plan` `[planned]`
+
+Generate an authentication flow test plan from a project blueprint.
+
+```bash
+python main.py auth-plan --project-id <id>
+```
+
+Produces: `AUTH_FLOW_PLAN.md`, `AuthFlowPlan` schema object. Requires prior approval gate for credential use.
+
+### `auth-check` `[planned]`
+
+Run a single auth check step (read-only, smoke mode) after approval.
+
+```bash
+python main.py auth-check --project-id <id> --step <step-id>
+```
+
+Requires: `AuthFlowPlan.approved = True`, `CredentialUseApproval.approved = True`. Result stored as `AuthCheckResult`.
+
+### `run-auth-smoke` `[planned]`
+
+Run the full approved auth smoke suite for a project.
+
+```bash
+python main.py run-auth-smoke --project-id <id>
+```
+
+Requires: all approval gates in `AuthFlowPlan` and `CredentialPolicy` satisfied. Never runs against production without explicit production read-only approval.
+
+### `credentials-status` `[planned]`
+
+Show credential reference status for a project — what is referenced, what is approved, what is missing.
+
+```bash
+python main.py credentials-status --project-id <id>
+```
+
+Shows: credential types, storage modes, approval status. Never shows actual secret values.
+
+### `redaction-check` `[planned]`
+
+Scan generated artifacts for possible secret leaks before client delivery.
+
+```bash
+python main.py redaction-check --project-id <id>
+```
+
+Produces: `RedactionReport`. Blocks client delivery if `possible_secret_leaks_found = True`. No actual secret values are printed in output.
+
+### `integration-status` `[planned]`
+
+Show integration policy and endpoint status for a project.
+
+```bash
+python main.py integration-status --project-id <id>
+```
+
+Shows: enabled integrations, approval status, provider list. Never shows actual URLs, tokens, or secrets.
+
+### `integration-policy` `[planned]`
+
+View or set the integration policy for a project.
+
+```bash
+python main.py integration-policy --project-id <id>
+```
+
+Produces: `IntegrationPolicy` status report.
+
+### `integration-event-preview` `[planned]`
+
+Preview what event payload would be sent for a given workbench event type. Dry-run only — no external calls.
+
+```bash
+python main.py integration-event-preview --project-id <id> --event-type approval_required
+```
+
+### `n8n-export-event` `[planned]`
+
+Export a workbench event to n8n after approval. Requires `IntegrationPolicy.allow_outbound_events = True` and explicit `--approve`.
+
+```bash
+python main.py n8n-export-event --project-id <id> --event-type report_generated
+```
+
+### `n8n-webhook-validate` `[planned]`
+
+Validate that a configured n8n webhook reference is structurally correct. Does not send a real HTTP request.
+
+```bash
+python main.py n8n-webhook-validate --project-id <id>
+```
+
+### `integration-test-dry-run` `[planned]`
+
+Run a full dry-run integration test — simulate event generation and delivery without real external calls.
+
+```bash
+python main.py integration-test-dry-run --project-id <id>
+```
+
 ---
 
 ## `--source-platform` values `[implemented]`

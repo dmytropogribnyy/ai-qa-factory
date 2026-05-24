@@ -13,6 +13,20 @@ from core.schemas.constants import (
     WORK_DOMAINS,
     TASK_TYPES,
     DELIVERABLE_TYPES,
+    CREDENTIAL_TYPES,
+    CREDENTIAL_STORAGE_MODES,
+    AUTH_FLOW_TYPES,
+    AUTH_ACTION_RISK_LEVELS,
+    SECRET_REDACTION_TARGETS,
+    APP_SURFACES,
+    AUTH_MECHANISMS,
+    AUTH_PROVIDERS,
+    MOBILE_AUTH_CONTEXTS,
+    MOBILE_EXECUTION_TARGETS,
+    MOBILE_TOOLING_OPTIONS,
+    INTEGRATION_PROVIDERS,
+    INTEGRATION_DIRECTIONS,
+    INTEGRATION_EVENT_TYPES,
 )
 
 from core.schemas.source_reference import SourceReference
@@ -40,6 +54,11 @@ from core.schemas.ai_resilience import AIProviderStatus, AIFallbackEvent, AIResi
 from core.schemas.admin_feedback import AdminNotification, AdminFeedbackCenter
 from core.schemas.media_evidence import MediaEvidenceItem, MediaEvidenceCollection
 from core.schemas.analytics import AnalyticsMetric, AnalyticsReport
+from core.schemas.mobile_testing import MobileTestTarget, MobileExecutionPlan
+from core.schemas.integration import IntegrationEndpoint, IntegrationEvent, IntegrationPolicy
+from core.schemas.credentials import CredentialReference, CredentialPolicy, CredentialUseApproval
+from core.schemas.auth_flow import AuthFlowStep, AuthFlowPlan, AuthCheckResult
+from core.schemas.redaction import SecretRedactionRule, RedactionReport
 
 __all__ = [
     # Base
@@ -56,6 +75,24 @@ __all__ = [
     "WORK_DOMAINS",
     "TASK_TYPES",
     "DELIVERABLE_TYPES",
+    # Credential / auth constants
+    "CREDENTIAL_TYPES",
+    "CREDENTIAL_STORAGE_MODES",
+    "AUTH_FLOW_TYPES",
+    "AUTH_ACTION_RISK_LEVELS",
+    "SECRET_REDACTION_TARGETS",
+    # Web/mobile auth constants
+    "APP_SURFACES",
+    "AUTH_MECHANISMS",
+    "AUTH_PROVIDERS",
+    "MOBILE_AUTH_CONTEXTS",
+    # Mobile execution constants
+    "MOBILE_EXECUTION_TARGETS",
+    "MOBILE_TOOLING_OPTIONS",
+    # Integration constants
+    "INTEGRATION_PROVIDERS",
+    "INTEGRATION_DIRECTIONS",
+    "INTEGRATION_EVENT_TYPES",
     # Input/context
     "SourceReference",
     "WorkRequest",
@@ -108,4 +145,22 @@ __all__ = [
     "MediaEvidenceCollection",
     "AnalyticsMetric",
     "AnalyticsReport",
+    # Credentials
+    "CredentialReference",
+    "CredentialPolicy",
+    "CredentialUseApproval",
+    # Auth flows
+    "AuthFlowStep",
+    "AuthFlowPlan",
+    "AuthCheckResult",
+    # Redaction
+    "SecretRedactionRule",
+    "RedactionReport",
+    # Mobile testing
+    "MobileTestTarget",
+    "MobileExecutionPlan",
+    # Integration
+    "IntegrationEndpoint",
+    "IntegrationEvent",
+    "IntegrationPolicy",
 ]

@@ -183,3 +183,51 @@ Integration reference: [`PLAYWRIGHT_MCP_GUIDE.md`](PLAYWRIGHT_MCP_GUIDE.md)
 | Selenium / WebdriverIO as default | Advisory only unless client stack requires |
 | Heavy CI/CD integration in core | Optional — generated scaffold includes CI config, workbench core does not require it |
 | Pydantic | Not yet — stdlib dataclasses sufficient for Phase 1B; revisit in Phase 2 if runtime validation is needed |
+| n8n / Make / Zapier as core engine | Not the core — optional external adapter only; see section below |
+
+---
+
+## Optional n8n / external integration model
+
+### The boundary
+
+**Workbench** is responsible for:
+- QA intelligence, classification, strategy, test design, scaffolding
+- Project state, approval model, safety enforcement
+- Evidence collection, quality gate, reporting
+- All LLM orchestration, agent sequencing, and output generation
+
+**n8n / external integrations** are optional adapters for:
+- Outbound notifications (Slack, Telegram, email)
+- Approval alert delivery (notify Dmytro that a decision is pending)
+- Report export to Google Drive, Notion, Jira, Linear
+- Delivery workflow automation after manual sign-off
+- CI/CD bridge events (GitHub Actions, Checkly)
+
+n8n is **not** the orchestration engine for QA logic. It does not classify briefs, generate strategies, or produce test cases. The Workbench does all of that.
+
+### Current status (Phase 1B-n8n)
+
+Schema-only foundation in `core/schemas/integration.py`:
+- `IntegrationEndpoint` — reference descriptor for an external endpoint (no live URLs)
+- `IntegrationEvent` — metadata record for a workbench event queued for delivery
+- `IntegrationPolicy` — project-level policy; all external calls disabled by default
+
+No HTTP calls. No webhooks. No n8n API calls. No secrets stored.
+
+### Safety rules
+
+- `IntegrationPolicy.allow_outbound_events = False` by default — no external calls without approval
+- `IntegrationEndpoint.enabled = False` by default
+- `url_ref` and `auth_ref_id` are reference labels only — never real webhook URLs or tokens
+- All integration payloads must be redacted before delivery (see `RedactionReport`)
+- Client-facing data must be reviewed before any external delivery
+- Integration delivery does not replace final human approval (Rule 9 in SAFETY_RULES.md)
+
+### When to enable
+
+Enable only when:
+1. A specific integration is needed for a client project
+2. Credentials are stored as env var references only (see `CredentialReference`)
+3. `IntegrationPolicy.allow_outbound_events = True` is set with explicit approval
+4. Payloads are reviewed and redacted

@@ -120,6 +120,101 @@ These require explicit written scope from the client and a separate approval dec
 
 ---
 
+## Credential and authentication safety
+
+These rules extend the hard rules above specifically for credential and auth flow testing. They are encoded in the `core/schemas/credentials.py`, `core/schemas/auth_flow.py`, and `core/schemas/redaction.py` schema foundation (Phase 1B-auth). Runtime enforcement comes in a later phase.
+
+### Raw credentials must never be stored
+
+Passwords, tokens, cookies, API keys, OTP codes, recovery codes, session IDs, and JWTs must never appear in:
+- `QAFactoryState` or any state snapshot
+- Schema fields (only the **name** of the env var may be stored, e.g. `TEST_USER_PASSWORD`)
+- Markdown reports
+- JSON logs or JSONL event logs
+- Screenshots, traces, videos
+- Any client-facing artifact
+
+**Violation:** Storing a password string in `CredentialReference.secret_names`. That field holds env var names only.
+
+### Credentials require explicit approval before use
+
+`CredentialReference.requires_approval_before_use = True` is the immutable default. A credential is not used until `approved_for_use = True` is set via an explicit approval decision. This maps to risk level `payment_or_auth` in the approval model.
+
+**Violation:** Running a login flow with a credential whose `approved_for_use` is `False`.
+
+### Auth testing uses test accounts only
+
+Only synthetic test accounts created specifically for testing are permitted. Real user accounts and production credentials are blocked by `CredentialPolicy.allow_production_credentials = False` (default).
+
+**Violation:** Using a real user's email/password in any automated test.
+
+### Production auth testing requires explicit production read-only approval
+
+Any auth check against a production environment requires:
+- `CredentialPolicy.allow_production_credentials = True` (explicit override)
+- Approval at risk level `production_read_only`
+- Written client confirmation
+- Read-only scope confirmed — no state changes
+
+**Violation:** Running a login test against production without explicit written client scope.
+
+### Destructive account actions are blocked by default
+
+`CredentialPolicy.prohibit_destructive_account_actions = True` is the default. Actions in the forbidden list (`change_password`, `delete_account`, `change_billing`, `create_real_payment`, `modify_production_data`) require a separate explicit approval at risk level `destructive_account_action` or `security_sensitive`.
+
+**Violation:** Any automated test that changes a user's password or deletes an account without a separate explicit destructive-scope approval.
+
+### Web and mobile auth — additional rules
+
+- **OAuth2 / social login** must use test accounts only. Never use a real personal Google, Apple, or GitHub account in automation.
+- **Email magic link / email OTP** automation must use an approved test mailbox only. No real user inboxes.
+- **TOTP automation** may use a test TOTP seed only. The seed must never appear in logs, reports, screenshots, or traces — only the env var name referencing it.
+- **SMS OTP** should default to manual or semi-automated entry unless an approved test provider (e.g. Twilio test mode) is explicitly configured.
+- **Mobile biometric auth** must not be automated unless a test device or simulator in safe mock mode is explicitly approved for that step.
+- **App surface context** (`app_surface` field on `CredentialReference` and `AuthFlowPlan`) must be set before planning auth flows so approval gates can apply the correct risk level.
+
+### Reports and evidence must redact secrets
+
+`CredentialPolicy.mask_secrets_in_outputs = True` and `block_client_delivery_if_secrets_detected = True` are defaults. Any report containing a detectable secret pattern must be blocked from client delivery until redaction is confirmed.
+
+**Violation:** Delivering a `TEST_RESULTS.md` that contains a bearer token found in a network log trace.
+
+---
+
+## External integration safety
+
+These rules govern optional integrations such as n8n, Make, Zapier, Slack, Jira, and similar systems. Encoded in `core/schemas/integration.py` as schema defaults. Runtime enforcement is planned for a later phase.
+
+### External integration calls are disabled by default
+
+`IntegrationPolicy.allow_outbound_events = False` and `allow_inbound_webhooks = False` are the defaults. No integration sends any external request without explicit approval.
+
+**Violation:** Any code path that sends an HTTP request to an external integration endpoint without `IntegrationPolicy.allow_outbound_events = True` and an explicit approval decision.
+
+### No real webhook URLs or API keys in state, docs, or logs
+
+`IntegrationEndpoint.url_ref` and `auth_ref_id` are reference labels only (e.g. env var names). Real webhook URLs containing secrets, n8n API keys, Slack tokens, Jira tokens, or similar must never appear in project state, schema fields, Markdown reports, JSONL logs, or any committed file.
+
+**Violation:** A webhook URL containing a secret token stored in `state.json` or `factory.jsonl`.
+
+### Integration payloads must be redacted before sending
+
+Before any integration event is delivered externally, its payload must be reviewed and redacted using the `RedactionReport` process. `IntegrationPolicy.redact_sensitive_payloads = True` is the default.
+
+**Violation:** Sending a payload containing a client's email address, test credentials, or internal agent notes to an external endpoint.
+
+### Client-facing data must be reviewed before external delivery
+
+Integration delivery (Google Drive upload, Jira ticket creation, Slack message) does not replace the final human review required by Rule 9. A human must approve the content before it is sent externally.
+
+**Violation:** Automatically posting a generated test strategy to a Slack channel without human review.
+
+### AI fallback events should trigger human review
+
+When `AIFallbackEvent` is recorded (primary LLM unavailable, fallback used), the output quality may be affected. Any integration event generated from fallback output must be flagged and reviewed before delivery.
+
+---
+
 ## Consequences of rule violations
 
 | If a rule is violated during a run | Required action |

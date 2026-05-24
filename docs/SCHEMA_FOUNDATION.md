@@ -107,7 +107,7 @@ These constants are informational — schemas do not validate field values again
 
 | Module | Classes | Description |
 |---|---|---|
-| `cleanup` | `CleanupCandidate`, `CleanupReport` | Dry-run cleanup candidates (approved_for_deletion=False by default); explicit nested from_dict |
+| `cleanup` | `CleanupPolicy`, `CleanupCandidate`, `CleanupReport` | Retention/cleanup policy (all-preserve defaults); dry-run cleanup candidates (approved_for_deletion=False by default); explicit nested from_dict on CleanupReport |
 | `ai_resilience` | `AIProviderStatus`, `AIFallbackEvent`, `AIResilienceReport` | Provider health + fallback history; explicit nested from_dict |
 | `admin_feedback` | `AdminNotification`, `AdminFeedbackCenter` | Admin notifications requiring attention; explicit nested from_dict |
 | `media_evidence` | `MediaEvidenceItem`, `MediaEvidenceCollection` | Screenshots, traces, videos from test runs; explicit nested from_dict |
@@ -123,7 +123,47 @@ These constants are informational — schemas do not validate field values again
 | `CleanupCandidate.approved_for_deletion = False` | Explicit approval required per candidate |
 | `SafetyReport.all_passed = True` | Fail-safe: only set to False on violation |
 | `RunContext.approved = False` | Approval is opt-in, not assumed |
-| `RunContext.mode = "mock"` | Real LLM mode must be explicitly requested |
+| `RunContext.mode = "unknown"` | Workflow mode must be set explicitly |
+| `RunContext.llm_mode = "mock"` | Real LLM mode must be explicitly requested |
+
+---
+
+## Credential and auth safety schemas (Phase 1B-auth)
+
+**Schema-only foundation. No runtime auth execution in this phase.**
+
+Three modules added in Phase 1B-auth addendum:
+
+### `credentials.py`
+
+| Class | Description |
+|---|---|
+| `CredentialReference` | Metadata reference for a test credential. Stores only env var names — never actual secret values. `raw_value_stored = False`, `requires_approval_before_use = True`, `approved_for_use = False` by default. |
+| `CredentialPolicy` | Project-level policy governing credential use. All protective defaults enabled. `allow_credential_use = False`, `allow_production_credentials = False`, `prohibit_destructive_account_actions = True`. |
+| `CredentialUseApproval` | Recorded approval for using a credential in a specific action. `approved = False` by default. Forbidden actions list pre-populated with destructive account actions. |
+
+### `auth_flow.py`
+
+| Class | Description |
+|---|---|
+| `AuthFlowStep` | One step in an auth flow plan. `risk_level = "payment_or_auth"`, `requires_approval = True`, `destructive = False`, `allowed_in_production = False` by default. |
+| `AuthFlowPlan` | Full auth flow plan. `blocked = True`, `safe_to_execute = False`, `approved = False` by default. Nested `steps` reconstructed as `AuthFlowStep` objects via explicit `from_dict`. |
+| `AuthCheckResult` | Result of an auth check — metadata only. `executed = False`, `auth_success = None`, `secrets_redacted = True`, `client_safe = False` by default. Must never store usernames, passwords, tokens, or session values. |
+
+### `redaction.py`
+
+| Class | Description |
+|---|---|
+| `SecretRedactionRule` | One redaction rule: target + pattern type + replacement string. `replacement = "[REDACTED]"`, `enabled = True` by default. |
+| `RedactionReport` | Summary of redaction applied for a run. `redaction_performed = False`, `blocked_client_delivery = False` by default. Nested `rules_applied` reconstructed as `SecretRedactionRule` objects. |
+
+### New constants (credentials/auth)
+
+`CREDENTIAL_TYPES`, `CREDENTIAL_STORAGE_MODES`, `AUTH_FLOW_TYPES`, `AUTH_ACTION_RISK_LEVELS`, `SECRET_REDACTION_TARGETS` — all added to `core/schemas/constants.py`.
+
+### Runtime auth execution — deferred
+
+The schemas above define the data model for future credential-aware and auth-aware testing. Runtime behaviour (reading `.env`, executing login flows, applying redaction to actual output) is **not implemented in this phase**. See `APPROVAL_MODEL.md` for the approval gates that will govern runtime use.
 
 ---
 
@@ -148,6 +188,24 @@ Run: `python -m pytest tests/test_schema_foundations.py -v`
 ---
 
 ## Related documents
+
+## Integration schemas (Phase 1B-n8n)
+
+**Schema-only foundation. No runtime external calls in this phase.**
+
+Module: `core/schemas/integration.py`
+
+| Class | Description |
+|---|---|
+| `IntegrationEndpoint` | Reference descriptor for an optional external endpoint. `enabled = False`, `requires_approval = True` by default. `url_ref` holds an env var name — never a live URL with secrets. |
+| `IntegrationEvent` | Metadata record for one workbench event queued for external delivery. `delivered = False`, `contains_sensitive_data = False`, `client_visible = False` by default. `payload_summary` is safe short metadata only. |
+| `IntegrationPolicy` | Project-level policy. `allow_outbound_events = False`, `allow_inbound_webhooks = False`, `require_approval_for_external_calls = True`, `redact_sensitive_payloads = True` by default. `allowed_providers` defaults to empty — no provider is allowed without explicit configuration. |
+
+**n8n model:** n8n is an optional external automation bridge, not the core orchestration engine. The Workbench handles all QA logic, state, approvals, and reporting. n8n may later receive event notifications and drive delivery workflows after human sign-off.
+
+New constants: `INTEGRATION_PROVIDERS`, `INTEGRATION_DIRECTIONS`, `INTEGRATION_EVENT_TYPES` — all added to `core/schemas/constants.py`.
+
+---
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
