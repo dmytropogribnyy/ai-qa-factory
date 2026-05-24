@@ -9,6 +9,31 @@ The guiding constraint: **keep the project lightweight and CLI-first.** No manda
 
 ---
 
+## Domain schema layer
+
+### Pure Python dataclasses — current default
+
+`core/schemas/` contains 25 domain modules. All schema classes are Python `@dataclass` + `SchemaMixin`.
+
+**Why dataclasses over Pydantic:**
+- Zero extra dependencies — Pydantic is not in `requirements.txt`
+- Sufficient for the current use case: structured dicts in/out, round-trip tests
+- Pydantic adds runtime validation, which is valuable but not blocking Phase 1
+- Migration to Pydantic in Phase 2+ would be a clean swap: same field names, add `BaseModel`
+
+**Why not plain dicts:**
+- Named classes make agent code readable — `InputMap` vs `Dict[str, Any]`
+- `from_dict` on container schemas reconstructs typed objects, not raw dicts
+- Tests can assert on field names, not string keys
+
+**Container schemas** (those with nested `List[SomeClass]`) override `from_dict` explicitly per module. This is intentional — no reflection, no magic, clear per-class handling.
+
+**Validation:** field values are not validated against `constants.py` at construction time. Constants are informational — validation gates belong in agents, not schema constructors.
+
+**State integration:** `QAFactoryState` integration is deferred to Phase 2. See `TODO (Phase 2)` comment in `core/state.py` and [`SCHEMA_FOUNDATION.md`](SCHEMA_FOUNDATION.md).
+
+---
+
 ## Orchestration
 
 ### Registry-based orchestrator — current default
@@ -157,3 +182,4 @@ Integration reference: [`PLAYWRIGHT_MCP_GUIDE.md`](PLAYWRIGHT_MCP_GUIDE.md)
 | Auto-submit to Upwork / client platforms | Not allowed — all submissions are manual |
 | Selenium / WebdriverIO as default | Advisory only unless client stack requires |
 | Heavy CI/CD integration in core | Optional — generated scaffold includes CI config, workbench core does not require it |
+| Pydantic | Not yet — stdlib dataclasses sufficient for Phase 1B; revisit in Phase 2 if runtime validation is needed |

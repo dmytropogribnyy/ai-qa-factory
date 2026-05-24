@@ -409,3 +409,12 @@ python main.py doctor --project-id <id>
 | `python main.py opportunity` | `python main.py prescreen` |
 | Auto-execute against staging URL | Use `run-approved` (planned) after `approve-action` |
 | Auto-send to client | Manual — workbench never auto-sends |
+
+---
+
+## Related documents
+
+- [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates
+- [`SCHEMA_FOUNDATION.md`](SCHEMA_FOUNDATION.md) — domain schema layer (`core/schemas/`)
+- [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why each tool was or was not added
+- [`RUNBOOK.md`](RUNBOOK.md) — step-by-step operational playbooks

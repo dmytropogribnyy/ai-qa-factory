@@ -9,6 +9,15 @@ from typing import Any, Dict, List
 
 SCHEMA_VERSION = "5.0.5"
 
+# TODO (Phase 2): Wire core.schemas domain models into QAFactoryState.
+# Fields to add (all optional, all default to None or empty):
+#   input_map: Optional[dict]         -> InputMap.to_dict() / InputMap.from_dict()
+#   project_blueprint: Optional[dict] -> ProjectBlueprint.to_dict() / from_dict()
+#   approval_history: Optional[dict]  -> ApprovalHistory.to_dict() / from_dict()
+#   artifact_manifest: Optional[dict] -> ArtifactManifest.to_dict() / from_dict()
+#   project_status: Optional[dict]    -> ProjectStatus.to_dict() / from_dict()
+# Defer until Phase 2 to avoid breaking the 69 existing mock-mode tests.
+
 
 def make_project_id(raw: str, mode: str = "project") -> str:
     base = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")[:48] or "qa-project"
