@@ -316,3 +316,52 @@ INTEGRATION_EVENT_TYPES: frozenset[str] = frozenset({
     "blocker_resolved",
     "admin_attention_required",
 })
+
+DOC_TYPES: frozenset[str] = frozenset({
+    "vision",
+    "readme",
+    "runbook",
+    "commands",
+    "safety",
+    "approval_model",
+    "tooling_decisions",
+    "schema_foundation",
+    "project_types",
+    "reporting",
+    "troubleshooting",
+    "docs_governance",
+    "docs_manifest",
+    "generated_report",
+    "internal_note",
+    "client_facing",
+    "unknown",
+})
+
+DOC_STATUSES: frozenset[str] = frozenset({
+    "current",
+    "needs_review",
+    "stale",
+    "planned",
+    "deprecated",
+    "unknown",
+})
+
+DOC_UPDATE_TRIGGERS: frozenset[str] = frozenset({
+    "schema_changed",
+    "command_added",
+    "command_removed",
+    "workflow_changed",
+    "safety_rule_changed",
+    "approval_model_changed",
+    "tool_added",
+    "integration_added",
+    "reporting_changed",
+    "evidence_changed",
+    "cleanup_changed",
+    "ai_resilience_changed",
+    "auth_changed",
+    "mobile_changed",
+    "credential_changed",
+    "version_changed",
+    "phase_completed",
+})

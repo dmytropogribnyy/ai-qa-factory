@@ -27,6 +27,9 @@ from core.schemas.constants import (
     INTEGRATION_PROVIDERS,
     INTEGRATION_DIRECTIONS,
     INTEGRATION_EVENT_TYPES,
+    DOC_TYPES,
+    DOC_STATUSES,
+    DOC_UPDATE_TRIGGERS,
 )
 
 from core.schemas.source_reference import SourceReference
@@ -59,6 +62,12 @@ from core.schemas.integration import IntegrationEndpoint, IntegrationEvent, Inte
 from core.schemas.credentials import CredentialReference, CredentialPolicy, CredentialUseApproval
 from core.schemas.auth_flow import AuthFlowStep, AuthFlowPlan, AuthCheckResult
 from core.schemas.redaction import SecretRedactionRule, RedactionReport
+from core.schemas.documentation import (
+    DocumentationRecord,
+    DocumentationManifest,
+    DocumentationFreshnessCheck,
+    DocumentationFreshnessReport,
+)
 
 __all__ = [
     # Base
@@ -93,6 +102,10 @@ __all__ = [
     "INTEGRATION_PROVIDERS",
     "INTEGRATION_DIRECTIONS",
     "INTEGRATION_EVENT_TYPES",
+    # Documentation governance constants
+    "DOC_TYPES",
+    "DOC_STATUSES",
+    "DOC_UPDATE_TRIGGERS",
     # Input/context
     "SourceReference",
     "WorkRequest",
@@ -163,4 +176,9 @@ __all__ = [
     "IntegrationEndpoint",
     "IntegrationEvent",
     "IntegrationPolicy",
+    # Documentation governance
+    "DocumentationRecord",
+    "DocumentationManifest",
+    "DocumentationFreshnessCheck",
+    "DocumentationFreshnessReport",
 ]

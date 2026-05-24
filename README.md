@@ -82,8 +82,9 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 69 tests, mock mode, no API keys needed
+python -m pytest -q             # 232 tests, mock mode, no API keys needed
 python main.py system-health
+python tools/docs_audit.py      # verify documentation is current
 ```
 
 ---
@@ -165,7 +166,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **69 passed**
+Expected: **232 passed** (69 original + 81 schema foundations + 62 auth/credential/mobile + 20 integration + 20 documentation governance)
 
 ---
 
@@ -174,12 +175,15 @@ Expected: **69 passed**
 | Document | Purpose |
 |---|---|
 | [`docs/VISION.md`](docs/VISION.md) | Product vision and roadmap |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Daily operating guide |
 | [`docs/COMMANDS.md`](docs/COMMANDS.md) | Full command reference (implemented + planned) |
 | [`docs/APPROVAL_MODEL.md`](docs/APPROVAL_MODEL.md) | Risk levels, approval gates, what runs automatically |
 | [`docs/SAFETY_RULES.md`](docs/SAFETY_RULES.md) | Hard rules — what never runs automatically |
 | [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) | Orchestrator, LangGraph, Playwright, Allure, LangSmith decisions |
+| [`docs/SCHEMA_FOUNDATION.md`](docs/SCHEMA_FOUNDATION.md) | `core/schemas/` layer — 35 domain models |
 | [`docs/PROJECT_TYPES.md`](docs/PROJECT_TYPES.md) | Supported project types with risks and test focus |
-| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Daily operating guide |
+| [`docs/DOCUMENTATION_GOVERNANCE.md`](docs/DOCUMENTATION_GOVERNANCE.md) | How to keep docs accurate as the project evolves |
+| [`docs/DOCS_MANIFEST.md`](docs/DOCS_MANIFEST.md) | Registry of all documentation files and their status |
 
 ---
 
@@ -191,7 +195,10 @@ Expected: **69 passed**
 - Product direction: evolving from opportunity router to full QA automation workbench
 - `core/version.py`: `APP_VERSION`, `STATE_SCHEMA_VERSION`, `RELEASE_LABEL`
 - New docs: VISION, COMMANDS, APPROVAL_MODEL, TOOLING_DECISIONS, SAFETY_RULES, PROJECT_TYPES
+- Phase 1B: 35 schema modules in `core/schemas/` — domain models, auth/credential, mobile, integration, documentation governance
+- Phase 1B-DOCS: `tools/docs_audit.py`, `DOCUMENTATION_GOVERNANCE.md`, `DOCS_MANIFEST.md`
 - Pre-screen first: opportunity evaluation workflows fully supported and preserved
+- 232 schema/mock-mode tests passing
 
 ### v5.0.9 — Validation hardened
 

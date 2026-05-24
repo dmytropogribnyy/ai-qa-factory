@@ -296,7 +296,47 @@ Mock fallback warning: if you see `WARNING: N LLM call(s) fell back to mock outp
 
 ---
 
-## 12. Archive hygiene
+## 12. Keeping documentation current
+
+Documentation becomes stale when schemas, commands, workflows, safety rules, or integrations change. Use this process to keep docs accurate.
+
+### When to run the docs audit
+
+Run `python tools/docs_audit.py` after:
+- Adding or changing schema modules in `core/schemas/`
+- Adding, removing, or renaming CLI commands
+- Changing workflow steps or agent behavior
+- Changing safety rules or approval model
+- Adding or changing tool/integration decisions
+- Completing a phase
+
+### How to run
+
+```bash
+python tools/docs_audit.py
+```
+
+Review the output. Fix any **errors** before proceeding. Assess **warnings** — not all require immediate action.
+
+Reports are written to `outputs/docs_audit/DOCS_FRESHNESS_REPORT.md` unless `--no-write` is passed.
+
+### Before moving to the next phase
+
+1. Run `python tools/docs_audit.py` — no errors allowed.
+2. Open `docs/DOCS_MANIFEST.md` — update the Status column for any changed docs.
+3. Verify no doc claims runtime behavior for features that are still schema-only or planned.
+4. Verify all new commands are in `docs/COMMANDS.md` with correct `[planned]` or `[implemented]` markers.
+5. Verify all new schema modules are listed in `docs/SCHEMA_FOUNDATION.md`.
+
+### Foundation-only reminder
+
+Several Phase 1B schemas are foundation-only — no runtime execution yet. Docs referencing these must use a qualifier (`schema-only`, `foundation-only`, `planned`, or `[planned]`): credentials/auth execution, mobile/native execution, n8n/external integration calls, cleanup apply/deletion, live redaction.
+
+See [`DOCUMENTATION_GOVERNANCE.md`](DOCUMENTATION_GOVERNANCE.md) for full rules.
+
+---
+
+## 13. Archive hygiene
 
 **Exclude from any zip or share:**
 ```

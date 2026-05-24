@@ -113,6 +113,12 @@ These constants are informational — schemas do not validate field values again
 | `media_evidence` | `MediaEvidenceItem`, `MediaEvidenceCollection` | Screenshots, traces, videos from test runs; explicit nested from_dict |
 | `analytics` | `AnalyticsMetric`, `AnalyticsReport` | Aggregated project metrics; explicit nested from_dict |
 
+### Documentation governance
+
+| Module | Classes | Description |
+|---|---|---|
+| `documentation` | `DocumentationRecord`, `DocumentationManifest`, `DocumentationFreshnessCheck`, `DocumentationFreshnessReport` | Documentation metadata registry and freshness audit results. `DocumentationManifest.docs` reconstructed as typed `DocumentationRecord` objects; `DocumentationFreshnessReport.checks` reconstructed as `DocumentationFreshnessCheck` objects. `docs_current = False` by default — audit must explicitly confirm docs are current. |
+
 ---
 
 ## Safety defaults

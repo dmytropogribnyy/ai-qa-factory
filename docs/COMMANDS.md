@@ -502,6 +502,81 @@ python main.py integration-test-dry-run --project-id <id>
 
 ---
 
+## Direct scripts `[implemented]`
+
+These are run directly with Python, not via `main.py`.
+
+### `python tools/docs_audit.py` `[implemented]`
+
+Run the documentation freshness audit. Checks that required docs exist, that planned
+commands are marked `[planned]`, that foundation-only features are not described as
+runtime-implemented, and that DOCS_MANIFEST.md and DOCUMENTATION_GOVERNANCE.md are present.
+
+```bash
+python tools/docs_audit.py                # run audit + write reports to outputs/docs_audit/
+python tools/docs_audit.py --no-write     # print only, do not write output files
+```
+
+Outputs (when `--no-write` is not passed):
+- `outputs/docs_audit/DOCS_FRESHNESS_REPORT.md`
+- `outputs/docs_audit/docs_freshness_report.json`
+
+Exit codes: `0` = all required docs present, no hard errors. `1` = missing required doc or hard contradiction.
+
+---
+
+## Planned commands — documentation governance `[planned]`
+
+These commands are designed but not yet implemented in `main.py`.
+
+### `docs-audit` `[planned]`
+
+Run docs audit via `main.py`.
+
+```bash
+python main.py docs-audit
+```
+
+Currently available as a direct script: `python tools/docs_audit.py`
+
+### `docs-check` `[planned]`
+
+Quick check that required docs exist and are not stale.
+
+```bash
+python main.py docs-check
+```
+
+### `docs-freshness-report` `[planned]`
+
+Generate a full documentation freshness report for a project.
+
+```bash
+python main.py docs-freshness-report --project-id <id>
+```
+
+Produces: `DocumentationFreshnessReport` schema object + Markdown report.
+
+### `docs-sync-preview` `[planned]`
+
+Preview which docs would need updating if a schema or command changed. Dry-run only.
+
+```bash
+python main.py docs-sync-preview --trigger schema_changed
+```
+
+### `docs-sync-apply` `[planned]`
+
+After human review of `docs-sync-preview` output, apply recommended doc updates.
+
+```bash
+python main.py docs-sync-apply --trigger schema_changed --approve
+```
+
+Requires `--approve`. Never auto-rewrites documentation without human review.
+
+---
+
 ## Commands that do NOT exist
 
 | Wrong | Correct |

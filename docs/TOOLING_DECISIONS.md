@@ -231,3 +231,32 @@ Enable only when:
 2. Credentials are stored as env var references only (see `CredentialReference`)
 3. `IntegrationPolicy.allow_outbound_events = True` is set with explicit approval
 4. Payloads are reviewed and redacted
+
+---
+
+## Documentation governance
+
+### Local and dependency-free — current default
+
+`tools/docs_audit.py` is the docs governance tool. It requires no external dependencies — only the Python standard library.
+
+**Why dependency-free:**
+- No extra packages in `requirements.txt`
+- Runs on any machine with Python 3.9+
+- No external service, no LLM calls, no network access
+- Safe to run as a pre-commit check or CI step
+
+**What it checks:**
+- All required docs exist (exit 1 if missing)
+- Known-implemented commands carry `[implemented]` marker (warning)
+- Foundation-only features are not described as runtime (warning)
+- DOCS_MANIFEST.md and DOCUMENTATION_GOVERNANCE.md are present (exit 1 if missing)
+
+**What it does NOT do:**
+- Does not modify documentation files
+- Does not call external services or LLM APIs
+- Does not make subjective quality judgments
+- Does not auto-rewrite docs
+
+**Future integrations — optional:**
+Future phases may export docs freshness status to n8n/Slack or write to a project dashboard, but only after explicit approval and within the integration policy constraints (`IntegrationPolicy.allow_outbound_events = True` with approval). No such integration is mandatory.
