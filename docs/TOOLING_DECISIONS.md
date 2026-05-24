@@ -1,158 +1,159 @@
 # Tooling Decisions — Guided QA Automation Workbench
 
-**Version:** 5.1.0-workbench-alpha  
+**Version:** 5.1.0  
 **Updated:** 2026-05-24
 
-This document records the tooling choices for the workbench itself (its runtime and infrastructure) and for the automation scaffolds it generates. It explains what is default, what is optional, and why.
+This document records the tooling choices for the workbench itself and for the automation scaffolds it generates. It explains what is the current default, what is optional, and why.
+
+The guiding constraint: **keep the project lightweight and CLI-first.** No mandatory heavy dependencies. No always-on external services. No framework lock-in.
 
 ---
 
-## Orchestration layer
+## Orchestration
 
-### Current: Registry-based orchestrator (default, active)
+### Registry-based orchestrator — current default
 
 `core/orchestrator.py` + `core/workflow_registry.py` + `core/agent_registry.py`
 
-The current orchestration model is a sequential registry of agents. Workflows are defined as ordered lists of agent keys. The orchestrator looks up each agent, runs it, passes state, and moves to the next.
+Workflows are ordered lists of agent keys. The orchestrator runs them sequentially, passing state. New agents are added by: writing the class, registering it, adding it to a workflow list. No orchestrator code changes needed.
 
-**Why this is the right choice now:**
-- Current workflows are mostly linear — no complex branching or retry loops.
-- Registry-based is faster to iterate: add a new agent in one file, register in another, wire into a workflow — done.
-- No additional runtime dependencies.
-- Easy to test in mock mode: same code path, all LLM calls return mock.
-- Existing 69 tests cover this layer completely.
+**Why this is right for now:**
+- Current workflows are mostly linear — no complex branching or retry loops
+- Zero additional dependencies
+- Fast iteration — add an agent in two files
+- Full coverage by existing 69 mock-mode tests
+- Resumable via `--from-step`, `--only`, `--project-id`
 
-**Limitations that will trigger a migration:**
-- More than 15 agents with non-trivial conditional branching
-- Real feedback loops (browser output feeding back into generation)
-- Per-client memory changing route decisions mid-workflow
-- Human approval checkpoints that need multi-turn interaction
+**Limitations that would trigger a migration to LangGraph:**
+1. More than 15 agents in a workflow with non-trivial conditional branching
+2. Real feedback loops (browser output feeding back into generation mid-run)
+3. Per-client memory changing the agent graph at runtime
+4. Human approval checkpoints requiring multi-turn state machines
+5. Parallel agent execution that registry cannot express cleanly
 
-### Optional future: LangGraph
+### LangGraph — optional future backend, not mandatory now
 
-LangGraph is an appropriate choice for the scenarios above. It is **not** mandatory now and will not be added until the registry model demonstrably cannot handle the use case.
+LangGraph is an appropriate orchestration layer for scenarios above. It is **not being added** until the registry model demonstrably cannot handle the use case.
 
-Migration path is intentional: the registry structure is already LangGraph-ready (state dataclass, agent functions, explicit graph-like flow). The migration when it happens will be surgical, not a rewrite.
+The current state dataclass (`QAFactoryState`) and agent function signatures are intentionally LangGraph-compatible. Migration when it happens will be surgical, not a rewrite.
 
-**Conditions for adopting LangGraph:**
-1. A specific workflow needs conditional loops that the current `--from-step` / `--only` pattern cannot express cleanly.
-2. Real MCP / browser output must feed back into the generation pipeline dynamically.
-3. Per-client memory needs to alter the agent graph at runtime.
-
-Until any of those conditions are met: registry-based remains default.
+**Decision: do not add LangGraph until at least one of the five conditions above is met in practice.**
 
 ---
 
-## Primary automation framework
+## Automation framework
 
-### Playwright + TypeScript (default, always)
+### Playwright + TypeScript — primary target
 
 `agents/playwright_generator.py` generates a complete Playwright TypeScript project:
-- `playwright.config.ts` with `baseURL` from env
+- `playwright.config.ts` with `baseURL` from env (no hardcoded URLs)
 - `tsconfig.json`
-- `npm` package setup
+- npm package setup with correct Playwright version
 - Spec files: smoke, API health
 - `.github/workflows/` CI integration
-- `README.md` with first-run setup instructions
+- Generated `README.md` with first-run setup
 
 **Why Playwright + TypeScript:**
 - Industry standard for web UI automation
-- First-class TypeScript support — types, autocomplete, strong assertions
-- Built-in parallelism, trace viewer, video recording
-- Playwright test runner eliminates need for separate test framework
-- Best-in-class web-first assertions (no `waitForTimeout`)
-- Strong community and Anthropic/OpenAI tooling support
+- First-class TypeScript: types, autocomplete, strong assertions
+- Built-in parallelism, trace recording, video, Playwright Inspector
+- `expect` API with web-first assertions — no manual `waitForTimeout`
+- Playwright test runner eliminates a separate test framework dependency
+- Strong alignment with AI tooling (codegen, MCP, trace viewer)
 
-**Stack variants handled:**
-- Web UI: Playwright TypeScript (default)
-- REST API: Supertest or Playwright API (generated by `api_test_generator.py`)
-- Mobile: React Native + Maestro (advisory notes via `project_extension.py`)
-- Accessibility: axe-playwright integration (advisory via `ux_a11y_agent.py`)
-- Performance: k6 advisory notes (via `performance_agent.py`)
-
-Other frameworks (Cypress, Selenium/Java, WebdriverIO) are supported as advisory outputs or alternative scaffold variants where the client's stack requires them.
+Other frameworks handled:
+- REST API: Supertest or Playwright API mode (generated by `api_test_generator.py`)
+- Mobile: React Native + Maestro advisory (via `project_extension.py`)
+- Accessibility: axe-playwright advisory (via `ux_a11y_agent.py`)
+- Performance: k6 advisory (via `performance_agent.py`)
+- Selenium/Java, Cypress, WebdriverIO: advisory outputs or scaffold variants when client stack requires
 
 ---
 
-## Reporting
+## Observability and reporting
 
-### Internal reports: Markdown (always)
+### Default: local files — Markdown, JSON, JSONL
 
-The workbench generates Markdown reports: `TEST_STRATEGY.md`, `QUALITY_GATE_REPORT.md`, `SUMMARY.md`, etc.
+The workbench produces structured output locally:
+- `outputs/<id>/logs/factory.jsonl` — structured event log per agent
+- `outputs/<id>/state.json` — full project state snapshot
+- `outputs/<id>/*.md` — human-readable reports
+- `outputs/<id>/.snapshots/` — state after each agent
 
-These are the primary delivery artifacts. No external reporting tool required.
+This is sufficient for single-session debugging, audit trail, and client delivery review. No external service required.
 
-### Allure (optional adapter, not installed by default)
+### Allure — optional reporting adapter, not installed by default
 
-Allure can be added to generated Playwright scaffolds as an optional reporting adapter.
+Allure can be added to generated Playwright scaffolds when the client requires it.
 
-**When to use:** when the client explicitly requires Allure reports, or when a project needs rich historical trend data.
+**When to use:** client explicitly requires Allure trend reports, or historical test data needs a dashboard.
 
-**How to add:** the workbench can generate Allure config in the scaffold on request. Not included by default — it adds a Java dependency (Allure CLI) to the test environment.
+**How to add:** the workbench can generate Allure config in the scaffold on request. Not in `requirements.txt`.
 
-**Not mandatory:** internal Markdown reports are sufficient for most projects.
+**Not mandatory:** local Markdown reports cover the standard use case.
 
----
+### LangSmith — optional tracing adapter, not mandatory now
 
-## LLM observability
+LangSmith traces LLM calls: prompts, responses, latency, cost per call.
 
-### LiteLLM (active, required)
+**When to use:** debugging prompt regressions across many runs, systematic LLM quality auditing.
 
-The workbench uses LiteLLM as the LLM abstraction layer. This is an existing, active dependency. LiteLLM handles: provider routing, retries, fallbacks, token counting, cost estimation.
+**How to enable:** set `LANGCHAIN_API_KEY` and `LANGCHAIN_TRACING_V2=true` in `.env`. LiteLLM supports LangSmith callbacks.
 
-### LangSmith (optional tracing adapter)
-
-LangSmith is an LLM observability platform that can trace LLM calls, inspect prompts, and monitor costs.
-
-**When to use:** when LLM call quality needs systematic auditing across many runs, or when debugging prompt regressions.
-
-**How to use:** set `LANGCHAIN_API_KEY` and `LANGCHAIN_TRACING_V2=true` in `.env`. LiteLLM supports LangSmith callbacks natively.
-
-**Not mandatory:** the workbench produces structured JSON logs (`outputs/<id>/logs/factory.jsonl`) that serve the same purpose for single-session debugging.
+**Not mandatory:** `factory.jsonl` covers single-session LLM call debugging. LangSmith adds value at scale, not for daily use.
 
 ---
 
-## Playwright tooling (optional helpers)
+## Playwright helper tools
 
-### Playwright MCP (optional, not mandatory)
+### Playwright codegen — useful helper, not managed by workbench
 
-Playwright MCP allows an AI agent to control a real browser via the MCP protocol. It was explored in v5.0.x but is not a mandatory dependency.
+`npx playwright codegen <url>` records interactions and generates TypeScript selectors. Useful for bootstrapping realistic selectors when writing tests manually.
+
+The workbench generates scaffolds from briefs, not from recorded sessions. Codegen is a developer helper used after the scaffold is generated.
+
+**Not managed by the workbench.** User runs it manually when needed.
+
+### Playwright Trace Viewer — useful helper, not managed by workbench
+
+`npx playwright show-trace trace.zip` opens the visual trace viewer. The generated scaffold includes `trace: 'on-first-retry'` in config.
+
+Trace viewing is a manual step after test runs, used for debugging failures.
+
+**Not managed by the workbench.** User opens it manually after a failed run.
+
+### Playwright MCP — not a mandatory runtime dependency
+
+Playwright MCP allows an AI agent to control a real browser via the MCP protocol. It was explored in v5.0.x.
 
 **Why not mandatory:**
-- Requires a running MCP server process alongside the workbench.
-- Adds complexity to local setup.
-- Current use case (scaffold generation from a brief) does not need live browser access.
+- Requires a running MCP server process alongside the workbench
+- Adds setup complexity for users who don't need it
+- Current scaffold generation from briefs does not require live browser access
+- Introduces external execution risk that must be approval-gated
 
 **When Playwright MCP becomes relevant:**
-- When the workbench needs to inspect a live site to generate more accurate selectors.
-- When a "record and generate" intake mode is added.
-- When browser feedback needs to feed back into the generation pipeline.
+- When the workbench needs to inspect a live site to generate accurate selectors
+- When a "record and generate" intake mode is added (Phase 3+)
+- When browser feedback needs to feed mid-generation
 
-Integration guide: [`docs/PLAYWRIGHT_MCP_GUIDE.md`](PLAYWRIGHT_MCP_GUIDE.md)
+**Decision: do not reintroduce Playwright MCP as a required runtime dependency.**
 
-### Playwright codegen (optional helper, not managed by workbench)
-
-`npx playwright codegen <url>` records interactions and generates TypeScript. Useful for bootstrapping selectors when writing tests manually.
-
-The workbench generates scaffolds from briefs — not from recorded sessions. Codegen is a manual helper for the developer working with the generated framework.
-
-### Playwright trace viewer (optional helper, not managed by workbench)
-
-`npx playwright show-trace` opens the trace viewer for a recorded test run. The generated scaffold includes trace-on-failure config. Viewing traces is a manual step after running tests.
+Integration reference: [`PLAYWRIGHT_MCP_GUIDE.md`](PLAYWRIGHT_MCP_GUIDE.md)
 
 ---
 
 ## What is explicitly NOT being added
 
-| Tool | Decision |
+| Tool / approach | Decision |
 |---|---|
-| LangGraph | Optional future — conditions documented above |
-| Full browser automation in the orchestrator pipeline | Blocked until approval gates are designed for it |
-| Selenium / WebdriverIO as default | Advisory-only unless client stack requires |
-| Allure as mandatory dependency | Optional adapter, not in `requirements.txt` |
-| LangSmith as mandatory dependency | Optional tracing, not in `requirements.txt` |
-| Playwright MCP as mandatory runtime | Optional integration guide only |
+| LangGraph | Optional future — see conditions above |
+| Allure | Optional adapter — not in requirements.txt |
+| LangSmith | Optional tracing — not in requirements.txt |
+| Playwright MCP as required runtime | Not mandatory — guide only |
 | RAG / vector store | Not needed until cross-project pattern retrieval is proven necessary |
-| UI (web or desktop) | Not planned — CLI + Markdown outputs are the interface |
+| Web UI (browser dashboard) | Not planned — CLI + Markdown is the interface |
 | Auto-push to GitHub | Not allowed — all git operations are manual |
-| Auto-submit to Upwork/client platforms | Not allowed — all submissions are manual |
+| Auto-submit to Upwork / client platforms | Not allowed — all submissions are manual |
+| Selenium / WebdriverIO as default | Advisory only unless client stack requires |
+| Heavy CI/CD integration in core | Optional — generated scaffold includes CI config, workbench core does not require it |

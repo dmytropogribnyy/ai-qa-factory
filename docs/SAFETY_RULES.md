@@ -1,158 +1,139 @@
 # Safety Rules — Guided QA Automation Workbench
 
-**Version:** 5.1.0-workbench-alpha  
+**Version:** 5.1.0  
 **Updated:** 2026-05-24
 
-These rules are non-negotiable. They exist because QA automation work touches authentication flows, payment systems, staging environments, and client data. Getting any of these wrong has real consequences.
+These rules are non-negotiable. No flag, no argument, and no configuration overrides them without an explicit human decision documented outside the system.
 
 ---
 
-## Execution rules
+## Hard rules
 
-### Rule 1 — No external execution without explicit approval
+### Rule 1 — Do not confuse task URL with target application URL
 
-The workbench does not run Playwright tests, API calls, or any network operations against external URLs unless:
+A brief may contain multiple URLs:
+- A **task URL** points to where the work was described (Jira ticket, Linear issue, Notion page, Upwork job post).
+- A **target URL** points to the application under test (staging SaaS, e-commerce site, API endpoint).
 
-1. `--approve` flag is passed, AND
-2. `APPROVAL_CHECKPOINTS.md` has been reviewed, AND
-3. `TESTING_READINESS_CHECKLIST.md` has been completed
+These must be classified separately before any action. A task URL is never a test target. A target URL is never treated as task context.
 
-**There is no URL pattern, domain allowlist, or robots.txt check that substitutes for this.** Even "safe" public demo sites require the above before running generated tests.
+**Violation:** Using a Jira ticket URL as the base URL for Playwright tests, or treating a staging URL as a source of project requirements.
 
-### Rule 2 — Production is never a test target
+### Rule 2 — Do not run against an unknown external URL
 
-Production environments are never an acceptable test target for automated runs.
+If the system or a generated script references an external URL that has not been explicitly classified and approved, that URL must not be contacted.
 
-Testing on production:
-- Is not supported by the workbench
-- Requires explicit written authorisation from the client
-- Requires a stop-conditions agreement before any test execution
-- Must still be approved per Rule 1
+"It looks like a staging URL" is not sufficient. The URL must be:
+1. Named explicitly in the agreed project scope
+2. Confirmed by the client as a test target
+3. Approved via the checklist in [`RUNBOOK.md`](RUNBOOK.md) section 4
 
-### Rule 3 — Staging is not production, but is still external
+**Violation:** Running `npx playwright test` with a BASE_URL that was not explicitly approved for testing.
 
-Staging environments are still real external systems. Apply Rule 1 fully.
+### Rule 3 — Do not run against a target URL without approval
 
-Additional staging requirements:
-- Staging URL must be a different domain or subdomain from production
-- Test accounts must be synthetic (no PII, no real user data)
-- Payment flows must use sandbox mode (Stripe test mode, etc.)
-- No destructive actions without explicit scope
+Even when the target URL is correctly classified and confirmed, automated execution against it requires explicit approval per run.
 
-### Rule 4 — No credentials in artifacts
+Approval means:
+- `--approve` flag passed with awareness of what it unlocks
+- Section 4 checklist in RUNBOOK.md completed
+- Staging confirmed as separate from production
 
-API keys, passwords, tokens, and credentials:
-- Must never appear in input briefs
-- Must never appear in generated test files
-- Must never appear in reports or delivery notes
-- Live in `.env` only, inside the framework folder that generates them
-- `.env` files are never committed to git and never included in deliveries
+**Violation:** Running `npx playwright test` against any staging URL without completing the checklist and passing `--approve`.
 
-The quality gate includes a `HardcodedCredentialsCheck` that flags patterns matching common credential formats. If it fires, fix before any client use.
+### Rule 4 — Do not run against production without explicit read-only approval
 
-### Rule 5 — No invented evidence
+Production environments require a higher level of approval than staging:
+- Written confirmation from the client that production testing is in scope
+- Explicit read-only scope defined (no write, no mutation, no state change)
+- Stop conditions agreed in writing
 
-The workbench must never claim capabilities, results, or experience that don't exist:
+**Violation:** Any automated run against a production URL, even for smoke tests, without written client authorization.
 
-- No invented bug reports (e.g., "I found 12 bugs in your system last week")
-- No invented Loom recordings
-- No invented Linear or Jira tickets
-- No invented device availability (e.g., claiming iOS device access without having it)
-- No invented Tosca/Maestro/React Native experience beyond what is declared
+### Rule 5 — Do not test payment flows unless sandbox is confirmed
 
-The quality gate includes a `NoInventedEvidenceCheck`. If it fires, the output cannot be sent to a client.
+Payment flow testing requires:
+- Written confirmation that the payment provider is in sandbox/test mode
+- Test card numbers confirmed (Stripe test cards, etc.)
+- No real money involved — ever
 
-### Rule 6 — Mock output is not client output
+This must be confirmed **in writing by the client** before any payment-adjacent test runs.
 
-If `LLM_MODE=mock`, the generated content is structural placeholder text — not real analysis.
+**Violation:** Running checkout tests that call a payment API without written sandbox confirmation.
 
-Mock output must never be sent to a client. The workbench marks mock runs with:
-- `MockModeWarningCheck` in the quality gate
-- WARNING in terminal output
-- Exit code 2 under `--require-real-llm`
+### Rule 6 — Do not use credentials unless explicitly approved
 
-Use `--require-real-llm` before any client-facing run.
+Credentials (usernames, passwords, API tokens, session cookies) used in tests must:
+- Be synthetic test accounts created specifically for testing
+- Never be real user accounts or real production credentials
+- Live in `.env` files only — never in briefs, test specs, reports, or commits
+- Be confirmed by the client as safe-to-use test accounts
 
----
+**Violation:** Pasting a real user password into a test file. Using a production API token in automation. Including credentials in a client report.
 
-## Content rules
+### Rule 7 — Do not claim tests were executed unless there is evidence
 
-### Rule 7 — No overclaims
+The workbench generates test plans, strategies, and scaffolds. It does not execute tests unless explicitly run.
 
-The workbench must not generate text that claims:
-- Guaranteed bug-free outcomes
-- 100% test coverage
-- Absolute stability or reliability
-- Outcomes that cannot be verified before delivery
+Never write or approve a client-facing report that implies tests were run when they were not. Evidence means:
+- Playwright test results (HTML report, JSONL results)
+- Screenshots or traces from an actual run
+- A log entry showing execution
 
-The quality gate includes an `OverclaimsCheck`. Soften language to: "aims to cover", "targets the critical path", "provides a foundation for".
+**Violation:** Delivering a `TEST_RESULTS.md` that says "All 45 tests passed" when only the scaffold was generated.
 
-### Rule 8 — No generic proposal phrases
+### Rule 8 — Do not include internal notes or prompts in client-facing reports
 
-Client-facing proposals must not use:
-- "I'm excited to apply"
-- "Dear Hiring Manager"
-- "I am passionate about"
-- Template filler that could apply to any job
+Internal artifacts include:
+- System prompts and LLM instructions
+- Agent reasoning notes
+- Mock-mode placeholder text
+- Routing decisions and internal scoring
+- `HUMAN_REVIEW_REQUIRED.md` checklists
+- `QUALITY_GATE_REPORT.md` errors and warnings
 
-The quality gate includes a `GenericProposalPhrasesCheck`. Personalise to the specific brief.
+These must never appear in a document delivered to a client. Client reports are a clean, professional subset.
 
-### Rule 9 — Screening questions must be answered specifically
+**Violation:** Delivering a report that contains `[MOCK OUTPUT]` placeholders, internal quality gate warnings, or agent prompt fragments.
 
-If a job post contains screening questions, the generated proposal must answer them specifically — not generically. The `ScreeningQuestionsAnsweredCheck` flags proposals where screening questions were detected but no specific answers were generated.
+### Rule 9 — Do not auto-deliver client-facing reports
 
----
+No client-facing report is sent automatically. Every delivery is a manual action:
+1. Open the generated report
+2. Complete the `HUMAN_REVIEW_REQUIRED.md` checklist
+3. Manually edit the report (remove internals, verify claims, soften overclaims)
+4. Send it yourself
 
-## System rules
+**Violation:** Any configuration, script, or workflow that automatically emails, posts, or submits a report to a client or platform.
 
-### Rule 10 — Safety gates are not bypassed
+### Rule 10 — Do not perform destructive actions automatically
 
-Hooks, guards, and quality checks are not bypassed with `--no-verify`, `--force`, or by editing check logic.
+Destructive actions include:
+- Deleting records or data in any environment
+- Modifying production configuration
+- Triggering irreversible state changes (order cancellation, user deletion, billing changes)
+- Security testing actions (injection, auth bypass attempts)
 
-If a quality check fires incorrectly (false positive), fix the check — don't disable it.
+These require explicit written scope from the client and a separate approval decision per action type.
 
-### Rule 11 — Real testing only after system-health pass
-
-Before any real-mode run:
-
-```bash
-python main.py system-health
-.venv\Scripts\python.exe -m pytest -q   # must show 69 passed
-```
-
-A failing health check or failing tests mean the local environment is not ready for real work.
-
-### Rule 12 — Archive hygiene
-
-When creating archives or sharing the project:
-
-**Exclude:** `.env`, `.env.local`, `.venv/`, `__pycache__/`, `outputs/`, `test-results/`, `playwright-report/`, `node_modules/`
-
-**Include:** source code, `sample_inputs/`, `validation_inputs/`, `docs/`, `tests/`, `requirements.txt`, `README.md`, `.env.example`
-
-If `.env` is accidentally included in a shared archive: **rotate all API keys immediately.**
+**Violation:** A generated test script that deletes test users or orders without an explicit "destructive scope" confirmation.
 
 ---
 
-## Approval model reference
+## Consequences of rule violations
 
-The full approval model (gates, flags, checklists) is in [`docs/APPROVAL_MODEL.md`](APPROVAL_MODEL.md).  
-The pre-execution checklist for real staging runs is in [`docs/REAL_TESTING_PREPARATION.md`](REAL_TESTING_PREPARATION.md).
+| If a rule is violated during a run | Required action |
+|---|---|
+| Staging URL accessed without approval | Stop the run, document what happened, re-run with proper approval |
+| Client report contains internal notes | Regenerate the report, do not send the contaminated version |
+| Credentials appear in test files | Rotate credentials immediately, remove from files, add to `.gitignore` |
+| Evidence claimed without execution | Do not deliver. Re-run the actual tests. |
+| Payment test without sandbox confirmation | Stop immediately. Confirm sandbox mode before any further run. |
 
 ---
 
-## Summary table
+## Related documents
 
-| Scenario | Allowed without approval | Requires approval |
-|---|---|---|
-| Generate scaffold from brief | Yes | — |
-| Write output files locally | Yes | — |
-| Run pytest (mock mode) | Yes | — |
-| TypeScript compile check | Yes | — |
-| Run Playwright dry-run (no network) | Yes | — |
-| Run Playwright against demo/public site | No | Rule 1 checklist |
-| Run Playwright against client staging | No | Rule 1 checklist + written scope |
-| Run Playwright against production | No | Rule 2 — not supported |
-| Send proposal to client | No | Human edit + HUMAN_REVIEW_REQUIRED.md |
-| Submit deliverable to client | No | Human edit + HUMAN_REVIEW_REQUIRED.md |
-| Push to client's repository | No | Manual — workbench never auto-pushes |
+- [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates
+- [`RUNBOOK.md`](RUNBOOK.md) — approval checklist (section 4), safe local vs. external execution (section 5)
+- [`REAL_TESTING_PREPARATION.md`](REAL_TESTING_PREPARATION.md) — full staging pre-execution checklist

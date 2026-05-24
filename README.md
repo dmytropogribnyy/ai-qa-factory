@@ -1,104 +1,130 @@
-# Guided QA Automation Workbench v5.1.0
+# Guided QA Automation Workbench
 
 > **AI drafts. Senior QA decides.**
 
-A practical, local, AI-assisted QA automation platform for real client projects.
+A local, AI-assisted QA automation platform for real client projects.  
 Built for Dmytro Pogribnyy — SDET / QA Automation Lead.
-
-The system classifies your input (job brief, client brief, test file), routes it to the right
-workflow, builds a test strategy and automation scaffold, and then stops and waits for your review
-before anything goes to a client or touches a real environment.
-
-It is not a full autopilot. It is a **guided workbench**: AI proposes, Dmytro decides.
-
-See [`docs/VISION.md`](docs/VISION.md) for the full product direction.
-See [`docs/APPROVAL_MODEL.md`](docs/APPROVAL_MODEL.md) for the safety and approval model.
-See [`docs/COMMANDS.md`](docs/COMMANDS.md) for the full command reference.
 
 ---
 
-<!-- Legacy product identity — preserved for internal sync tests: AI QA Factory v5.0.9 — Validation-Hardened QA/SDET Cockpit -->
+## What this is
 
-A practical local AI-assisted opportunity + QA delivery operating system for Dmytro Pogribnyy.
+**AI QA Factory is evolving into a Guided QA Automation Workbench** for real client QA automation work.
 
-It is not Playwright-only. Playwright + TypeScript is the strongest execution zone, but the system now routes broader opportunities: QA, manual exploratory testing, SaaS audit, API testing, mobile advisory, Tosca advisory, technical writing, AI automation-adjacent work, microservices and skip/risk cases.
+Conceptually similar in flow to Lovable, Make, or n8n — but specialized for QA automation consulting:
 
-*Builds on v5.0.8 Model Routing Profiles — upgraded and validated to v5.0.9.*
+```
+Understand → Classify Inputs → Build Project Blueprint
+    → Plan Strategically → Plan Tactically → Select Tools
+    → Ask Approval → Execute Safely → Collect Evidence → Report Clearly
+```
 
-> AI drafts. Senior QA decides.
+The workbench accepts a brief, client task, or job post; classifies the context; builds a QA strategy and test automation plan; generates a Playwright TypeScript scaffold; and stops — waiting for your review before anything touches a real environment or goes to a client.
 
-## What v5.0.8 includes
+**It is not a full autopilot.** It uses human approval gates at every risky step.
 
+---
 
+## What it supports
 
-### Project extensions, self-health and test design
+**Inputs (current and planned):**
+- Text briefs and job posts
+- Task URLs (Jira, Linear, Notion tickets)
+- Target application URLs (classified, not fetched automatically)
+- Screenshots (via vision model — planned)
+- Uploaded archives and repos (planned)
+- API documentation (OpenAPI, Postman — planned)
 
-- `ProjectExtensionAgent` suggests temporary project-specific extension packs for special stacks/domains without making them permanent.
-- `SelfHealthMonitorAgent` creates `SELF_HEALTH_REPORT.md` and `SYSTEM_REPAIR_PLAN.md` with safe repair suggestions.
-- `TestStrategyAgent`, `TestPlanWriterAgent` and `TestCaseWriterAgent` create `TEST_STRATEGY.md`, `TEST_PLAN.md` and `TEST_CASES.md`.
-- New mode: `test-design` for generating test strategy / plan / cases from a brief or job.
+**Project types:**
+- Web SaaS (multi-tenant, auth, billing)
+- E-commerce (checkout, cart, payment flows)
+- API backends (REST, GraphQL)
+- AI-generated applications
+- Admin panels
+- Auth-heavy applications
+- Mixed UI + API
+- Unknown / to be classified
 
-### Pre-screening & execution cockpit
+**Outputs:**
+- Project Blueprint (source of truth)
+- Strategic QA plan
+- Tactical test plan and test cases
+- Playwright TypeScript scaffold (full npm project)
+- API test suite
+- Evidence pack
+- Internal summary report
+- Client-facing delivery report (gated behind explicit approval)
 
-- `PreScreeningAgent` estimates opportunity suitability, rough effort, blockers, required inputs and recommended workflow before Dmytro commits.
-- `ExecutionCockpitAgent` creates `EXECUTION_FLOW.md`, `APPROVAL_CHECKPOINTS.md`, `SYSTEM_DIALOG_GUIDE.md`, `TESTING_READINESS_CHECKLIST.md` and `PROJECT_INTAKE_CHECKLIST.md`.
-- New mode: `prescreen` for fast suitability checks before spending Connects or accepting work.
+---
 
-### Market calibration
+## Safety model
 
-- `PlatformRouterAgent` detects Upwork / writing / evaluator / direct B2B / microservice-style inputs.
-- `CapabilityRouterAgent` classifies work beyond Playwright: strong execution, supported/adjacent, advisory-only, skip/risky.
-- `OpportunityFilterAgent` outputs practical decisions: `strong_apply`, `apply_selectively`, `advisory_only`, `skip_low_value`, `skip_risky`, `skip_not_core`.
-- `ScreeningAnswersAgent` extracts screening questions, mandatory keywords and AI/prompt-injection traps.
-- `EvidencePackAgent` lists proof needed before applying and forbids invented evidence.
-- `CommercialStrategyAgent` reframes pricing as negotiation/milestone strategy.
-- `TechnicalWritingAgent` supports SaaS/QA documentation opportunities as an adjacent branch.
+| Action | Behaviour |
+|---|---|
+| Analyze text input | Automatic |
+| Generate strategy / scaffold | Automatic |
+| Run local validation (compile, lint, dry-run) | Automatic |
+| Run tests against staging URL | **Requires approval** |
+| Run tests against production | **Requires explicit read-only approval** |
+| Test payment / auth / security flows | **Requires approval + sandbox confirmation** |
+| Send client-facing report | **Requires final approval** |
 
-### Human-readable reporting
+External and staging execution is blocked by default. `--approve` flag unlocks it per run.  
+See [`docs/APPROVAL_MODEL.md`](docs/APPROVAL_MODEL.md) and [`docs/SAFETY_RULES.md`](docs/SAFETY_RULES.md).
 
-Every normal run should create a control pack:
+---
 
-- `READ_ME_FIRST.md`
-- `PRESCREENING_REPORT.md`
-- `EXECUTION_FLOW.md`
-- `APPROVAL_CHECKPOINTS.md`
-- `SYSTEM_DIALOG_GUIDE.md`
-- `TESTING_READINESS_CHECKLIST.md`
-- `PROJECT_INTAKE_CHECKLIST.md`
-- `DECISION.md`
-- `NEXT_ACTIONS.md`
-- `SUMMARY.md`
-- `fit_decision.md`
-- `commercial_strategy.md`
-- `screening_answers.md`
-- `evidence_needed.md`
-- `HUMAN_REVIEW_REQUIRED.md`
-- `QUALITY_GATE_REPORT.md`
-- `SELF_HEALTH_REPORT.md`
-- `SYSTEM_REPAIR_PLAN.md`
-- `TEST_STRATEGY.md`
-- `TEST_PLAN.md`
-- `TEST_CASES.md`
-
-### Batch filtering
+## Quick start
 
 ```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS/Linux
+pip install -r requirements.txt
+copy .env.example .env
+python -m pytest -q             # 69 tests, mock mode, no API keys needed
+python main.py system-health
+```
+
+---
+
+## Current commands
+
+```bash
+# System
+python main.py system-health
+python main.py capabilities
+python main.py agents
+
+# Opportunity evaluation
+python main.py prescreen --input brief.txt
+python main.py filter   --input brief.txt
+python main.py upwork   --input brief.txt --source-platform upwork --require-real-llm
 python main.py batch-filter --input real_jobs/
+
+# QA delivery
+python main.py test-design --input brief.txt --require-real-llm
+python main.py scaffold    --input brief.txt --require-real-llm
+python main.py plan        --input brief.txt --require-real-llm
+python main.py audit       --input brief.txt --require-real-llm
+python main.py full        --input brief.txt --require-real-llm
+python main.py review      --input tests/smoke.spec.ts
+python main.py delivery    --input brief.txt --require-real-llm
+
+# Execution control
+python main.py full --input brief.txt --step
+python main.py full --input brief.txt --dry-run
+python main.py full --input brief.txt --only proposal_writer
+python main.py full --input brief.txt --from-step proposal_writer
+python main.py run-tests --project-path outputs/<id>/framework --kind playwright
+python main.py ask --project-id <id> --question "Why apply_selectively?"
 ```
 
-This creates:
+Full command reference with planned future commands: [`docs/COMMANDS.md`](docs/COMMANDS.md)
 
-```text
-outputs/batch_opportunity_report.md
-```
+---
 
-Use it to shortlist a folder of copied Upwork/direct opportunities before spending Connects or time.
-
-### Role-based model routing
-
-The Factory does not use one model for everything. Configure role routing via `MODEL_PROFILE` or manual `*_MODEL` overrides.
-
-Recommended premium hybrid profile:
+## Configuration
 
 ```env
 LLM_MODE=real
@@ -107,140 +133,72 @@ OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-This routes work as follows:
+Role routing in `premium_hybrid`:
 
-| Role | Model | Purpose |
+| Role | Model | Used for |
 |---|---|---|
-| `architect` | `gpt-5.5` | prescreening, capability routing, strategy |
-| `coding` | `anthropic/claude-sonnet-4-6` | code/scaffold/test implementation notes |
-| `review` | `anthropic/claude-opus-4-7` | deep review, quality gate, self-health |
-| `fast` | `anthropic/claude-sonnet-4-6` | proposals, summaries, delivery notes |
-| `vision` | `gpt-5.5` | future screenshot / visual review |
-| `fallback` | `gpt-5.4-mini` | backup |
+| `architect` | `gpt-5.5` | Strategy, capability routing, prescreening |
+| `coding` | `claude-sonnet-4-6` | Scaffold, test implementation |
+| `review` | `claude-opus-4-7` | Quality gate, self-health, deep review |
+| `fast` | `claude-sonnet-4-6` | Proposals, summaries, delivery notes |
+| `vision` | `gpt-5.5` | Screenshot / visual input (planned) |
+| `fallback` | `gpt-5.4-mini` | Backup |
 
-See `docs/MODEL_ROUTING_PROFILES.md`.
+---
 
-## Quick start
+## Tooling decisions
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate    # Windows
-# source .venv/bin/activate  # macOS/Linux
-pip install -r requirements.txt
-copy .env.example .env
-python -m pytest -q
-```
+- **Orchestrator:** Registry-based (current default). LangGraph is optional future backend — not mandatory now.
+- **Automation framework:** Playwright + TypeScript is the primary target.
+- **Reporting:** Markdown + JSONL locally. Allure is an optional future adapter.
+- **Observability:** Local JSONL logs. LangSmith is optional — not mandatory now.
+- **Playwright MCP:** Not a mandatory runtime dependency.
+- **Playwright codegen / trace viewer:** Useful helpers, not managed by the workbench.
 
-## Running tests
+See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 
-Unit and smoke tests always run in **mock mode** — no real API keys are required and no paid LLM calls are made.
-`tests/conftest.py` sets `LLM_MODE=mock` and `MODEL_PROFILE=mock` before any test imports app config, so `.env` values are ignored.
+---
 
-```bash
-# Default: always uses mock mode regardless of .env
-python -m pytest -q
-
-# Explicit (same result, useful as a reminder in CI):
-LLM_MODE=mock MODEL_PROFILE=mock python -m pytest -q
-```
-
-To run real-LLM smoke tests you must explicitly set both variables in your shell:
+## Tests
 
 ```bash
-LLM_MODE=real MODEL_PROFILE=premium_hybrid python -m pytest -q
+.venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-For full real-runtime validation use the CLI directly:
+Expected: **69 passed**
 
-```bash
-python main.py system-health
-python main.py prescreen --input sample_inputs/upwork_job.txt --source-platform upwork --require-real-llm
-```
+---
 
-**LiteLLM botocore warnings** (`No module named 'botocore'`, etc.) are harmless — they only affect AWS Bedrock/SageMaker providers, which are not used here. They are suppressed automatically during pytest.
+## Docs
 
-## Main commands
+| Document | Purpose |
+|---|---|
+| [`docs/VISION.md`](docs/VISION.md) | Product vision and roadmap |
+| [`docs/COMMANDS.md`](docs/COMMANDS.md) | Full command reference (implemented + planned) |
+| [`docs/APPROVAL_MODEL.md`](docs/APPROVAL_MODEL.md) | Risk levels, approval gates, what runs automatically |
+| [`docs/SAFETY_RULES.md`](docs/SAFETY_RULES.md) | Hard rules — what never runs automatically |
+| [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) | Orchestrator, LangGraph, Playwright, Allure, LangSmith decisions |
+| [`docs/PROJECT_TYPES.md`](docs/PROJECT_TYPES.md) | Supported project types with risks and test focus |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Daily operating guide |
 
-```bash
-python main.py prescreen --input sample_inputs/upwork_job_saas_multitenant_billing.txt
-python main.py filter --input sample_inputs/upwork_job_saas_multitenant_billing.txt
-python main.py test-design --input sample_inputs/client_brief.txt
-python main.py batch-filter --input sample_inputs/
-python main.py upwork --input sample_inputs/upwork_job_greenhouse_ai_native_qa.txt
-python main.py scaffold --input sample_inputs/client_brief.txt
-python main.py full --input sample_inputs/client_brief.txt
-python main.py review --input sample_inputs/test_to_review.ts
-python main.py capabilities
-python main.py agents
-python main.py ask --project-id <project_id> --question "Why did you recommend this action?"
-```
+---
 
-## Execution modes
+## Changelog highlights
 
-```bash
-python main.py full --input sample_inputs/client_brief.txt --step
-python main.py full --input sample_inputs/client_brief.txt --dry-run
-python main.py full --input sample_inputs/client_brief.txt --only proposal_writer
-python main.py full --input sample_inputs/client_brief.txt --from-step proposal_writer
-```
+<!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
+### v5.1.0 — Guided QA Automation Workbench
 
-## Real client safety
+- Product direction: evolving from opportunity router to full QA automation workbench
+- `core/version.py`: `APP_VERSION`, `STATE_SCHEMA_VERSION`, `RELEASE_LABEL`
+- New docs: VISION, COMMANDS, APPROVAL_MODEL, TOOLING_DECISIONS, SAFETY_RULES, PROJECT_TYPES
+- Pre-screen first: opportunity evaluation workflows fully supported and preserved
 
-For real proposals:
+### v5.0.9 — Validation hardened
 
-```bash
-python main.py upwork --input real_jobs/job_001.txt --require-real-llm
-```
+Patches: api_testing routing (P1), mobile risk flag (P2), SaaS billing check (P3), test-design mode (P4).  
+Tests: 69/69.
 
-If `LLM_MODE=mock`, this fails intentionally unless `--allow-mock` is passed. Mock mode is for structure testing only.
+### v5.0.8 model routing additions
 
-## Human approval rule
-
-Every output is a draft. Dmytro must check: claims, evidence, screening answers, mandatory keywords, price/rate, scope, credentials, payment/security safety and final wording before sending.
-
-## Still out of scope
-
-No aggressive platform scraping, no auto-submission, no GitHub auto-push, no autonomous inter-agent dialogue, no unsafe self-healing, no self-healing test promises, no LangGraph/RAG/UI until real usage proves the need.
-
-## v5.0.8 model routing additions
-
-- `system-health` checks local readiness before real testing: Python packages, LLM config, API key presence, output/memory folders and Node/npm/npx availability.
-- `--project-id` lets you rerun `--only` or `--from-step` against a saved project more explicitly.
-- `--source-platform` lets you force a source hint when copied text does not contain enough platform metadata, e.g. `--source-platform upwork`.
-- Release archive is cleaned of generated `__pycache__`, `outputs/` and previous `memory/projects/` run artifacts.
-
-```bash
-python main.py system-health
-python main.py prescreen --input real_jobs/job_001.txt --source-platform upwork --allow-mock
-python main.py full --input real_jobs/job_001.txt --project-id <saved_project_id> --only proposal_writer --allow-mock
-```
-
-## v5.0.8 code & documentation sync
-
-v5.0.8 aligns the codebase and docs around the current operating model:
-
-1. pre-screen first;
-2. open human-readable reports before JSON;
-3. approve key steps before client-facing or real-site actions;
-4. use capability/platform routing to decide apply / selective apply / advisory / skip;
-5. use extension packs and self-health reports to identify missing project-specific support;
-6. prepare real testing only after `system-health` and `TESTING_READINESS_CHECKLIST.md` are clean.
-
-New docs:
-
-- `docs/OPPORTUNITY_PRESCREENING_APPROVAL_FLOW.md`
-- `docs/REAL_TESTING_PREPARATION.md`
-- `docs/V507_CODE_DOC_SYNC_NOTES.md`
-
-- `docs/MODEL_ROUTING_PROFILES.md`
-
-## v5.0.9 validation hardening
-
-Controlled validation run against 6 demo-brief scenarios (2026-05-24). Patches applied: `api_testing` routing (P1), mobile risk flag (P2), SaaS billing check (P3/P3b), `test-design` mode guards (P4). Test suite: 60/60 (was 49).
-
-- `docs/RUNBOOK.md` — **daily practical runbook** (what to run, what to open, troubleshooting)
-- `docs/AI_QA_Factory_Concept_and_Implementation_Plan_v7_validation_hardened.md` — current canonical architecture and operating reference
-- `docs/VALIDATION_WEBSITE_TESTING_REPORT.md` — full validation report, per-scenario results, patch list
-- `docs/V508_MODEL_ROUTING_NOTES.md` — model routing change notes
-- `docs/REAL_TESTING_PREPARATION.md` — checklist before real-site/staging testing
-- `docs/VSCODE_USAGE.md` — VS Code setup and archive/sharing hygiene (what to exclude from zips)
+Role-based model routing profiles: architect / coding / review / fast / vision / fallback.  
+`system-health`, `--project-id`, `--source-platform` added.

@@ -1,116 +1,167 @@
 # Product Vision — Guided QA Automation Workbench
 
-**Version:** 5.1.0-workbench-alpha  
-**Date:** 2026-05-24
+**Version:** 5.1.0  
+**Updated:** 2026-05-24
 
 ---
 
-## What it is
+## One sentence
 
-The Guided QA Automation Workbench is a local, AI-assisted QA automation platform for real client projects.
-
-It accepts a brief, job post, or project description; classifies the input; builds a QA strategy and test automation plan; generates a Playwright TypeScript scaffold; and stops — waiting for Dmytro's review before anything reaches a client or a live environment.
-
-Think of it as a very fast, very thorough junior QA engineer that prepares a complete first draft of everything and then hands it to the senior for sign-off.
+A guided, AI-assisted QA automation workbench for senior QA consultants doing real client work — not a generator, not an autopilot.
 
 ---
 
-## What it is not
+## The problem it solves
 
-- Not a full autopilot. Nothing is sent or executed without approval.
-- Not a browser agent. It does not open URLs, scrape sites, or run Playwright against real environments unless explicitly approved for a specific run.
-- Not an autonomous delivery system. Client-facing artifacts always require human review.
-- Not a mandatory-heavy-dependency stack. LangGraph, Allure, LangSmith, and Playwright MCP are optional.
+A senior QA automation consultant takes on a client project and immediately has to juggle:
+
+- Understanding what the client actually needs (which is rarely what they say they need)
+- Classifying the application: SaaS? e-commerce? API? auth-heavy?
+- Building a test strategy that fits the tech stack and risk profile
+- Producing a concrete test plan, test cases, and automation scaffold
+- Selecting the right tools for the job
+- Getting approval before touching production-adjacent systems
+- Collecting evidence that work was done correctly
+- Producing two kinds of reports: internal notes and a clean client-facing deliverable
+
+This takes time. A lot of it is structured and repeatable. A workbench can assist.
 
 ---
 
-## Evolution from AI QA Factory
+## What it is — and what it is not
 
-The project started as "AI QA Factory" — a freelancing operating system for evaluating Upwork opportunities and generating proposals.
+**It is:** A local CLI platform that understands your project context, builds a structured first draft of everything, and stops for your review at every decision point that matters.
 
-It is evolving into a broader **QA automation workbench** that handles real ongoing client projects, not just opportunity evaluation:
+**It is not:**
+- A full autopilot. No artifact goes to a client without human sign-off.
+- A browser agent. It does not open URLs, log into applications, or run tests against live systems without explicit approval.
+- A one-size-fits-all generator. It classifies input before acting.
+- A heavy-dependency framework. LangGraph, Allure, LangSmith, and Playwright MCP are optional.
 
-| Old focus | New focus |
+---
+
+## Why it's closer to Lovable / Make / n8n than to a simple script
+
+Lovable turns a description into a working web app through a guided, iterative loop.  
+Make/n8n turn a workflow description into a running automation.  
+Both are:
+- Input-driven (you describe, it builds)
+- Structured (each step is visible and editable)
+- Guided (you approve before things run)
+- Composable (steps chain into a full pipeline)
+
+This workbench applies the same pattern to QA automation consulting:
+
+| Step | What happens |
 |---|---|
-| Evaluate freelancing opportunities | Deliver real client QA automation projects |
-| Generate Upwork proposals | Build project blueprints, test strategies, automation scaffolds |
-| Route by opportunity type | Route by project type and client context |
-| Proposal + prescreening | Full intake → strategy → automation → validation → delivery |
+| You provide input | Brief, task URL, screenshots, API docs, archive |
+| System classifies | Project type, tech stack, risk profile, input source vs. target |
+| System builds blueprint | Structured source of truth for the project |
+| System plans strategically | QA approach, coverage areas, risk-based priorities |
+| System plans tactically | Test cases, scenarios, edge cases, automation layers |
+| System selects tools | Playwright-TS, API testing, advisory for mobile/Tosca |
+| System asks approval | Before anything touches a real environment |
+| System executes safely | Local validation only, unless approved for external |
+| System collects evidence | What ran, what was found, what was skipped |
+| System reports | Internal summary + client-facing deliverable (separately gated) |
 
-The old workflows (`prescreen`, `filter`, `upwork`, `batch-filter`) remain fully supported. New workflows for client project delivery (`client`, `intake`) are being added incrementally.
-
----
-
-## Core principles
-
-**1. Guided, not autonomous**  
-The workbench proposes. Dmytro decides. Every risky action has an explicit approval gate.
-
-**2. Universal input, classified before action**  
-Accepts text briefs, job posts, client descriptions, API spec references, and eventually URLs and screenshots. Always classifies the input before acting — never assumes.
-
-**3. Distinguish task source from application under test**  
-A brief may describe where the task came from (Upwork, client email, Linear ticket) AND what the target application is (SaaS dashboard, mobile app, REST API). These are separate concepts with separate handling.
-
-**4. Project Blueprint as source of truth**  
-Before generating test artifacts, the workbench builds a structured Project Blueprint: project name, target context, tech stack, scope, open questions, approval status. Downstream agents consume this, not raw text.
-
-**5. Safety by default**  
-Local operations (file writes, TypeScript compilation check, mock runs) are automatic. External execution (hitting staging URLs, running Playwright against real environments) requires explicit approval per run.
-
-**6. Incremental delivery**  
-Phases are small and verifiable. Each phase preserves all existing tests and workflows. No big-bang rewrites.
+The difference from Lovable/Make: every step that could harm a client system or produce misleading output is blocked until you explicitly approve it.
 
 ---
 
-## Intended workflow (target state)
+## Core workflow formula
 
 ```
-Input (brief / job post / description)
-        ↓
-Input classification (text? url? api spec? screenshot?)
-        ↓
-Context analysis (platform, tech stack, project type, risks)
-        ↓
-Project Blueprint (source of truth — Dmytro reviews)
-        ↓
-Strategic QA Plan   +   Automation Plan
-        ↓
-Tool / framework selection (Playwright-TS, API, mobile advisory, ...)
-        ↓
-Scaffold generation (Playwright TS project, API test suite, ...)
-        ↓
-Safe local validation (TypeScript compile, lint, dry-run — automatic)
-        ↓
-Human approval gate (Dmytro signs off)
-        ↓
-Evidence collection
-        ↓
-Internal report (always)   |   Client report (explicit flag + approval only)
-        ↓
-Delivery
+Understand
+    → Classify Inputs
+    → Build Project Blueprint
+    → Plan Strategically
+    → Plan Tactically
+    → Select Tools
+    → Ask Approval (for anything external)
+    → Execute Safely
+    → Collect Evidence
+    → Report Clearly
 ```
+
+This is the backbone of every client project workflow — regardless of whether the project is a SaaS audit, an API test suite, or an e-commerce checkout automation.
 
 ---
 
-## What already works (v5.0.9 → v5.1.0)
+## Supported input types
 
-- Input: text file briefs (all modes)
-- Context analysis: 11 opportunity types, 6 source platforms, stack detection
-- Opportunity routing: prescreen / filter / upwork / batch-filter
-- Test design: test-design mode → TEST_STRATEGY.md + TEST_PLAN.md + TEST_CASES.md
-- Scaffold: scaffold mode → full Playwright TypeScript project
-- Approval gates: HUMAN_REVIEW_REQUIRED.md, --approve flag, triggered pre-run prompts
-- Role-based LLM routing: architect / coding / review / fast / vision roles
-- Quality gate: 16 checks post-workflow
-- State persistence: snapshots, --from-step, --only, --project-id
+| Input type | Status | Notes |
+|---|---|---|
+| Text brief (paste or file) | Implemented | Core input for all current workflows |
+| Task URL (Jira, Linear, Notion) | Planned (Phase 2) | Classified, not fetched automatically |
+| Target application URL | Planned (Phase 2) | Classified separately from task URL |
+| Screenshots | Planned (Phase 2) | Via vision model role |
+| Archive / zip | Planned (Phase 3) | Repo or project context |
+| Repo reference | Planned (Phase 3) | Code context for test generation |
+| API documentation (OpenAPI, Postman) | Planned (Phase 3) | Structured endpoint ingestion |
 
-## What is being added (v5.1.x)
+**Key rule:** Classifying a URL (knowing it exists) is separate from fetching or acting on it. The system will classify URLs before any action. Fetching requires a separate approval decision.
 
-Phase 1A (this release): documentation, identity alignment, core/version.py  
-Phase 1B (next): structured schema models (InputMap, ProjectBlueprint, AutomationPlan, ...)  
-Phase 2: universal input classifier (URL classification, not fetching)  
-Phase 3: Project Blueprint agent  
-Phase 4: client / intake workflow modes  
-Phase 5: safe execution layer surfacing  
-Phase 6: internal vs. client report stratification
+---
+
+## Supported project types
+
+| Type | Description |
+|---|---|
+| `web_saas` | Multi-tenant SaaS, subscription billing, RBAC, SSO |
+| `ecommerce` | Cart, checkout, payment flows, order management |
+| `api_backend` | REST API, GraphQL, OpenAPI spec, microservices |
+| `ai_generated_app` | LLM-powered UX, non-deterministic behavior, prompt testing |
+| `admin_panel` | Internal dashboards, data tables, role access |
+| `auth_heavy` | OAuth, MFA, session management, SSO, identity |
+| `mixed_ui_api` | Full-stack apps where both layers need coverage |
+| `unknown` | Not yet classified — must be resolved before automation |
+
+---
+
+## Human-in-the-loop safety model
+
+The workbench has two operating zones:
+
+**Safe zone (automatic):**
+- Reading and classifying input
+- Generating strategy, test plans, scaffold files
+- Running local validation (TypeScript compile, lint, playwright dry-run)
+- Writing output files to `outputs/`
+
+**Approval zone (blocked until approved):**
+- Running tests against any external URL (staging, demo, production)
+- Testing payment, auth, or security-sensitive flows
+- Generating client-facing reports (separate from internal summaries)
+- Any destructive or state-changing action
+
+Approval is execution-mode-based, not domain-based. The workbench does not infer safety from URL patterns or robots.txt. Every external execution requires an explicit decision.
+
+---
+
+## Target outcome
+
+The workbench should feel like having a very capable junior consultant who:
+
+1. Reads everything you give it carefully
+2. Asks clarifying questions when something is ambiguous
+3. Builds a complete first draft of the project structure, test plan, and automation scaffold
+4. Lists what it needs from you before it can proceed (credentials, scope, approval)
+5. Waits for your sign-off before touching anything real
+6. Produces clean internal notes and a separate polished client deliverable
+
+You, as the senior QA automation consultant, make every judgment call. The workbench does the drafting, structuring, and scaffolding.
+
+---
+
+## Roadmap
+
+| Phase | Status | What it adds |
+|---|---|---|
+| 1A | Done | Docs, identity alignment, `core/version.py` |
+| 1B | Next | Schema models: `InputMap`, `ProjectBlueprint`, `AutomationPlan`, `ApprovalDecision` |
+| 2 | Planned | Universal input classifier (URL classification, not fetching) |
+| 3 | Planned | `ProjectBlueprintAgent` — structured source of truth |
+| 4 | Planned | `client` and `intake` workflow modes |
+| 5 | Planned | Safe execution boundary surfaced in CLI |
+| 6 | Planned | Internal vs. client-facing report stratification |

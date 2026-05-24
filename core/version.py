@@ -21,4 +21,4 @@ APP_VERSION = "5.1.0"
 # Keep in sync with SCHEMA_VERSION in core/state.py when that changes.
 STATE_SCHEMA_VERSION = "5.0.5"
 
-RELEASE_LABEL = "workbench-alpha"
+RELEASE_LABEL = "Guided QA Automation Workbench"
