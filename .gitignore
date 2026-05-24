@@ -1,0 +1,48 @@
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Python runtime ────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# ── Node / Playwright ─────────────────────────────────────────────────────────
+node_modules/
+playwright-report/
+test-results/
+.playwright/
+
+# ── OS noise ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Generated run outputs ─────────────────────────────────────────────────────
+# Keep the outputs/ directory in git (for .gitkeep), exclude all run artifacts
+outputs/*
+!outputs/.gitkeep
+
+# ── Memory: runtime state (project runs, client data, learned patterns) ───────
+# pricing_book.yaml is source — keep it. Everything else is runtime.
+memory/projects/
+memory/clients/
+memory/patterns/
+memory/snippets/
+memory/lessons-learned/
+
+# ── Real job/site input files (may contain client info) ───────────────────────
+# Use sample_inputs/ for committed examples instead.
+real_jobs/
+real_sites/
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.vscode/*.code-workspace
+.idea/

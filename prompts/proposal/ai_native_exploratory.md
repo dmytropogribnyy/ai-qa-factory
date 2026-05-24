@@ -1,0 +1,1 @@
+Focus on hands-on exploratory QA plus AI-assisted speed. Emphasize DevTools, screenshots/video, clear bug reports, critical flows, and selective Playwright automation. Do not make the proposal automation-only.

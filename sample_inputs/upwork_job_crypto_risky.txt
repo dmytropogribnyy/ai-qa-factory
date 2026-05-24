@@ -1,0 +1,2 @@
+App Tester for Crypto App
+Test our crypto brokerage app. You must complete the test without VPN/proxy, have a valid ID from your country of residence, deposit $10 of your own money, record the app experience and blur personal data. Payment $20 plus refund.

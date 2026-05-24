@@ -1,0 +1,1 @@
+Generate a release QA plan for multi-app retail operations: storefront, admin, POS, driver/mobile, ops hub, PWA/offline sync, timezone/multi-location state, checkout/order pipeline, real devices and async bug reporting.

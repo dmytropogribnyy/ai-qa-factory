@@ -1,0 +1,2 @@
+We need a Senior QA Automation Engineer to build Playwright tests for our SaaS web application.
+Stack: React frontend, REST API, GitHub Actions. We have flaky regression tests and want reliable smoke coverage for login, dashboard, billing and user management. TypeScript preferred. Need someone who can review current CI and recommend improvements.

@@ -1,0 +1,19 @@
+SaaS B2B platform — login, roles, dashboard QA audit.
+
+Project: multi-tenant B2B SaaS tool for project management.
+Frontend: Next.js. Backend: FastAPI + PostgreSQL. Auth: JWT + OAuth (Google SSO).
+Three user roles: Admin, Manager, Viewer.
+
+Test scope:
+- Login flows: email/password, Google SSO, remember-me, session expiry
+- Role-based access control: each role should only see/edit their allowed resources
+- Admin-only pages must return 403 for Manager and Viewer
+- Dashboard data isolation: tenant A must not see tenant B data
+- Password reset flow (staging email only)
+- Logout and session invalidation
+- API authorization headers checked with DevTools
+
+Test environment: staging.saasapp.dev (test accounts to be provided).
+No production data. No real OAuth credentials in test runs — use pre-configured test accounts.
+
+Deliverables: test strategy, test cases for auth + RBAC, Playwright smoke suite for critical login paths.

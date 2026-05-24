@@ -1,0 +1,15 @@
+Technical writing — QA documentation migration and help center rewrite.
+
+Project: Series-A SaaS company migrating from Confluence to Notion.
+They need a freelance technical writer to:
+- Audit existing QA process docs (test plans, release checklists, bug report templates)
+- Rewrite 8–12 documents for clarity, consistency and non-technical readability
+- Create a QA onboarding guide for new engineers joining the team
+- Adapt a "how to report a bug" guide for non-technical stakeholders
+- Ensure all docs follow their internal style guide (to be shared)
+- Deliver in Notion-compatible Markdown
+
+AI assistance is acceptable but all content must be human-reviewed and factually accurate.
+No code writing expected. English must be native-level or near-native.
+
+Deliverables: documentation audit, rewrite samples, onboarding guide outline, and a project timeline estimate.

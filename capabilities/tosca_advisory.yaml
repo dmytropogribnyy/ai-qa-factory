@@ -1,0 +1,4 @@
+support_level: advisory_only
+keywords: [tosca, tricentis, tbox]
+allowed_claims: [QA automation architecture discussion, risk-based test design]
+forbidden_claims: [expert Tosca hands-on delivery unless verified]

@@ -1,0 +1,1 @@
+Focus on SaaS documentation migration, structure, clarity, user journeys, source material audit, GitHub/help center workflow, and human-led AI-assisted editing. Do not claim native copywriting unless verified.

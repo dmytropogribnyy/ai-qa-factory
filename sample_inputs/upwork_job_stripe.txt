@@ -1,0 +1,1 @@
+We need a QA automation engineer to test our Stripe checkout and subscription flow ASAP. The app is live and we want Playwright tests for login, checkout, invoices, and billing settings.

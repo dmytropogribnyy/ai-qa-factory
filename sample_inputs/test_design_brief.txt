@@ -1,0 +1,1 @@
+Client needs a test strategy, test plan and test cases for a SaaS onboarding and billing workflow. Scope includes signup, roles, Stripe test checkout, plan limits, password reset, and basic API validation. Need a clear report and practical cases before release.

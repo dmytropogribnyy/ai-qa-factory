@@ -1,0 +1,19 @@
+E-commerce QA audit — demo/staging environment only.
+
+Project: mid-size online retail store built on a custom React frontend with a Node/Express backend.
+Checkout uses Stripe in test mode (no real cards).
+Cart, product listing, wishlist, checkout, order confirmation, and user account pages need coverage.
+
+Scope requested:
+- End-to-end checkout flow (guest + logged-in) using Stripe test cards only
+- Cart add/remove/update quantity
+- Coupon code validation
+- Order confirmation email trigger (staging SMTP only, no real emails)
+- Responsive layout smoke (desktop + mobile viewport)
+- Accessibility basics (WCAG 2.1 AA)
+
+Stack: React, Node/Express, PostgreSQL, GitHub Actions, Playwright preferred.
+Test environment: staging.demostore.internal (credentials to be provided).
+No real payments. No production database access.
+
+Expected output: QA plan, Playwright smoke suite scaffold, and a bug report template.

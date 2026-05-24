@@ -1,0 +1,18 @@
+support_level: strong_execution
+keywords:
+  - test strategy
+  - test plan
+  - test cases
+  - acceptance criteria
+  - regression checklist
+allowed_claims:
+  - risk-based test strategy
+  - practical test plans
+  - manual and automation candidate test cases
+forbidden_claims:
+  - exhaustive complete coverage without requirements
+  - final sign-off without human review
+outputs:
+  - TEST_STRATEGY.md
+  - TEST_PLAN.md
+  - TEST_CASES.md

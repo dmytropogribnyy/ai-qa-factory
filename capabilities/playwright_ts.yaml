@@ -1,0 +1,4 @@
+support_level: strong_execution
+keywords: [playwright, typescript, e2e, regression, ci]
+allowed_claims: [Playwright TypeScript automation, UI/API smoke suites, CI reporting]
+forbidden_claims: [100% coverage guarantee, bug-free guarantee]

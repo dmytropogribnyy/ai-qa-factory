@@ -1,0 +1,2 @@
+Technical Writer for Documentation Migration
+We need a technical writer with B2B SaaS experience to migrate documentation from docs site to help center using GitHub AI documentation. Questions: How have you used AI to write documentation? How do you determine what features need to be documented? Describe similar experience.

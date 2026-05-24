@@ -1,0 +1,24 @@
+REST API testing — public-facing product catalog and order API.
+
+Project: e-commerce company needs API test coverage for their product and order management REST API.
+Stack: Node.js / Express, PostgreSQL, OpenAPI 3.0 spec provided.
+Hosted at: api-staging.shop.internal (staging only, no production access).
+
+Endpoints to cover:
+- GET /products — list, filter, pagination
+- GET /products/:id — single product, 404 on missing
+- POST /cart — add item, validate stock
+- POST /orders — create order, requires auth header
+- GET /orders/:id — retrieve order, tenant-scoped
+- DELETE /orders/:id — cancel order (role-restricted to Admin)
+- Auth: Bearer token (test tokens provided, no real user tokens)
+
+Goals:
+- Happy path coverage for all endpoints
+- Auth/403 boundary checks
+- Input validation and negative cases (missing fields, wrong types, oversized payloads)
+- Response schema validation against provided OpenAPI spec
+- Rate limit behavior (non-destructive smoke only)
+
+No production database. No real user data. Staging environment only.
+Expected output: API test strategy, Playwright/request-based test cases, and a checklist.

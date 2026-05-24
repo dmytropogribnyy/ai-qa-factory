@@ -1,0 +1,1 @@
+Generate a mobile release QA plan for React Native/Expo apps: TestFlight, Google Play Internal Testing, simulators/emulators, physical device sign-off, Dynamic Type/accessibility, Maestro smoke checks, screenshots and brief UX findings.

@@ -1,0 +1,3 @@
+Need QA Automation Engineer for AI-generated SaaS MVP built quickly with Lovable.
+We need Playwright TypeScript tests for login, dashboard, Stripe checkout sandbox, API health checks and GitHub Actions.
+Some flows are flaky and release is urgent.

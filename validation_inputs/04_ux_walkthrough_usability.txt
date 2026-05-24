@@ -1,0 +1,17 @@
+UX walkthrough and usability review — onboarding flow for a productivity SaaS.
+
+Project: new productivity SaaS app (task management + team collaboration).
+Frontend: React SPA. Target users: non-technical team leads and project managers.
+
+Request: hands-on exploratory QA + usability review of the onboarding flow.
+- New user signup → email verification → workspace setup → invite teammates → first task creation
+- Focus: clarity of instructions, error messages, loading states, empty states, mobile responsiveness
+- Use Loom recordings to document findings
+- File bugs in Linear with clear reproduction steps, severity, screenshots
+- Check for confusing UX, missing validation feedback, accessibility anti-patterns
+- No automation script needed — this is human-led exploratory + observational
+
+App URL: staging.taskapp.dev (test account credentials to be provided separately).
+Time budget: 4–6 hours exploratory session.
+
+Expected output: exploratory checklist, findings report format, Loom/Linear bug template, and a usability severity rubric.

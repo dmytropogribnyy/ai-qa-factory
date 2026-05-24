@@ -1,0 +1,1 @@
+Generate a black-box SaaS QA audit plan covering tenant isolation, Stripe/billing, role enforcement, auth/session/JWT boundaries, responsible API replay checks within authorized test orgs, severity rubric, and daily reporting.

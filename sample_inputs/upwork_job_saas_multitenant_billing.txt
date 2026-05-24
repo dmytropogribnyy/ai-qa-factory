@@ -1,0 +1,2 @@
+SaaS QA Tester — Multi-Tenant Onboarding & Billing
+We need an experienced QA freelancer to stress-test signup, onboarding and billing flows. Focus: multi-tenant data isolation, Stripe subscription/billing correctness, multi-user role enforcement, auth/session/JWT boundaries. Black-box responsible discovery only. Trial task first: 1 hour at $50 fixed, full engagement $450 fixed for up to 10 hours. To apply: explain your approach to data isolation and confirm availability.

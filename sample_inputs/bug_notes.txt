@@ -1,0 +1,1 @@
+Checkout submit button becomes enabled even when card number is incomplete. Expected: button remains disabled or validation message appears. Actual: user can click submit and gets a generic server error.

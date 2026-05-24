@@ -1,0 +1,17 @@
+Test design brief — QA strategy for a healthcare appointment booking SaaS.
+
+Project: web-based healthcare appointment booking platform.
+Stack: Vue.js frontend, Django REST backend, PostgreSQL, Redis, Docker.
+Users: patients (book appointments), doctors (manage availability), clinic admins (reports).
+
+Regulatory context: HIPAA-aware design; no real patient data in tests; staging environment with synthetic data only.
+
+Test design request:
+- Risk-based test strategy covering booking flow, calendar sync, notifications, payment (no real cards), and admin reporting
+- Test plan with scope, entry/exit criteria, and a release checklist
+- Test cases for the three user role flows (patient, doctor, admin)
+- Identify automation candidates vs manual exploratory checks
+- Flag HIPAA-relevant test boundaries (what must NOT be automated without review)
+
+No execution yet — this is planning and strategy only.
+Expected output: TEST_STRATEGY.md, TEST_PLAN.md, TEST_CASES.md

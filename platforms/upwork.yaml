@@ -1,0 +1,4 @@
+platform_name: Upwork
+allowed_outputs: [proposal.md, screening_answers.md, commercial_strategy.md, evidence_needed.md]
+tone: direct, concise, no-fluff
+risk_rules: [do_not_invent_evidence, answer_required_keywords, avoid_low_budget_traps]

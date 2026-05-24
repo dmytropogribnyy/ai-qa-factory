@@ -1,0 +1,4 @@
+support_level: supported_or_adjacent
+keywords: [react native, expo, maestro, testflight, android emulator]
+allowed_claims: [mobile release QA if device/tooling confirmed, Maestro learning/advisory]
+forbidden_claims: [owning iOS sign-off without Mac/device confirmation]

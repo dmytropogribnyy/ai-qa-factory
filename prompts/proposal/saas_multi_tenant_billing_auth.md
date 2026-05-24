@@ -1,0 +1,1 @@
+Focus on B2B SaaS risk audit: tenant isolation, billing/subscription correctness, role enforcement, auth/session boundaries, responsible black-box testing, and daily structured findings. Avoid formal pentest claims.

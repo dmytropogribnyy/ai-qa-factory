@@ -1,0 +1,3 @@
+platform_name: AI evaluator platforms
+allowed_outputs: [platform_fit.md, profile_answers.md, assessment_prep.md, ai_usage_warning.md]
+risk_rules: [do_not_use_ai_to_perform_paid_evaluation_tasks]

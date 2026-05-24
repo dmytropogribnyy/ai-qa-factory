@@ -1,0 +1,4 @@
+platform_name: Writing platforms
+allowed_outputs: [pitch.md, article_outline.md, ai_policy_warning.md]
+tone: editorial, expert, source-aware
+risk_rules: [check_ai_policy, no_ai_written_drafts_where_banned]

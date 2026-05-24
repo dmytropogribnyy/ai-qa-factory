@@ -1,0 +1,1 @@
+Client has an AI-generated SaaS MVP built quickly with authentication, dashboard, onboarding, Stripe checkout in test mode, and a few API endpoints. They need a QA audit, critical bug report, and a small Playwright smoke suite before launch.

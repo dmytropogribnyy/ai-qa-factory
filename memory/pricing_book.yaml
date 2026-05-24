@@ -1,0 +1,20 @@
+# AI QA Factory pricing book. Edit this file as real market feedback arrives.
+qa_audit:
+  triggers: [audit, review, qa readiness, mvp]
+  price: "$150–$500 fixed-price audit"
+  milestone: "Starter milestone: QA audit report + prioritized risk list + first smoke automation recommendation."
+flaky_stabilization:
+  triggers: [flaky, stabilize, stabilise, ci]
+  price: "$75–$250 starter task or $50/hr ongoing"
+  milestone: "Starter milestone: stabilize top 3–5 flaky tests and document root causes."
+selenium_migration:
+  triggers: [selenium, migration, migrate]
+  price: "$500–$2,000+ depending on suite size"
+  milestone: "Starter milestone: migrate 2–3 representative Selenium tests to Playwright and define migration plan."
+framework_setup:
+  triggers: [framework, setup, from scratch]
+  price: "$700–$1,500+ fixed scope or $50/hr"
+  milestone: "Starter milestone: Playwright + TypeScript scaffold with CI-ready smoke suite."
+default:
+  price: "$50/hr or $150–$300 discovery milestone"
+  milestone: "Starter milestone: scope review + test plan + one critical smoke flow."
