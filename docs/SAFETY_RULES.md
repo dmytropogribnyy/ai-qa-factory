@@ -241,6 +241,37 @@ Ecommerce checkout specs and admin panel specs must use `test.skip(true, '...')`
 
 ---
 
+## Static scaffold validation safety (Phase 3B)
+
+These rules apply to `ScaffoldValidator` in `core/scaffold_validator.py`.
+
+### Validator is static inspection only — no execution of any kind
+
+Phase 3B reads local files and checks their content. It does not run npm, npx, TypeScript,
+Playwright, or any subprocess. All six execution flags in `ScaffoldValidationReport` remain
+`False` always, regardless of the scaffold contents or check results.
+
+**Violation:** Any code path in `ScaffoldValidator` that calls `subprocess.run`, imports `playwright`,
+calls `npm`, `npx`, or opens any network connection.
+
+### `safe_to_execute_tests` is always `False` in Phase 3B
+
+Static validation alone is never sufficient to grant test execution permission.
+`ScaffoldValidationReport.safe_to_execute_tests` must be `False` always.
+Test execution requires explicit human approval (Phase 4A), not just passing static checks.
+
+**Violation:** Any code path that sets `safe_to_execute_tests = True` inside `ScaffoldValidator`.
+
+### Validation artifacts must not echo scaffold secrets
+
+The validation report describes whether secrets were found, but must not reproduce them.
+Check messages may say "secret detected in tests/auth.spec.ts" but must not include the secret value.
+
+**Violation:** `STATIC_VALIDATION_REPORT.json` or `STATIC_VALIDATION_REPORT.md` containing
+a literal API key, JWT, or hardcoded password copied from the scaffold.
+
+---
+
 ## External integration safety
 
 These rules govern optional integrations such as n8n, Make, Zapier, Slack, Jira, and similar systems. Encoded in `core/schemas/integration.py` as schema defaults. Runtime enforcement is planned for a later phase.

@@ -1,8 +1,8 @@
 # Artifact Contracts — Guided QA Automation Workbench
 
-**Version:** 5.4.0
+**Version:** 5.5.0
 **Updated:** 2026-05-25
-**Phase:** 3A
+**Phase:** 3B
 
 This document defines the stable artifact paths, formats, and ownership rules for all
 workbench-generated files. Agents and scripts should use these paths and respect the
@@ -186,7 +186,38 @@ outputs/<project_id>/03_framework/playwright/
 
 ---
 
-## Future Artifact Layout (Phase 3A+)
+## Phase 3B Artifact Layout
+
+Phase 3B artifacts are written to the same scaffold root as Phase 3A:
+
+```
+outputs/<project_id>/03_framework/playwright/
+```
+
+### Validation artifacts (written by `python tools/validate_scaffold.py`)
+
+| File | Description |
+|---|---|
+| `STATIC_VALIDATION_REPORT.json` | Full `ScaffoldValidationReport` schema — checks, blockers, warnings, safety flags |
+| `STATIC_VALIDATION_REPORT.md` | Human-readable report with Safety Invariants section |
+| `VALIDATION_PLAN.md` | Summary of static checks run and toolchain steps that would require approval |
+| `LOCAL_VALIDATION_CHECKLIST.md` | Manual checklist of steps to complete before running any local command |
+| `TOOLCHAIN_VALIDATION_PLAN.md` | Proposed toolchain commands requiring explicit human approval |
+
+### Artifact contract guarantees (Phase 3B)
+
+- **`execution_performed = False`** — validator never executes any code
+- **`npm_performed = False`** — no npm commands run
+- **`npx_performed = False`** — no npx commands run
+- **`browser_performed = False`** — no browser launched
+- **`external_calls_performed = False`** — no network access
+- **`safe_to_execute_tests = False`** — static validation alone does not grant test execution permission
+- **`approval_required = True`** — `ToolchainValidationPlan` always requires explicit approval
+- **No secret echo** — artifact files describe secret detection results but never reproduce secret values
+
+---
+
+## Future Artifact Layout (Phase 4A+)
 
 These paths are planned. Phase 3A (03_framework) is now implemented.
 

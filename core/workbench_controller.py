@@ -367,6 +367,53 @@ class WorkbenchController:
         return result
 
     # ------------------------------------------------------------------
+    # Phase 3B — Scaffold Validation API
+    # ------------------------------------------------------------------
+
+    def validate_framework_scaffold(
+        self,
+        scaffold_root_or_project_id: str,
+        project_id: Optional[str] = None,
+    ):
+        """Statically validate a generated scaffold. No execution of any kind.
+
+        Args:
+            scaffold_root_or_project_id: Either a filesystem path to a scaffold root,
+                or a project_id (looks up outputs/<id>/03_framework/playwright/).
+            project_id: Optional override for project_id in the report.
+        """
+        from core.scaffold_validator import ScaffoldValidator
+        root = Path(scaffold_root_or_project_id)
+        if not root.exists():
+            root = self._outputs_root / scaffold_root_or_project_id / "03_framework" / "playwright"
+        pid = project_id or root.parent.parent.parent.name
+        return ScaffoldValidator(outputs_root=self._outputs_root).validate_scaffold(root, pid)
+
+    def render_scaffold_validation_artifacts(
+        self,
+        report,
+        plan,
+        project_id: str,
+    ) -> dict:
+        """Write validation artifacts under the scaffold root. Returns path dict."""
+        from core.scaffold_validator import ScaffoldValidator
+        out_dir = Path(report.scaffold_root)
+        return ScaffoldValidator(outputs_root=self._outputs_root).render_validation_artifacts(report, plan, out_dir)
+
+    def build_toolchain_validation_plan(
+        self,
+        scaffold_root_or_project_id: str,
+        project_id: Optional[str] = None,
+    ):
+        """Build a ToolchainValidationPlan without executing anything."""
+        from core.scaffold_validator import ScaffoldValidator
+        root = Path(scaffold_root_or_project_id)
+        if not root.exists():
+            root = self._outputs_root / scaffold_root_or_project_id / "03_framework" / "playwright"
+        pid = project_id or root.parent.parent.parent.name
+        return ScaffoldValidator(outputs_root=self._outputs_root).build_toolchain_validation_plan(root, pid)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

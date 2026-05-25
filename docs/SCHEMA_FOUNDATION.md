@@ -1,8 +1,8 @@
 # Schema Foundation — Guided QA Automation Workbench
 
-**Version:** 5.4.0  
+**Version:** 5.5.0  
 **Updated:** 2026-05-25  
-**Phase:** 3A — Schema foundations + Phase 3A Framework Scaffold schema
+**Phase:** 3B — Schema foundations + Phase 3A Framework Scaffold schema + Phase 3B Scaffold Validation schemas
 
 ---
 
@@ -147,6 +147,27 @@ Runtime: `core/framework_scaffold_generator.py` — `FrameworkScaffoldGenerator`
 
 ---
 
+## Phase 3B — Scaffold Validation schemas
+
+These schemas represent the output of static scaffold inspection (Phase 3B).
+No runtime execution is performed — all fields are populated by reading local files.
+
+| Module | Classes | Description |
+|---|---|---|
+| `scaffold_validation` | `ScaffoldValidationCheck` | One static check result. Fields: `id` (e.g. `CHK-001`), `name`, `category`, `status` (pass/fail/warning/skipped), `severity` (info/low/medium/high/critical), `file_path`, `message`, `recommendation`, `blocks_next_phase`, `notes`. |
+| `scaffold_validation` | `ScaffoldValidationReport` | Root validation report. Contains `List[ScaffoldValidationCheck]` with explicit nested reconstruction in `from_dict`. Hard safety defaults: all execution/npm/npx/browser/external flags `False`, `safe_to_execute_tests=False`. `validation_status` is one of: `pass`, `fail`, `warning`, `unknown`. |
+| `scaffold_validation` | `ToolchainValidationPlan` | Describes what toolchain commands WOULD be run with approval. Safety defaults: `approval_required=True`, `network_access_required=True`, `browser_execution_required=False`, `safe_without_approval=False`. Never executes anything. |
+
+Module constants:
+- `VALIDATION_STATUSES` — `pass`, `fail`, `warning`, `unknown`, `skipped`
+- `CHECK_STATUSES` — `pass`, `fail`, `warning`, `skipped`
+- `SEVERITIES` — `info`, `low`, `medium`, `high`, `critical`
+- `CATEGORIES` — `structure`, `metadata`, `safety`, `secrets`, `urls`, `package_json`, `config`, `env`, `tests`, `docs`, `repository_boundary`, `toolchain_plan`
+
+Runtime: `core/scaffold_validator.py` — `ScaffoldValidator`. Inspects scaffold files statically. No subprocess, no browser, no npm, no Playwright, no external calls. All six execution flags remain `False` always.
+
+---
+
 ## Safety defaults
 
 | Default | Why |
@@ -161,6 +182,14 @@ Runtime: `core/framework_scaffold_generator.py` — `FrameworkScaffoldGenerator`
 | `FrameworkScaffold.client_visible = False` | Scaffold is internal until delivery is approved |
 | `FrameworkScaffold.requires_review = True` | Senior QA review required before any use |
 | `FrameworkFile.client_visible = False` | Individual files inherit scaffold visibility default |
+| `ScaffoldValidationReport.execution_performed = False` | Static validator never executes code |
+| `ScaffoldValidationReport.npm_performed = False` | No npm commands run during validation |
+| `ScaffoldValidationReport.npx_performed = False` | No npx commands run during validation |
+| `ScaffoldValidationReport.browser_performed = False` | No browser launched during validation |
+| `ScaffoldValidationReport.external_calls_performed = False` | No network calls during validation |
+| `ScaffoldValidationReport.safe_to_execute_tests = False` | Tests must not run based on static validation alone |
+| `ToolchainValidationPlan.approval_required = True` | All toolchain commands require explicit approval |
+| `ToolchainValidationPlan.safe_without_approval = False` | No toolchain command is safe to run without approval |
 
 ---
 

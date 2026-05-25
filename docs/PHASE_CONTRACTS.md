@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.4.0
+**Version:** 5.5.0
 **Updated:** 2026-05-25
-**Phase:** 3A
+**Phase:** 3B
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -352,17 +352,73 @@ Scaffold generation only — no execution, no browser, no npm/npx, no credential
 
 ---
 
-## Phase 3B — Safe Local Validation `[planned]`
+## Phase 3B — Safe Local Scaffold Validation `[implemented]`
 
-**Purpose:** Validate generated scaffold locally without any external execution.
+**Purpose:** Statically validate a generated Playwright scaffold without executing any code.
+Inspection-only — no npm/npx, no TypeScript compilation, no Playwright execution, no browser launch.
 
-**Input artifacts:** Phase 3A framework output
+**Input artifacts:**
+- `outputs/<project_id>/03_framework/playwright/` (Phase 3A scaffold)
+- `FRAMEWORK_SCAFFOLD.json` (Phase 3A metadata)
 
-**Actions:**
-- TypeScript compile
-- Playwright dry-run
-- Lint
-- No network calls
+**Output artifacts (under `outputs/<project_id>/03_framework/playwright/`):**
+- `STATIC_VALIDATION_REPORT.json` — full `ScaffoldValidationReport` schema
+- `STATIC_VALIDATION_REPORT.md` — human-readable report with safety invariants
+- `VALIDATION_PLAN.md` — what Phase 3B checked and what Phase 3C (toolchain) would do
+- `LOCAL_VALIDATION_CHECKLIST.md` — human checklist before running any local command
+- `TOOLCHAIN_VALIDATION_PLAN.md` — proposed toolchain commands (not executed)
+
+**Runtime modules:**
+- `core/scaffold_validator.py` — `ScaffoldValidator`
+- `core/schemas/scaffold_validation.py` — `ScaffoldValidationCheck`, `ScaffoldValidationReport`, `ToolchainValidationPlan`
+- `core/workbench_controller.py` — Phase 3B methods
+- `tools/validate_scaffold.py` — CLI entry point
+
+**Check categories:**
+- `structure` — required files present
+- `metadata` — `execution_allowed=False`, `client_visible=False`, `requires_review=True`
+- `package_json` — parseable, no lifecycle hooks, Playwright declared
+- `config` — `playwright.config.ts` uses `process.env`
+- `env` — `.env.example` present, no real secrets, no `.env` file
+- `tests` — skip guards on auth/api/checkout specs
+- `docs` — README present and documents env vars
+- `secrets` — no API keys, JWTs, hardcoded passwords in scaffold files
+- `urls` — no hardcoded external URLs in executable files
+- `repository_boundary` — scaffold inside `outputs/`, no `.git` inside scaffold
+
+**Blocked actions (permanent):**
+- No npm install / npm ci / npx
+- No TypeScript compilation
+- No Playwright execution
+- No browser launch
+- No URL fetching
+- No credential use
+- No external calls
+- `execution_performed`, `npm_performed`, `npx_performed`, `browser_performed`,
+  `external_calls_performed` remain `False` always
+- `safe_to_execute_tests` remains `False` always
+
+**Safety invariants (guaranteed):**
+- `ScaffoldValidationReport.execution_performed = False`
+- `ScaffoldValidationReport.npm_performed = False`
+- `ScaffoldValidationReport.npx_performed = False`
+- `ScaffoldValidationReport.browser_performed = False`
+- `ScaffoldValidationReport.external_calls_performed = False`
+- `ScaffoldValidationReport.safe_to_execute_tests = False`
+
+**Acceptance criteria:**
+- `python tools/validate_scaffold.py --scaffold-root <path>` runs without error
+- `STATIC_VALIDATION_REPORT.json` has all six safety flags `false`
+- `execution_allowed=True` in scaffold metadata → blocker
+- `client_visible=True` in scaffold metadata → blocker
+- `requires_review=False` in scaffold metadata → blocker
+- Lifecycle hooks in `package.json` → blocker
+- Hardcoded external URL in scaffold `.ts`/`.js` → blocker
+- Secret patterns in scaffold files → blocker
+- Scaffold outside `outputs/` → blocker
+- `FakeSecret123` in scaffold → does not appear in validation artifacts
+- 49+ Phase 3B tests passing
+- No subprocess, no playwright import in `scaffold_validator.py`
 
 ---
 

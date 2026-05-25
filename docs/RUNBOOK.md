@@ -1,7 +1,7 @@
 # Operational Runbook — Guided QA Automation Workbench
 
-**Version:** 5.1.0  
-**Updated:** 2026-05-24
+**Version:** 5.5.0  
+**Updated:** 2026-05-25
 
 > **AI drafts. Senior QA decides.**
 
@@ -432,21 +432,65 @@ scaffold = result["scaffold"]
 - Does not set `execution_allowed = True` or `client_visible = True`.
 - Does not deliver scaffold to client — human review required first.
 
-### Safe commands after setup (Phase 3B, not yet automated):
+---
 
-After completing `SCAFFOLD_REVIEW_CHECKLIST.md`, these are safe to run manually:
+## 15. Phase 3B: Statically validate the scaffold
+
+Run Phase 3B after Phase 3A to validate the generated scaffold without executing any code.
+
+```bash
+# By project ID (looks up outputs/<id>/03_framework/playwright/):
+python tools/validate_scaffold.py --project-id <project_id>
+
+# By direct path:
+python tools/validate_scaffold.py --scaffold-root outputs/<project_id>/03_framework/playwright
+
+# Dry run (no artifacts written):
+python tools/validate_scaffold.py --project-id <project_id> --no-write
+
+# JSON output:
+python tools/validate_scaffold.py --project-id <project_id> --json
+```
+
+Phase 3B runs 27+ static checks across categories: structure, metadata, package_json, config,
+env, tests, docs, secrets, urls, repository_boundary.
+
+**Artifacts written to scaffold root:**
+- `STATIC_VALIDATION_REPORT.json` / `.md` — full report with safety invariants
+- `VALIDATION_PLAN.md` — what was checked and what needs approval
+- `LOCAL_VALIDATION_CHECKLIST.md` — manual steps before any local command
+- `TOOLCHAIN_VALIDATION_PLAN.md` — proposed toolchain commands (not yet executed)
+
+### What to review after Phase 3B:
+
+1. Open `STATIC_VALIDATION_REPORT.md` in the scaffold root.
+2. Resolve all BLOCKERS before proceeding.
+3. Review WARNINGS — most require human judgement, not automatic fix.
+4. If validation passes: use `TOOLCHAIN_VALIDATION_PLAN.md` as the approval checklist for Phase 3C.
+
+### What Phase 3B never does:
+
+- Does not run npm install, npx, TypeScript compilation, or any test.
+- Does not open a browser or fetch any URL.
+- Does not use credentials or read `.env` files.
+- Does not set `safe_to_execute_tests = True` — that requires Phase 4A approval.
+- Does not deliver anything to the client.
+
+### Before running toolchain commands locally (Phase 3C — requires approval):
+
+After completing `SCAFFOLD_REVIEW_CHECKLIST.md` and Phase 3B static validation:
 ```bash
 cd outputs/<project_id>/03_framework/playwright
-npm install
-npx playwright install
-npm run typecheck    # TypeScript compile — no network, no browser
+npm install               # requires approval
+npx playwright install    # requires approval, downloads browser binary
+npm run typecheck         # TypeScript compile — no network, no browser
 ```
 
 Only run tests after completing the checklist and obtaining explicit approval for the target URL.
 
 ---
 
-## 15. Agent-safe workflow
+## 16. Agent-safe workflow
 
 When Claude Code or any other AI assistant is driving changes in this workbench, the following rules apply before any agent session begins and before any commit is made.
 

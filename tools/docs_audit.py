@@ -350,7 +350,7 @@ def run_audit(root: Path) -> dict[str, Any]:
     elif warnings:
         next_action = "Review warnings above, update docs where appropriate, then re-run."
     else:
-        next_action = "Documentation is current. Safe to proceed to Phase 3A."
+        next_action = "Documentation is current. Safe to proceed to the next planned phase."
 
     return {
         "project_id": "workbench",

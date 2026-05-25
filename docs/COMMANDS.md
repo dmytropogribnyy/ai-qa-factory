@@ -645,6 +645,40 @@ Safety: `execution_allowed = False`, `client_visible = False`, `requires_review 
 All env references use `process.env.*` — no hardcoded secrets or URLs.
 Auth spec and API spec are `test.skip` by default until credentials and URL are approved.
 
+### `python tools/validate_scaffold.py` `[implemented]`
+
+Phase 3B static scaffold validator. Inspects a generated Playwright scaffold with no code execution.
+No npm, no npx, no TypeScript compilation, no Playwright execution, no browser, no URL fetching,
+no credentials, no external calls.
+
+```bash
+# Validate by project ID (looks up outputs/<id>/03_framework/playwright/):
+python tools/validate_scaffold.py --project-id <id>
+
+# Validate by direct path:
+python tools/validate_scaffold.py --scaffold-root outputs/<id>/03_framework/playwright
+
+# JSON output:
+python tools/validate_scaffold.py --project-id <id> --json
+
+# Dry run (no artifacts written):
+python tools/validate_scaffold.py --project-id <id> --no-write
+```
+
+**Outputs** (written to scaffold root unless `--no-write`):
+- `STATIC_VALIDATION_REPORT.json` — full `ScaffoldValidationReport` schema
+- `STATIC_VALIDATION_REPORT.md` — human-readable with safety invariants section
+- `VALIDATION_PLAN.md` — static checks done, toolchain steps (not executed)
+- `LOCAL_VALIDATION_CHECKLIST.md` — manual checklist before running any command
+- `TOOLCHAIN_VALIDATION_PLAN.md` — proposed commands requiring explicit approval
+
+Exit codes: 0 = pass or warning; 1 = blockers found or scaffold root missing.
+
+Safety invariants always held:
+- `execution_performed = False`, `npm_performed = False`, `npx_performed = False`
+- `browser_performed = False`, `external_calls_performed = False`
+- `safe_to_execute_tests = False`
+
 ### `python tools/agent_readiness_audit.py` `[implemented]`
 
 Check whether the repository has the required agent operating contract docs, artifact

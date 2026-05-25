@@ -81,6 +81,11 @@ from core.schemas.framework_scaffold import (
     FrameworkScaffold,
     FrameworkScaffoldPlan,
 )
+from core.schemas.scaffold_validation import (
+    ScaffoldValidationCheck,
+    ScaffoldValidationReport,
+    ToolchainValidationPlan,
+)
 
 __all__ = [
     # Base
@@ -205,4 +210,8 @@ __all__ = [
     "FrameworkFile",
     "FrameworkScaffold",
     "FrameworkScaffoldPlan",
+    # Scaffold Validation (Phase 3B)
+    "ScaffoldValidationCheck",
+    "ScaffoldValidationReport",
+    "ToolchainValidationPlan",
 ]
