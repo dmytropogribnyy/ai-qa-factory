@@ -564,6 +564,33 @@ Secret handling: passwords, tokens, cookies, API keys detected in input are repl
 with `[REDACTED_PASSWORD]`, `[REDACTED_TOKEN]`, `[REDACTED_COOKIE]`, `[REDACTED_SECRET]`.
 If secrets are detected, the artifact includes an explicit notice that no credential use was performed.
 
+### `python tools/agent_readiness_audit.py` `[implemented]`
+
+Check whether the repository has the required agent operating contract docs, artifact
+contracts, and tooling for agent-safe work. Dependency-free: no external calls, no LLM
+calls, no automatic rewrites.
+
+```bash
+python tools/agent_readiness_audit.py              # run audit + write reports
+python tools/agent_readiness_audit.py --no-write   # print only
+python tools/agent_readiness_audit.py --json       # JSON output to stdout
+```
+
+Checks (34 total):
+- Required agent contract docs exist (AGENT_CONTRACT, PHASE_CONTRACTS, ARTIFACT_CONTRACTS, AGENT_HANDOFF_TEMPLATE)
+- Required governance and safety docs exist
+- `outputs/` is gitignored
+- AGENT_CONTRACT contains forbidden actions, report format, safety phrases
+- PHASE_CONTRACTS contains allowed/blocked actions, acceptance criteria, implemented/planned markers
+- ARTIFACT_CONTRACTS documents 00_project path, tests/ reservation, machine-readable distinction
+- AGENT_HANDOFF_TEMPLATE contains all required sections
+
+Outputs (when `--no-write` is not passed):
+- `outputs/agent_audit/AGENT_READINESS_REPORT.md`
+- `outputs/agent_audit/agent_readiness_report.json`
+
+Exit codes: `0` = all required checks passed. `1` = one or more required checks failed.
+
 ---
 
 ## Planned commands — documentation governance `[planned]`
@@ -615,6 +642,41 @@ python main.py docs-sync-apply --trigger schema_changed --approve
 ```
 
 Requires `--approve`. Never auto-rewrites documentation without human review.
+
+---
+
+## Planned commands — agent readiness `[planned]`
+
+These commands are designed but not yet implemented in `main.py`.
+
+### `agent-audit` `[planned]`
+
+Run agent readiness audit via `main.py`.
+
+```bash
+python main.py agent-audit
+```
+
+Currently available as a direct script: `python tools/agent_readiness_audit.py`
+
+### `agent-readiness` `[planned]`
+
+Quick check that all agent contract docs are present and consistent.
+
+```bash
+python main.py agent-readiness
+```
+
+### `agent-handoff-report` `[planned]`
+
+Generate a pre-populated handoff report for the current project state.
+
+```bash
+python main.py agent-handoff-report --project-id <id>
+```
+
+Produces: handoff report pre-filled from current project artifacts, using
+the `AGENT_HANDOFF_TEMPLATE.md` structure.
 
 ---
 

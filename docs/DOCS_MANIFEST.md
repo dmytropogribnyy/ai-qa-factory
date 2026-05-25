@@ -2,7 +2,7 @@
 
 **Version:** 5.1.0  
 **Updated:** 2026-05-24  
-**Phase:** 2B
+**Phase:** 2B-AGENT
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.
@@ -23,8 +23,12 @@ These docs define the canonical behavior, rules, and structure of the workbench.
 | `docs/SAFETY_RULES.md` | Non-negotiable safety rules (Rules 1–10 + auth + integration) | Yes | safety_rule_changed, auth_changed, integration_added | current | Credential, auth, integration safety sections added in Phase 1B addendum |
 | `docs/TOOLING_DECISIONS.md` | Tooling choices, optional adapters, what is NOT added | Yes | tool_added, integration_added, workflow_changed | current | n8n integration model section added in Phase 1B addendum |
 | `docs/SCHEMA_FOUNDATION.md` | `core/schemas/` layer — classes, defaults, patterns | Yes | schema_changed, phase_completed | current | Auth, mobile, integration sections added; documentation.py added in Phase 1B-DOCS |
-| `docs/DOCUMENTATION_GOVERNANCE.md` | Docs maintenance rules, governance, audit process | Yes | phase_completed, schema_changed, command_added | current | Created in Phase 1B-DOCS |
+| `docs/DOCUMENTATION_GOVERNANCE.md` | Docs maintenance rules, governance, audit process | Yes | phase_completed, schema_changed, command_added, agent_behavior_changed | current | Agent contract update trigger added in Phase 2B-AGENT |
 | `docs/DOCS_MANIFEST.md` | Registry of all documentation files and status | Yes | phase_completed, command_added, schema_changed | current | This file — created in Phase 1B-DOCS |
+| `docs/AGENT_CONTRACT.md` | Agent operating contract — allowed/forbidden actions, report format | Yes | safety_rule_changed, phase_completed, workflow_changed, agent_behavior_changed | current | Created in Phase 2B-AGENT |
+| `docs/PHASE_CONTRACTS.md` | Phase-by-phase contracts — inputs, outputs, blocked actions, acceptance criteria | Yes | phase_completed, phase_added, workflow_changed | current | Created in Phase 2B-AGENT |
+| `docs/ARTIFACT_CONTRACTS.md` | Stable artifact paths, formats, and ownership rules | Yes | artifact_path_changed, phase_completed, workflow_changed | current | Created in Phase 2B-AGENT |
+| `docs/AGENT_HANDOFF_TEMPLATE.md` | Reusable final report template for agent phase handoffs | No | phase_completed, report_format_changed | current | Created in Phase 2B-AGENT |
 
 ---
 

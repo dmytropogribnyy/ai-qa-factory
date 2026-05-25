@@ -15,7 +15,7 @@ Docs: [`VISION.md`](VISION.md) · [`COMMANDS.md`](COMMANDS.md) · [`APPROVAL_MOD
 
 ```bash
 python main.py system-health          # all 26 checks must pass
-.venv\Scripts\python.exe -m pytest -q # 413 passed — always mock mode
+.venv\Scripts\python.exe -m pytest -q # 471 passed — always mock mode
 ```
 
 If `system-health` fails: fix the listed issue before continuing.  
@@ -336,7 +336,43 @@ See [`DOCUMENTATION_GOVERNANCE.md`](DOCUMENTATION_GOVERNANCE.md) for full rules.
 
 ---
 
-## 13. Archive hygiene
+## 13. Agent-safe workflow
+
+When Claude Code or any other AI assistant is driving changes in this workbench, the following rules apply before any agent session begins and before any commit is made.
+
+### Before an agent-driven session
+
+1. Read [`docs/AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — the operating contract that governs what agents are and are not allowed to do.
+2. Confirm which phase you are in. Read the relevant phase entry in [`docs/PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) for allowed and blocked actions.
+3. Run `python -m pytest -q` — all tests must be green before new agent work starts.
+4. Run `python tools/docs_audit.py --no-write` — no errors allowed.
+5. Run `python tools/agent_readiness_audit.py --no-write` — all 34 required checks must pass.
+
+### What agents must never do
+
+- Do not fetch any URL, clone any repo, or call any external API.
+- Do not open a browser or execute Playwright automation.
+- Do not read `.env` files or use any credentials.
+- Do not stage or commit anything in `outputs/`.
+- Do not mark `[planned]` commands or features as implemented in docs.
+- Do not implement autonomous agent runtimes, LangGraph, n8n, or browser execution — these are future phases.
+
+See [`docs/AGENT_CONTRACT.md`](AGENT_CONTRACT.md) for the full forbidden actions list and required safety phrase declarations.
+
+### Before a phase handoff or commit
+
+1. Run the three checks above (pytest, docs_audit, agent_readiness_audit) — all must pass.
+2. Run `git status` — confirm no `.env`, no `outputs/`, and no unintended files are staged.
+3. Fill out [`docs/AGENT_HANDOFF_TEMPLATE.md`](AGENT_HANDOFF_TEMPLATE.md) and include it in the final response.
+4. Do not commit automatically — always present the diff for human review first.
+
+### Credential and external call policy
+
+Credentials and external API calls are **not permitted in the current phase**. If a credential-like input is detected during classification, the workbench redacts it and outputs a notice. Any real credential use requires explicit written approval from the human operator and is gated to a future phase (Phase 2+).
+
+---
+
+## 14. Archive hygiene
 
 **Exclude from any zip or share:**
 ```

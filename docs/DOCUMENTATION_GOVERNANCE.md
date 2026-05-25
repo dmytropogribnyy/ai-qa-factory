@@ -146,6 +146,10 @@ When the following changes happen, the corresponding docs must be reviewed and u
 | AI resilience behavior changes | `SCHEMA_FOUNDATION.md`, `TOOLING_DECISIONS.md` |
 | Version bump | `README.md`, relevant docs headers |
 | Phase completed | `DOCS_MANIFEST.md` (update status column) |
+| Workflow phases added or changed | `AGENT_CONTRACT.md`, `PHASE_CONTRACTS.md` |
+| Safety rules added or changed | `AGENT_CONTRACT.md`, `SAFETY_RULES.md`, `APPROVAL_MODEL.md` |
+| Artifact paths added or changed | `ARTIFACT_CONTRACTS.md`, `DOCS_MANIFEST.md` |
+| Agent behavior or contract changed | `AGENT_CONTRACT.md`, `PHASE_CONTRACTS.md`, `DOCS_MANIFEST.md` |
 
 ---
 

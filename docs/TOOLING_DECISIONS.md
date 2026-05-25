@@ -260,3 +260,48 @@ Enable only when:
 
 **Future integrations — optional:**
 Future phases may export docs freshness status to n8n/Slack or write to a project dashboard, but only after explicit approval and within the integration policy constraints (`IntegrationPolicy.allow_outbound_events = True` with approval). No such integration is mandatory.
+
+---
+
+## Agent readiness
+
+### Local, dependency-free, tool-agnostic — current default
+
+`tools/agent_readiness_audit.py` is the agent readiness check tool (Phase 2B-AGENT). Like `tools/docs_audit.py`, it requires only the Python standard library — no LLM calls, no external services, no network access.
+
+**What it checks (34 required checks):**
+- All required agent contract docs exist (`AGENT_CONTRACT.md`, `PHASE_CONTRACTS.md`, `ARTIFACT_CONTRACTS.md`, `AGENT_HANDOFF_TEMPLATE.md`)
+- All required governance and safety docs exist
+- `outputs/` is in `.gitignore`
+- `AGENT_CONTRACT.md` contains required sections (forbidden actions, no URL fetch, no credentials, safety phrases, final report format)
+- `PHASE_CONTRACTS.md` marks implemented and planned phases correctly
+- `ARTIFACT_CONTRACTS.md` documents correct path ownership and output rules
+- `AGENT_HANDOFF_TEMPLATE.md` contains all required handoff sections
+
+**What it does NOT do:**
+- Does not call any LLM or external API
+- Does not modify any documentation files
+- Does not enforce contracts at runtime — it audits documentation only
+- Does not implement agent orchestration, scheduling, or routing
+
+### AI assistants as external tools — not mandatory runtime dependencies
+
+Claude, GPT, and Claude Code are used as external AI assistants that drive workbench sessions interactively. They are **not** part of the Workbench runtime:
+
+| Tool | Role | Status |
+|---|---|---|
+| Claude Code (Anthropic CLI) | Interactive assistant — reads code, proposes edits, runs checks | External, optional |
+| Claude API (claude-sonnet-*) | LLM provider for real-mode runs | External, required only for real-mode |
+| GPT (OpenAI) | Alternative LLM provider | External, optional |
+| LangGraph | Future orchestration backend | Optional future — not added until explicit need |
+
+The Workbench runtime does not depend on which assistant is driving it. `agent_readiness_audit.py` is tool-agnostic — it checks the repository state, not the assistant being used.
+
+### Future agent tooling — optional
+
+Future phases may add:
+- Structured agent workflows (LangGraph) — only when multi-step orchestration is genuinely needed
+- Agent event notifications (n8n/Slack) — only after integration policy approval
+- Trace logging (LangSmith) — optional, not mandatory for correctness
+
+None of these are added until conditions listed in this document are met. The Workbench remains usable without them.
