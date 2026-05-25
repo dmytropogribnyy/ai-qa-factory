@@ -15,7 +15,7 @@ Docs: [`VISION.md`](VISION.md) · [`COMMANDS.md`](COMMANDS.md) · [`APPROVAL_MOD
 
 ```bash
 python main.py system-health          # all 26 checks must pass
-.venv\Scripts\python.exe -m pytest -q # 69 passed — always mock mode
+.venv\Scripts\python.exe -m pytest -q # 327 passed — always mock mode
 ```
 
 If `system-health` fails: fix the listed issue before continuing.  

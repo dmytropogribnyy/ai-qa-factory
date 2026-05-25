@@ -523,6 +523,33 @@ Outputs (when `--no-write` is not passed):
 
 Exit codes: `0` = all required docs present, no hard errors. `1` = missing required doc or hard contradiction.
 
+### `python tools/classify_inputs.py` `[implemented]`
+
+Phase 2A input classification script. Classifies raw inputs (URLs, text, file paths) into
+typed schema objects and writes structured artifacts. Classify-only: no URL fetching,
+no browser execution, no credential use, no external calls. Secrets are redacted.
+
+```bash
+python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard"
+python tools/classify_inputs.py --input "https://app.example.com" --input "brief text"
+python tools/classify_inputs.py --input-file brief.txt
+python tools/classify_inputs.py --input "..." --no-write     # print only
+python tools/classify_inputs.py --input "..." --json         # JSON output to stdout
+python tools/classify_inputs.py --input "..." --project-id myproject
+python tools/classify_inputs.py --input "..." --source-platform upwork
+```
+
+Outputs (written to `outputs/<project_id>/00_project/` unless `--no-write`):
+- `INPUT_MAP.json` / `INPUT_MAP.md`
+- `WORK_REQUEST.json` / `WORK_REQUEST.md`
+- `TASK_CLASSIFICATION.json` / `TASK_CLASSIFICATION.md`
+- `PROJECT_STATUS.json` / `PROJECT_STATUS.md`
+- `NEXT_SAFE_STEP.md`
+
+Secret handling: passwords, tokens, cookies, API keys detected in input are replaced
+with `[REDACTED_PASSWORD]`, `[REDACTED_TOKEN]`, `[REDACTED_COOKIE]`, `[REDACTED_SECRET]`.
+If secrets are detected, the artifact includes an explicit notice that no credential use was performed.
+
 ---
 
 ## Planned commands — documentation governance `[planned]`

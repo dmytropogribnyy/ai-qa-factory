@@ -82,9 +82,10 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 232 tests, mock mode, no API keys needed
+python -m pytest -q             # 327 tests, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
+python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
 ```
 
 ---
@@ -166,7 +167,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **232 passed** (69 original + 81 schema foundations + 62 auth/credential/mobile + 20 integration + 20 documentation governance)
+Expected: **327 passed** (69 original + 81 schema foundations + 62 auth/credential/mobile + 20 integration + 26 documentation governance + 69 Phase 2A classification)
 
 ---
 

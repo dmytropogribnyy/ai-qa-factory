@@ -173,6 +173,31 @@ The schemas above define the data model for future credential-aware and auth-awa
 
 ---
 
+## Phase 2A runtime modules (classify-only)
+
+These modules add the first runtime layer: input classification and artifact writing.
+They do not replace `core/orchestrator.py` and do not execute any external calls.
+
+| Module | Class(es) | Description |
+|---|---|---|
+| `core/input_context_resolver.py` | `InputContextResolver` | Classifies raw inputs (URLs, files, text) into `InputSource` objects. Redacts secrets. No URL fetching, no browser, no external calls. |
+| `core/work_request_classifier.py` | `WorkRequestClassifier` | Classifies `InputMap` + text into `WorkRequest` + `TaskClassification`. Keyword-based signal detection. No external calls. |
+| `core/workbench_controller.py` | `WorkbenchController` | Coordinates classification and writes structured artifacts to `outputs/<project_id>/00_project/`. Does NOT replace `core/orchestrator.py`. |
+
+**Artifacts written by `WorkbenchController.build_initial_context()`:**
+- `INPUT_MAP.json` / `.md` — all classified input sources
+- `WORK_REQUEST.json` / `.md` — normalised work request
+- `TASK_CLASSIFICATION.json` / `.md` — task type, project type, confidence, signals
+- `PROJECT_STATUS.json` / `.md` — current phase and next action
+- `NEXT_SAFE_STEP.md` — human-readable guidance
+
+**Secret redaction (Phase 2A):** passwords, tokens, cookies, API keys, and session values
+detected in raw input are replaced with `[REDACTED_PASSWORD]`, `[REDACTED_TOKEN]`,
+`[REDACTED_COOKIE]`, or `[REDACTED_SECRET]` before any value is stored. If secrets are
+detected, a notice is added to artifacts stating that no credential use was performed.
+
+---
+
 ## State integration — deferred to Phase 2
 
 `QAFactoryState` (`core/state.py`) currently holds free-form dict fields for agent outputs. Schema objects can be stored as `to_dict()` snapshots and rehydrated via `from_dict()`. The wiring is not done yet.
