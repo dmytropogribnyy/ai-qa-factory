@@ -2,7 +2,7 @@
 
 This is NOT a replacement for core/orchestrator.py. The orchestrator remains the
 workflow execution engine. WorkbenchController is the initial classification and
-artifact-writing layer (Phase 2A).
+artifact-writing layer (Phase 2A/2B).
 
 Classify-only: no URL fetching, no browser execution, no credential use,
 no external calls, no cleanup deletion.
@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from core.input_context_resolver import InputContextResolver, _redact_secrets
 from core.schemas.input_map import InputMap
+from core.schemas.project_blueprint import ProjectBlueprint
 from core.schemas.project_status import ProjectStatus
 from core.schemas.task_classification import TaskClassification
 from core.schemas.work_request import WorkRequest
@@ -110,6 +111,88 @@ class WorkbenchController:
         task_classification: TaskClassification,
     ) -> str:
         return self._determine_next_safe_step(input_map, task_classification)
+
+    # ------------------------------------------------------------------
+    # Phase 2B — Blueprint API
+    # ------------------------------------------------------------------
+
+    def build_project_blueprint(
+        self,
+        input_map: InputMap,
+        work_request: WorkRequest,
+        task_classification: TaskClassification,
+    ) -> ProjectBlueprint:
+        """Build a ProjectBlueprint from Phase 2A context. No external calls."""
+        from core.project_blueprint_builder import ProjectBlueprintBuilder
+        return ProjectBlueprintBuilder().build(input_map, work_request, task_classification)
+
+    def render_blueprint_artifacts(
+        self,
+        blueprint: ProjectBlueprint,
+        task_type: str,
+        project_id: str,
+    ) -> dict:
+        """Write Phase 2B planning artifacts to outputs/<project_id>/00_project/. Returns path dict."""
+        from core.project_blueprint_builder import ProjectBlueprintBuilder
+        out_dir = self._outputs_root / project_id / "00_project"
+        return ProjectBlueprintBuilder().render_artifacts(blueprint, task_type, out_dir)
+
+    def update_project_status_for_blueprint(
+        self,
+        project_id: str,
+        blueprint: ProjectBlueprint,
+    ) -> ProjectStatus:
+        """Return a ProjectStatus reflecting Phase 2B completion."""
+        n_missing = len(blueprint.missing_information)
+        return ProjectStatus(
+            project_id=project_id,
+            phase="blueprint",
+            overall_status="in_progress",
+            next_action=(
+                f"Review blueprint and resolve {n_missing} missing information item(s) "
+                "before proceeding to Phase 2C."
+            ),
+            notes=(
+                f"Phase 2B blueprint complete. "
+                f"confidence={blueprint.confidence_level} "
+                f"project_type={blueprint.project_type}"
+            ),
+        )
+
+    def build_context_with_blueprint(
+        self,
+        raw_inputs: List[str],
+        raw_text: str = "",
+        source_platform: str = "unknown",
+        project_id: Optional[str] = None,
+    ) -> dict:
+        """Phase 2A + 2B: classify inputs, write all artifacts including blueprint.
+
+        Returns the combined result dict with keys:
+          project_id, input_map, work_request, task_classification,
+          project_status, next_safe_step, artifact_paths,
+          blueprint, blueprint_status, blueprint_artifact_paths.
+        """
+        result = self.build_initial_context(raw_inputs, raw_text, source_platform, project_id)
+
+        blueprint = self.build_project_blueprint(
+            result["input_map"],
+            result["work_request"],
+            result["task_classification"],
+        )
+        blueprint_status = self.update_project_status_for_blueprint(result["project_id"], blueprint)
+        blueprint_paths = self.render_blueprint_artifacts(
+            blueprint,
+            result["task_classification"].task_type,
+            result["project_id"],
+        )
+
+        result["blueprint"] = blueprint
+        result["blueprint_status"] = blueprint_status
+        result["blueprint_artifact_paths"] = blueprint_paths
+        result["artifact_paths"].update(blueprint_paths)
+
+        return result
 
     # ------------------------------------------------------------------
     # Internal helpers

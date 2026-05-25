@@ -231,15 +231,19 @@ python main.py classify-inputs --input brief.txt --url https://app.example.com
 
 Produces: `INPUT_MAP.md` — what each input is (task source vs. target vs. API docs vs. unknown)
 
+> Phase 2A/2B implementation available as a direct script: `python tools/classify_inputs.py`
+
 ### `blueprint` `[planned]`
 
-Build or update the Project Blueprint from classified inputs.
+Build or update the Project Blueprint from classified inputs via `main.py`.
 
 ```bash
 python main.py blueprint --project-id <id>
 ```
 
 Produces: `PROJECT_BLUEPRINT.md` — structured source of truth for the project
+
+> Phase 2B implementation available as `python tools/classify_inputs.py --with-blueprint`
 
 ### `strategy` `[planned]`
 
@@ -533,18 +537,28 @@ no browser execution, no credential use, no external calls. Secrets are redacted
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard"
 python tools/classify_inputs.py --input "https://app.example.com" --input "brief text"
 python tools/classify_inputs.py --input-file brief.txt
-python tools/classify_inputs.py --input "..." --no-write     # print only
-python tools/classify_inputs.py --input "..." --json         # JSON output to stdout
+python tools/classify_inputs.py --input "..." --no-write          # print only
+python tools/classify_inputs.py --input "..." --json              # JSON output to stdout
 python tools/classify_inputs.py --input "..." --project-id myproject
 python tools/classify_inputs.py --input "..." --source-platform upwork
+python tools/classify_inputs.py --input "..." --with-blueprint    # Phase 2A + 2B: classify + blueprint
+python tools/classify_inputs.py --input "..." --json --with-blueprint  # JSON with blueprint included
 ```
 
-Outputs (written to `outputs/<project_id>/00_project/` unless `--no-write`):
+**Phase 2A outputs** (written to `outputs/<project_id>/00_project/` unless `--no-write`):
 - `INPUT_MAP.json` / `INPUT_MAP.md`
 - `WORK_REQUEST.json` / `WORK_REQUEST.md`
 - `TASK_CLASSIFICATION.json` / `TASK_CLASSIFICATION.md`
 - `PROJECT_STATUS.json` / `PROJECT_STATUS.md`
 - `NEXT_SAFE_STEP.md`
+
+**Phase 2B outputs** (additional, when `--with-blueprint` is passed):
+- `PROJECT_BLUEPRINT.json` / `PROJECT_BLUEPRINT.md`
+- `ASSUMPTIONS.md`
+- `MISSING_INFO.md`
+- `SAFE_NEXT_STEPS.md`
+- `BLOCKED_ACTIONS.md`
+- `INITIAL_QA_STRATEGY_OUTLINE.md`
 
 Secret handling: passwords, tokens, cookies, API keys detected in input are replaced
 with `[REDACTED_PASSWORD]`, `[REDACTED_TOKEN]`, `[REDACTED_COOKIE]`, `[REDACTED_SECRET]`.

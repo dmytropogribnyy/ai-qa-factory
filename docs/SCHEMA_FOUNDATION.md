@@ -198,6 +198,42 @@ detected, a notice is added to artifacts stating that no credential use was perf
 
 ---
 
+## Phase 2B runtime modules (planning/blueprint)
+
+These modules add the Project Blueprint builder. They consume Phase 2A output and produce
+planning artifacts. No URL fetching, no browser, no credential use, no external calls.
+
+| Module | Class(es) | Description |
+|---|---|---|
+| `core/project_blueprint_builder.py` | `ProjectBlueprintBuilder` | Builds `ProjectBlueprint` from `InputMap` + `WorkRequest` + `TaskClassification`. Infers project type, environment, surfaces, risks, assumptions, missing info, blocked actions, and QA strategy. |
+
+**`ProjectBlueprintBuilder.build()`** produces a `ProjectBlueprint` with:
+- Project type inference (web_saas, ecommerce, api_backend, ai_generated_app, admin_panel, auth_heavy, mixed_ui_api)
+- Environment inference (staging, production, local, none, unknown)
+- task_source vs target_application separation — task URL ≠ target application
+- Assumptions, missing information, safe next steps, blocked actions
+- Required approvals list
+- Recommended strategy and tactical test focus
+- Confidence level (low / medium / high)
+
+**Artifacts written by `WorkbenchController.build_context_with_blueprint()`** (7 additional files):
+- `PROJECT_BLUEPRINT.json` / `PROJECT_BLUEPRINT.md` — structured planning source-of-truth
+- `ASSUMPTIONS.md` — working assumptions for client confirmation
+- `MISSING_INFO.md` — information needed before strategy or execution
+- `SAFE_NEXT_STEPS.md` — planning-only actions that can proceed immediately
+- `BLOCKED_ACTIONS.md` — actions blocked until listed approvals are obtained
+- `INITIAL_QA_STRATEGY_OUTLINE.md` — preliminary test layer and focus guidance
+
+**New controller methods (Phase 2B):**
+- `build_project_blueprint(input_map, work_request, task_classification) → ProjectBlueprint`
+- `render_blueprint_artifacts(blueprint, task_type, project_id) → dict`
+- `update_project_status_for_blueprint(project_id, blueprint) → ProjectStatus`
+- `build_context_with_blueprint(raw_inputs, ...) → dict` — runs Phase 2A + 2B, writes all 14 artifacts
+
+**CLI access:** `python tools/classify_inputs.py --with-blueprint`
+
+---
+
 ## State integration — deferred to Phase 2
 
 `QAFactoryState` (`core/state.py`) currently holds free-form dict fields for agent outputs. Schema objects can be stored as `to_dict()` snapshots and rehydrated via `from_dict()`. The wiring is not done yet.
