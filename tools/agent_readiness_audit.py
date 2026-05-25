@@ -271,7 +271,7 @@ def _print_report(checks: list[dict], write: bool) -> int:
 
     if not required_failed:
         print("  Recommended next action:")
-        print("    Repository is agent-ready. Safe to proceed to Phase 2C.")
+        print("    Repository is agent-ready. Safe to proceed to Phase 3A.")
         print()
         print("  Result: [PASS]")
     else:
