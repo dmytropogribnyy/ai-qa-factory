@@ -544,7 +544,65 @@ See: [`docs/CLIENT_SCENARIO_FIXTURES.md`](CLIENT_SCENARIO_FIXTURES.md)
 
 ---
 
-## 17. Agent-safe workflow
+## 17. Phase 3C: Approved local toolchain validation
+
+Phase 3C adds approval-gated command execution for generated scaffolds.
+**Without `--approve-toolchain`: nothing runs.** With it: only `npm install`,
+`npm run typecheck`, and `npx playwright test --list` are executed.
+
+### Prerequisite
+
+Static validation (Phase 3B) must pass first:
+
+```bash
+python tools/validate_scaffold.py --project-id <id>
+```
+
+Resolve any blockers in `STATIC_VALIDATION_REPORT.json` before proceeding.
+
+### Inspection mode (safe, no commands run)
+
+```bash
+python tools/validate_toolchain.py --project-id <id> --no-write
+```
+
+Output: `validation_status="blocked"`, all commands shown as `skipped`.
+
+### Approved run (runs npm install + typecheck + --list)
+
+```bash
+python tools/validate_toolchain.py --project-id <id> --approve-toolchain
+```
+
+Writes 4 artifacts to scaffold root:
+- `TOOLCHAIN_VALIDATION_REPORT.json` / `.md`
+- `TOOLCHAIN_COMMAND_LOG.md`
+- `TOOLCHAIN_APPROVAL_RECORD.md`
+
+### Safety invariants — always False
+
+Regardless of `--approve-toolchain` or command results:
+- `safe_to_execute_tests` — False always
+- `browser_execution_performed` — False always
+- `external_url_used` — False always
+- `credentials_used` — False always
+
+Passing toolchain validation does **not** authorize browser tests or target URL access.
+That requires Phase 4A approval (planned).
+
+### What is always blocked
+
+- `npx playwright install` — install browsers (not allowed)
+- `npx playwright test` — run tests (not allowed)
+- `npm test` / `npm run test` — run test suite (not allowed)
+- Any command with an external URL
+- Any command with credential-like arguments
+
+See: [`docs/COMMANDS.md`](COMMANDS.md) — `validate_toolchain.py` section for all flags.
+
+---
+
+## 18. Agent-safe workflow
 
 When Claude Code or any other AI assistant is driving changes in this workbench, the following rules apply before any agent session begins and before any commit is made.
 
@@ -580,7 +638,7 @@ Credentials and external API calls are **not permitted in the current phase**. I
 
 ---
 
-## 18. Archive hygiene
+## 19. Archive hygiene
 
 **Exclude from any zip or share:**
 ```

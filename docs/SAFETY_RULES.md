@@ -272,6 +272,58 @@ a literal API key, JWT, or hardcoded password copied from the scaffold.
 
 ---
 
+## Toolchain validation safety (Phase 3C)
+
+These rules apply to `ToolchainValidator` in `core/toolchain_validator.py` and the
+`python tools/validate_toolchain.py` CLI.
+
+### `--approve-toolchain` is required for any command execution
+
+Without the `--approve-toolchain` CLI flag, `ToolchainValidator` executes no subprocess
+commands. All commands are recorded with `status="skipped"` and `validation_status="blocked"`.
+This is the safe default — inspection only, no execution.
+
+**Violation:** Any code path in `ToolchainValidator` that calls `subprocess.run` when
+`approved=False`.
+
+### Only allowlisted local commands may run
+
+When `--approve-toolchain` is provided, only three commands are permitted:
+`npm install`, `npm run typecheck`, and `npx playwright test --list`.
+All other commands — including `playwright install`, `playwright test`, `npm test`,
+`npm run test`, headed/headless browser launch, `curl`, `wget`, `git clone` — are blocked
+regardless of approval.
+
+**Violation:** Running `npx playwright test` (without `--list`), any headed browser command,
+or any command that opens a network connection to an external URL.
+
+### `safe_to_execute_tests` is always `False` in Phase 3C
+
+Passing toolchain validation (npm install success, typecheck pass, test list discovered)
+does **not** grant permission to execute tests. `safe_to_execute_tests = False` is a hard
+invariant. Test execution requires a separate explicit approval gate (Phase 4A).
+
+**Violation:** Any code path that sets `safe_to_execute_tests = True` inside `ToolchainValidator`.
+
+### The four safety invariants are hardcoded — never cleared
+
+`browser_execution_performed`, `external_url_used`, `credentials_used`, and
+`safe_to_execute_tests` are set to `False` at report creation and re-asserted at the end of
+`validate_toolchain()`. No command result, exit code, or approval state can override them.
+
+**Violation:** Any code path that conditionally sets any of these four fields to `True`.
+
+### Subprocess environment must be sanitized before command execution
+
+Before passing the environment to any subprocess, keys matching the pattern
+`PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE_KEY|CREDENTIAL|AUTH|COOKIE|SESSION` must be stripped,
+and `BASE_URL` / `API_BASE_URL` must be overridden with `http://localhost:3000` values.
+Real credential values must never reach subprocess.
+
+**Violation:** Passing `os.environ` directly (without stripping) to `subprocess.run`.
+
+---
+
 ## Client scenario fixture safety (Phase 3B-SCENARIOS)
 
 These rules govern the `fixtures/client_scenarios/` layer.

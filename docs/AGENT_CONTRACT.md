@@ -1,6 +1,6 @@
 # Agent Operating Contract — Guided QA Automation Workbench
 
-**Version:** 5.2.0
+**Version:** 5.3.0
 **Updated:** 2026-05-25
 **Phase:** 2B-AGENT
 
@@ -189,6 +189,14 @@ documented outside the system.
 - **Do not treat fixture URLs as approved test targets** — all external execution still requires per-run approval
 - **Do not treat task management URLs as target apps** — Linear, Jira, ClickUp, Asana URLs classified as `task_url` are requirement sources; set them as `task_source` in the blueprint, not `target_application`
 - **Do not call Linear/Jira/ClickUp APIs** without explicit approval — issue fetch, comment writeback, and status updates are all blocked by default
+
+### Toolchain approval gate rules (Phase 3C)
+
+- **Do not run toolchain commands without `--approve-toolchain`** — `ToolchainValidator` must never call `subprocess.run` when `approved=False`
+- **Do not add commands to the allowlist** without explicit architecture review — only `npm install`, `npm run typecheck`, and `npx playwright test --list` are permitted
+- **Do not change the four safety invariants** — `safe_to_execute_tests`, `browser_execution_performed`, `external_url_used`, `credentials_used` are hardcoded `False` and must never be set to `True` in `ToolchainValidator`
+- **Do not pass `os.environ` directly to subprocess** — always use `_build_safe_env()` which strips sensitive keys and applies safe overrides
+- **Do not interpret toolchain pass as test execution permission** — `validation_status="pass"` means local toolchain commands succeeded; it does not authorize running browser tests or accessing target URLs
 
 ### Architecture integrity
 

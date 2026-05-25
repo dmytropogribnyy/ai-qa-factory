@@ -414,6 +414,45 @@ class WorkbenchController:
         return ScaffoldValidator(outputs_root=self._outputs_root).build_toolchain_validation_plan(root, pid)
 
     # ------------------------------------------------------------------
+    # Phase 3C — Toolchain Validation API
+    # ------------------------------------------------------------------
+
+    def validate_toolchain(
+        self,
+        scaffold_root_or_project_id: str,
+        project_id: Optional[str] = None,
+        approved: bool = False,
+        command_timeout: int = 120,
+    ):
+        """Run approval-gated toolchain validation. Returns (report, approval_record).
+
+        Without approved=True: all commands skipped, no shell commands executed.
+        With approved=True: runs only allowlisted local commands inside scaffold root.
+        safe_to_execute_tests remains False always.
+        """
+        from core.toolchain_validator import ToolchainValidator
+        root = Path(scaffold_root_or_project_id)
+        if not root.exists():
+            root = self._outputs_root / scaffold_root_or_project_id / "03_framework" / "playwright"
+        pid = project_id or root.parent.parent.parent.name
+        return ToolchainValidator(outputs_root=self._outputs_root).validate_toolchain(
+            root, pid, approved=approved, command_timeout=command_timeout
+        )
+
+    def render_toolchain_validation_artifacts(
+        self,
+        report,
+        approval,
+        project_id: Optional[str] = None,
+    ) -> dict:
+        """Write toolchain validation artifacts under the scaffold root. Returns path dict."""
+        from core.toolchain_validator import ToolchainValidator
+        root = Path(report.scaffold_root)
+        return ToolchainValidator(outputs_root=self._outputs_root).render_toolchain_artifacts(
+            report, approval, root
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

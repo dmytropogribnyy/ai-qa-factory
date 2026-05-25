@@ -1,8 +1,8 @@
 # Artifact Contracts — Guided QA Automation Workbench
 
-**Version:** 5.5.0
+**Version:** 5.6.0
 **Updated:** 2026-05-25
-**Phase:** 3B
+**Phase:** 3C
 
 This document defines the stable artifact paths, formats, and ownership rules for all
 workbench-generated files. Agents and scripts should use these paths and respect the
@@ -214,6 +214,35 @@ outputs/<project_id>/03_framework/playwright/
 - **`safe_to_execute_tests = False`** — static validation alone does not grant test execution permission
 - **`approval_required = True`** — `ToolchainValidationPlan` always requires explicit approval
 - **No secret echo** — artifact files describe secret detection results but never reproduce secret values
+
+---
+
+## Phase 3C Artifact Layout
+
+Phase 3C artifacts are written to the same scaffold root as Phase 3A/3B:
+
+```
+outputs/<project_id>/03_framework/playwright/
+```
+
+### Toolchain validation artifacts (written by `python tools/validate_toolchain.py`)
+
+| File | Description |
+|---|---|
+| `TOOLCHAIN_VALIDATION_REPORT.json` | Full `ToolchainValidationReport` schema — commands, safety invariants, blockers |
+| `TOOLCHAIN_VALIDATION_REPORT.md` | Human-readable report with Safety Boundary section and next steps |
+| `TOOLCHAIN_COMMAND_LOG.md` | Per-command stdout/stderr excerpts; no secret values reproduced |
+| `TOOLCHAIN_APPROVAL_RECORD.md` | Approval state, approved/denied command lists, safety constraints |
+
+### Artifact contract guarantees (Phase 3C)
+
+- **`safe_to_execute_tests = False`** — toolchain validation alone never grants test execution permission
+- **`browser_execution_performed = False`** — no browser launched under any circumstances
+- **`external_url_used = False`** — no external URL contacted under any circumstances
+- **`credentials_used = False`** — no credentials read or injected under any circumstances
+- **`approval_required = True`** — `--approve-toolchain` flag must be provided to run any command
+- **Without approval** — `validation_status="blocked"`, all commands `status="skipped"`, no subprocess runs
+- **No secret echo** — `TOOLCHAIN_COMMAND_LOG.md` reproduces stdout/stderr excerpts but strips env-level secrets
 
 ---
 

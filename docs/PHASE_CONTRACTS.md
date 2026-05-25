@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.5.0
+**Version:** 5.6.0
 **Updated:** 2026-05-25
-**Phase:** 3B
+**Phase:** 3C
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -475,6 +475,58 @@ Docs/fixtures/tests only — no runtime behavior changes.
 - `tests/test_client_scenario_fixtures.py` passes with all scenario-count and safety checks
 - No real credentials found in any fixture file
 - All 7 updated docs reflect Phase 3B-SCENARIOS correctly
+
+---
+
+## Phase 3C — Approved Local Toolchain Validation `[implemented]`
+
+**Purpose:** Approval-gated local toolchain validation for generated Playwright scaffolds.
+Runs only allowlisted local commands (`npm install`, `npm run typecheck`,
+`npx playwright test --list`) inside the scaffold directory. Requires explicit `--approve-toolchain`
+flag; without it, all commands are skipped and `validation_status="blocked"`. No browser
+execution, no external URLs, no credentials — ever.
+
+**Input artifacts:** Phase 3B static validation report (`STATIC_VALIDATION_REPORT.json`)
+
+**Output artifacts** (written to scaffold root):
+- `TOOLCHAIN_VALIDATION_REPORT.json` — `ToolchainValidationReport` schema object
+- `TOOLCHAIN_VALIDATION_REPORT.md` — human-readable report with safety invariants
+- `TOOLCHAIN_COMMAND_LOG.md` — per-command stdout/stderr excerpts (no secrets)
+- `TOOLCHAIN_APPROVAL_RECORD.md` — approval state, allowed/denied commands, constraints
+
+**New schemas:** `ToolchainCommandResult`, `ToolchainApprovalRecord`, `ToolchainValidationReport`
+
+**New modules:** `core/toolchain_validator.py`, `core/schemas/toolchain_validation.py`
+
+**New CLI:** `tools/validate_toolchain.py --project-id <id> [--approve-toolchain]`
+
+**Allowed actions (with `--approve-toolchain`):**
+- `npm install` inside scaffold root
+- `npm run typecheck` inside scaffold root
+- `npx playwright test --list` inside scaffold root (discovery mode only)
+
+**Blocked actions (permanent — no flag overrides these):**
+- No `npx playwright install` or `npx playwright test`
+- No `npm test` or `npm run test`
+- No headed/headless browser launch
+- No external URL access
+- No `.env` reading or credential injection
+- No external API calls
+- No n8n / webhook calls
+
+**Safety invariants (hardcoded `False` — never overridden):**
+- `safe_to_execute_tests = False`
+- `browser_execution_performed = False`
+- `external_url_used = False`
+- `credentials_used = False`
+
+**Acceptance criteria:**
+- 63 Phase 3C tests pass (all classes)
+- Without `--approve-toolchain`: no subprocess runs, `validation_status="blocked"`
+- With `--approve-toolchain`: allowlisted commands run, safety invariants remain `False`
+- `core/workbench_controller.py` has `validate_toolchain()` and `render_toolchain_validation_artifacts()`
+- All 7 Phase 3C docs updated
+- `python tools/validate_toolchain.py --project-id <id>` runs without error (no-write mode)
 
 ---
 

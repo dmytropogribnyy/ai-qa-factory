@@ -679,6 +679,60 @@ Safety invariants always held:
 - `browser_performed = False`, `external_calls_performed = False`
 - `safe_to_execute_tests = False`
 
+### `python tools/validate_toolchain.py` `[implemented]`
+
+Phase 3C approval-gated local toolchain validator. Runs allowlisted local commands
+(`npm install`, `npm run typecheck`, `npx playwright test --list`) inside a generated
+scaffold directory, but **only when `--approve-toolchain` is passed**. Without the flag:
+no commands execute, status is `blocked`. Never runs browser tests, never uses external
+URLs, never uses credentials.
+
+```bash
+# Inspect only (no commands executed — safe default):
+python tools/validate_toolchain.py --project-id <id>
+
+# Approved run (npm install + typecheck + --list):
+python tools/validate_toolchain.py --project-id <id> --approve-toolchain
+
+# Direct path:
+python tools/validate_toolchain.py --scaffold-root outputs/<id>/03_framework/playwright --approve-toolchain
+
+# JSON output:
+python tools/validate_toolchain.py --project-id <id> --json
+
+# Dry run (no artifact files written):
+python tools/validate_toolchain.py --project-id <id> --no-write
+
+# Custom timeout (default: 120s per command):
+python tools/validate_toolchain.py --project-id <id> --approve-toolchain --timeout 60
+```
+
+**Outputs** (written to scaffold root unless `--no-write`):
+- `TOOLCHAIN_VALIDATION_REPORT.json` — `ToolchainValidationReport` schema
+- `TOOLCHAIN_VALIDATION_REPORT.md` — human-readable report with safety invariants section
+- `TOOLCHAIN_COMMAND_LOG.md` — per-command stdout/stderr excerpts (no secrets)
+- `TOOLCHAIN_APPROVAL_RECORD.md` — approval state, allowed commands, denied commands, constraints
+
+**Safety invariants — always `False` regardless of approval:**
+- `safe_to_execute_tests` — toolchain validation alone never grants test execution permission
+- `browser_execution_performed` — no browser is ever launched
+- `external_url_used` — no external URLs are contacted
+- `credentials_used` — no credentials are read or injected
+
+**Allowlisted commands** (only with `--approve-toolchain`):
+- `npm install` — install dependencies
+- `npm run typecheck` — TypeScript type-check
+- `npx playwright test --list` — discover test cases (list mode only, no browser)
+
+**Always blocked:**
+- `npx playwright install`, `npx playwright test`, `npm test`, `npm run test`
+- Any headed/headless browser command
+- Any command referencing an external URL
+
+Exit codes: `0` = pass, blocked-without-approval, or warning. `1` = command failure.
+
+See: [`RUNBOOK.md`](RUNBOOK.md) — Phase 3C section for full workflow.
+
 ### `python tools/agent_readiness_audit.py` `[implemented]`
 
 Check whether the repository has the required agent operating contract docs, artifact

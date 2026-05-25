@@ -86,6 +86,11 @@ from core.schemas.scaffold_validation import (
     ScaffoldValidationReport,
     ToolchainValidationPlan,
 )
+from core.schemas.toolchain_validation import (
+    ToolchainCommandResult,
+    ToolchainApprovalRecord,
+    ToolchainValidationReport,
+)
 
 __all__ = [
     # Base
@@ -214,4 +219,8 @@ __all__ = [
     "ScaffoldValidationCheck",
     "ScaffoldValidationReport",
     "ToolchainValidationPlan",
+    # Toolchain Validation (Phase 3C)
+    "ToolchainCommandResult",
+    "ToolchainApprovalRecord",
+    "ToolchainValidationReport",
 ]

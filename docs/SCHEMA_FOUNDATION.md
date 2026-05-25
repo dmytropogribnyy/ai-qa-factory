@@ -1,8 +1,8 @@
 # Schema Foundation — Guided QA Automation Workbench
 
-**Version:** 5.5.0  
+**Version:** 5.6.0  
 **Updated:** 2026-05-25  
-**Phase:** 3B — Schema foundations + Phase 3A Framework Scaffold schema + Phase 3B Scaffold Validation schemas
+**Phase:** 3C — Schema foundations + Phase 3A Framework Scaffold schema + Phase 3B Scaffold Validation schemas + Phase 3C Toolchain Validation schemas
 
 ---
 
@@ -168,6 +168,31 @@ Runtime: `core/scaffold_validator.py` — `ScaffoldValidator`. Inspects scaffold
 
 ---
 
+## Phase 3C — Toolchain Validation schemas
+
+These schemas represent the output of approval-gated local toolchain validation (Phase 3C).
+All four safety invariant fields (`safe_to_execute_tests`, `browser_execution_performed`,
+`external_url_used`, `credentials_used`) are hardcoded `False` and never overridden.
+
+| Module | Classes | Description |
+|---|---|---|
+| `toolchain_validation` | `ToolchainCommandResult` | One command execution result. Fields: `id`, `command`, `cwd`, `exit_code`, `stdout_excerpt`, `stderr_excerpt`, `status` (pass/fail/skipped/blocked), `duration_seconds`, `executed`, `skipped_reason`, `safety_notes`. |
+| `toolchain_validation` | `ToolchainApprovalRecord` | Records the approval state at validation time. Fields: `project_id`, `scaffold_root`, `approved` (bool), `approval_source` (`cli_flag` or `not_provided`), `approval_reason`, `approved_commands`, `denied_commands`, `safety_constraints`. |
+| `toolchain_validation` | `ToolchainValidationReport` | Root validation report. Contains `List[ToolchainCommandResult]` with explicit nested reconstruction in `from_dict`. Hard safety defaults: `browser_execution_performed=False`, `external_url_used=False`, `credentials_used=False`, `safe_to_execute_tests=False`. `validation_status` is one of: `pass`, `fail`, `blocked`, `skipped`, `warning`, `unknown`. |
+
+Module constants:
+- `TOOLCHAIN_STATUSES` — `pass`, `fail`, `blocked`, `skipped`, `warning`, `unknown`
+- `COMMAND_STATUSES` — `pass`, `fail`, `skipped`, `blocked`
+- `ALLOWED_COMMAND_CATEGORIES` — `dependency_install`, `typecheck`, `discovery`
+- `BLOCKED_COMMAND_CATEGORIES` — `test_execution`, `browser_launch`, `external_call`, `install_browsers`
+
+Runtime: `core/toolchain_validator.py` — `ToolchainValidator`. Runs only allowlisted commands
+(`npm install`, `npm run typecheck`, `npx playwright test --list`) inside scaffold root.
+Requires `approved=True`; without it, all commands are skipped. Strips sensitive env vars
+before any subprocess call. Four safety invariants are hardcoded `False` always.
+
+---
+
 ## Safety defaults
 
 | Default | Why |
@@ -190,6 +215,11 @@ Runtime: `core/scaffold_validator.py` — `ScaffoldValidator`. Inspects scaffold
 | `ScaffoldValidationReport.safe_to_execute_tests = False` | Tests must not run based on static validation alone |
 | `ToolchainValidationPlan.approval_required = True` | All toolchain commands require explicit approval |
 | `ToolchainValidationPlan.safe_without_approval = False` | No toolchain command is safe to run without approval |
+| `ToolchainValidationReport.safe_to_execute_tests = False` | Toolchain validation alone never grants test execution permission |
+| `ToolchainValidationReport.browser_execution_performed = False` | No browser launched during toolchain validation |
+| `ToolchainValidationReport.external_url_used = False` | No external URLs contacted during toolchain validation |
+| `ToolchainValidationReport.credentials_used = False` | No credentials read or injected during toolchain validation |
+| `ToolchainApprovalRecord.approved = False` | Default: no approval; must be set via `--approve-toolchain` |
 
 ---
 
