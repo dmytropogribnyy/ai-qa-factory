@@ -68,6 +68,14 @@ from core.schemas.documentation import (
     DocumentationFreshnessCheck,
     DocumentationFreshnessReport,
 )
+from core.schemas.qa_strategy import (
+    QAStrategyArea,
+    RiskMatrixItem,
+    TestLayerRecommendation,
+    TacticalPlanningItem,
+    StrategyDecision,
+    QAStrategy,
+)
 
 __all__ = [
     # Base
@@ -181,4 +189,11 @@ __all__ = [
     "DocumentationManifest",
     "DocumentationFreshnessCheck",
     "DocumentationFreshnessReport",
+    # QA Strategy (Phase 2C)
+    "QAStrategyArea",
+    "RiskMatrixItem",
+    "TestLayerRecommendation",
+    "TacticalPlanningItem",
+    "StrategyDecision",
+    "QAStrategy",
 ]

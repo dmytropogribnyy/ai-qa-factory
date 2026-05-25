@@ -82,7 +82,7 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 471 tests, mock mode, no API keys needed
+python -m pytest -q             # 577 tests, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
@@ -167,7 +167,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **471 passed** (69 original + 81 schema foundations + 62 auth/credential/mobile + 20 integration + 26 documentation governance + 73 Phase 2A classification + 82 Phase 2B blueprint + 58 Phase 2B-AGENT readiness)
+Expected: **577 passed** (69 original + 81 schema foundations + 62 auth/credential/mobile + 20 integration + 26 documentation governance + 73 Phase 2A classification + 82 Phase 2B blueprint + 58 Phase 2B-AGENT readiness + 106 Phase 2C strategy)
 
 ---
 
@@ -198,8 +198,12 @@ Expected: **471 passed** (69 original + 81 schema foundations + 62 auth/credenti
 - New docs: VISION, COMMANDS, APPROVAL_MODEL, TOOLING_DECISIONS, SAFETY_RULES, PROJECT_TYPES
 - Phase 1B: 35 schema modules in `core/schemas/` — domain models, auth/credential, mobile, integration, documentation governance
 - Phase 1B-DOCS: `tools/docs_audit.py`, `DOCUMENTATION_GOVERNANCE.md`, `DOCS_MANIFEST.md`
+- Phase 2A: `core/input_context_resolver.py`, `core/work_request_classifier.py` — input classification, secret redaction
+- Phase 2B: `core/project_blueprint_builder.py` — project blueprint from classified inputs (8 project types)
+- Phase 2B-AGENT: `docs/AGENT_CONTRACT.md`, `docs/PHASE_CONTRACTS.md`, `docs/ARTIFACT_CONTRACTS.md`, `docs/AGENT_HANDOFF_TEMPLATE.md`, `tools/agent_readiness_audit.py`
+- Phase 2C: `core/qa_strategy_planner.py`, `core/schemas/qa_strategy.py`, `tools/build_strategy.py` — QA strategy planner, 8 artifact types in `02_strategy/`
 - Pre-screen first: opportunity evaluation workflows fully supported and preserved
-- 232 schema/mock-mode tests passing
+- 577 tests passing
 
 ### v5.0.9 — Validation hardened
 

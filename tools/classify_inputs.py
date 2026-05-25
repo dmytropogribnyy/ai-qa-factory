@@ -73,6 +73,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run Phase 2B: build project blueprint and planning artifacts after Phase 2A classification.",
     )
+    p.add_argument(
+        "--with-strategy",
+        dest="with_strategy",
+        action="store_true",
+        help="Run Phase 2C: build QA strategy after Phase 2A + 2B (implies --with-blueprint).",
+    )
     return p
 
 
@@ -83,8 +89,14 @@ def _print_summary(result: dict) -> None:
     tc = result["task_classification"]
     ns = result["next_safe_step"]
     has_blueprint = "blueprint" in result
+    has_strategy = "strategy" in result
 
-    phase_label = "Phase 2A + 2B" if has_blueprint else "Phase 2A"
+    if has_strategy:
+        phase_label = "Phase 2A + 2B + 2C"
+    elif has_blueprint:
+        phase_label = "Phase 2A + 2B"
+    else:
+        phase_label = "Phase 2A"
     print()
     print("=" * 60)
     print(f"  CLASSIFY INPUTS — {phase_label}")
@@ -100,6 +112,13 @@ def _print_summary(result: dict) -> None:
         print(f"  Blueprint type: {bp.project_type}")
         print(f"  Environment   : {bp.environment}")
         print(f"  BP confidence : {bp.confidence_level}")
+    if has_strategy:
+        st = result["strategy"]
+        n_areas = len(st.strategy_areas)
+        n_blocked = sum(1 for a in st.strategy_areas if a.blocked)
+        print(f"  Strategy areas: {n_areas} ({n_blocked} blocked)")
+        print(f"  Risk items    : {len(st.risk_matrix)}")
+        print(f"  Client ready  : {st.client_ready}")
     print("-" * 60)
     print("  Input sources:")
     for src in im.sources:
@@ -153,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:
 
     controller = WorkbenchController()
 
+    # --with-strategy implies --with-blueprint
+    with_blueprint = args.with_blueprint or args.with_strategy
+
     if args.no_write or args.output_json:
         result = controller.analyze_inputs(
             raw_inputs=raw_inputs,
@@ -160,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             source_platform=args.source_platform,
             project_id=args.project_id,
         )
-        if args.with_blueprint:
+        if with_blueprint:
             bp = controller.build_project_blueprint(
                 result["input_map"],
                 result["work_request"],
@@ -170,7 +192,25 @@ def main(argv: list[str] | None = None) -> int:
             result["blueprint_status"] = controller.update_project_status_for_blueprint(
                 result["project_id"], bp
             )
-    elif args.with_blueprint:
+        if args.with_strategy:
+            st = controller.build_qa_strategy(
+                result["blueprint"],
+                result["input_map"],
+                result["work_request"],
+                result["task_classification"],
+            )
+            result["strategy"] = st
+            result["strategy_status"] = controller.update_project_status_for_strategy(
+                result["project_id"], st
+            )
+    elif args.with_strategy:
+        result = controller.build_context_with_strategy(
+            raw_inputs=raw_inputs,
+            raw_text=raw_text,
+            source_platform=args.source_platform,
+            project_id=args.project_id,
+        )
+    elif with_blueprint:
         result = controller.build_context_with_blueprint(
             raw_inputs=raw_inputs,
             raw_text=raw_text,
@@ -198,6 +238,9 @@ def main(argv: list[str] | None = None) -> int:
         if "blueprint" in result:
             output["blueprint"] = result["blueprint"].to_dict()
             output["blueprint_status"] = result["blueprint_status"].to_dict()
+        if "strategy" in result:
+            output["strategy"] = result["strategy"].to_dict()
+            output["strategy_status"] = result["strategy_status"].to_dict()
         print(json.dumps(output, indent=2, ensure_ascii=False))
     else:
         _print_summary(result)

@@ -1,8 +1,8 @@
 # Artifact Contracts — Guided QA Automation Workbench
 
-**Version:** 5.2.0
+**Version:** 5.3.0
 **Updated:** 2026-05-25
-**Phase:** 2B-AGENT
+**Phase:** 2C
 
 This document defines the stable artifact paths, formats, and ownership rules for all
 workbench-generated files. Agents and scripts should use these paths and respect the
@@ -86,6 +86,44 @@ When reading project state, prefer `.json` over `.md` for structured processing.
 
 ---
 
+## Phase 2C Artifact Layout
+
+Phase 2C artifacts are written to:
+
+```
+outputs/<project_id>/02_strategy/
+```
+
+### Machine-readable (JSON) — source for agents
+
+| File | Description |
+|---|---|
+| `QA_STRATEGY.json` | Full `QAStrategy` schema: areas, risk matrix, test layers, tactical plan, decisions |
+| `PROJECT_STATUS.json` | Updated project status reflecting strategy phase completion |
+
+### Human-readable (Markdown) — for review
+
+| File | Description |
+|---|---|
+| `QA_STRATEGY.md` | Strategy summary, project type, confidence, blocked actions |
+| `TEST_SCOPE.md` | In-scope and out-of-scope areas, blocked areas, surfaces |
+| `RISK_MATRIX.md` | Risk items with likelihood, impact, severity, mitigation |
+| `TEST_LAYERS.md` | Recommended test layers with purpose, priority, examples |
+| `TACTICAL_PLAN_OUTLINE.md` | Phase-ordered tactical planning sequence |
+| `QUALITY_RUBRIC.md` | Quality criteria for this project type |
+| `STRATEGY_DECISIONS.md` | Key strategy decisions with rationale and alternatives |
+| `PROJECT_STATUS.md` | Updated project status |
+
+### Artifact contract guarantees (Phase 2C)
+
+- **No raw secrets** — inherited from Phase 2B; planner never introduces new secrets
+- **No execution claims** — strategy artifacts describe what to test, not what was tested
+- **`client_ready = False`** — all Phase 2C artifacts require human review before delivery
+- **Blocked actions preserved** — anything blocked in Phase 2B remains blocked in strategy output
+- **Required approvals preserved** — approval requirements from blueprint are carried forward
+
+---
+
 ## Future Artifact Layout (Phase 3A+)
 
 These paths are planned. No implementation yet.
@@ -94,7 +132,7 @@ These paths are planned. No implementation yet.
 outputs/<project_id>/
     00_project/          ← Phase 2A/2B (implemented)
     01_approval/         ← Approval decisions and status (Phase 3+)
-    02_strategy/         ← QA strategy, risk matrix, test scope (Phase 2C)
+    02_strategy/         ← QA strategy, risk matrix, test scope (Phase 2C — implemented)
     03_framework/        ← Generated Playwright TypeScript framework (Phase 3A)
     04_execution/        ← Test run results and logs (Phase 4A)
     05_evidence/         ← Screenshots, traces, HTML reports (Phase 4A)

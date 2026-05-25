@@ -15,7 +15,7 @@ Docs: [`VISION.md`](VISION.md) · [`COMMANDS.md`](COMMANDS.md) · [`APPROVAL_MOD
 
 ```bash
 python main.py system-health          # all 26 checks must pass
-.venv\Scripts\python.exe -m pytest -q # 471 passed — always mock mode
+.venv\Scripts\python.exe -m pytest -q # 577 passed — always mock mode
 ```
 
 If `system-health` fails: fix the listed issue before continuing.  
@@ -336,7 +336,54 @@ See [`DOCUMENTATION_GOVERNANCE.md`](DOCUMENTATION_GOVERNANCE.md) for full rules.
 
 ---
 
-## 13. Agent-safe workflow
+## 13. Phase 2C: Build QA strategy before tactical execution
+
+Run Phase 2C after Phase 2B has produced a `PROJECT_BLUEPRINT.json`. This step produces
+a QA strategy, risk matrix, test layer recommendations, and tactical planning foundation.
+All output is planning-only — no execution, no credentials, no external calls.
+
+### Option A — Build from new input (full 2A + 2B + 2C):
+
+```bash
+python tools/build_strategy.py --input "Need Playwright tests for SaaS dashboard with login"
+python tools/build_strategy.py --input "..." --project-id myproject
+python tools/build_strategy.py --input "..." --no-write   # dry run, print only
+python tools/build_strategy.py --input "..." --json       # JSON output to stdout
+```
+
+### Option B — Build from existing Phase 2B blueprint:
+
+```bash
+python tools/build_strategy.py --from-output outputs/<project_id>/00_project
+python tools/build_strategy.py --from-output outputs/<project_id>/00_project --json
+```
+
+### Option C — Combined classify + blueprint + strategy:
+
+```bash
+python tools/classify_inputs.py --input "..." --with-strategy
+python tools/classify_inputs.py --input "..." --with-strategy --no-write  # dry run
+```
+
+### What to review after Phase 2C:
+
+1. Open `outputs/<project_id>/02_strategy/QA_STRATEGY.md` — review confidence level and strategy summary.
+2. Open `RISK_MATRIX.md` — confirm risk items are realistic and mitigations are appropriate.
+3. Open `BLOCKED_ACTIONS.md` (from Phase 2B) — all blocked items must still be blocked in strategy.
+4. Open `STRATEGY_DECISIONS.md` — review key decisions before tactical work begins.
+5. Confirm `client_ready = False` in `QA_STRATEGY.json` — do not deliver strategy to client without human review.
+
+### What Phase 2C never does:
+
+- Does not fetch any URL or access any external resource.
+- Does not use credentials or read `.env` files.
+- Does not execute Playwright or run any tests.
+- Does not set `client_ready = True`.
+- Does not remove or weaken blocked actions from Phase 2B.
+
+---
+
+## 14. Agent-safe workflow
 
 When Claude Code or any other AI assistant is driving changes in this workbench, the following rules apply before any agent session begins and before any commit is made.
 
@@ -372,7 +419,7 @@ Credentials and external API calls are **not permitted in the current phase**. I
 
 ---
 
-## 14. Archive hygiene
+## 15. Archive hygiene
 
 **Exclude from any zip or share:**
 ```

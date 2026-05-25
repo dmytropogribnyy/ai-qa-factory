@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.2.0
+**Version:** 5.3.0
 **Updated:** 2026-05-25
-**Phase:** 2B-AGENT
+**Phase:** 2C
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -237,33 +237,57 @@ Documentation and tooling only — no runtime changes.
 
 ---
 
-## Phase 2C — Strategy Planner + Tactical Planning Foundation `[planned]`
+## Phase 2C — Strategy Planner + Tactical Planning Foundation `[implemented]`
 
-**Purpose:** Build QA strategy and tactical test plan from `ProjectBlueprint`.
-Planning-only — no execution, no scaffolding.
+**Purpose:** Build QA strategy and tactical planning foundation from `ProjectBlueprint`.
+Planning-only — no execution, no scaffolding, no credential use, no external calls.
 
 **Input artifacts:**
 - `PROJECT_BLUEPRINT.json` (Phase 2B)
-- Optional: `api_docs_file` sources from `INPUT_MAP.json`
+- Optional: `InputMap`, `WorkRequest`, `TaskClassification` (from 2A, for signal enrichment)
 
-**Planned output artifacts:**
+**Output artifacts (under `outputs/<project_id>/02_strategy/`):**
 - `QA_STRATEGY.json` / `QA_STRATEGY.md`
-- `RISK_MATRIX.md`
 - `TEST_SCOPE.md`
-- `TACTICAL_TEST_PLAN.md` (Phase 2C+)
+- `RISK_MATRIX.md`
+- `TEST_LAYERS.md`
+- `TACTICAL_PLAN_OUTLINE.md`
+- `QUALITY_RUBRIC.md`
+- `STRATEGY_DECISIONS.md`
+- `PROJECT_STATUS.json` / `PROJECT_STATUS.md` (updated)
 
-**Allowed actions (planned):**
-- Build QA strategy from blueprint (classify-only, no execution)
-- Generate risk matrix from project type and risk signals
-- Define test scope from surfaces and blocked actions
-- Write artifacts to `outputs/<project_id>/02_strategy/`
+**Runtime modules:**
+- `core/qa_strategy_planner.py` — `QAStrategyPlanner`
+- `core/schemas/qa_strategy.py` — `QAStrategy` and 5 component schemas
+- `core/workbench_controller.py` — Phase 2C methods
+- `tools/build_strategy.py` — CLI entry point (standalone)
+- `tools/classify_inputs.py --with-strategy` — combined 2A+2B+2C CLI
+
+**Allowed actions:**
+- Build QA strategy from blueprint using local signal detection (no LLM required)
+- Generate risk matrix from project type, environment, and risk signals
+- Define test scope, test layers, and tactical plan from surfaces and blocked actions
+- Write all 8 artifact files to `outputs/<project_id>/02_strategy/`
+- Carry forward blocked actions and required approvals from blueprint unchanged
 
 **Blocked actions (permanent):**
 - No URL fetching
 - No browser execution
 - No credential use
 - No external calls
-- No Playwright scaffold (Phase 3A)
+- No n8n/webhook calls [planned — Phase 2+]
+- No Playwright scaffold generation (Phase 3A)
+- No executable test generation
+- No cleanup/deletion actions
+- `client_ready` must remain `False` — explicit approval required before delivery
+
+**Acceptance criteria:**
+- `python tools/build_strategy.py --input "..."` writes 8 artifacts to `02_strategy/`
+- `python tools/classify_inputs.py --input "..." --with-strategy` writes 22+ total artifacts
+- No raw secrets in any artifact
+- `client_ready = False` in all strategy outputs
+- Blocked actions from blueprint are preserved in strategy output
+- 106+ Phase 2C tests passing
 
 ---
 

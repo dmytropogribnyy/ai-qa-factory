@@ -247,13 +247,15 @@ Produces: `PROJECT_BLUEPRINT.md` — structured source of truth for the project
 
 ### `strategy` `[planned]`
 
-Generate the strategic QA plan from the Project Blueprint.
+Generate the strategic QA plan from the Project Blueprint via `main.py`.
 
 ```bash
 python main.py strategy --project-id <id>
 ```
 
-Produces: `QA_STRATEGY.md`, `RISK_MATRIX.md`
+Produces: `QA_STRATEGY.md`, `RISK_MATRIX.md`, `TEST_SCOPE.md`, `TEST_LAYERS.md`, etc.
+
+> Phase 2C implementation available as a direct script: `python tools/build_strategy.py`
 
 ### `tactical-plan` `[planned]`
 
@@ -542,7 +544,9 @@ python tools/classify_inputs.py --input "..." --json              # JSON output 
 python tools/classify_inputs.py --input "..." --project-id myproject
 python tools/classify_inputs.py --input "..." --source-platform upwork
 python tools/classify_inputs.py --input "..." --with-blueprint    # Phase 2A + 2B: classify + blueprint
+python tools/classify_inputs.py --input "..." --with-strategy     # Phase 2A + 2B + 2C: classify + blueprint + strategy
 python tools/classify_inputs.py --input "..." --json --with-blueprint  # JSON with blueprint included
+python tools/classify_inputs.py --input "..." --json --with-strategy   # JSON with blueprint + strategy
 ```
 
 **Phase 2A outputs** (written to `outputs/<project_id>/00_project/` unless `--no-write`):
@@ -552,7 +556,7 @@ python tools/classify_inputs.py --input "..." --json --with-blueprint  # JSON wi
 - `PROJECT_STATUS.json` / `PROJECT_STATUS.md`
 - `NEXT_SAFE_STEP.md`
 
-**Phase 2B outputs** (additional, when `--with-blueprint` is passed):
+**Phase 2B outputs** (additional, when `--with-blueprint` or `--with-strategy` is passed):
 - `PROJECT_BLUEPRINT.json` / `PROJECT_BLUEPRINT.md`
 - `ASSUMPTIONS.md`
 - `MISSING_INFO.md`
@@ -560,9 +564,51 @@ python tools/classify_inputs.py --input "..." --json --with-blueprint  # JSON wi
 - `BLOCKED_ACTIONS.md`
 - `INITIAL_QA_STRATEGY_OUTLINE.md`
 
+**Phase 2C outputs** (additional, when `--with-strategy` is passed, written to `outputs/<project_id>/02_strategy/`):
+- `QA_STRATEGY.json` / `QA_STRATEGY.md`
+- `TEST_SCOPE.md`
+- `RISK_MATRIX.md`
+- `TEST_LAYERS.md`
+- `TACTICAL_PLAN_OUTLINE.md`
+- `QUALITY_RUBRIC.md`
+- `STRATEGY_DECISIONS.md`
+- `PROJECT_STATUS.json` / `PROJECT_STATUS.md` (updated)
+
 Secret handling: passwords, tokens, cookies, API keys detected in input are replaced
 with `[REDACTED_PASSWORD]`, `[REDACTED_TOKEN]`, `[REDACTED_COOKIE]`, `[REDACTED_SECRET]`.
 If secrets are detected, the artifact includes an explicit notice that no credential use was performed.
+
+### `python tools/build_strategy.py` `[implemented]`
+
+Phase 2C strategy planner script. Builds a QA strategy and tactical planning foundation
+from a `ProjectBlueprint`. Planning-only: no URL fetching, no browser execution, no
+credential use, no external calls. `client_ready` is always `False` — human review
+required before any delivery.
+
+```bash
+# From text input (runs full 2A + 2B + 2C pipeline):
+python tools/build_strategy.py --input "Need Playwright tests for a SaaS dashboard with login"
+python tools/build_strategy.py --input "..." --project-id myproject
+python tools/build_strategy.py --input "..." --no-write     # print summary, no files
+python tools/build_strategy.py --input "..." --json         # JSON to stdout
+
+# From existing Phase 2B blueprint:
+python tools/build_strategy.py --from-output outputs/<project_id>/00_project
+python tools/build_strategy.py --from-output outputs/<project_id>/00_project --json
+```
+
+**Outputs** (written to `outputs/<project_id>/02_strategy/` unless `--no-write`):
+- `QA_STRATEGY.json` / `QA_STRATEGY.md` — strategy summary, areas, confidence
+- `TEST_SCOPE.md` — what is and is not in scope
+- `RISK_MATRIX.md` — risk items, likelihood, impact, mitigations
+- `TEST_LAYERS.md` — recommended test layers (unit, integration, e2e, etc.)
+- `TACTICAL_PLAN_OUTLINE.md` — tactical planning sequence
+- `QUALITY_RUBRIC.md` — quality criteria for this project type
+- `STRATEGY_DECISIONS.md` — key decisions and rationale
+- `PROJECT_STATUS.json` / `PROJECT_STATUS.md` — updated project status
+
+Safety: `client_ready = False` always. Credentials-blocked and approval-required items
+are carried forward from the blueprint unchanged.
 
 ### `python tools/agent_readiness_audit.py` `[implemented]`
 

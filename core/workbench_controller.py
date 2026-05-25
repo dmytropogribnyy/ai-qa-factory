@@ -195,6 +195,94 @@ class WorkbenchController:
         return result
 
     # ------------------------------------------------------------------
+    # Phase 2C — QA Strategy API
+    # ------------------------------------------------------------------
+
+    def build_qa_strategy(
+        self,
+        blueprint: ProjectBlueprint,
+        input_map=None,
+        work_request=None,
+        task_classification=None,
+    ):
+        """Build a QAStrategy from a ProjectBlueprint. No external calls."""
+        from core.qa_strategy_planner import QAStrategyPlanner
+        return QAStrategyPlanner().build_strategy(
+            blueprint, input_map, work_request, task_classification
+        )
+
+    def render_strategy_artifacts(
+        self,
+        strategy,
+        project_id: str,
+        updated_status=None,
+    ) -> dict:
+        """Write Phase 2C strategy artifacts to outputs/<project_id>/02_strategy/. Returns path dict."""
+        from core.qa_strategy_planner import QAStrategyPlanner
+        out_dir = self._outputs_root / project_id / "02_strategy"
+        return QAStrategyPlanner().render_strategy_artifacts(strategy, out_dir, updated_status)
+
+    def update_project_status_for_strategy(
+        self,
+        project_id: str,
+        strategy,
+    ) -> ProjectStatus:
+        """Return a ProjectStatus reflecting Phase 2C completion."""
+        n_blocked = sum(1 for a in strategy.strategy_areas if a.blocked)
+        n_approvals = len(strategy.required_approvals)
+        return ProjectStatus(
+            project_id=project_id,
+            phase="strategy",
+            overall_status="in_progress",
+            completed_phases=["intake", "blueprint"],
+            pending_approvals=strategy.required_approvals[:5],
+            next_action=(
+                f"Review QA strategy (Phase 2C-R): {n_blocked} blocked area(s), "
+                f"{n_approvals} required approval(s). "
+                "Resolve approvals before proceeding to Phase 2D / Phase 3A."
+            ),
+            notes=(
+                f"Phase 2C strategy complete. "
+                f"project_type={strategy.project_type} "
+                f"confidence={strategy.confidence_level} "
+                f"client_ready={strategy.client_ready}"
+            ),
+        )
+
+    def build_context_with_strategy(
+        self,
+        raw_inputs: List[str],
+        raw_text: str = "",
+        source_platform: str = "unknown",
+        project_id: Optional[str] = None,
+    ) -> dict:
+        """Phase 2A + 2B + 2C: classify, blueprint, and build QA strategy.
+
+        Returns combined result dict with keys:
+          project_id, input_map, work_request, task_classification,
+          project_status, next_safe_step, artifact_paths,
+          blueprint, blueprint_status, blueprint_artifact_paths,
+          strategy, strategy_status, strategy_artifact_paths.
+        """
+        result = self.build_context_with_blueprint(raw_inputs, raw_text, source_platform, project_id)
+
+        strategy = self.build_qa_strategy(
+            result["blueprint"],
+            result["input_map"],
+            result["work_request"],
+            result["task_classification"],
+        )
+        strategy_status = self.update_project_status_for_strategy(result["project_id"], strategy)
+        strategy_paths = self.render_strategy_artifacts(strategy, result["project_id"], strategy_status)
+
+        result["strategy"] = strategy
+        result["strategy_status"] = strategy_status
+        result["strategy_artifact_paths"] = strategy_paths
+        result["artifact_paths"].update(strategy_paths)
+
+        return result
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

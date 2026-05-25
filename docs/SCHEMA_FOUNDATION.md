@@ -119,6 +119,17 @@ These constants are informational — schemas do not validate field values again
 |---|---|---|
 | `documentation` | `DocumentationRecord`, `DocumentationManifest`, `DocumentationFreshnessCheck`, `DocumentationFreshnessReport` | Documentation metadata registry and freshness audit results. `DocumentationManifest.docs` reconstructed as typed `DocumentationRecord` objects; `DocumentationFreshnessReport.checks` reconstructed as `DocumentationFreshnessCheck` objects. `docs_current = False` by default — audit must explicitly confirm docs are current. |
 
+### QA Strategy (Phase 2C)
+
+| Module | Classes | Description |
+|---|---|---|
+| `qa_strategy` | `QAStrategyArea` | One area of QA focus (e.g., auth, e2e flows, payment). `blocked=False` by default; set to `True` with `blocked_reason` when the area requires approval before any work can begin. |
+| `qa_strategy` | `RiskMatrixItem` | One risk entry with likelihood, impact, severity, and mitigation. `blocked=False`, `approval_required=False` by default. Payment and auth risks have `approval_required=True` by default. |
+| `qa_strategy` | `TestLayerRecommendation` | Recommendation for one test layer (unit, integration, e2e, api, visual, etc.). `recommended=True`, `blocked=False` by default. Mobile-native layer is always `blocked=True` in Phase 2C. Nested `examples` and `notes` are plain `List[str]`. |
+| `qa_strategy` | `TacticalPlanningItem` | One tactical planning step (e.g., "Define test data strategy"). `requires_approval=False`, `blocked=False` by default. |
+| `qa_strategy` | `StrategyDecision` | A recorded strategy decision with rationale and alternatives considered. |
+| `qa_strategy` | `QAStrategy` | Root strategy object. All 5 list types have explicit nested reconstruction in `from_dict`. `client_ready=False` always — never changed by the planner. `confidence_level` is one of: `low`, `medium`, `high`. |
+
 ---
 
 ## Safety defaults
@@ -231,6 +242,46 @@ planning artifacts. No URL fetching, no browser, no credential use, no external 
 - `build_context_with_blueprint(raw_inputs, ...) → dict` — runs Phase 2A + 2B, writes all 14 artifacts
 
 **CLI access:** `python tools/classify_inputs.py --with-blueprint`
+
+---
+
+## Phase 2C runtime modules (strategy planner)
+
+These modules add the QA Strategy Planner. They consume Phase 2B output and produce
+strategy artifacts. No URL fetching, no browser, no credential use, no external calls.
+`client_ready = False` is a hard invariant — never modified by the planner.
+
+| Module | Class(es) | Description |
+|---|---|---|
+| `core/qa_strategy_planner.py` | `QAStrategyPlanner` | Builds `QAStrategy` from `ProjectBlueprint` using local signal detection. Covers 8 project types. Writes 8 artifact files to `outputs/<project_id>/02_strategy/`. No LLM calls. |
+
+**`QAStrategyPlanner.build_strategy()`** produces a `QAStrategy` with:
+- Strategy areas tailored to the project type (e.g., auth testing, e2e flows, API contract)
+- Risk matrix covering universal risks + type-specific + signal-detected (payment, mobile, integration)
+- Test layer recommendations (unit, integration, e2e, api, visual, a11y, performance, security, mobile_native)
+- Tactical planning outline with phase-ordered steps
+- Strategy decisions with rationale
+- Blocked actions and required approvals carried forward from blueprint
+- Confidence level (low / medium / high)
+- `client_ready = False` — always
+
+**Artifacts written by `WorkbenchController.render_strategy_artifacts()`** (8 files):
+- `QA_STRATEGY.json` / `QA_STRATEGY.md` — full strategy schema + human summary
+- `TEST_SCOPE.md` — in-scope and out-of-scope areas
+- `RISK_MATRIX.md` — risk items with likelihood, impact, mitigation
+- `TEST_LAYERS.md` — recommended test layers
+- `TACTICAL_PLAN_OUTLINE.md` — tactical planning sequence
+- `QUALITY_RUBRIC.md` — quality criteria
+- `STRATEGY_DECISIONS.md` — key decisions and rationale
+- `PROJECT_STATUS.json` / `PROJECT_STATUS.md` — updated project status
+
+**New controller methods (Phase 2C):**
+- `build_qa_strategy(blueprint, input_map, work_request, task_classification) -> QAStrategy`
+- `render_strategy_artifacts(strategy, project_id, updated_status) -> dict`
+- `update_project_status_for_strategy(project_id, strategy) -> ProjectStatus`
+- `build_context_with_strategy(raw_inputs, ...) -> dict` — runs Phase 2A + 2B + 2C, writes all 22+ artifacts
+
+**CLI access:** `python tools/build_strategy.py` or `python tools/classify_inputs.py --with-strategy`
 
 ---
 
