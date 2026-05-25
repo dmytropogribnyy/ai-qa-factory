@@ -383,7 +383,70 @@ python tools/classify_inputs.py --input "..." --with-strategy --no-write  # dry 
 
 ---
 
-## 14. Agent-safe workflow
+## 14. Phase 3A: Generate Playwright TypeScript scaffold
+
+Run Phase 3A after Phase 2C has produced a `QA_STRATEGY.json`. This step generates a
+Playwright TypeScript scaffold in `outputs/<project_id>/03_framework/playwright/`.
+Scaffold generation only — no URL fetching, no browser execution, no npm/npx, no credentials.
+
+### Option A — Full pipeline from text input (Phase 2A + 2B + 2C + 3A):
+
+```bash
+python tools/generate_scaffold.py --input "Need Playwright tests for SaaS dashboard with login"
+python tools/generate_scaffold.py --input "..." --project-id myproject
+python tools/generate_scaffold.py --input "..." --no-write   # dry run, print only
+python tools/generate_scaffold.py --input "..." --json       # JSON scaffold summary to stdout
+```
+
+### Option B — Scaffold only from existing Phase 2B/2C output:
+
+```bash
+python tools/generate_scaffold.py --from-output outputs/<project_id> --project-id <id>
+python tools/generate_scaffold.py --from-output outputs/<project_id> --json
+```
+
+### Option C — Via WorkbenchController (programmatic):
+
+```python
+from core.workbench_controller import WorkbenchController
+ctrl = WorkbenchController()
+result = ctrl.build_context_with_scaffold(raw_inputs=["SaaS dashboard with login"], project_id="myproject")
+scaffold = result["scaffold"]
+# scaffold.execution_allowed is always False
+```
+
+### What to review after Phase 3A:
+
+1. Open `outputs/<project_id>/03_framework/playwright/FRAMEWORK_SCAFFOLD.md` — review file list and safety flags.
+2. Confirm `execution_allowed: false`, `client_visible: false`, `requires_review: true` in `FRAMEWORK_SCAFFOLD.json`.
+3. Open `docs/SCAFFOLD_REVIEW_CHECKLIST.md` inside the scaffold — **complete before running any command**.
+4. Review `pages/*.ts` — all selectors are placeholders; replace with real ones after inspecting the application.
+5. Check `.env.example` — copy to `.env` and set approved values only; never commit `.env`.
+6. Verify auth spec has `test.skip` guard; verify API spec has `test.skip` guard.
+
+### What Phase 3A never does:
+
+- Does not run npm install, npx, TypeScript compilation, or any test.
+- Does not open a browser or fetch any URL.
+- Does not use credentials or read `.env` files.
+- Does not set `execution_allowed = True` or `client_visible = True`.
+- Does not deliver scaffold to client — human review required first.
+
+### Safe commands after setup (Phase 3B, not yet automated):
+
+After completing `SCAFFOLD_REVIEW_CHECKLIST.md`, these are safe to run manually:
+```bash
+cd outputs/<project_id>/03_framework/playwright
+npm install
+npx playwright install
+npm run typecheck    # TypeScript compile — no network, no browser
+```
+
+Only run tests after completing the checklist and obtaining explicit approval for the target URL.
+
+---
+
+## 15. Agent-safe workflow
 
 When Claude Code or any other AI assistant is driving changes in this workbench, the following rules apply before any agent session begins and before any commit is made.
 
@@ -419,7 +482,7 @@ Credentials and external API calls are **not permitted in the current phase**. I
 
 ---
 
-## 15. Archive hygiene
+## 16. Archive hygiene
 
 **Exclude from any zip or share:**
 ```

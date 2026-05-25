@@ -1,8 +1,8 @@
 # Schema Foundation — Guided QA Automation Workbench
 
-**Version:** 5.1.0  
-**Updated:** 2026-05-24  
-**Phase:** 1B — Schema foundations (pure Python, no runtime behavior)
+**Version:** 5.4.0  
+**Updated:** 2026-05-25  
+**Phase:** 3A — Schema foundations + Phase 3A Framework Scaffold schema
 
 ---
 
@@ -130,6 +130,21 @@ These constants are informational — schemas do not validate field values again
 | `qa_strategy` | `StrategyDecision` | A recorded strategy decision with rationale and alternatives considered. |
 | `qa_strategy` | `QAStrategy` | Root strategy object. All 5 list types have explicit nested reconstruction in `from_dict`. `client_ready=False` always — never changed by the planner. `confidence_level` is one of: `low`, `medium`, `high`. |
 
+### Framework Scaffold (Phase 3A)
+
+| Module | Classes | Description |
+|---|---|---|
+| `framework_scaffold` | `FrameworkFile` | One file in a generated scaffold. Fields: `id`, `path`, `purpose`, `file_type`, `client_visible=False`, `generated=True`, `requires_review=True`, `notes`. |
+| `framework_scaffold` | `FrameworkScaffold` | Root scaffold object. Contains `List[FrameworkFile]` with explicit nested reconstruction in `from_dict`. Hard safety defaults: `execution_allowed=False`, `client_visible=False`, `requires_review=True`. `scaffold_status` is one of: `planned`, `generated`, `needs_review`, `approved_for_local_validation`, `rejected`. |
+| `framework_scaffold` | `FrameworkScaffoldPlan` | Planning-only object that describes what the scaffold will contain: `included_layers`, `deferred_layers`, `blocked_layers`, `required_approvals`, `recommended_structure`. Created by `FrameworkScaffoldGenerator.build_scaffold_plan()` before generation. |
+
+Module constants:
+- `FILE_TYPES` — valid `file_type` values: `package_json`, `tsconfig`, `playwright_config`, `test_spec`, `page_object`, `fixture`, `utility`, `test_data`, `documentation`, `gitignore`, `ci_config`, `example_env`, `unknown`
+- `FRAMEWORK_TYPES` — `playwright_ts`, `api_only`, `mixed_ui_api`, `unknown`
+- `SCAFFOLD_STATUSES` — `planned`, `generated`, `needs_review`, `approved_for_local_validation`, `rejected`
+
+Runtime: `core/framework_scaffold_generator.py` — `FrameworkScaffoldGenerator`. Generates all scaffold files as plain text strings and writes them to disk. No subprocess, no browser, no npm, no external calls.
+
 ---
 
 ## Safety defaults
@@ -142,6 +157,10 @@ These constants are informational — schemas do not validate field values again
 | `RunContext.approved = False` | Approval is opt-in, not assumed |
 | `RunContext.mode = "unknown"` | Workflow mode must be set explicitly |
 | `RunContext.llm_mode = "mock"` | Real LLM mode must be explicitly requested |
+| `FrameworkScaffold.execution_allowed = False` | No test may run without explicit approval |
+| `FrameworkScaffold.client_visible = False` | Scaffold is internal until delivery is approved |
+| `FrameworkScaffold.requires_review = True` | Senior QA review required before any use |
+| `FrameworkFile.client_visible = False` | Individual files inherit scaffold visibility default |
 
 ---
 

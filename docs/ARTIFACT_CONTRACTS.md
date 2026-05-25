@@ -1,8 +1,8 @@
 # Artifact Contracts — Guided QA Automation Workbench
 
-**Version:** 5.3.0
+**Version:** 5.4.0
 **Updated:** 2026-05-25
-**Phase:** 2C
+**Phase:** 3A
 
 This document defines the stable artifact paths, formats, and ownership rules for all
 workbench-generated files. Agents and scripts should use these paths and respect the
@@ -124,9 +124,71 @@ outputs/<project_id>/02_strategy/
 
 ---
 
+## Phase 3A Artifact Layout
+
+Phase 3A artifacts are written to:
+
+```
+outputs/<project_id>/03_framework/playwright/
+```
+
+### Always-present files (17 minimum)
+
+| File | Description |
+|---|---|
+| `package.json` | Node.js project definition with Playwright scripts |
+| `tsconfig.json` | TypeScript compiler configuration |
+| `playwright.config.ts` | Playwright test runner — reads `BASE_URL` from env |
+| `.gitignore` | Ignores `node_modules/`, `test-results/`, `.env` |
+| `.env.example` | Placeholder env vars — copy to `.env`, never commit `.env` |
+| `README.md` | Scaffold overview, setup, approval requirements |
+| `tests/smoke/smoke.spec.ts` | Smoke test placeholder |
+| `tests/regression/regression-placeholder.spec.ts` | Regression placeholder (skipped) |
+| `pages/BasePage.ts` | Base page object with shared helpers |
+| `fixtures/test-fixtures.ts` | Playwright test fixtures |
+| `utils/env.ts` | Safe env var reader with validation |
+| `utils/test-data.ts` | Test data factory — no real credentials |
+| `test-data/README.md` | Test data governance |
+| `test-data/sample-users.example.json` | Sample user structure — placeholders only |
+| `docs/TEST_STRATEGY.md` | Strategy summary from QAStrategy |
+| `docs/HOW_TO_RUN.md` | Setup and run guide with approval checklist |
+| `docs/SCAFFOLD_REVIEW_CHECKLIST.md` | Pre-execution safety checklist |
+
+### Conditional files (per project type / strategy layers)
+
+| File | Condition |
+|---|---|
+| `tests/auth/auth-placeholder.spec.ts` | auth layer, web_saas, auth_heavy |
+| `pages/LoginPage.ts` | auth layer, web_saas, auth_heavy |
+| `tests/api/api-placeholder.spec.ts` | api layer, api_backend, mixed_ui_api |
+| `utils/api-client.ts` | api layer, api_backend, mixed_ui_api |
+| `pages/DashboardPage.ts` | web_saas, admin_panel, ecommerce |
+| `tests/ecommerce/checkout-placeholder.spec.ts` | ecommerce — blocked until sandbox approval |
+| `tests/admin/admin-placeholder.spec.ts` | admin_panel — blocked until admin account approval |
+
+### Metadata files (always written to scaffold root)
+
+| File | Description |
+|---|---|
+| `FRAMEWORK_SCAFFOLD.json` | Full `FrameworkScaffold` schema — files, status, safety flags |
+| `FRAMEWORK_SCAFFOLD.md` | Human-readable scaffold summary |
+
+### Artifact contract guarantees (Phase 3A)
+
+- **`execution_allowed = False`** — no test may be run without completing `SCAFFOLD_REVIEW_CHECKLIST.md`
+- **`client_visible = False`** — scaffold is internal until explicitly approved for delivery
+- **`requires_review = True`** — must be reviewed by a senior QA reviewer before any use
+- **No raw secrets** — all credential references use `process.env.*` placeholders only
+- **No hardcoded URLs** — all URLs are `process.env.BASE_URL` or `http://localhost:3000` placeholder
+- **Auth spec skipped by default** — `test.skip` guard requires `TEST_USERNAME`/`TEST_PASSWORD`
+- **API spec skipped by default** — `test.skip` guard requires `API_BASE_URL`
+- **Checkout/admin specs blocked** — `test.skip(true, ...)` until sandbox/admin approval
+
+---
+
 ## Future Artifact Layout (Phase 3A+)
 
-These paths are planned. No implementation yet.
+These paths are planned. Phase 3A (03_framework) is now implemented.
 
 ```
 outputs/<project_id>/

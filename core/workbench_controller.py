@@ -283,6 +283,90 @@ class WorkbenchController:
         return result
 
     # ------------------------------------------------------------------
+    # Phase 3A — Framework Scaffold API
+    # ------------------------------------------------------------------
+
+    def build_framework_scaffold(
+        self,
+        blueprint,
+        strategy=None,
+        project_id: Optional[str] = None,
+    ):
+        """Generate a Playwright TypeScript scaffold from blueprint + strategy. No execution."""
+        from core.framework_scaffold_generator import FrameworkScaffoldGenerator
+        pid = project_id or blueprint.project_id
+        out_dir = self._outputs_root / pid / "03_framework" / "playwright"
+        return FrameworkScaffoldGenerator().generate_scaffold(blueprint, strategy, out_dir)
+
+    def render_framework_scaffold_artifacts(
+        self,
+        scaffold,
+        project_id: str,
+    ) -> dict:
+        """Write FRAMEWORK_SCAFFOLD.json and .md metadata. Returns path dict."""
+        from core.framework_scaffold_generator import FrameworkScaffoldGenerator
+        out_dir = self._outputs_root / project_id / "03_framework" / "playwright"
+        return FrameworkScaffoldGenerator().render_scaffold_artifacts(scaffold, out_dir)
+
+    def update_project_status_for_scaffold(
+        self,
+        project_id: str,
+        scaffold,
+    ):
+        """Return a ProjectStatus reflecting Phase 3A completion."""
+        n_files = len(scaffold.files)
+        return ProjectStatus(
+            project_id=project_id,
+            phase="scaffold",
+            overall_status="in_progress",
+            completed_phases=["intake", "blueprint", "strategy"],
+            next_action=(
+                f"Review scaffold ({n_files} files generated). "
+                "Complete docs/SCAFFOLD_REVIEW_CHECKLIST.md before any local validation. "
+                "execution_allowed=False — explicit approval required."
+            ),
+            notes=(
+                f"Phase 3A scaffold complete. "
+                f"framework_type={scaffold.framework_type} "
+                f"execution_allowed={scaffold.execution_allowed} "
+                f"client_visible={scaffold.client_visible}"
+            ),
+        )
+
+    def build_context_with_scaffold(
+        self,
+        raw_inputs: List[str],
+        raw_text: str = "",
+        source_platform: str = "unknown",
+        project_id: Optional[str] = None,
+    ) -> dict:
+        """Phase 2A + 2B + 2C + 3A: classify, blueprint, strategy, scaffold.
+
+        Returns combined result dict with keys:
+          project_id, input_map, work_request, task_classification,
+          project_status, next_safe_step, artifact_paths,
+          blueprint, blueprint_status, blueprint_artifact_paths,
+          strategy, strategy_status, strategy_artifact_paths,
+          scaffold, scaffold_status, scaffold_artifact_paths.
+        """
+        result = self.build_context_with_strategy(raw_inputs, raw_text, source_platform, project_id)
+
+        scaffold = self.build_framework_scaffold(
+            result["blueprint"],
+            result.get("strategy"),
+            result["project_id"],
+        )
+        scaffold_status = self.update_project_status_for_scaffold(result["project_id"], scaffold)
+        scaffold_paths = self.render_framework_scaffold_artifacts(scaffold, result["project_id"])
+
+        result["scaffold"] = scaffold
+        result["scaffold_status"] = scaffold_status
+        result["scaffold_artifact_paths"] = scaffold_paths
+        result["artifact_paths"].update(scaffold_paths)
+
+        return result
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

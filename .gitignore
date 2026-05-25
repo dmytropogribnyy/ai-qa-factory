@@ -28,6 +28,7 @@ desktop.ini
 # Keep the outputs/ directory in git (for .gitkeep), exclude all run artifacts
 outputs/*
 !outputs/.gitkeep
+outputs_dry/
 
 # ── Memory: runtime state (project runs, client data, learned patterns) ───────
 # pricing_book.yaml is source — keep it. Everything else is runtime.

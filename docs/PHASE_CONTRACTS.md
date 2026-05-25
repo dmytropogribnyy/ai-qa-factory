@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.3.0
+**Version:** 5.4.0
 **Updated:** 2026-05-25
-**Phase:** 2C
+**Phase:** 3A
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -291,29 +291,64 @@ Planning-only — no execution, no scaffolding, no credential use, no external c
 
 ---
 
-## Phase 3A — Framework Scaffold Generation `[planned]`
+## Phase 3A — Framework Scaffold Generation `[implemented]`
 
-**Purpose:** Generate a Playwright TypeScript framework from the strategy.
-Scaffold-only — no execution against live URLs.
+**Purpose:** Generate a Playwright TypeScript framework scaffold from ProjectBlueprint + QAStrategy.
+Scaffold generation only — no execution, no browser, no npm/npx, no credential use.
 
 **Input artifacts:**
-- `QA_STRATEGY.json` (Phase 2C)
 - `PROJECT_BLUEPRINT.json` (Phase 2B)
+- `QA_STRATEGY.json` (Phase 2C) — optional; scaffold generation works without strategy
 
-**Planned output artifacts (under `outputs/<project_id>/03_framework/`):**
-- `package.json`, `tsconfig.json`, `playwright.config.ts`
-- `specs/smoke.spec.ts`, `specs/auth.spec.ts` (per type)
-- `CI workflow`
+**Output artifacts (under `outputs/<project_id>/03_framework/playwright/`):**
+- `package.json`, `tsconfig.json`, `playwright.config.ts`, `.gitignore`, `.env.example`, `README.md`
+- `tests/smoke/smoke.spec.ts`, `tests/regression/regression-placeholder.spec.ts`
+- `tests/auth/auth-placeholder.spec.ts` (if auth layer or web_saas/auth_heavy)
+- `tests/api/api-placeholder.spec.ts` (if api layer or api_backend/mixed_ui_api)
+- `tests/ecommerce/checkout-placeholder.spec.ts` (ecommerce — blocked until sandbox approval)
+- `tests/admin/admin-placeholder.spec.ts` (admin_panel — blocked until admin account approval)
+- `pages/BasePage.ts`, `pages/LoginPage.ts` (conditional), `pages/DashboardPage.ts` (conditional)
+- `fixtures/test-fixtures.ts`, `utils/env.ts`, `utils/test-data.ts`
+- `utils/api-client.ts` (if api layer)
+- `test-data/README.md`, `test-data/sample-users.example.json`
+- `docs/TEST_STRATEGY.md`, `docs/HOW_TO_RUN.md`, `docs/SCAFFOLD_REVIEW_CHECKLIST.md`
+- `FRAMEWORK_SCAFFOLD.json`, `FRAMEWORK_SCAFFOLD.md` (metadata, written to root)
 
-**Allowed actions (planned):**
-- Generate scaffold files (local writes only, no execution)
-- Run TypeScript compile check (`npx tsc --noEmit`) — safe local validation
-- Run Playwright dry-run (`npx playwright test --dry-run`) — no browser, no network
+**Runtime modules:**
+- `core/framework_scaffold_generator.py` — `FrameworkScaffoldGenerator`
+- `core/schemas/framework_scaffold.py` — `FrameworkFile`, `FrameworkScaffold`, `FrameworkScaffoldPlan`
+- `core/workbench_controller.py` — Phase 3A methods
+- `tools/generate_scaffold.py` — CLI entry point (standalone)
 
-**Blocked actions:**
-- No execution against any URL (requires Phase 4A approval)
+**Allowed actions:**
+- Generate scaffold files as plain text to local disk (no execution)
+- Build `FrameworkScaffoldPlan` and `FrameworkScaffold` schema objects
+- Write all scaffold files to `outputs/<project_id>/03_framework/playwright/`
+- Write metadata (`FRAMEWORK_SCAFFOLD.json`, `FRAMEWORK_SCAFFOLD.md`)
+
+**Blocked actions (permanent):**
+- No browser execution
+- No Playwright execution
+- No npm/npx execution
+- No TypeScript compilation
+- No test execution
+- No URL fetching
 - No credential use
 - No external calls
+- No cleanup/deletion actions
+- `execution_allowed` must remain `False` in all generated scaffold metadata
+- `client_visible` must remain `False` — scaffold requires review before any delivery
+
+**Acceptance criteria:**
+- `python tools/generate_scaffold.py --input "..." --project-id <id>` writes all scaffold files
+- `FRAMEWORK_SCAFFOLD.json` has `execution_allowed: false`, `client_visible: false`, `requires_review: true`
+- Auth spec contains `test.skip` guard requiring `TEST_USERNAME`/`TEST_PASSWORD`
+- API spec contains `test.skip` guard requiring `API_BASE_URL`
+- Checkout spec (ecommerce) and admin spec (admin_panel) are `test.skip` blocked
+- All env references use `process.env.*` — no hardcoded secrets or URLs
+- `sample-users.example.json` contains only `PLACEHOLDER` values
+- 577+ existing tests passing + Phase 3A test suite passing
+- No subprocess, no playwright import in generator module
 
 ---
 

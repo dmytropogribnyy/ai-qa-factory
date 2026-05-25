@@ -610,6 +610,41 @@ python tools/build_strategy.py --from-output outputs/<project_id>/00_project --j
 Safety: `client_ready = False` always. Credentials-blocked and approval-required items
 are carried forward from the blueprint unchanged.
 
+### `python tools/generate_scaffold.py` `[implemented]`
+
+Phase 3A scaffold generator. Generates a Playwright TypeScript framework scaffold from a
+project brief (full 2A+2B+2C+3A pipeline) or from existing blueprint/strategy artifacts.
+Scaffold generation only — no URL fetching, no browser execution, no npm/npx, no credential use.
+
+```bash
+# Full pipeline from text input (Phase 2A + 2B + 2C + 3A):
+python tools/generate_scaffold.py --input "Need Playwright tests for SaaS dashboard with login"
+python tools/generate_scaffold.py --input "..." --project-id myproject
+
+# From existing Phase 2B/2C output directory (scaffold only):
+python tools/generate_scaffold.py --from-output outputs/<project_id> --project-id <id>
+
+# Print only, no files written:
+python tools/generate_scaffold.py --input "..." --no-write
+
+# JSON scaffold summary to stdout:
+python tools/generate_scaffold.py --input "..." --json
+```
+
+**Outputs** (written to `outputs/<project_id>/03_framework/playwright/` unless `--no-write`):
+- `package.json`, `tsconfig.json`, `playwright.config.ts`, `.gitignore`, `.env.example`, `README.md`
+- `tests/smoke/smoke.spec.ts`, `tests/regression/regression-placeholder.spec.ts`
+- `tests/auth/auth-placeholder.spec.ts` + `pages/LoginPage.ts` (conditional — auth/web_saas/auth_heavy)
+- `tests/api/api-placeholder.spec.ts` + `utils/api-client.ts` (conditional — api/api_backend/mixed_ui_api)
+- `pages/BasePage.ts`, `fixtures/test-fixtures.ts`, `utils/env.ts`, `utils/test-data.ts`
+- `test-data/README.md`, `test-data/sample-users.example.json`
+- `docs/TEST_STRATEGY.md`, `docs/HOW_TO_RUN.md`, `docs/SCAFFOLD_REVIEW_CHECKLIST.md`
+- `FRAMEWORK_SCAFFOLD.json`, `FRAMEWORK_SCAFFOLD.md` (metadata)
+
+Safety: `execution_allowed = False`, `client_visible = False`, `requires_review = True` always.
+All env references use `process.env.*` — no hardcoded secrets or URLs.
+Auth spec and API spec are `test.skip` by default until credentials and URL are approved.
+
 ### `python tools/agent_readiness_audit.py` `[implemented]`
 
 Check whether the repository has the required agent operating contract docs, artifact

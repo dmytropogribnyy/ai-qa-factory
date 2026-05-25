@@ -76,6 +76,11 @@ from core.schemas.qa_strategy import (
     StrategyDecision,
     QAStrategy,
 )
+from core.schemas.framework_scaffold import (
+    FrameworkFile,
+    FrameworkScaffold,
+    FrameworkScaffoldPlan,
+)
 
 __all__ = [
     # Base
@@ -196,4 +201,8 @@ __all__ = [
     "TacticalPlanningItem",
     "StrategyDecision",
     "QAStrategy",
+    # Framework Scaffold (Phase 3A)
+    "FrameworkFile",
+    "FrameworkScaffold",
+    "FrameworkScaffoldPlan",
 ]
