@@ -708,6 +708,64 @@ Exit codes: `0` = all required checks passed. `1` = one or more required checks 
 
 ---
 
+## Client scenario fixtures — safe usage `[implemented]`
+
+Scenario fixtures in `fixtures/client_scenarios/` are source input files, not runtime outputs.
+They can be used as input to the classification, strategy, and scaffold CLIs.
+**Reading a fixture file does not fetch URLs, open browsers, or call external services.**
+
+### Classify a fixture as input
+
+```bash
+# Pass the fixture file as a text brief via --input-file:
+python tools/classify_inputs.py \
+  --input-file fixtures/client_scenarios/public_demo_targets/01_saucedemo_ecommerce_login.md \
+  --no-write
+
+# Dry run with blueprint:
+python tools/classify_inputs.py \
+  --input-file fixtures/client_scenarios/synthetic/04_linear_issue_task_source.md \
+  --with-blueprint --no-write
+```
+
+`classify_inputs.py` supports `--input-file`. `build_strategy.py` and `generate_scaffold.py` do not — pass brief text via `--input` instead.
+
+### Build strategy from fixture brief text
+
+```bash
+python tools/build_strategy.py \
+  --project-id scenario-saucedemo \
+  --input "Need Playwright tests for SauceDemo. Surfaces: login, product listing, cart, checkout." \
+  --no-write
+```
+
+### Generate scaffold from fixture brief text
+
+```bash
+python tools/generate_scaffold.py \
+  --project-id scenario-saucedemo \
+  --input "Need Playwright tests for SauceDemo. Surfaces: login, product listing, cart, checkout." \
+  --no-write
+```
+
+### Validate a fixture-driven scaffold
+
+```bash
+python tools/validate_scaffold.py --project-id scenario-saucedemo --no-write
+```
+
+### Safety rules for fixture usage
+
+- A fixture URL is a planning reference. It does **not** authorize execution against that URL.
+- Every public demo target still requires explicit per-run execution approval.
+- Every real production target (Alza.sk, Playwright.dev) requires written approval.
+- Amazon and similar marketplaces have all execution unconditionally blocked.
+- Task management URLs (Linear, Jira) in fixtures are `task_url` (requirement source) — not `target_url`.
+
+See: [`docs/CLIENT_SCENARIO_FIXTURES.md`](CLIENT_SCENARIO_FIXTURES.md)
+
+---
+
 ## Planned commands — documentation governance `[planned]`
 
 These commands are designed but not yet implemented in `main.py`.

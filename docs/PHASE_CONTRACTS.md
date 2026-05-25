@@ -422,6 +422,62 @@ Inspection-only — no npm/npx, no TypeScript compilation, no Playwright executi
 
 ---
 
+## Phase 3B-SCENARIOS — Practical Client Scenario Fixtures `[implemented]`
+
+**Purpose:** Create a controlled, committed fixture layer of realistic client QA scenarios.
+Fixtures are source inputs used to evaluate Workbench behavior across all phases.
+Docs/fixtures/tests only — no runtime behavior changes.
+
+**Input artifacts:** Phase 3B docs and tools
+
+**Output artifacts:**
+- `docs/CLIENT_SCENARIO_FIXTURES.md` — category definitions, safe usage, blocked actions
+- `fixtures/client_scenarios/README.md` — directory intro and category rules
+- `fixtures/client_scenarios/synthetic/` — 4 synthetic scenarios
+- `fixtures/client_scenarios/public_demo_targets/` — 6 public demo scenarios
+- `fixtures/client_scenarios/real_public_readonly/` — 2 real production read-only scenarios
+- `fixtures/client_scenarios/high_risk_marketplace_readonly/` — 1 high-risk marketplace scenario
+- `tests/test_client_scenario_fixtures.py` — fixture evaluation tests
+
+**Scenario categories:**
+- `synthetic` — fake URLs and fake credentials; safety and redaction verification
+- `public_demo_targets` — real demo/practice apps; execution requires approval
+- `real_public_readonly` — real production sites; read-only planning only; execution blocked
+- `high_risk_marketplace_readonly` — real marketplaces (Amazon etc.); all execution blocked
+
+**Allowed actions:**
+- Create Markdown fixture files in `fixtures/client_scenarios/`
+- Create evaluation tests in `tests/test_client_scenario_fixtures.py`
+- Update existing docs to reference fixtures correctly
+
+**Blocked actions (permanent):**
+- No URL fetching
+- No browser execution
+- No external API calls
+- No credential use
+- No real secrets in fixture files
+- No runtime outputs generated in `outputs/`
+- No orchestrator changes
+- No heavy new dependencies
+
+**Fixture contract guarantees:**
+- Fixtures are committed source material — not runtime outputs
+- Real URLs in fixtures do not authorize execution against those URLs
+- Every public demo target explicitly requires per-run approval
+- Every real production fixture explicitly blocks execution without written approval
+- High-risk marketplace fixtures mark all execution as unconditionally blocked
+- No real secrets, OAuth tokens, webhook tokens, or API keys in any fixture
+- `task_url` inputs (Linear, Jira, etc.) are requirement sources — not `target_application`
+
+**Acceptance criteria:**
+- 13 scenario files exist across 4 categories
+- Every scenario has all 11 required sections
+- `tests/test_client_scenario_fixtures.py` passes with all scenario-count and safety checks
+- No real credentials found in any fixture file
+- All 7 updated docs reflect Phase 3B-SCENARIOS correctly
+
+---
+
 ## Phase 4A — Evidence and Reporting `[planned]`
 
 **Purpose:** Run approved tests, collect evidence, produce internal summary.

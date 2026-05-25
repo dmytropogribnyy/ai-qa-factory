@@ -268,6 +268,53 @@ Both report folders are under `outputs/` and are gitignored.
 
 ---
 
+## Client Scenario Fixtures (Phase 3B-SCENARIOS)
+
+Scenario fixtures are **source inputs**, not runtime outputs.
+
+```
+fixtures/client_scenarios/
+    README.md
+    synthetic/
+        01_google_oauth_auth_heavy.md
+        02_payment_checkout_sandbox_required.md
+        03_n8n_webhook_integration_blocked.md
+        04_linear_issue_task_source.md
+    public_demo_targets/
+        01_saucedemo_ecommerce_login.md
+        02_orangehrm_admin_dashboard.md
+        03_the_internet_dynamic_ui.md
+        04_restful_booker_api_auth_crud.md
+        05_jsonplaceholder_fake_rest_api.md
+        06_realworld_conduit_ui_api.md
+    real_public_readonly/
+        01_alza_sk_public_ecommerce_readonly.md
+        02_playwright_docs_readonly.md
+    high_risk_marketplace_readonly/
+        01_amazon_public_marketplace_readonly.md
+```
+
+### Fixture ownership rules
+
+| Property | Value |
+|---|---|
+| Committed to repository? | **Yes** |
+| Runtime execution triggered? | **No** |
+| Agent may read as planning input? | Yes |
+| Agent may add real credentials? | **Never** |
+| Agent may fetch URLs in fixtures? | **Never** |
+| Client-visible? | Not without human review |
+
+### Fixture contract guarantees
+
+- **Source inputs only** — reading a fixture file does not fetch URLs, open browsers, run tests, or call external services
+- **No real secrets** — synthetic fixtures contain only fake values; demo targets list published demo credentials only as reference text
+- **Real URLs ≠ execution permission** — a URL appearing in a fixture does not authorize contacting that URL
+- **Execution approval still required** — every external URL, including public demo targets, requires explicit per-run approval before any test execution
+- **Not `outputs/`** — fixtures are committed source material; they never appear in `outputs/` and are not generated artifacts
+
+---
+
 ## Artifact Safety Rules
 
 1. **Never commit `outputs/`** — it is gitignored for a reason. Artifacts contain runtime

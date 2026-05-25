@@ -182,6 +182,14 @@ documented outside the system.
 - **Do not stage `node_modules/`, `__pycache__/`, `.venv/`**
 - **Do not add heavy dependencies** without explicit approval and `TOOLING_DECISIONS.md` entry
 
+### Client scenario fixture rules
+
+- **Do not add real credentials to fixtures** — `fixtures/client_scenarios/` files must never contain real OAuth secrets, API keys, webhook tokens, Linear tokens, payment keys, or personal credentials
+- **Do not fetch fixture URLs** — a URL appearing in a fixture file does not authorize fetching it at any phase
+- **Do not treat fixture URLs as approved test targets** — all external execution still requires per-run approval
+- **Do not treat task management URLs as target apps** — Linear, Jira, ClickUp, Asana URLs classified as `task_url` are requirement sources; set them as `task_source` in the blueprint, not `target_application`
+- **Do not call Linear/Jira/ClickUp APIs** without explicit approval — issue fetch, comment writeback, and status updates are all blocked by default
+
 ### Architecture integrity
 
 - **Do not replace `core/orchestrator.py`** without explicit architecture review

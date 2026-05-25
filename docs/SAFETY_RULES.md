@@ -272,6 +272,42 @@ a literal API key, JWT, or hardcoded password copied from the scaffold.
 
 ---
 
+## Client scenario fixture safety (Phase 3B-SCENARIOS)
+
+These rules govern the `fixtures/client_scenarios/` layer.
+
+### Real public URLs in fixtures do not authorize execution
+
+Fixture files in `public_demo_targets/`, `real_public_readonly/`, and `high_risk_marketplace_readonly/`
+may contain real URLs (e.g. `https://www.saucedemo.com`, `https://www.amazon.com`). These URLs
+are **planning references only**. They do not:
+- Authorize URL fetching during classification, planning, scaffold, or validation
+- Remove the per-run approval requirement for any external target
+- Make any external site an approved test target by default
+
+**Violation:** Treating `target_url: https://www.saucedemo.com` in a fixture as permission to
+fetch that URL or run tests against it.
+
+### Fixture files must never contain real credentials
+
+All `synthetic/` fixtures use fake values only. `public_demo_targets/` fixtures may reference
+published demo credentials as reference text (e.g. `standard_user / secret_sauce`) but these must
+appear only as documentation — never as active scaffold values, never committed as `.env` values.
+
+**Violation:** A fixture file or test that reads a credential value and passes it to a CLI or scaffold.
+
+### Task management URLs are requirement sources, not test targets
+
+When a Linear issue URL, Jira ticket URL, ClickUp URL, or similar task management URL appears in
+input as `task_url`, it must be classified as `task_source` in the blueprint — not `target_application`.
+The Workbench must never fetch these URLs, call their APIs, or write back comments/status without
+explicit approval.
+
+**Violation:** Using a Linear issue URL as `BASE_URL` in a Playwright config, or calling the
+Linear API to fetch issue content without approval.
+
+---
+
 ## External integration safety
 
 These rules govern optional integrations such as n8n, Make, Zapier, Slack, Jira, and similar systems. Encoded in `core/schemas/integration.py` as schema defaults. Runtime enforcement is planned for a later phase.

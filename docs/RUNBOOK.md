@@ -490,7 +490,61 @@ Only run tests after completing the checklist and obtaining explicit approval fo
 
 ---
 
-## 16. Agent-safe workflow
+## 16. Phase 3B-SCENARIOS: Practical client scenario fixtures
+
+The `fixtures/client_scenarios/` directory contains controlled input files that simulate realistic
+client QA tasks. They are source material for evaluation — **not runtime outputs**.
+
+Reading fixture files does not fetch URLs, open browsers, run tests, or call external services.
+
+### Categories
+
+| Category | Purpose | Real URLs allowed |
+|---|---|---|
+| `synthetic/` | Fake URLs/creds; safety and redaction testing | No |
+| `public_demo_targets/` | QA practice apps (SauceDemo, Restful Booker, etc.) | Yes — demo apps only |
+| `real_public_readonly/` | Real production sites; read-only planning only | Yes — planning only |
+| `high_risk_marketplace_readonly/` | High-risk marketplaces (Amazon etc.); strict blocking | Yes — planning only |
+
+### Safe usage examples
+
+```bash
+# Classify a fixture file as input (reads as plain text brief):
+python tools/classify_inputs.py \
+  --input-file fixtures/client_scenarios/public_demo_targets/01_saucedemo_ecommerce_login.md \
+  --no-write
+
+# Build strategy from fixture brief text (--input, not --input-file):
+python tools/build_strategy.py \
+  --project-id scenario-saucedemo \
+  --input "Need Playwright tests for SauceDemo. Surfaces: login, product listing, cart." \
+  --no-write
+
+# Validate a generated scaffold from a fixture-driven project:
+python tools/validate_scaffold.py --project-id scenario-saucedemo --no-write
+```
+
+### What presence of a real URL in a fixture does NOT mean
+
+A real URL appearing in a fixture file is a planning reference only. It does **not**:
+- Authorize execution against that URL
+- Enable URL fetching during classification, planning, scaffold, or validation
+- Remove the per-run approval requirement
+
+Real demo targets still require explicit per-run approval. Real production sites require written approval.
+
+### Linear and other task-management tool URLs
+
+Task management URLs (Linear, Jira, ClickUp, Asana) that appear as `task_url` inputs are
+**requirement sources, not target applications**. The Workbench must classify them as
+`task_source` in the blueprint — not as `target_application`. See:
+`fixtures/client_scenarios/synthetic/04_linear_issue_task_source.md`
+
+See: [`docs/CLIENT_SCENARIO_FIXTURES.md`](CLIENT_SCENARIO_FIXTURES.md)
+
+---
+
+## 17. Agent-safe workflow
 
 When Claude Code or any other AI assistant is driving changes in this workbench, the following rules apply before any agent session begins and before any commit is made.
 
@@ -526,7 +580,7 @@ Credentials and external API calls are **not permitted in the current phase**. I
 
 ---
 
-## 16. Archive hygiene
+## 18. Archive hygiene
 
 **Exclude from any zip or share:**
 ```

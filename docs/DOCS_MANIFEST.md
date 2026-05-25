@@ -1,8 +1,8 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 5.4.0  
+**Version:** 5.5.0  
 **Updated:** 2026-05-25  
-**Phase:** 3A
+**Phase:** 3B-SCENARIOS
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.
@@ -29,6 +29,7 @@ These docs define the canonical behavior, rules, and structure of the workbench.
 | `docs/PHASE_CONTRACTS.md` | Phase-by-phase contracts — inputs, outputs, blocked actions, acceptance criteria | Yes | phase_completed, phase_added, workflow_changed | current | Created in Phase 2B-AGENT |
 | `docs/ARTIFACT_CONTRACTS.md` | Stable artifact paths, formats, and ownership rules | Yes | artifact_path_changed, phase_completed, workflow_changed | current | Created in Phase 2B-AGENT |
 | `docs/AGENT_HANDOFF_TEMPLATE.md` | Reusable final report template for agent phase handoffs | No | phase_completed, report_format_changed | current | Created in Phase 2B-AGENT |
+| `docs/CLIENT_SCENARIO_FIXTURES.md` | Practical client scenario fixtures — categories, safe usage, blocked actions | Yes | phase_completed, scenario_added, safety_rule_changed | current | Created in Phase 3B-SCENARIOS |
 
 ---
 
