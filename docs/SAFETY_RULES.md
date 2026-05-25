@@ -449,6 +449,59 @@ No URL in any fixture is fetched.
 
 ---
 
+## Controlled demo/local/public-readonly execution safety (Phase 4D)
+
+These rules apply to `BrowserExecutionRunner` and `tools/run_demo_execution.py`:
+
+### Rule 4D-1: Explicit approval flag required
+
+No subprocess or browser execution without `--approve-demo-execution` or `--approve-public-readonly-execution`.
+
+**Violation:** Any code path in `BrowserExecutionRunner` that calls `subprocess.run` without first verifying approval flag.
+
+### Rule 4D-2: Allowlist-only commands
+
+Only these commands may pass to subprocess:
+- `npx playwright test --list`
+- `npx playwright test tests/smoke --reporter=list`
+- `npx playwright test tests/smoke --reporter=html,list`
+
+**Violation:** Any other command, or any command with `--headed`, `--ui`, unrestricted test path, or credential args.
+
+### Rule 4D-3: Always-blocked targets
+
+Alza.sk, Amazon.com, and Linear.app are always blocked regardless of approval flag or target category.
+playwright.dev is blocked unless `--readonly-profile playwright_docs_readonly` + `--approve-public-readonly-execution` are both present.
+
+**Violation:** Any code that allows execution against these domains.
+
+### Rule 4D-4: Production/high-risk/task-source categories always blocked
+
+`production`, `high_risk_marketplace_readonly`, and `task_source` are always blocked even with approval flags.
+`real_public_readonly` is blocked unless `readonly_profile=playwright_docs_readonly` with public-readonly approval.
+
+**Violation:** Any code that allows execution against these categories.
+
+### Rule 4D-5: No credentials, no auth, no payment, no destructive actions
+
+Phase 4D must not inject credentials, read `.env`, run auth/checkout/payment flows, or perform destructive writes.
+
+**Violation:** Any code that reads `.env`, injects `TEST_USERNAME`/`TEST_PASSWORD` with real values, or executes auth-gated tests (auth execution is not implemented in Phase 4D — planned for a future explicitly approved phase).
+
+### Rule 4D-6: Delivery flags always False
+
+`safe_to_deliver=False`, `approved_for_client_delivery=False`, `client_delivery_created=False` must remain False via `__post_init__` and `from_dict`.
+
+**Violation:** Any `BrowserExecutionReport` or schema path that sets delivery flags to True.
+
+### Rule 4D-7: No npm install, no playwright install
+
+Phase 4D must not run `npm install` or `npx playwright install`. Toolchain setup is Phase 3C responsibility.
+
+**Violation:** Any CLI tool or runner code that calls npm install or playwright install.
+
+---
+
 ## Consequences of rule violations
 
 | If a rule is violated during a run | Required action |

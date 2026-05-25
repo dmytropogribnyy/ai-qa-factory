@@ -453,6 +453,28 @@ Module files: `core/schemas/execution_approval.py`, `core/schemas/evidence.py`,
 | `DeliverySafetyChecklist` | `safe_to_package` | `False` | Yes |
 | `ScenarioBatchEvaluationReport` | `evaluation_performed_without_execution` | `True` | Yes |
 | `ScenarioBatchEvaluationReport` | `external_calls_performed` | `False` | Yes |
+| `BrowserExecutionReport` | `safe_to_deliver` | `False` | Yes (`__post_init__`) |
+| `BrowserExecutionReport` | `approved_for_client_delivery` | `False` | Yes (`__post_init__`) |
+| `BrowserExecutionReport` | `client_delivery_created` | `False` | Yes (`__post_init__`) |
+| `BrowserExecutionReport` | `credentials_used` | `False` | Yes (`__post_init__`) |
+| `BrowserExecutionReport` | `destructive_actions_performed` | `False` | Yes (`__post_init__`) |
+| `BrowserExecutionEvidence` | `client_visible` | `False` | — |
+| `BrowserExecutionEvidence` | `internal_only` | `True` | — |
+
+---
+
+## Phase 4D — Browser Execution schemas
+
+**Module:** `core/schemas/browser_execution.py`
+
+| Class | Description |
+|---|---|
+| `BrowserExecutionApproval` | Records what was approved for a browser execution session. `approved=False` by default. Only set True by CLI approval flags after target validation. |
+| `BrowserExecutionCommand` | A single Playwright command attempt. `executed=False`, `status=skipped` by default. |
+| `BrowserExecutionEvidence` | Reference to evidence collected during execution. `internal_only=True`, `client_visible=False`, `requires_redaction=True` by default. |
+| `BrowserExecutionReport` | Full report of a controlled execution session. Delivery flags forced False by `__post_init__`. `browser_execution_performed` and `playwright_test_execution_performed` may become True only when approved execution actually ran. |
+
+Constants: `EXECUTION_STATUSES`, `COMMAND_STATUSES`, `EVIDENCE_TYPES`, `TARGET_CATEGORIES`, `COMMAND_MODES`
 
 ---
 

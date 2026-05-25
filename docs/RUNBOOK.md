@@ -729,3 +729,110 @@ playwright-report/  node_modules/  real_jobs/  real_sites/
 **Safe to include:** source, `sample_inputs/`, `validation_inputs/`, `docs/`, `tests/`, `requirements.txt`, `README.md`, `.env.example`
 
 If `.env` was accidentally shared: **rotate all API keys immediately.**
+
+---
+
+## 21. Phase 4D: Approved Controlled Demo and Public Read-Only Browser Execution
+
+> **Approval-gated.** No general production execution. No real credentials. No payment/destructive actions. No scraping/crawling/load/security testing. No client delivery.
+
+### Pre-flight approval checklist
+
+Before running any Phase 4D command, confirm:
+
+- [ ] Static scaffold validation passed (`validate_scaffold.py`)
+- [ ] Toolchain validation run (`validate_toolchain.py`)
+- [ ] Target is only: local/localhost, approved demo profile, or `playwright_docs_readonly`
+- [ ] No real credentials used
+- [ ] No general production target
+- [ ] No payment/checkout/order creation
+- [ ] No destructive/admin writes
+- [ ] No scraping/crawling/load/security testing
+- [ ] Evidence will remain internal-only
+- [ ] Client delivery remains blocked
+
+### No-execution (blocked) preview
+
+```bash
+python tools/run_demo_execution.py --project-id <id>
+```
+
+Result: `approved=False`, `execution_status=blocked`, no subprocess called.
+
+### Approved local demo list execution
+
+```bash
+python tools/run_demo_execution.py --project-id <id> \
+  --approve-demo-execution --target-category local --command-mode list
+```
+
+### Approved SauceDemo demo profile execution
+
+```bash
+# List mode (discovery, no browser opened)
+python tools/run_demo_execution.py --project-id <id> \
+  --approve-demo-execution --demo-profile saucedemo_public_demo --command-mode list
+
+# Smoke mode (tests/smoke only, requires dependencies installed)
+python tools/run_demo_execution.py --project-id <id> \
+  --approve-demo-execution --demo-profile saucedemo_public_demo --command-mode smoke
+```
+
+### Approved Playwright.dev public read-only execution
+
+```bash
+# List mode
+python tools/run_demo_execution.py --project-id <id> \
+  --approve-public-readonly-execution --readonly-profile playwright_docs_readonly --command-mode list
+
+# Read-only smoke (tests/smoke only, requires dependencies)
+python tools/run_demo_execution.py --project-id <id> \
+  --approve-public-readonly-execution --readonly-profile playwright_docs_readonly --command-mode readonly_smoke
+```
+
+### Blocked target examples (always rejected)
+
+```bash
+# Alza.sk — always blocked
+python tools/run_demo_execution.py --project-id <id> \
+  --approve-public-readonly-execution --target-category real_public_readonly --base-url https://www.alza.sk
+# → BLOCKED: Alza.sk is always blocked
+
+# Amazon.com — always blocked
+python tools/run_demo_execution.py --project-id <id> \
+  --approve-public-readonly-execution --target-category high_risk_marketplace_readonly --base-url https://www.amazon.com
+# → BLOCKED: high_risk_marketplace_readonly targets are always blocked
+
+# Linear.app — always blocked as task source
+python tools/run_demo_execution.py --project-id <id> \
+  --approve-demo-execution --target-category task_source --base-url https://linear.app/acme/issue/QA-123
+# → BLOCKED: task_source targets are always blocked
+
+# playwright.dev without readonly profile — blocked
+python tools/run_demo_execution.py --project-id <id> \
+  --approve-demo-execution --target-category real_public_readonly
+# → BLOCKED: requires --approve-public-readonly-execution and playwright_docs_readonly profile
+```
+
+### If dependencies/browsers are missing
+
+```
+Approved smoke execution support is implemented, but real smoke was skipped
+because dependencies/browsers are not present.
+```
+
+- Do not run `npm install` or `npx playwright install` automatically.
+- Toolchain setup is Phase 3C responsibility.
+- List-mode smoke and blocked-target smokes still work without dependencies.
+
+### Artifacts generated
+
+```
+outputs/<id>/07_execution/
+  BROWSER_EXECUTION_APPROVAL.json/md
+  BROWSER_EXECUTION_REPORT.json/md
+  BROWSER_COMMAND_LOG.md
+  BROWSER_EVIDENCE_MANIFEST.json/md
+```
+
+All evidence: `internal_only=True`, `client_visible=False`, `requires_redaction=True`. Client delivery remains blocked.

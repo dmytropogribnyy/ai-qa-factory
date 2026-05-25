@@ -600,28 +600,51 @@ No browser execution. No Playwright test execution. No target URL access. No cre
 
 ---
 
-## Phase 4D — Approved Browser Test Execution `[planned]`
+## Phase 4D — Approved Controlled Demo and Public Read-Only Browser Execution `[implemented]`
 
-**Purpose:** Run approved tests, collect evidence, produce internal summary.
-Requires explicit approval checklist per run.
+**Purpose:** Run approval-gated Playwright commands against safe demo/local targets and one explicit public read-only profile. Collect internal evidence. No general production execution.
 
-**Required approvals before execution:**
-- Target URL approval
-- Environment confirmation (staging, not production)
-- Synthetic test accounts confirmed
-- Approval checklist completed (`RUNBOOK.md` section 4)
-- `--approve` flag passed with awareness
+**Approval flags:**
+- `--approve-demo-execution` — allows local/localhost/public_demo_target execution only
+- `--approve-public-readonly-execution` + `--readonly-profile playwright_docs_readonly` — allows playwright.dev read-only smoke only
 
-**Output artifacts (under `outputs/<project_id>/04_execution/` and `05_evidence/`):**
-- Test results (Playwright HTML report, JSONL)
-- Screenshots, traces
-- Evidence artifacts
+**Allowed targets:**
+- `local` / `localhost`
+- `public_demo_target` (saucedemo_public_demo, the_internet_public_demo)
+- `real_public_readonly` only via `playwright_docs_readonly` profile
+
+**Allowed commands (allowlist):**
+- `npx playwright test --list`
+- `npx playwright test tests/smoke --reporter=list`
+- `npx playwright test tests/smoke --reporter=html,list`
+
+**Output artifacts (under `outputs/<project_id>/07_execution/`):**
+- `BROWSER_EXECUTION_APPROVAL.json/.md`
+- `BROWSER_EXECUTION_REPORT.json/.md`
+- `BROWSER_COMMAND_LOG.md`
+- `BROWSER_EVIDENCE_MANIFEST.json/.md`
 
 **Blocked actions (permanent):**
-- No production execution without explicit read-only written approval
-- No payment flows without sandbox written confirmation
-- No credential use without test account approval
-- No destructive actions
+- `alza.sk`, `amazon.com`, `linear.app` always blocked
+- `playwright.dev` blocked without readonly profile + approval
+- `production`, `high_risk_marketplace_readonly`, `task_source` always blocked
+- No real credentials, no auth flows, no payment/checkout, no destructive writes
+- No scraping/crawling/load/security testing
+- No npm install / playwright install
+- No client delivery (`safe_to_deliver=False`, `approved_for_client_delivery=False`)
+
+**Acceptance criteria:**
+- No subprocess without explicit approval flag
+- No execution against blocked targets regardless of approval
+- All delivery flags hardcoded False via `__post_init__`
+- Evidence internal-only by default
+- All existing tests pass; new Phase 4D tests pass
+
+**What Phase 4D is NOT:**
+- Not general production/client execution (→ Phase 5A+)
+- Not auth/credential execution (→ future explicit phase)
+- Not payment/checkout execution (→ future explicit phase)
+- Not final client delivery
 
 ---
 

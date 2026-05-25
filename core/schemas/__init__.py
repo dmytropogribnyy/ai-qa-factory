@@ -117,6 +117,12 @@ from core.schemas.scenario_evaluation import (
     ScenarioEvaluationResult,
     ScenarioBatchEvaluationReport,
 )
+from core.schemas.browser_execution import (
+    BrowserExecutionApproval,
+    BrowserExecutionCommand,
+    BrowserExecutionEvidence,
+    BrowserExecutionReport,
+)
 
 __all__ = [
     # Base
@@ -270,4 +276,9 @@ __all__ = [
     # Scenario Evaluation (Phase 4ABC)
     "ScenarioEvaluationResult",
     "ScenarioBatchEvaluationReport",
+    # Browser Execution (Phase 4D)
+    "BrowserExecutionApproval",
+    "BrowserExecutionCommand",
+    "BrowserExecutionEvidence",
+    "BrowserExecutionReport",
 ]

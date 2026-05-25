@@ -211,6 +211,18 @@ documented outside the system.
 - **Do not fetch URLs in scenario evaluation** — `ScenarioBatchEvaluator` reads local fixture files only
 - **Do not execute any code in scenario evaluation** — evaluation is static text analysis only
 
+### Controlled browser execution rules (Phase 4D)
+
+- **Do not run demo execution without `--approve-demo-execution`** — `BrowserExecutionRunner` must gate on explicit approval flag
+- **Do not run public-readonly execution without `--approve-public-readonly-execution` and `readonly_profile=playwright_docs_readonly`** — playwright.dev smoke is only allowed with both conditions present
+- **Do not change target category to bypass safety** — category classification must be based on actual target, not adjusted to pass validation
+- **Do not run against Alza.sk, Amazon.com, or Linear.app** — these are always hard-blocked regardless of approval
+- **Do not run against production/high-risk/task-source targets** — these are blocked even with approval flags
+- **Do not run smoke-mode unless explicitly requested** — list-mode is the safe default; smoke requires explicit `--command-mode smoke` flag
+- **Do not use real credentials in Phase 4D** — `TEST_USERNAME` and `TEST_PASSWORD` must be empty in safe env
+- **Do not run npm install or playwright install** — toolchain setup is Phase 3C responsibility
+- **Do not set delivery flags True** — `safe_to_deliver`, `approved_for_client_delivery`, `client_delivery_created` are hardcoded False
+
 ### Architecture integrity
 
 - **Do not replace `core/orchestrator.py`** without explicit architecture review

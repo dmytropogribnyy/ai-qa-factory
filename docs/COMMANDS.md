@@ -1054,6 +1054,57 @@ Exit codes: `0` = all pass/warnings. `1` = blocked scenarios found.
 
 ---
 
+## Phase 4D — Controlled Browser Execution `[implemented]`
+
+### `python tools/run_demo_execution.py` — Approval-gated controlled browser execution
+
+**Version:** v5.3.0 | **Phase:** 4D | **Safety:** Requires explicit approval flag
+
+```bash
+# No execution — blocked preview (default, no approval)
+python tools/run_demo_execution.py --project-id <id>
+
+# Approved local/localhost list execution
+python tools/run_demo_execution.py --project-id <id> --approve-demo-execution --target-category local --command-mode list
+
+# Approved SauceDemo list execution
+python tools/run_demo_execution.py --project-id <id> --approve-demo-execution --demo-profile saucedemo_public_demo --command-mode list
+
+# Approved SauceDemo smoke execution
+python tools/run_demo_execution.py --project-id <id> --approve-demo-execution --demo-profile saucedemo_public_demo --command-mode smoke
+
+# Approved Playwright.dev read-only list execution
+python tools/run_demo_execution.py --project-id <id> --approve-public-readonly-execution --readonly-profile playwright_docs_readonly --command-mode list
+
+# Approved Playwright.dev read-only smoke execution
+python tools/run_demo_execution.py --project-id <id> --approve-public-readonly-execution --readonly-profile playwright_docs_readonly --command-mode readonly_smoke
+
+# JSON output
+python tools/run_demo_execution.py --project-id <id> --json
+```
+
+**Approval flags:**
+
+| Flag | Effect |
+|------|--------|
+| _(none)_ | No execution. Commands blocked. `approved=False`. |
+| `--approve-demo-execution` | Allows local/localhost/public_demo_target execution only |
+| `--approve-public-readonly-execution` | Allows `playwright_docs_readonly` read-only smoke only |
+
+**Supported demo profiles (`--demo-profile`):** `saucedemo_public_demo`, `the_internet_public_demo`, `local`
+
+**Supported read-only profile (`--readonly-profile`):** `playwright_docs_readonly` (playwright.dev only)
+
+**Command modes:** `list` (discovery, no browser), `smoke` (tests/smoke only), `readonly_smoke` (tests/smoke read-only)
+
+**Always-blocked targets:** `alza.sk`, `amazon.com`, `linear.app`, `playwright.dev` without readonly profile, OAuth/payment/n8n scenarios
+
+**Safety invariants (always False):** `safe_to_deliver`, `approved_for_client_delivery`, `client_delivery_created`, `credentials_used`, `destructive_actions_performed`
+
+Exit codes: `0` = success. `1` = blocked. `2` = error.
+
+---
+
 ## Commands that do NOT exist
 
 | Wrong | Correct |

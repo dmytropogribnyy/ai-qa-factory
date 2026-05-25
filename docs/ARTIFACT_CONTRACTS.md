@@ -329,7 +329,8 @@ outputs/<project_id>/
     04_execution_plan/   ← Execution readiness artifacts (Phase 4A — implemented)
     05_evidence/         ← Evidence foundation (Phase 4B — implemented)
     06_client_draft/     ← Draft reports, delivery preview (Phase 4C — implemented)
-        packages/        ← Zipped delivery packages (require delivery approval — planned Phase 4D+)
+        packages/        ← Zipped delivery packages (require delivery approval — planned Phase 5A+)
+    07_execution/        ← Controlled browser execution artifacts (Phase 4D — implemented)
     99_internal/         ← Internal notes, quality gate reports, debug logs
         scenario_evaluation/  ← Scenario batch evaluation (Phase 4ABC — implemented)
 ```
@@ -345,9 +346,11 @@ outputs/<project_id>/
 | `04_execution_plan/` | No | No | Readiness artifacts — internal |
 | `05_evidence/` | No | Internal only by default | Evidence records (client_visible=False) |
 | `06_client_draft/` | No | After human review only | DRAFT — not approved for delivery |
+| `07_execution/` | No | Never — internal only | Browser execution approval, report, command log, evidence manifest |
 | `99_internal/` | No | Never | Internal quality gates, debug, scenario evaluation |
 
 **`06_client_draft/` is never sent without completing `DELIVERY_SAFETY_CHECKLIST.md`.**
+**`07_execution/` is always internal-only. Evidence remains `client_visible=False` until explicit future approval.**
 **`99_internal/` must never be included in client delivery packages.**
 
 ---

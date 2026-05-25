@@ -601,6 +601,50 @@ class WorkbenchController:
         )
 
     # ------------------------------------------------------------------
+    # Phase 4D — Controlled Browser Execution API
+    # ------------------------------------------------------------------
+
+    def run_controlled_browser_execution(
+        self,
+        project_id: str,
+        scaffold_root=None,
+        approve_demo: bool = False,
+        approve_public_readonly: bool = False,
+        target_category=None,
+        base_url=None,
+        demo_profile=None,
+        readonly_profile=None,
+        command_mode: str = "list",
+        timeout: int = 120,
+    ):
+        """Run approval-gated controlled browser execution and return BrowserExecutionReport."""
+        from core.browser_execution_runner import BrowserExecutionRunner
+        runner = BrowserExecutionRunner(outputs_root=self._outputs_root)
+        return runner.run_browser_execution(
+            project_id=project_id,
+            scaffold_root=scaffold_root,
+            approve_demo=approve_demo,
+            approve_public_readonly=approve_public_readonly,
+            target_category=target_category,
+            base_url=base_url,
+            demo_profile=demo_profile,
+            readonly_profile=readonly_profile,
+            command_mode=command_mode,
+            timeout=timeout,
+        )
+
+    def render_browser_execution_artifacts(
+        self,
+        approval,
+        report,
+        project_id: str,
+    ) -> dict:
+        """Write browser execution artifacts to outputs/<project_id>/07_execution/."""
+        from core.browser_execution_runner import BrowserExecutionRunner
+        runner = BrowserExecutionRunner(outputs_root=self._outputs_root)
+        return runner.render_execution_artifacts(approval, report, project_id)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
