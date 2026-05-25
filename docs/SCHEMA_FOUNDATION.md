@@ -1,8 +1,8 @@
 # Schema Foundation — Guided QA Automation Workbench
 
-**Version:** 5.6.0  
+**Version:** 5.7.0  
 **Updated:** 2026-05-25  
-**Phase:** 3C — Schema foundations + Phase 3A Framework Scaffold schema + Phase 3B Scaffold Validation schemas + Phase 3C Toolchain Validation schemas
+**Phase:** 4ABC — Schema foundations + Phase 3A/3B/3C schemas + Phase 4ABC Readiness/Evidence/Reporting/Delivery/Scenario schemas
 
 ---
 
@@ -380,6 +380,79 @@ All schemas have round-trip tests in `tests/test_schema_foundations.py`. Coverag
 - Defaults: `dry_run`, `approved`, `mode`, `all_passed`, counter fields
 
 Run: `python -m pytest tests/test_schema_foundations.py -v`
+
+---
+
+## Phase 4ABC — Readiness, Evidence, Reporting, Delivery Preview, Scenario Evaluation schemas
+
+Module files: `core/schemas/execution_approval.py`, `core/schemas/evidence.py`,
+`core/schemas/reporting.py`, `core/schemas/delivery_preview.py`, `core/schemas/scenario_evaluation.py`
+
+### Execution approval schemas (Phase 4A)
+
+| Class | Description |
+|---|---|
+| `ExecutionApprovalRequirement` | A single approval requirement with risk level and `blocks_execution`. `approved=False` by default. |
+| `ExecutionApprovalChecklist` | Aggregated checklist. `approved_for_execution=False`, `approved_for_browser_execution=False`, `approved_for_client_delivery=False` always. `from_dict` forces all three back to `False`. |
+| `ExecutionReadinessReport` | Readiness summary. All `approved_for_*` flags are `False` by default. `from_dict` forces all back to `False`. |
+
+### Evidence schemas (Phase 4B)
+
+| Class | Description |
+|---|---|
+| `EvidenceRecord` | A single evidence record. `client_visible=False`, `internal_only=True`, `requires_redaction=True` by default. |
+| `EvidenceCollection` | Full evidence collection. `ready_for_client_review=False` always. `from_dict` forces this back to `False`. |
+| `EvidenceQualityGate` | Quality gate. `approved_for_client_view=False` always. `from_dict` forces this back to `False`. |
+| `EvidenceRedactionReport` | Redaction status. `client_visible_blocked=True` by default. |
+
+### Reporting schemas (Phase 4C)
+
+| Class | Description |
+|---|---|
+| `ReportSection` | A section in a report. `client_visible=False`, `internal_only=True`, `requires_review=True` by default. |
+| `ReportDraft` | A draft report. `status="draft"`, `approved_for_delivery=False` always. `from_dict` forces `approved_for_delivery=False`. |
+| `ReportQualityChecklist` | Quality gate. `client_ready=False`, `approval_checked=False`, `safe_to_deliver=False` always. `from_dict` forces all three. |
+| `DeliveryNoteDraft` | Delivery note draft. `approved_for_delivery=False` always. `from_dict` forces this. |
+
+### Delivery preview schemas (Phase 4C)
+
+| Class | Description |
+|---|---|
+| `DeliveryPreviewItem` | A single delivery candidate or exclusion. `approved_for_delivery=False` by default. |
+| `DeliveryPackagePreview` | Preview manifest. `package_created=False`, `zip_created=False`, `approved_for_delivery=False` always. `from_dict` forces all three. |
+| `DeliverySafetyChecklist` | Safety gate. `approved_for_delivery=False`, `safe_to_package=False` always. `from_dict` forces both. |
+
+### Scenario evaluation schemas (Phase 4ABC)
+
+| Class | Description |
+|---|---|
+| `ScenarioEvaluationResult` | Result for a single fixture file. `no_execution_confirmed=False` until confirmed by content scan. |
+| `ScenarioBatchEvaluationReport` | Batch evaluation report. `evaluation_performed_without_execution=True`, `external_calls_performed=False` always. `from_dict` enforces both. |
+
+### Safety defaults — Phase 4ABC
+
+| Schema | Field | Default | from_dict enforced? |
+|---|---|---|---|
+| `ExecutionApprovalChecklist` | `approved_for_execution` | `False` | Yes |
+| `ExecutionApprovalChecklist` | `approved_for_browser_execution` | `False` | Yes |
+| `ExecutionApprovalChecklist` | `approved_for_client_delivery` | `False` | Yes |
+| `ExecutionReadinessReport` | all `approved_for_*` flags | `False` | Yes (all 6) |
+| `EvidenceRecord` | `client_visible` | `False` | — |
+| `EvidenceCollection` | `ready_for_client_review` | `False` | Yes |
+| `EvidenceQualityGate` | `approved_for_client_view` | `False` | Yes |
+| `EvidenceRedactionReport` | `client_visible_blocked` | `True` | — |
+| `ReportDraft` | `approved_for_delivery` | `False` | Yes |
+| `ReportQualityChecklist` | `client_ready` | `False` | Yes |
+| `ReportQualityChecklist` | `safe_to_deliver` | `False` | Yes |
+| `ReportQualityChecklist` | `approval_checked` | `False` | Yes |
+| `DeliveryNoteDraft` | `approved_for_delivery` | `False` | Yes |
+| `DeliveryPackagePreview` | `package_created` | `False` | Yes |
+| `DeliveryPackagePreview` | `zip_created` | `False` | Yes |
+| `DeliveryPackagePreview` | `approved_for_delivery` | `False` | Yes |
+| `DeliverySafetyChecklist` | `approved_for_delivery` | `False` | Yes |
+| `DeliverySafetyChecklist` | `safe_to_package` | `False` | Yes |
+| `ScenarioBatchEvaluationReport` | `evaluation_performed_without_execution` | `True` | Yes |
+| `ScenarioBatchEvaluationReport` | `external_calls_performed` | `False` | Yes |
 
 ---
 

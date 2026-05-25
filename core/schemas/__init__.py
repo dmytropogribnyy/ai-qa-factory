@@ -91,6 +91,32 @@ from core.schemas.toolchain_validation import (
     ToolchainApprovalRecord,
     ToolchainValidationReport,
 )
+from core.schemas.execution_approval import (
+    ExecutionApprovalRequirement,
+    ExecutionApprovalChecklist,
+    ExecutionReadinessReport,
+)
+from core.schemas.evidence import (
+    EvidenceRecord,
+    EvidenceCollection,
+    EvidenceQualityGate,
+    EvidenceRedactionReport,
+)
+from core.schemas.reporting import (
+    ReportSection,
+    ReportDraft,
+    ReportQualityChecklist,
+    DeliveryNoteDraft,
+)
+from core.schemas.delivery_preview import (
+    DeliveryPreviewItem,
+    DeliveryPackagePreview,
+    DeliverySafetyChecklist,
+)
+from core.schemas.scenario_evaluation import (
+    ScenarioEvaluationResult,
+    ScenarioBatchEvaluationReport,
+)
 
 __all__ = [
     # Base
@@ -223,4 +249,25 @@ __all__ = [
     "ToolchainCommandResult",
     "ToolchainApprovalRecord",
     "ToolchainValidationReport",
+    # Execution Approval (Phase 4A)
+    "ExecutionApprovalRequirement",
+    "ExecutionApprovalChecklist",
+    "ExecutionReadinessReport",
+    # Evidence (Phase 4B)
+    "EvidenceRecord",
+    "EvidenceCollection",
+    "EvidenceQualityGate",
+    "EvidenceRedactionReport",
+    # Reporting (Phase 4C)
+    "ReportSection",
+    "ReportDraft",
+    "ReportQualityChecklist",
+    "DeliveryNoteDraft",
+    # Delivery Preview (Phase 4C)
+    "DeliveryPreviewItem",
+    "DeliveryPackagePreview",
+    "DeliverySafetyChecklist",
+    # Scenario Evaluation (Phase 4ABC)
+    "ScenarioEvaluationResult",
+    "ScenarioBatchEvaluationReport",
 ]

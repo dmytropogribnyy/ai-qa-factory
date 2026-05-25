@@ -1,7 +1,7 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 5.1.0  
-**Updated:** 2026-05-24
+**Version:** 5.2.0  
+**Updated:** 2026-05-25
 
 Status labels:
 - `[implemented]` — works now
@@ -904,6 +904,153 @@ python main.py agent-handoff-report --project-id <id>
 
 Produces: handoff report pre-filled from current project artifacts, using
 the `AGENT_HANDOFF_TEMPLATE.md` structure.
+
+---
+
+## Phase 4ABC — Readiness, Evidence, Reporting, Delivery Preview, Scenario Evaluation
+
+> No execution, no browser, no Playwright test runs, no credentials, no external calls.
+> All commands read local artifacts only and produce local draft/preview/evaluation artifacts.
+
+### `python tools/plan_execution.py` `[implemented]`
+
+Inspect existing local project artifacts and generate an execution approval checklist
+and readiness report. All `approved_for_*` flags remain `False` by default.
+
+```bash
+python tools/plan_execution.py --project-id <id>
+python tools/plan_execution.py --project-id <id> --no-write
+python tools/plan_execution.py --project-id <id> --json
+```
+
+**Outputs** (written to `outputs/<id>/04_execution_plan/`):
+- `EXECUTION_APPROVAL_CHECKLIST.json` — `ExecutionApprovalChecklist` schema
+- `EXECUTION_APPROVAL_CHECKLIST.md` — human-readable checklist with approval items
+- `EXECUTION_READINESS_REPORT.json` — `ExecutionReadinessReport` schema
+- `EXECUTION_READINESS_REPORT.md` — readiness summary with blockers and required approvals
+- `EVIDENCE_COLLECTION_PLAN.md` — plan for future evidence collection
+- `EXECUTION_BOUNDARIES.md` — what has/has not been done, what requires approval
+
+**Safety invariants:**
+- `approved_for_execution=False`
+- `approved_for_browser_execution=False`
+- `approved_for_client_delivery=False`
+- No execution performed, no URL fetching, no credentials used.
+
+---
+
+### `python tools/build_evidence_foundation.py` `[implemented]`
+
+Register existing local validation artifacts as internal evidence records.
+Creates evidence directory structure, quality gate, and redaction report.
+
+```bash
+python tools/build_evidence_foundation.py --project-id <id>
+python tools/build_evidence_foundation.py --project-id <id> --no-write
+python tools/build_evidence_foundation.py --project-id <id> --json
+```
+
+**Outputs** (written to `outputs/<id>/05_evidence/`):
+- `EVIDENCE_MANIFEST.json` — `EvidenceCollection` schema
+- `EVIDENCE_MANIFEST.md` — human-readable evidence registry
+- `EVIDENCE_QUALITY_GATE.json` — `EvidenceQualityGate` schema
+- `EVIDENCE_QUALITY_GATE.md` — quality gate status
+- `EVIDENCE_REDACTION_REPORT.json` — `EvidenceRedactionReport` schema
+- `EVIDENCE_REDACTION_REPORT.md` — redaction status
+- `INTERNAL_EVIDENCE_SUMMARY.md` — internal evidence overview
+
+**Safety invariants:**
+- `client_visible=False` for all evidence records
+- `approved_for_client_view=False`
+- `ready_for_client_review=False`
+- No browser evidence collection, no Playwright, no URL fetching, no credentials.
+
+---
+
+### `python tools/build_report_drafts.py` `[implemented]`
+
+Generate internal QA summary draft, client report draft, delivery note draft,
+and report quality checklist from local artifacts.
+
+```bash
+python tools/build_report_drafts.py --project-id <id>
+python tools/build_report_drafts.py --project-id <id> --no-write
+python tools/build_report_drafts.py --project-id <id> --json
+```
+
+**Outputs** (written to `outputs/<id>/06_client_draft/`):
+- `INTERNAL_QA_SUMMARY_DRAFT.json` / `.md` — internal summary (not client-facing)
+- `CLIENT_REPORT_DRAFT.json` / `.md` — draft client report (DRAFT, not approved)
+- `DELIVERY_NOTE_DRAFT.json` / `.md` — draft delivery note
+- `REPORT_QUALITY_CHECKLIST.json` / `.md` — quality gate for report delivery
+
+**Safety invariants:**
+- `approved_for_delivery=False`
+- `client_ready=False`
+- `safe_to_deliver=False`
+- Client report clearly states: DRAFT, no browser execution, no target application testing.
+
+---
+
+### `python tools/build_delivery_preview.py` `[implemented]`
+
+Inspect local artifacts and build a delivery package preview manifest.
+No zip/package creation. No approved_for_delivery.
+
+```bash
+python tools/build_delivery_preview.py --project-id <id>
+python tools/build_delivery_preview.py --project-id <id> --no-write
+python tools/build_delivery_preview.py --project-id <id> --json
+```
+
+**Outputs** (written to `outputs/<id>/06_client_draft/`):
+- `DELIVERY_PACKAGE_PREVIEW.json` — `DeliveryPackagePreview` schema
+- `DELIVERY_PACKAGE_PREVIEW.md` — preview manifest with candidate/excluded items
+- `DELIVERY_SAFETY_CHECKLIST.json` — `DeliverySafetyChecklist` schema
+- `DELIVERY_SAFETY_CHECKLIST.md` — safety gate before any packaging
+
+**Safety invariants:**
+- `package_created=False`
+- `zip_created=False`
+- `approved_for_delivery=False`
+- `safe_to_package=False`
+- No files copied, archived, or packaged.
+
+---
+
+### `python tools/evaluate_scenarios.py` `[implemented]`
+
+Read local fixture files from `fixtures/client_scenarios/` and evaluate
+safety expectations, category-specific rules, and structural completeness.
+
+```bash
+python tools/evaluate_scenarios.py --project-id <id>
+python tools/evaluate_scenarios.py --project-id <id> --no-write
+python tools/evaluate_scenarios.py --project-id <id> --json
+python tools/evaluate_scenarios.py --project-id <id> --fixtures-root fixtures/client_scenarios
+```
+
+**Outputs** (written to `outputs/<id>/99_internal/scenario_evaluation/`):
+- `SCENARIO_BATCH_EVALUATION.json` — `ScenarioBatchEvaluationReport` schema
+- `SCENARIO_BATCH_EVALUATION.md` — evaluation summary with per-scenario results
+
+**Checks per scenario:**
+- Required sections present
+- No real secrets in synthetic fixtures
+- Public demo targets: approval-required statement present
+- Real public readonly: read-only and production warnings present
+- High-risk marketplace: scraping/anti-bot/CAPTCHA block rules present
+- Linear fixtures: task_source/task_url rule present
+- OAuth fixtures: dedicated test account / storageState present
+- Payment fixtures: sandbox confirmation present
+- n8n fixtures: outbound calls blocked
+
+**Safety invariants:**
+- `evaluation_performed_without_execution=True`
+- `external_calls_performed=False`
+- Local fixture files read only. No URL fetching. No execution.
+
+Exit codes: `0` = all pass/warnings. `1` = blocked scenarios found.
 
 ---
 

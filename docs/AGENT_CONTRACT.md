@@ -1,8 +1,8 @@
 # Agent Operating Contract — Guided QA Automation Workbench
 
-**Version:** 5.3.0
+**Version:** 5.4.0
 **Updated:** 2026-05-25
-**Phase:** 2B-AGENT
+**Phase:** 4ABC
 
 This document defines the operating contract for any agent — Claude Code, ChatGPT/GPT,
 future local automation, or any AI assistant — that edits, reviews, or runs code in this
@@ -197,6 +197,19 @@ documented outside the system.
 - **Do not change the four safety invariants** — `safe_to_execute_tests`, `browser_execution_performed`, `external_url_used`, `credentials_used` are hardcoded `False` and must never be set to `True` in `ToolchainValidator`
 - **Do not pass `os.environ` directly to subprocess** — always use `_build_safe_env()` which strips sensitive keys and applies safe overrides
 - **Do not interpret toolchain pass as test execution permission** — `validation_status="pass"` means local toolchain commands succeeded; it does not authorize running browser tests or accessing target URLs
+
+### Readiness, evidence, reporting, and delivery rules (Phase 4ABC)
+
+- **Do not mark `approved_for_execution=True`** — execution approval requires explicit human sign-off outside the system
+- **Do not mark `approved_for_browser_execution=True`** — browser execution is not authorized in Phase 4ABC
+- **Do not mark `approved_for_client_delivery=True`** — client delivery requires human review and explicit approval
+- **Do not set `safe_to_deliver=True`** or **`safe_to_package=True`** — delivery safety checklist must be completed by a human
+- **Do not remove DRAFT disclaimers from client-facing report drafts** — all Phase 4ABC reports are drafts only
+- **Do not convert delivery preview into a package** — `DeliveryPreviewBuilder` produces manifests only; no zip/archive
+- **Do not mark evidence `client_visible=True`** without redaction confirmation and human approval
+- **Do not set `approved_for_client_view=True`** — evidence quality gate requires human review
+- **Do not fetch URLs in scenario evaluation** — `ScenarioBatchEvaluator` reads local fixture files only
+- **Do not execute any code in scenario evaluation** — evaluation is static text analysis only
 
 ### Architecture integrity
 

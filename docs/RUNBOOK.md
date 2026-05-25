@@ -1,6 +1,6 @@
 # Operational Runbook — Guided QA Automation Workbench
 
-**Version:** 5.5.0  
+**Version:** 5.6.0  
 **Updated:** 2026-05-25
 
 > **AI drafts. Senior QA decides.**
@@ -635,6 +635,86 @@ See [`docs/AGENT_CONTRACT.md`](AGENT_CONTRACT.md) for the full forbidden actions
 ### Credential and external call policy
 
 Credentials and external API calls are **not permitted in the current phase**. If a credential-like input is detected during classification, the workbench redacts it and outputs a notice. Any real credential use requires explicit written approval from the human operator and is gated to a future phase (Phase 2+).
+
+---
+
+## 20. Phase 4ABC: Readiness, Evidence, Reporting, Delivery Preview, Scenario Evaluation
+
+> **No execution in Phase 4ABC.** No browser, no Playwright tests, no credentials,
+> no external calls. All commands read local artifacts and produce local draft/preview/evaluation artifacts.
+
+### Phase 4A: Execution Readiness Planning
+
+```bash
+python tools/plan_execution.py --project-id <id>
+```
+
+Inspects existing local artifacts (blueprint, strategy, scaffold, validation reports) and generates:
+- `04_execution_plan/EXECUTION_APPROVAL_CHECKLIST.json/.md` — what must be approved before execution
+- `04_execution_plan/EXECUTION_READINESS_REPORT.json/.md` — readiness status with blockers
+- `04_execution_plan/EVIDENCE_COLLECTION_PLAN.md` — plan for future evidence collection
+- `04_execution_plan/EXECUTION_BOUNDARIES.md` — what has/has not been done
+
+All `approved_for_execution`, `approved_for_browser_execution`, and `approved_for_client_delivery`
+flags remain `False`. Human review and explicit approval required for each.
+
+### Phase 4B: Evidence Foundation
+
+```bash
+python tools/build_evidence_foundation.py --project-id <id>
+```
+
+Registers existing local validation artifacts as internal evidence records:
+- `05_evidence/EVIDENCE_MANIFEST.json/.md` — registry of all evidence records
+- `05_evidence/EVIDENCE_QUALITY_GATE.json/.md` — quality gate (not approved for client view)
+- `05_evidence/EVIDENCE_REDACTION_REPORT.json/.md` — redaction status
+- `05_evidence/INTERNAL_EVIDENCE_SUMMARY.md` — internal overview
+
+Evidence is **internal-only by default** (`client_visible=False`). `approved_for_client_view=False`.
+No real browser/execution evidence exists until Phase 4A+ approved execution.
+
+### Phase 4C: Report Drafts
+
+```bash
+python tools/build_report_drafts.py --project-id <id>
+python tools/build_delivery_preview.py --project-id <id>
+```
+
+Builds draft reports and a delivery preview manifest:
+- `06_client_draft/INTERNAL_QA_SUMMARY_DRAFT.md` — internal summary
+- `06_client_draft/CLIENT_REPORT_DRAFT.md` — **DRAFT** client report (not approved)
+- `06_client_draft/DELIVERY_NOTE_DRAFT.md` — draft delivery note
+- `06_client_draft/REPORT_QUALITY_CHECKLIST.md` — quality gate for delivery
+- `06_client_draft/DELIVERY_PACKAGE_PREVIEW.md` — what would be included in a future package
+- `06_client_draft/DELIVERY_SAFETY_CHECKLIST.md` — safety gate before packaging
+
+All reports are marked **DRAFT — NOT APPROVED FOR DELIVERY**.
+`client_ready=False`. `safe_to_deliver=False`. `safe_to_package=False`.
+No zip or package is created.
+
+### Phase 4ABC: Scenario Batch Evaluation
+
+```bash
+python tools/evaluate_scenarios.py --project-id <id>
+```
+
+Reads local `fixtures/client_scenarios/**/*.md` and evaluates safety expectations:
+- `99_internal/scenario_evaluation/SCENARIO_BATCH_EVALUATION.json/.md`
+
+`evaluation_performed_without_execution=True`. `external_calls_performed=False`.
+No URL fetching. No execution. Internal only.
+
+### Safety Rules for Phase 4ABC
+
+- No browser execution is performed.
+- No Playwright tests are run.
+- No target URL is contacted.
+- No credentials are used.
+- No external APIs are called.
+- No zip/package is created.
+- No content is approved for client delivery.
+- Evidence is internal-only by default.
+- Client reports are draft-only.
 
 ---
 

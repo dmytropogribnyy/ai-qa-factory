@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.6.0
+**Version:** 5.7.0
 **Updated:** 2026-05-25
-**Phase:** 3C
+**Phase:** 4ABC
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -530,7 +530,77 @@ execution, no external URLs, no credentials — ever.
 
 ---
 
-## Phase 4A — Evidence and Reporting `[planned]`
+## Phase 4ABC — Readiness, Evidence Foundation, Report Drafts, Delivery Preview, Scenario Evaluation `[implemented]`
+
+**Purpose:** Prepare for future approved execution by generating readiness artifacts,
+evidence foundation, draft reports, delivery preview, and scenario evaluation.
+No browser execution. No Playwright test execution. No target URL access. No credentials.
+
+**Inputs:**
+- `outputs/<id>/00_project/PROJECT_BLUEPRINT.json` (Phase 2B)
+- `outputs/<id>/02_strategy/QA_STRATEGY.json` (Phase 2C)
+- `outputs/<id>/03_framework/playwright/FRAMEWORK_SCAFFOLD.json` (Phase 3A)
+- `outputs/<id>/03_framework/playwright/STATIC_VALIDATION_REPORT.json` (Phase 3B)
+- `outputs/<id>/03_framework/playwright/TOOLCHAIN_VALIDATION_REPORT.json` (Phase 3C)
+- `fixtures/client_scenarios/**/*.md` (Phase 3B-SCENARIOS)
+
+**Output artifacts:**
+- `04_execution_plan/` — approval checklist, readiness report, boundaries, evidence plan
+- `05_evidence/` — evidence manifest, quality gate, redaction report, internal summary
+- `06_client_draft/` — internal QA summary, client report draft, delivery note, quality checklist, delivery preview, safety checklist
+- `99_internal/scenario_evaluation/` — scenario batch evaluation
+
+**CLI tools:**
+- `python tools/plan_execution.py --project-id <id>`
+- `python tools/build_evidence_foundation.py --project-id <id>`
+- `python tools/build_report_drafts.py --project-id <id>`
+- `python tools/build_delivery_preview.py --project-id <id>`
+- `python tools/evaluate_scenarios.py --project-id <id>`
+
+**Blocked actions (permanent in this phase):**
+- No browser execution
+- No Playwright test execution
+- No target URL fetching
+- No credential use
+- No external API calls
+- No zip/package creation
+- No marking `approved_for_execution=True`
+- No marking `approved_for_client_delivery=True`
+- No marking `safe_to_deliver=True`
+
+**Safety invariants (always False):**
+- `approved_for_execution=False`
+- `approved_for_browser_execution=False`
+- `approved_for_client_delivery=False`
+- `client_visible=False` (evidence records)
+- `approved_for_client_view=False`
+- `safe_to_deliver=False`
+- `safe_to_package=False`
+- `package_created=False`
+- `zip_created=False`
+- `external_calls_performed=False` (scenario evaluation)
+- `evaluation_performed_without_execution=True` (scenario evaluation)
+
+**New schemas:**
+- `ExecutionApprovalRequirement`, `ExecutionApprovalChecklist`, `ExecutionReadinessReport` (Phase 4A)
+- `EvidenceRecord`, `EvidenceCollection`, `EvidenceQualityGate`, `EvidenceRedactionReport` (Phase 4B)
+- `ReportSection`, `ReportDraft`, `ReportQualityChecklist`, `DeliveryNoteDraft` (Phase 4C)
+- `DeliveryPreviewItem`, `DeliveryPackagePreview`, `DeliverySafetyChecklist` (Phase 4C)
+- `ScenarioEvaluationResult`, `ScenarioBatchEvaluationReport` (Phase 4ABC)
+
+**Acceptance criteria:**
+- All Phase 4ABC tests pass
+- docs_audit passes, agent_readiness_audit passes
+- No URL fetching, no browser execution, no Playwright test execution
+- No credential use, no external calls
+- All approved_for_* flags False by default
+- Evidence internal-only by default
+- Client reports draft-only, not approved for delivery
+- Delivery preview is preview-only, no packaging
+
+---
+
+## Phase 4D — Approved Browser Test Execution `[planned]`
 
 **Purpose:** Run approved tests, collect evidence, produce internal summary.
 Requires explicit approval checklist per run.
@@ -545,7 +615,7 @@ Requires explicit approval checklist per run.
 **Output artifacts (under `outputs/<project_id>/04_execution/` and `05_evidence/`):**
 - Test results (Playwright HTML report, JSONL)
 - Screenshots, traces
-- `EVIDENCE.md`
+- Evidence artifacts
 
 **Blocked actions (permanent):**
 - No production execution without explicit read-only written approval

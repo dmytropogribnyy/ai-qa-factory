@@ -1,7 +1,7 @@
 # Safety Rules — Guided QA Automation Workbench
 
-**Version:** 5.1.0  
-**Updated:** 2026-05-24
+**Version:** 5.2.0  
+**Updated:** 2026-05-25
 
 These rules are non-negotiable. No flag, no argument, and no configuration overrides them without an explicit human decision documented outside the system.
 
@@ -391,6 +391,61 @@ Integration delivery (Google Drive upload, Jira ticket creation, Slack message) 
 ### AI fallback events should trigger human review
 
 When `AIFallbackEvent` is recorded (primary LLM unavailable, fallback used), the output quality may be affected. Any integration event generated from fallback output must be flagged and reviewed before delivery.
+
+---
+
+## Readiness, Evidence, Reporting, and Delivery Preview safety (Phase 4ABC)
+
+These rules apply to Phase 4ABC modules and CLI tools:
+`ExecutionReadinessPlanner`, `EvidenceManager`, `ReportDraftBuilder`,
+`DeliveryPreviewBuilder`, `ScenarioBatchEvaluator`.
+
+### No execution in Phase 4ABC
+
+Phase 4ABC is readiness/foundation/draft/preview/evaluation only.
+No browser execution, no Playwright tests, no target URL fetching, no credential use.
+
+**Violation:** Any Phase 4ABC code path that opens a browser, runs Playwright, or contacts a target URL.
+
+### `approved_for_execution` and `approved_for_browser_execution` are always `False`
+
+In Phase 4ABC, these flags default to `False` and must not be set to `True`.
+`ExecutionReadinessReport.from_dict` explicitly forces these back to `False` to prevent
+deserialized data from overriding them.
+
+**Violation:** Any Phase 4ABC code that sets `approved_for_execution=True` without a future explicitly approved execution phase.
+
+### Evidence is internal-only by default
+
+`EvidenceManager` always sets `client_visible=False` on new evidence records.
+`EvidenceCollection.ready_for_client_review=False` always.
+`EvidenceQualityGate.approved_for_client_view=False` always.
+
+**Violation:** Any code that sets `client_visible=True` on evidence without redaction confirmation.
+
+### Reports are draft-only and not approved for delivery
+
+`ReportDraftBuilder` never sets `approved_for_delivery=True`.
+`ReportQualityChecklist.client_ready=False` and `safe_to_deliver=False` always in Phase 4ABC.
+Client report must always contain a DRAFT disclaimer and a "no browser execution" statement.
+
+**Violation:** Any code that sets `approved_for_delivery=True` or `safe_to_deliver=True` without explicit human approval.
+
+### Delivery preview never creates packages or zips
+
+`DeliveryPreviewBuilder` inspects artifacts and builds a manifest only.
+`package_created=False`, `zip_created=False`, `safe_to_package=False` always.
+No files are copied, archived, or sent.
+
+**Violation:** Any code that creates a zip file, tar archive, or copies artifacts to a delivery package in Phase 4ABC.
+
+### Scenario evaluation reads local fixtures only
+
+`ScenarioBatchEvaluator` reads only `fixtures/client_scenarios/**/*.md`.
+`external_calls_performed=False` always. `evaluation_performed_without_execution=True` always.
+No URL in any fixture is fetched.
+
+**Violation:** Any code in `ScenarioBatchEvaluator` that opens a URL, calls an API, or executes code.
 
 ---
 

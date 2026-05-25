@@ -81,6 +81,14 @@ class ToolchainValidationReport(SchemaMixin):
     notes: List[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    def __post_init__(self) -> None:
+        # Safety invariants: these four flags are hardcoded False in Phase 3C and must
+        # never be rehydrated as True from deserialized data or caller construction.
+        self.safe_to_execute_tests = False
+        self.browser_execution_performed = False
+        self.external_url_used = False
+        self.credentials_used = False
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "project_id": self.project_id,

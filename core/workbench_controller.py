@@ -453,6 +453,154 @@ class WorkbenchController:
         )
 
     # ------------------------------------------------------------------
+    # Phase 4A — Execution Readiness API
+    # ------------------------------------------------------------------
+
+    def plan_execution_readiness(
+        self,
+        project_id: str,
+        scaffold_root=None,
+    ):
+        """Inspect local artifacts and return (checklist, readiness_report). No execution."""
+        from core.execution_readiness_planner import ExecutionReadinessPlanner
+        root = None
+        if scaffold_root is not None:
+            root = Path(scaffold_root)
+            if not root.exists():
+                root = self._outputs_root / scaffold_root / "03_framework" / "playwright"
+        return ExecutionReadinessPlanner(outputs_root=self._outputs_root).plan_readiness(project_id, root)
+
+    def render_execution_plan_artifacts(
+        self,
+        checklist,
+        report,
+        project_id: str,
+    ) -> dict:
+        """Write execution plan artifacts to outputs/<project_id>/04_execution_plan/."""
+        from core.execution_readiness_planner import ExecutionReadinessPlanner
+        return ExecutionReadinessPlanner(outputs_root=self._outputs_root).render_execution_plan_artifacts(
+            checklist, report, project_id
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4B — Evidence Foundation API
+    # ------------------------------------------------------------------
+
+    def build_evidence_foundation(
+        self,
+        project_id: str,
+        scaffold_root=None,
+    ):
+        """Register local artifacts as evidence. Returns (collection, quality_gate, redaction_report)."""
+        from core.evidence_manager import EvidenceManager
+        root = None
+        if scaffold_root is not None:
+            root = Path(scaffold_root)
+            if not root.exists():
+                root = self._outputs_root / scaffold_root / "03_framework" / "playwright"
+        return EvidenceManager(outputs_root=self._outputs_root).build_evidence_foundation(project_id, root)
+
+    def render_evidence_artifacts(
+        self,
+        collection,
+        quality_gate,
+        redaction_report,
+        project_id: str,
+    ) -> dict:
+        """Write evidence artifacts to outputs/<project_id>/05_evidence/."""
+        from core.evidence_manager import EvidenceManager
+        return EvidenceManager(outputs_root=self._outputs_root).render_evidence_artifacts(
+            collection, quality_gate, redaction_report, project_id
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4C — Report Draft API
+    # ------------------------------------------------------------------
+
+    def build_report_drafts(
+        self,
+        project_id: str,
+        scaffold_root=None,
+    ):
+        """Build draft reports from local artifacts. Returns (internal, client, delivery_note, checklist)."""
+        from core.report_draft_builder import ReportDraftBuilder
+        root = None
+        if scaffold_root is not None:
+            root = Path(scaffold_root)
+            if not root.exists():
+                root = self._outputs_root / scaffold_root / "03_framework" / "playwright"
+        return ReportDraftBuilder(outputs_root=self._outputs_root).build_report_drafts(project_id, root)
+
+    def render_report_drafts(
+        self,
+        internal_summary,
+        client_report,
+        delivery_note,
+        quality_checklist,
+        project_id: str,
+    ) -> dict:
+        """Write report draft artifacts to outputs/<project_id>/06_client_draft/."""
+        from core.report_draft_builder import ReportDraftBuilder
+        return ReportDraftBuilder(outputs_root=self._outputs_root).render_report_drafts(
+            internal_summary, client_report, delivery_note, quality_checklist, project_id
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4C — Delivery Preview API
+    # ------------------------------------------------------------------
+
+    def build_delivery_preview(
+        self,
+        project_id: str,
+        scaffold_root=None,
+    ):
+        """Inspect local artifacts and return (preview, safety_checklist). No packaging."""
+        from core.delivery_preview_builder import DeliveryPreviewBuilder
+        root = None
+        if scaffold_root is not None:
+            root = Path(scaffold_root)
+            if not root.exists():
+                root = self._outputs_root / scaffold_root / "03_framework" / "playwright"
+        return DeliveryPreviewBuilder(outputs_root=self._outputs_root).build_delivery_preview(project_id, root)
+
+    def render_delivery_preview_artifacts(
+        self,
+        preview,
+        checklist,
+        project_id: str,
+    ) -> dict:
+        """Write delivery preview artifacts to outputs/<project_id>/06_client_draft/."""
+        from core.delivery_preview_builder import DeliveryPreviewBuilder
+        return DeliveryPreviewBuilder(outputs_root=self._outputs_root).render_delivery_preview_artifacts(
+            preview, checklist, project_id
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 4ABC — Scenario Evaluation API
+    # ------------------------------------------------------------------
+
+    def evaluate_scenarios(
+        self,
+        project_id: str,
+        fixtures_root=None,
+    ):
+        """Evaluate local scenario fixtures. No external calls. Returns batch report."""
+        from core.scenario_batch_evaluator import ScenarioBatchEvaluator
+        fr = Path(fixtures_root) if fixtures_root else None
+        return ScenarioBatchEvaluator(fixtures_root=fr, outputs_root=self._outputs_root).evaluate_scenarios(project_id)
+
+    def render_scenario_evaluation_artifacts(
+        self,
+        report,
+        project_id: str,
+    ) -> dict:
+        """Write evaluation artifacts to outputs/<project_id>/99_internal/scenario_evaluation/."""
+        from core.scenario_batch_evaluator import ScenarioBatchEvaluator
+        return ScenarioBatchEvaluator(outputs_root=self._outputs_root).render_scenario_evaluation_artifacts(
+            report, project_id
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

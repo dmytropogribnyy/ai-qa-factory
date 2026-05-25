@@ -1,8 +1,8 @@
 # Artifact Contracts — Guided QA Automation Workbench
 
-**Version:** 5.6.0
+**Version:** 5.7.0
 **Updated:** 2026-05-25
-**Phase:** 3C
+**Phase:** 4ABC
 
 This document defines the stable artifact paths, formats, and ownership rules for all
 workbench-generated files. Agents and scripts should use these paths and respect the
@@ -246,21 +246,92 @@ outputs/<project_id>/03_framework/playwright/
 
 ---
 
-## Future Artifact Layout (Phase 4A+)
+## Phase 4ABC Artifact Layout
 
-These paths are planned. Phase 3A (03_framework) is now implemented.
+Phase 4ABC artifacts are written to new subdirectories:
+
+```
+outputs/<project_id>/
+    04_execution_plan/   ← Execution approval checklist, readiness report, boundaries (Phase 4A)
+    05_evidence/         ← Evidence manifest, quality gate, redaction report, summary (Phase 4B)
+    06_client_draft/     ← Draft reports, delivery note, delivery preview, quality checklist (Phase 4C)
+    99_internal/
+        scenario_evaluation/  ← Scenario batch evaluation (Phase 4ABC)
+```
+
+### Phase 4A — Execution Plan artifacts
+
+| File | Description |
+|---|---|
+| `EXECUTION_APPROVAL_CHECKLIST.json` | `ExecutionApprovalChecklist` schema — all `approved_for_*` flags False |
+| `EXECUTION_APPROVAL_CHECKLIST.md` | Human-readable checklist with approval requirements |
+| `EXECUTION_READINESS_REPORT.json` | `ExecutionReadinessReport` schema — blockers, required approvals |
+| `EXECUTION_READINESS_REPORT.md` | Human-readable readiness report |
+| `EVIDENCE_COLLECTION_PLAN.md` | Plan for future evidence collection after approved execution |
+| `EXECUTION_BOUNDARIES.md` | What has/has not been done, what requires approval |
+
+### Phase 4B — Evidence Foundation artifacts
+
+| File | Description |
+|---|---|
+| `EVIDENCE_MANIFEST.json` | `EvidenceCollection` schema — all evidence records (`client_visible=False`) |
+| `EVIDENCE_MANIFEST.md` | Human-readable evidence registry |
+| `EVIDENCE_QUALITY_GATE.json` | `EvidenceQualityGate` schema (`approved_for_client_view=False`) |
+| `EVIDENCE_QUALITY_GATE.md` | Human-readable quality gate |
+| `EVIDENCE_REDACTION_REPORT.json` | `EvidenceRedactionReport` schema (`client_visible_blocked=True`) |
+| `EVIDENCE_REDACTION_REPORT.md` | Human-readable redaction status |
+| `INTERNAL_EVIDENCE_SUMMARY.md` | Internal evidence overview — not for client delivery |
+
+### Phase 4C — Client Draft artifacts
+
+| File | Description |
+|---|---|
+| `INTERNAL_QA_SUMMARY_DRAFT.json/.md` | Internal QA summary — not for client delivery |
+| `CLIENT_REPORT_DRAFT.json/.md` | Client report — **DRAFT, not approved for delivery** |
+| `DELIVERY_NOTE_DRAFT.json/.md` | Delivery note — **DRAFT, not approved for delivery** |
+| `REPORT_QUALITY_CHECKLIST.json/.md` | Quality gate (`safe_to_deliver=False`) |
+| `DELIVERY_PACKAGE_PREVIEW.json/.md` | Preview manifest (`package_created=False`, `zip_created=False`) |
+| `DELIVERY_SAFETY_CHECKLIST.json/.md` | Safety gate (`safe_to_package=False`) |
+
+### Phase 4ABC — Scenario Evaluation artifacts (99_internal)
+
+| File | Description |
+|---|---|
+| `99_internal/scenario_evaluation/SCENARIO_BATCH_EVALUATION.json` | `ScenarioBatchEvaluationReport` schema (`external_calls_performed=False`) |
+| `99_internal/scenario_evaluation/SCENARIO_BATCH_EVALUATION.md` | Human-readable evaluation — internal only |
+
+### Artifact contract guarantees (Phase 4ABC)
+
+- **`approved_for_execution=False`** — never set to True in Phase 4ABC
+- **`approved_for_browser_execution=False`** — never set to True in Phase 4ABC
+- **`approved_for_client_delivery=False`** — never set to True in Phase 4ABC
+- **`client_visible=False`** — all evidence records are internal-only by default
+- **`approved_for_client_view=False`** — quality gate not passed until human review
+- **`safe_to_deliver=False`** — reports are draft-only
+- **`safe_to_package=False`** — no delivery package created
+- **`package_created=False`** — no zip/archive created
+- **`zip_created=False`** — no zip/archive created
+- **`external_calls_performed=False`** — scenario evaluation reads local fixtures only
+- **`evaluation_performed_without_execution=True`** — scenario evaluation is static only
+- **No raw secrets** — no credential values reproduced in any artifact
+- **Client reports clearly marked DRAFT** — must state no browser execution occurred
+
+---
+
+## Full Artifact Layout (current state)
 
 ```
 outputs/<project_id>/
     00_project/          ← Phase 2A/2B (implemented)
-    01_approval/         ← Approval decisions and status (Phase 3+)
+    01_approval/         ← Approval decisions and status (planned)
     02_strategy/         ← QA strategy, risk matrix, test scope (Phase 2C — implemented)
-    03_framework/        ← Generated Playwright TypeScript framework (Phase 3A)
-    04_execution/        ← Test run results and logs (Phase 4A)
-    05_evidence/         ← Screenshots, traces, HTML reports (Phase 4A)
-    06_client_draft/     ← Client-facing reports and delivery packages (Phase 4A+)
-        packages/        ← Zipped delivery packages (require delivery approval)
+    03_framework/        ← Generated Playwright TypeScript framework (Phase 3A — implemented)
+    04_execution_plan/   ← Execution readiness artifacts (Phase 4A — implemented)
+    05_evidence/         ← Evidence foundation (Phase 4B — implemented)
+    06_client_draft/     ← Draft reports, delivery preview (Phase 4C — implemented)
+        packages/        ← Zipped delivery packages (require delivery approval — planned Phase 4D+)
     99_internal/         ← Internal notes, quality gate reports, debug logs
+        scenario_evaluation/  ← Scenario batch evaluation (Phase 4ABC — implemented)
 ```
 
 ### Folder ownership rules
@@ -268,15 +339,15 @@ outputs/<project_id>/
 | Folder | Committed? | Client-visible? | Notes |
 |---|---|---|---|
 | `00_project/` | No | No (internal) | Planning artifacts |
-| `01_approval/` | No | No | Approval records |
+| `01_approval/` | No | No | Approval records (planned) |
 | `02_strategy/` | No | Prepared by agent, reviewed by human | Strategy docs |
 | `03_framework/` | No | Delivered after review | Generated scaffold |
-| `04_execution/` | No | No | Raw execution logs |
-| `05_evidence/` | No | Referenced in report | Screenshots, traces |
-| `06_client_draft/` | No | After human review only | Client delivery |
-| `99_internal/` | No | Never | Internal quality gates, debug |
+| `04_execution_plan/` | No | No | Readiness artifacts — internal |
+| `05_evidence/` | No | Internal only by default | Evidence records (client_visible=False) |
+| `06_client_draft/` | No | After human review only | DRAFT — not approved for delivery |
+| `99_internal/` | No | Never | Internal quality gates, debug, scenario evaluation |
 
-**`06_client_draft/` is never sent without completing `HUMAN_REVIEW_REQUIRED.md`.**
+**`06_client_draft/` is never sent without completing `DELIVERY_SAFETY_CHECKLIST.md`.**
 **`99_internal/` must never be included in client delivery packages.**
 
 ---
