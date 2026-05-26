@@ -1244,3 +1244,66 @@ API_AUTH_EXECUTION_REPORT.json/md
 ```
 
 All Phase 5E artifacts: `internal_only=True`, `client_visible=False`, `token_logged=False`, `safe_to_deliver=False` always.
+
+---
+
+## Section 27 — Phase 5F — QA Evidence Report Generator
+
+### What it does
+
+Read-only aggregation of Phase 5AB and Phase 5E execution artifacts into a consolidated
+QA Evidence Report. Supports multi-source aggregation (browser auth + API auth from
+separate project IDs). Includes secret scan. No execution, no network calls.
+
+### Pre-flight checklist
+
+- [ ] At least one source project has `outputs/<id>/12_dedicated_auth/DEDICATED_AUTH_EXECUTION_REPORT.json`
+  or `outputs/<id>/13_api_auth/API_AUTH_EXECUTION_REPORT.json`
+- [ ] `core/qa_report_generator.py` and `tools/generate_qa_report.py` present
+- [ ] No storageState content will be read (enforced in generator)
+
+### Execution workflow
+
+```bash
+# Single browser-auth source:
+python tools/generate_qa_report.py \
+    --project-id first-real-auth-smoke
+
+# Single API-auth source:
+python tools/generate_qa_report.py \
+    --project-id restful-booker-api-smoke
+
+# Combined multi-source report:
+python tools/generate_qa_report.py \
+    --project-id qa-demo-evidence-report \
+    --source-project-id first-real-auth-smoke \
+    --source-project-id restful-booker-api-smoke
+
+# Preview (no artifacts written):
+python tools/generate_qa_report.py \
+    --project-id qa-demo-evidence-report \
+    --source-project-id first-real-auth-smoke \
+    --no-write
+```
+
+### Key safety invariants
+
+- `execution_performed=False` always (hardcoded in `__post_init__`)
+- `network_calls_performed=False` always
+- `storage_state_content_read=False` always — `.auth/` directories never entered
+- `safe_to_deliver=False` always
+- `approved_for_client_delivery=False` always
+- `human_review_required=True` always
+
+### Artifacts
+
+**`outputs/<project_id>/14_qa_report/`**:
+```
+QA_EVIDENCE_REPORT.json
+QA_EVIDENCE_REPORT.md
+QA_REPORT_REVIEW_CHECKLIST.md
+QA_REPORT_SECRET_SCAN.json
+QA_REPORT_SECRET_SCAN.md
+```
+
+All Phase 5F artifacts: `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.

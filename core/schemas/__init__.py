@@ -162,6 +162,13 @@ from core.schemas.api_auth import (
     APIAuthSessionArtifact,
     APIAuthExecutionReport,
 )
+from core.schemas.qa_report import (
+    QAEvidenceItem,
+    QAEvidenceSource,
+    QACoverageSummary,
+    QASecretScanResult,
+    QAEvidenceReport,
+)
 
 __all__ = [
     # Base
@@ -350,9 +357,15 @@ __all__ = [
     "DedicatedAuthExecutionCommand",
     "DedicatedAuthSessionArtifact",
     "DedicatedAuthExecutionReport",
-    # Phase 5D — API Auth Smoke
+    # Phase 5E — API Auth Smoke
     "APIAuthTarget",
     "APIAuthCommand",
     "APIAuthSessionArtifact",
     "APIAuthExecutionReport",
+    # Phase 5F — QA Evidence Report
+    "QAEvidenceItem",
+    "QAEvidenceSource",
+    "QACoverageSummary",
+    "QASecretScanResult",
+    "QAEvidenceReport",
 ]

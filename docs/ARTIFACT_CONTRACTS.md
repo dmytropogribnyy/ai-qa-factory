@@ -339,6 +339,7 @@ outputs/<project_id>/
     12_dedicated_auth/   ← Dedicated test-account auth execution artifacts (Phase 5AB — implemented)
         .auth/           ← storageState (gitignored, internal-only, never committed)
     13_api_auth/         ← API auth execution artifacts (Phase 5E — implemented)
+    14_qa_report/        ← QA Evidence Report (Phase 5F — implemented)
     99_internal/         ← Internal notes, quality gate reports, debug logs
         scenario_evaluation/  ← Scenario batch evaluation (Phase 4ABC — implemented)
 ```
@@ -363,6 +364,7 @@ outputs/<project_id>/
 | `12_dedicated_auth/` | No | Never — internal only | Dedicated auth execution report, command log, session artifacts, safety boundary |
 | `12_dedicated_auth/.auth/` | **Never committed** | Never | storageState (gitignored always) |
 | `13_api_auth/` | No | Never — internal only | API auth execution report, command log, token check result, safety boundary |
+| `14_qa_report/` | No | Never — internal only | QA Evidence Report, secret scan result, review checklist |
 | `99_internal/` | No | Never | Internal quality gates, debug, scenario evaluation |
 
 **`06_client_draft/` is never sent without completing `DELIVERY_SAFETY_CHECKLIST.md`.**
@@ -373,6 +375,7 @@ outputs/<project_id>/
 **`11_runtime_secrets/` is always internal-only. Intake validation and routing plan only — no env var values, no execution.**
 **`12_dedicated_auth/` is always internal-only. `raw_credentials_logged=False`, `raw_credentials_serialized=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False` always. storageState `approved_for_commit=False` always.**
 **`13_api_auth/` is always internal-only. Phase 5E. `raw_credentials_logged=False`, `raw_credentials_serialized=False`, `token_logged=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False` always.**
+**`14_qa_report/` is always internal-only. Phase 5F. `execution_performed=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False`, `human_review_required=True` always. storageState content never read.**
 **`99_internal/` must never be included in client delivery packages.**
 
 ---

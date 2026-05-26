@@ -903,6 +903,29 @@ class WorkbenchController:
         )
 
     # ------------------------------------------------------------------
+    # Phase 5F — QA Evidence Report API
+    # ------------------------------------------------------------------
+
+    def generate_qa_report(
+        self,
+        project_id: str,
+        source_project_ids: list,
+        write: bool = True,
+    ):
+        """Aggregate evidence from one or more source projects into a QA Evidence Report.
+
+        Read-only. No execution. No network calls. No credential use.
+        storageState content is never read.
+        """
+        from core.qa_report_generator import QAReportGenerator
+        gen = QAReportGenerator(outputs_root=self._outputs_root)
+        return gen.generate(
+            project_id=project_id,
+            source_project_ids=source_project_ids,
+            write=write,
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

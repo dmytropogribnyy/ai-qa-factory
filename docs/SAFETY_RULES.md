@@ -728,6 +728,36 @@ Instruct immediate password rotation. Do not use shared credentials.
 
 ---
 
+## Phase 5F — QA Evidence Report Safety Rules
+
+**5F-1. No execution in report generation.**
+`generate_qa_report.py` and `QAReportGenerator` must never invoke subprocess, urlopen,
+requests, or any network call. Generation is read-only file I/O only.
+
+**5F-2. storageState content must never be read.**
+The generator must not read `.auth/storageState.json` or any file under `.auth/`.
+Existence checks are allowed; content reads are not. `storage_state_content_read=False` always.
+
+**5F-3. All safety flags are hardcoded False in `__post_init__` and `from_dict`.**
+`safe_to_deliver`, `approved_for_client_delivery`, `client_ready`, `execution_performed`,
+`network_calls_performed`, `raw_credentials_in_report`, `raw_tokens_in_report`,
+`storage_state_content_read` — all unconditionally set to False (or True for
+`human_review_required`) regardless of constructor arguments.
+
+**5F-4. Secret scan must not print, log, or store secret values.**
+The secret scan checks if known env var values appear in report content.
+Only the env var name and finding description may appear in output — never the value.
+
+**5F-5. No `--approve` flag is allowed in the CLI.**
+Phase 5F is read-only. There is no execution gate to unlock. If `--approve` appears
+in `generate_qa_report.py`, it is a defect.
+
+**5F-6. Multi-source aggregation must not modify source artifacts.**
+`QAReportGenerator` reads source artifacts but must never write to source project
+directories. All output goes to `outputs/<report_project_id>/14_qa_report/` only.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

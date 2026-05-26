@@ -878,6 +878,60 @@ test-account planning. Policy/schema/routing only — no execution, no credentia
 
 ---
 
+## Phase 5F — QA Evidence Report Generator [implemented]
+
+**Scope:** Read-only aggregation of Phase 5AB and Phase 5E execution artifacts into a
+consolidated QA Evidence Report with multi-source aggregation and secret scan.
+
+**Generator:** `QAReportGenerator` (`core/qa_report_generator.py`)  
+**CLI:** `tools/generate_qa_report.py`  
+**Artifacts:** `outputs/<project_id>/14_qa_report/`
+
+**Multi-source aggregation:**
+- Accepts 1..N `source_project_ids` (via `--source-project-id`, repeatable)
+- Reads from each source: `12_dedicated_auth/DEDICATED_AUTH_EXECUTION_REPORT.json`
+  and `13_api_auth/API_AUTH_EXECUTION_REPORT.json`
+- Missing artifacts produce `artifacts_missing` entries, not errors
+- Coverage summary computed across all source projects
+
+**Secret scan:**
+- Checks generated report content against known env var values
+- Env var names checked: `ORANGEHRM_USERNAME/PASSWORD`, `RESTFUL_BOOKER_USERNAME/PASSWORD`,
+  `QA_TEST_USERNAME/PASSWORD`, `STAGING_USERNAME/PASSWORD`
+- Values read internally, never logged or printed — only finding descriptions logged
+- Token pattern scan: flags unmasked alphanumeric strings ≥ 20 chars
+- Verdict: `clean | warn | fail`
+
+**Safety invariants (hardcoded in `__post_init__` + `from_dict`, all unconditional):**
+- `execution_performed=False` — no tests or scripts run
+- `network_calls_performed=False` — no HTTP requests
+- `raw_credentials_in_report=False`
+- `raw_tokens_in_report=False`
+- `storage_state_content_read=False` — `.auth/storageState.json` never read
+- `safe_to_deliver=False`
+- `approved_for_client_delivery=False`
+- `client_ready=False`
+- `human_review_required=True`
+
+**Coverage model:**
+
+| Lane | Provided by |
+|---|---|
+| `browser_auth` | Phase 5AB `DEDICATED_AUTH_EXECUTION_REPORT.json` |
+| `api_auth` | Phase 5E `API_AUTH_EXECUTION_REPORT.json` |
+| `functional_tests` | Not yet covered — future phase |
+| `e2e_scenarios` | Not yet covered — future phase |
+| `performance_tests` | Not yet covered — future phase |
+| `security_tests` | Not yet covered — future phase |
+
+**What Phase 5F is NOT:**
+- Not execution — no subprocess, no browser, no network calls
+- Not approval for client delivery — `approved_for_client_delivery=False` always
+- Not a replacement for Phase 5AB or Phase 5E runners
+- Not able to read storageState content
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

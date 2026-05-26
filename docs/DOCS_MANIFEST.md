@@ -281,6 +281,18 @@ All Phase 5AB artifacts: `internal_only=True`, `client_visible=False`, `approved
 
 All Phase 5E artifacts: `internal_only=True`, `client_visible=False`, `token_logged=False`, `safe_to_deliver=False` always.
 
+### `14_qa_report/` (Phase 5F — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `QA_EVIDENCE_REPORT.json` | JSON | system | `QAEvidenceReport` schema — consolidated multi-source report |
+| `QA_EVIDENCE_REPORT.md` | MD | system | Human-readable QA evidence report |
+| `QA_REPORT_REVIEW_CHECKLIST.md` | MD | system | Pre-delivery human review checklist |
+| `QA_REPORT_SECRET_SCAN.json` | JSON | system | `QASecretScanResult` schema — scan result |
+| `QA_REPORT_SECRET_SCAN.md` | MD | system | Human-readable secret scan summary |
+
+All Phase 5F artifacts: `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

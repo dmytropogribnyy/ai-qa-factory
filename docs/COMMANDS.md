@@ -1555,6 +1555,77 @@ API_AUTH_EXECUTION_REPORT.json/md
 
 ---
 
+### `python tools/generate_qa_report.py`
+
+Phase 5F — Read-only QA Evidence Report Generator. Aggregates evidence from one or
+more source project outputs into a consolidated QA Evidence Report. No execution,
+no network calls, no credentials.
+
+```bash
+# Single browser-auth source (reads outputs/first-real-auth-smoke/12_dedicated_auth/):
+python tools/generate_qa_report.py \
+    --project-id first-real-auth-smoke
+
+# Single API-auth source (reads outputs/restful-booker-api-smoke/13_api_auth/):
+python tools/generate_qa_report.py \
+    --project-id restful-booker-api-smoke
+
+# Multi-source combined report:
+python tools/generate_qa_report.py \
+    --project-id qa-demo-evidence-report \
+    --source-project-id first-real-auth-smoke \
+    --source-project-id restful-booker-api-smoke
+
+# No-write (preview only):
+python tools/generate_qa_report.py \
+    --project-id qa-demo-evidence-report \
+    --source-project-id first-real-auth-smoke \
+    --no-write
+
+# JSON output:
+python tools/generate_qa_report.py --project-id my-report --json
+```
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--project-id` | Required — output report project identifier |
+| `--source-project-id` | Source project to read evidence from (repeatable) |
+| `--source-projects` | Comma-separated source project IDs (alternative form) |
+| `--outputs-root` | Root of outputs directory (default: `outputs`) |
+| `--no-write` | Preview only — no artifacts written |
+| `--json` | Print JSON report to stdout |
+
+**Blocked flags (never accepted):** `--approve`, `subprocess`, `urlopen`, `requests`
+
+**Safety invariants (always False/True, cannot be bypassed):**
+- `execution_performed=False` — no tests or scripts run
+- `network_calls_performed=False` — no HTTP requests made
+- `raw_credentials_in_report=False`
+- `raw_tokens_in_report=False`
+- `storage_state_content_read=False`
+- `safe_to_deliver=False`
+- `approved_for_client_delivery=False`
+- `client_ready=False`
+- `human_review_required=True`
+
+**Secret scan:** Checks report content against known env var values (names only logged,
+values never printed). Reports `verdict: clean | warn | fail`.
+
+**Generated artifacts** (`outputs/<project_id>/14_qa_report/`):
+```
+QA_EVIDENCE_REPORT.json
+QA_EVIDENCE_REPORT.md
+QA_REPORT_REVIEW_CHECKLIST.md
+QA_REPORT_SECRET_SCAN.json
+QA_REPORT_SECRET_SCAN.md
+```
+
+**Exit codes:** `0` = evidence passed, `1` = no passed items, `2` = secret scan failed
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

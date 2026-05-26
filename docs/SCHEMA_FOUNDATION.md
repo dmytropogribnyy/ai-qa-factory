@@ -664,6 +664,32 @@ NOT forced (reflect real routing state):
 
 ---
 
+### Phase 5F — QA Evidence Report (`core/schemas/qa_report.py`)
+
+| Class | Export | Description |
+|---|---|---|
+| `QAEvidenceItem` | `QAEvidenceItem` | Single evidence item from one execution lane of one source project |
+| `QAEvidenceSource` | `QAEvidenceSource` | Evidence collected from a single source project |
+| `QACoverageSummary` | `QACoverageSummary` | Coverage across all aggregated source projects |
+| `QASecretScanResult` | `QASecretScanResult` | Result of scanning generated report for raw secrets/tokens |
+| `QAEvidenceReport` | `QAEvidenceReport` | Consolidated QA Evidence Report — internal-only, human review required |
+
+**Hardcoded safety defaults in `QAEvidenceReport` (set in `__post_init__` AND `from_dict`):**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `QAEvidenceReport.execution_performed` | `False` | `__post_init__` + `from_dict` |
+| `QAEvidenceReport.network_calls_performed` | `False` | `__post_init__` + `from_dict` |
+| `QAEvidenceReport.raw_credentials_in_report` | `False` | `__post_init__` + `from_dict` |
+| `QAEvidenceReport.raw_tokens_in_report` | `False` | `__post_init__` + `from_dict` |
+| `QAEvidenceReport.storage_state_content_read` | `False` | `__post_init__` + `from_dict` |
+| `QAEvidenceReport.safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `QAEvidenceReport.approved_for_client_delivery` | `False` | `__post_init__` + `from_dict` |
+| `QAEvidenceReport.client_ready` | `False` | `__post_init__` + `from_dict` |
+| `QAEvidenceReport.human_review_required` | `True` | `__post_init__` + `from_dict` |
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic

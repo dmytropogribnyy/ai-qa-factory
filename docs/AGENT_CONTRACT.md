@@ -458,6 +458,32 @@ Agents must follow these rules when proposing or evaluating test execution:
 
 ---
 
+## Section 13 — Phase 5F — QA Evidence Report Rules
+
+### Rules
+
+- **Read-only** — `generate_qa_report.py` and `QAReportGenerator` must never invoke
+  subprocess, `urllib.request`, `requests`, or any form of network call.
+  Report generation is file I/O only.
+- **No storageState reading** — `.auth/` directories must never be entered.
+  The generator may check path existence but must not call `.read_text()` on
+  storageState files. `storage_state_content_read=False` always.
+- **Safety flags are unconditional** — `safe_to_deliver=False`, `approved_for_client_delivery=False`,
+  `client_ready=False`, `execution_performed=False`, `human_review_required=True` cannot be
+  changed via constructor arguments. They are hardcoded in `__post_init__` and `from_dict`.
+- **Secret scan does not log values** — only env var names and finding descriptions may appear
+  in `QA_REPORT_SECRET_SCAN.md`. Raw secret values must never be printed, stored, or returned.
+- **No `--approve` flag** — Phase 5F is read-only. There is no approval gate to unlock.
+  Adding an `--approve` flag is a defect.
+- **Multi-source read only** — the generator reads from source project directories but must
+  never write to them. All output goes to `outputs/<report_project_id>/14_qa_report/` only.
+- **Artifacts** — `outputs/<project_id>/14_qa_report/` only.
+  5 files: `QA_EVIDENCE_REPORT.json/md`, `QA_REPORT_REVIEW_CHECKLIST.md`,
+  `QA_REPORT_SECRET_SCAN.json/md`.
+- **Do not include `14_qa_report/` in client delivery packages.**
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts
