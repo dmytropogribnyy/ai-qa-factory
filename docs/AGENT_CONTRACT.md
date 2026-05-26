@@ -236,6 +236,19 @@ documented outside the system.
 - **Do not mark `safe_for_auth_execution=True`** — auth execution safety gate requires explicit human approval
 - **Do not mark `safe_for_client_visibility=True`** for credential artifacts — redaction checklist must be completed by a human first
 
+### Demo auth execution rules (Phase 4F)
+
+- **Do not run demo auth without `--approve-demo-auth-execution`** — no subprocess, no credential injection, no storageState without explicit approval flag
+- **Do not use auth profiles other than `saucedemo_demo_auth`** — no Alza, Amazon, Google, LinkedIn, Upwork, or Linear auth profiles in Phase 4F
+- **Do not use personal accounts, production accounts, or client credentials** — `personal_account_used=False` and `production_account_used=False` are hardcoded
+- **Do not inject credentials into command args** — demo credentials go into subprocess env only; never appear in command strings, logs, or artifacts
+- **Do not read `.env`, `.auth`, or storageState files** — `DemoAuthRunner` builds its own safe env from the approved profile registry
+- **Do not commit storageState** — storageState is gitignored under `outputs/<project_id>/09_auth/.auth/`; `approved_for_commit=False` always
+- **Do not read storageState content** — only record the path reference; do not include content in reports or artifacts
+- **Do not mark `safe_to_deliver=True`** — demo auth evidence is always internal-only; `approved_for_client_delivery=False` hardcoded
+- **Do not run npm install or npx playwright install in Phase 4F** — toolchain setup is Phase 3C; if dependencies are missing, fail cleanly
+- **Do not add Alza/Amazon/Google/Linear auth profiles** in any phase without explicit architecture review and spec update
+
 ### Architecture integrity
 
 - **Do not replace `core/orchestrator.py`** without explicit architecture review

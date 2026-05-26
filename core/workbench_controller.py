@@ -688,6 +688,43 @@ class WorkbenchController:
         )
 
     # ------------------------------------------------------------------
+    # Phase 4F — Demo Auth Execution API
+    # ------------------------------------------------------------------
+
+    def run_demo_auth_execution(
+        self,
+        project_id: str,
+        scaffold_root=None,
+        approve_demo_auth: bool = False,
+        auth_profile=None,
+        command_mode: str = "auth_smoke",
+        timeout: int = 120,
+    ):
+        """Run approval-gated demo auth execution. Returns AuthExecutionReport.
+
+        No real credentials. No personal/production accounts.
+        No Alza/Amazon/Google/Linear auth.
+        Requires approve_demo_auth=True and auth_profile='saucedemo_demo_auth'.
+        """
+        from core.demo_auth_runner import DemoAuthRunner
+        from pathlib import Path
+        runner = DemoAuthRunner(outputs_root=self._outputs_root)
+        return runner.run_demo_auth_execution(
+            project_id=project_id,
+            scaffold_root=Path(scaffold_root) if scaffold_root else None,
+            approve_demo_auth=approve_demo_auth,
+            auth_profile=auth_profile,
+            command_mode=command_mode,
+            timeout=timeout,
+        )
+
+    def render_demo_auth_artifacts(self, report, project_id: str) -> dict:
+        """Write demo auth artifacts to outputs/<project_id>/09_auth/."""
+        from core.demo_auth_runner import DemoAuthRunner
+        runner = DemoAuthRunner(outputs_root=self._outputs_root)
+        return runner.render_auth_artifacts(report, project_id)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

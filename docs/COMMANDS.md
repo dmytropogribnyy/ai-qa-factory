@@ -1190,6 +1190,70 @@ CREDENTIAL_REDACTION_CHECKLIST.md
 
 ---
 
+## Phase 4F — Demo Auth Execution `[implemented]`
+
+### `tools/run_demo_auth.py`
+
+**Approval-gated demo auth execution. Only `saucedemo_demo_auth` profile allowed.**  
+No real credentials. No personal/production accounts.  
+No Alza/Amazon/Google/Linear/LinkedIn/Upwork auth.
+
+```bash
+# Preview only (no execution, no credentials):
+python tools/run_demo_auth.py --project-id demo
+
+# Approved SauceDemo auth smoke:
+python tools/run_demo_auth.py --project-id demo --approve-demo-auth-execution --auth-profile saucedemo_demo_auth --command-mode auth_smoke
+
+# Approved SauceDemo auth setup (storageState):
+python tools/run_demo_auth.py --project-id demo --approve-demo-auth-execution --auth-profile saucedemo_demo_auth --command-mode auth_setup
+
+# JSON output:
+python tools/run_demo_auth.py --project-id demo --json
+```
+
+### Flags
+
+| Flag | Description |
+|---|---|
+| `--project-id` | Project ID (required unless `--scaffold-root` or `--from-output`) |
+| `--scaffold-root` | Path to scaffold root directory |
+| `--from-output` | Path to `outputs/<project_id>` directory |
+| `--approve-demo-auth-execution` | **Required** explicit approval for demo auth execution |
+| `--auth-profile` | Auth profile — only `saucedemo_demo_auth` allowed in Phase 4F |
+| `--command-mode` | `auth_smoke` (run auth tests) or `auth_setup` (generate storageState) |
+| `--json` | Print JSON to stdout |
+| `--no-write` | Do not write artifacts to disk |
+| `--timeout` | Subprocess timeout in seconds (default: 120) |
+| `--outputs-root` | Outputs root directory (default: `outputs`) |
+
+### Safety invariants
+
+- Without `--approve-demo-auth-execution`: no subprocess, no credentials, no storageState
+- `saucedemo_demo_auth` is the only allowed profile in Phase 4F
+- Public demo credentials injected into subprocess env only — never command args, logs, or artifacts
+- storageState generated only under `outputs/<project_id>/09_auth/.auth/` (gitignored)
+- storageState content is never read or included in reports
+- `real_credentials_used=False`, `personal_account_used=False`, `production_account_used=False` always
+- `safe_to_deliver=False`, `approved_for_client_delivery=False` always
+
+### Always blocked (regardless of approval)
+
+`alza.sk`, `amazon.com`, `accounts.google.com`, `linear.app`, `linkedin.com`, `upwork.com`
+
+### Generated artifacts (`outputs/<project_id>/09_auth/`)
+
+```
+AUTH_EXECUTION_APPROVAL.json/md
+AUTH_EXECUTION_REPORT.json/md
+AUTH_COMMAND_LOG.md
+AUTH_SESSION_ARTIFACTS.json/md
+AUTH_REDACTION_CHECKLIST.md
+09_auth/.auth/storageState.json  ← optional, gitignored, internal-only
+```
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

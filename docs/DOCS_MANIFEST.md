@@ -216,6 +216,22 @@ Any doc describing them must include a qualifier: `schema-only`, `foundation-onl
 
 All Phase 4E artifacts: `internal_only=True`, `client_visible=False`. Human redaction review required before delivery.
 
+### Phase 4F — Auth Execution artifacts (`outputs/<id>/09_auth/`)
+
+| Artifact | Type | Owner | Description |
+|---|---|---|---|
+| `AUTH_EXECUTION_APPROVAL.json` | JSON | system | Approval record for demo auth execution |
+| `AUTH_EXECUTION_APPROVAL.md` | MD | system | Human-readable approval |
+| `AUTH_EXECUTION_REPORT.json` | JSON | system | Full auth execution report |
+| `AUTH_EXECUTION_REPORT.md` | MD | system | Human-readable report |
+| `AUTH_COMMAND_LOG.md` | MD | system | Command log (credentials masked) |
+| `AUTH_SESSION_ARTIFACTS.json` | JSON | system | Session artifact references |
+| `AUTH_SESSION_ARTIFACTS.md` | MD | system | Human-readable artifact list |
+| `AUTH_REDACTION_CHECKLIST.md` | MD | human | Checklist before any client-visible use |
+| `.auth/storageState.json` | JSON | system | Optional — storageState (gitignored) |
+
+All Phase 4F artifacts: `internal_only=True`, `client_visible=False`. storageState `approved_for_commit=False` always.
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

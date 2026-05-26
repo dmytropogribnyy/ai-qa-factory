@@ -550,6 +550,47 @@ Alza staging/test account = future candidate, requires client-provided test acco
 
 ---
 
+## Demo Auth Execution Safety Rules (Phase 4F)
+
+These rules govern demo auth execution. They extend the hard rules above for approved public demo auth only.
+
+**4F-1. No auth execution without `--approve-demo-auth-execution`.**
+The flag must be present. Without it: no subprocess, no credential injection, no storageState creation.
+
+**4F-2. Only `saucedemo_demo_auth` profile allowed in Phase 4F.**
+No Alza, Amazon, Google, LinkedIn, Upwork, or Linear auth profiles may be added or used.
+No personal accounts. No production accounts. No client credentials.
+
+**4F-3. Credentials injected into subprocess env only — never command args, logs, or artifacts.**
+Public demo credentials (SauceDemo standard_user/secret_sauce) are universally published values.
+They must still be masked in stdout/stderr excerpts and must never appear in JSON/MD artifacts.
+
+**4F-4. storageState only under `outputs/<project_id>/09_auth/.auth/`.**
+Never under repository root, scaffold source root, or any path outside outputs/.
+storageState content must not be read or included in reports.
+`approved_for_commit=False` always. `client_visible=False` always.
+
+**4F-5. `real_credentials_used=False` always — hardcoded in schema `__post_init__` and `from_dict`.**
+Public demo credentials do not make `real_credentials_used=True`. The field reflects use of personal, production, or client credentials only.
+
+**4F-6. No personal accounts, production accounts, or client credentials in Phase 4F.**
+`personal_account_used=False` and `production_account_used=False` are hardcoded.
+
+**4F-7. `safe_to_deliver=False` and `approved_for_client_delivery=False` always.**
+Demo auth evidence is internal-only. Client delivery requires a separate explicit human approval.
+
+**4F-8. No payment/checkout/order creation, no destructive/admin writes.**
+Auth smoke is restricted to `tests/auth` path only. No ecommerce/admin/regression paths.
+
+**4F-9. No npm install, no npx playwright install in Phase 4F.**
+Toolchain setup is Phase 3C responsibility. If dependencies are missing, fail cleanly and report it.
+
+**4F-10. Agents must not run auth without `--approve-demo-auth-execution`.**
+Agents must not inject credentials without approval. Agents must not read `.env` or `.auth` files.
+Agents must not expose storageState content. Agents must not create client delivery packages.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

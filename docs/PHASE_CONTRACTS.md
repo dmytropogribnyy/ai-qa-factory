@@ -725,6 +725,46 @@ These rules apply in every phase, without exception:
 
 ---
 
+## Phase 4F — Approved Demo Auth Execution `[implemented]`
+
+**Goal:** Add approval-gated demo auth execution layer using safe public demo credentials only.
+
+**Inputs:** Scaffold at `outputs/<project_id>/03_framework/playwright/`, `--approve-demo-auth-execution`, `--auth-profile saucedemo_demo_auth`
+
+**Outputs:** `outputs/<project_id>/09_auth/` (8 artifacts — all internal-only)
+
+**Allowed:**
+- `saucedemo_demo_auth` profile only (SauceDemo public demo credentials)
+- `auth_smoke` and `auth_setup` command modes
+- `tests/auth` test path only
+- storageState under `outputs/<project_id>/09_auth/.auth/` only
+
+**Blocked:**
+- No personal credentials, production credentials, or client credentials
+- No Alza/Amazon/Google/LinkedIn/Upwork/Linear auth — always blocked
+- No payment/checkout/order creation
+- No destructive/admin writes
+- No npm install / npx playwright install
+- No client delivery — `safe_to_deliver=False` always
+
+**Safety invariants (always enforced):**
+- `real_credentials_used=False` — hardcoded in schema
+- `personal_account_used=False` — hardcoded in schema
+- `production_account_used=False` — hardcoded in schema
+- `safe_to_deliver=False` — hardcoded in schema
+- `approved_for_client_delivery=False` — hardcoded in schema
+- `AuthSessionArtifact.approved_for_commit=False` — hardcoded
+- `AuthSessionArtifact.client_visible=False` — hardcoded
+
+**What Phase 4F is NOT:**
+- Not approval for Alza/Amazon/Google/LinkedIn/Upwork/Linear auth
+- Not approval for real client credentials or personal accounts
+- Not approval for production auth execution
+- Not approval for payment/checkout/destructive flows
+- Not approval for client delivery
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

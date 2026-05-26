@@ -534,6 +534,38 @@ New constants: `INTEGRATION_PROVIDERS`, `INTEGRATION_DIRECTIONS`, `INTEGRATION_E
 
 ---
 
+## Phase 4F — Auth Execution schemas
+
+**Module:** `core/schemas/auth_execution.py`
+
+| Class | Exported as | Purpose |
+|---|---|---|
+| `AuthCredentialProfile` | `AuthCredentialProfile` | Credential profile metadata (no raw values) |
+| `AuthExecutionCommand` | `AuthExecutionCommand` | Single auth command record |
+| `AuthExecutionReport` | `AuthExecutionReport` | Full demo auth execution report |
+| `AuthSessionArtifact` | `AuthSessionArtifact` | Reference to a session artifact (storageState, etc.) |
+
+### Safety defaults (hardcoded — cannot be bypassed via constructor or from_dict)
+
+| Field | Value | Enforced by |
+|---|---|---|
+| `AuthExecutionReport.real_credentials_used` | `False` | `__post_init__` + `from_dict` |
+| `AuthExecutionReport.personal_account_used` | `False` | `__post_init__` + `from_dict` |
+| `AuthExecutionReport.production_account_used` | `False` | `__post_init__` + `from_dict` |
+| `AuthExecutionReport.safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `AuthExecutionReport.approved_for_client_delivery` | `False` | `__post_init__` + `from_dict` |
+| `AuthCredentialProfile.personal_account` | `False` | `__post_init__` + `from_dict` |
+| `AuthCredentialProfile.production_account` | `False` | `__post_init__` + `from_dict` |
+| `AuthCredentialProfile.safe_to_store_in_repo` | `False` | `__post_init__` + `from_dict` |
+| `AuthSessionArtifact.approved_for_commit` | `False` | `__post_init__` |
+| `AuthSessionArtifact.approved_for_client_view` | `False` | `__post_init__` |
+| `AuthSessionArtifact.client_visible` | `False` | `__post_init__` |
+
+NOT forced (reflect real execution state when approved demo auth runs):
+`auth_execution_performed`, `browser_execution_performed`, `storage_state_created`, `credentials_used`
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic

@@ -904,3 +904,71 @@ CREDENTIAL_REDACTION_CHECKLIST.md
 ```
 
 All credential artifacts are `internal_only=True`, `client_visible=False`. Client delivery requires human redaction review.
+
+---
+
+## 23. Phase 4F — Approved Demo Auth Execution
+
+**Purpose:** Run approval-gated auth smoke against SauceDemo public demo target only.  
+**Requires:** Phase 4E credential safety PASS. Explicit `--approve-demo-auth-execution` flag.
+
+### Pre-flight checklist
+
+- [ ] Phase 4E credential safety inspection passed (status=pass)
+- [ ] Only `saucedemo_demo_auth` profile selected
+- [ ] `--approve-demo-auth-execution` flag present and intentional
+- [ ] No personal credentials present in environment
+- [ ] No production credentials present in environment
+- [ ] No payment/checkout/order creation in test scope
+- [ ] Scaffold exists at `outputs/<project_id>/03_framework/playwright/`
+- [ ] `node_modules` present (Phase 3C) — if absent, report cleanly, do not install
+
+### Safe examples
+
+```bash
+# Approved auth smoke:
+python tools/run_demo_auth.py --project-id demo --approve-demo-auth-execution --auth-profile saucedemo_demo_auth --command-mode auth_smoke
+
+# Approved auth setup (storageState):
+python tools/run_demo_auth.py --project-id demo --approve-demo-auth-execution --auth-profile saucedemo_demo_auth --command-mode auth_setup
+```
+
+### Blocked examples (always rejected)
+
+```bash
+# Alza auth — always blocked:
+python tools/run_demo_auth.py --auth-profile alza_auth  → BLOCKED
+
+# Amazon auth — always blocked:
+python tools/run_demo_auth.py --auth-profile amazon_auth  → BLOCKED
+
+# Google OAuth personal login — always blocked:
+python tools/run_demo_auth.py --auth-profile google_oauth  → BLOCKED
+
+# Linear token/account — always blocked:
+python tools/run_demo_auth.py --auth-profile linear_auth  → BLOCKED
+
+# No approval flag — always blocked:
+python tools/run_demo_auth.py --project-id demo  → BLOCKED (no --approve-demo-auth-execution)
+```
+
+### Key rules
+
+- Public demo credentials (standard_user/secret_sauce) injected into subprocess env only
+- Credentials never appear in command args, logs, JSON/MD artifacts
+- storageState generated only under `outputs/<project_id>/09_auth/.auth/` (gitignored)
+- storageState content never read or included in reports
+- `real_credentials_used=False`, `personal_account_used=False`, `production_account_used=False` always
+- `safe_to_deliver=False`, `approved_for_client_delivery=False` always
+- Evidence internal-only
+
+### Artifacts written to `outputs/<project_id>/09_auth/`
+
+```
+AUTH_EXECUTION_APPROVAL.json/md
+AUTH_EXECUTION_REPORT.json/md
+AUTH_COMMAND_LOG.md
+AUTH_SESSION_ARTIFACTS.json/md
+AUTH_REDACTION_CHECKLIST.md
+09_auth/.auth/storageState.json  ← optional, gitignored, internal-only
+```

@@ -132,6 +132,12 @@ from core.schemas.credential_safety import (
     AuthExecutionApproval,
     SandboxProfileClassification,
 )
+from core.schemas.auth_execution import (
+    AuthCredentialProfile,
+    AuthExecutionCommand,
+    AuthExecutionReport,
+    AuthSessionArtifact,
+)
 
 __all__ = [
     # Base
@@ -299,4 +305,9 @@ __all__ = [
     "StorageStatePolicy",
     "AuthExecutionApproval",
     "SandboxProfileClassification",
+    # Auth Execution (Phase 4F)
+    "AuthCredentialProfile",
+    "AuthExecutionCommand",
+    "AuthExecutionReport",
+    "AuthSessionArtifact",
 ]

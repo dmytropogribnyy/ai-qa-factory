@@ -73,7 +73,8 @@ FOUNDATION_ONLY_FEATURES: list[tuple[str, list[str], list[str]]] = [
         "credential/auth execution",
         ["auth execution", "executes auth", "runs auth", "run-auth-smoke", "auth-check"],
         ["planned", "foundation-only", "schema-only", "not implemented", "deferred",
-         "future", "[planned]", "phase 2", "phase 3", "no runtime", "not yet"],
+         "future", "[planned]", "phase 2", "phase 3", "no runtime", "not yet",
+         "demo", "approved", "phase 4f", "approval"],  # Phase 4F demo auth is implemented
     ),
     (
         "mobile/native execution",
