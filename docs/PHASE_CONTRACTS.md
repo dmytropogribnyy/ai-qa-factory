@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.8.0
+**Version:** 5.9.0
 **Updated:** 2026-05-26
-**Phase:** 5I
+**Phase:** 5J
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1099,6 +1099,62 @@ consolidated QA Evidence Report with multi-source aggregation and secret scan.
 - `VisualRegressionReport`: `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False`, `human_review_required=True`, `baselines_committed=False`
 - `GitHubAuthCapability`: `personal_account_always_blocked=True`, `production_account_always_blocked=True`, `captcha_bypass_allowed=False`, `raw_secrets_allowed=False`, `storage_state_content_read=False`, `client_delivery_allowed=False`
 - `GitHubAuthEvidenceReport`: `cookies_logged=False`, `tokens_logged=False`, `storage_state_content_read=False`, `safe_to_deliver=False`, `human_review_required=True`
+
+---
+
+---
+
+## Phase 5J — E2E Pipeline Runner + DB Smoke [implemented]
+
+**Scope:**
+1. E2E Pipeline Runner — subprocess orchestration layer that runs all enabled Phase 5x CLI tools in a fixed, safe sequence
+2. DB Smoke Runner — read-only database connectivity smoke for PostgreSQL, MySQL, and MongoDB
+
+**What Phase 5J IS:**
+- A subprocess orchestration layer (`E2EPipelineRunner`) that calls existing Phase CLI tools in a hardcoded order: `task_source → browser → api_smoke → google_auth → github_auth → mobile_viewport → visual_regression → db_smoke → qa_report`
+- Read-only database smoke: `SELECT`/`SHOW`/`DESCRIBE`/`EXPLAIN` for SQL; `find`/`aggregate`/`count`/etc. for MongoDB
+- Connection string accepted via env var NAME only — raw URLs blocked at CLI and runner level
+- Row limit enforced: default 10, max 100 (hard cap)
+- DB drivers (psycopg2, mysql-connector-python, pymongo) are optional — missing driver produces a `blocked` result with install instructions
+- Planning-only mode: `E2EPipelineRunner.plan()` builds an execution plan without calling any subprocess
+
+**What Phase 5J is NOT:**
+- Not replacing `QAFactoryOrchestrator` (AI/LLM workflow engine)
+- Not replacing `WorkbenchController` (Phase 2A intake + artifact writing)
+- Not replacing `EvidenceManager` (Phase 4B evidence registration)
+- Not a write-capable database runner — INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/TRUNCATE/EXEC and all destructive operations are permanently blocked
+- Not a general pipeline scheduler or CI/CD system
+- Not producing client delivery packages (`client_delivery_allowed=False` hardcoded)
+
+**Allowed Actions:**
+- Run `tools/run_e2e_pipeline.py` with `--approve-pipeline-execution`
+- Run `tools/run_db_smoke.py` with `--approve-db-smoke`
+- Build and inspect execution plan without `--approve-pipeline-execution` (plan-only mode)
+- Pass DB connection string via env var name (e.g. `--db-url-env-var STAGING_DATABASE_URL`)
+
+**Blocked Actions:**
+- Raw connection strings, passwords, or tokens via any CLI flag
+- Any SQL other than SELECT/SHOW/DESCRIBE/EXPLAIN
+- Any MongoDB operation not in the allowed list
+- Destructive DB operations (INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/TRUNCATE etc.)
+- Reordering the pipeline execution sequence
+- Client delivery without human review
+- Committing `outputs/` artifacts
+
+**Acceptance Criteria:**
+- `tools/run_e2e_pipeline.py` generates artifacts in `20_e2e_pipeline/`
+- `tools/run_db_smoke.py` generates artifacts in `21_db_smoke/`
+- All new schemas: `safe_to_deliver=False`, `human_review_required=True` hardcoded in `__post_init__` AND `from_dict`
+- `PipelineRunReport`: `raw_secrets_allowed=False`, `production_write_allowed=False`, `client_delivery_allowed=False` hardcoded
+- `DBSmokeReport`: `destructive_db_actions_allowed=False`, `connection_string_logged=False` hardcoded
+- Blocked flags (`--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--db-url`, etc.) reject immediately with exit code 2
+- ruff: clean; pytest: 1778 passed
+
+**Safety invariants (all hardcoded, cannot be bypassed):**
+- `PipelineRunReport`: `raw_secrets_allowed=False`, `production_write_allowed=False`, `client_delivery_allowed=False`, `safe_to_deliver=False`, `human_review_required=True`
+- `DBSmokeReport`: `raw_secrets_allowed=False`, `production_write_allowed=False`, `destructive_db_actions_allowed=False`, `client_delivery_allowed=False`, `human_review_required=True`, `connection_string_logged=False`
+- SQL safety: word-boundary regex blocks all destructive keywords even inside subqueries
+- MongoDB safety: operation allowlist enforced before any driver connection attempt
 
 ---
 

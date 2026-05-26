@@ -1,8 +1,8 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 5.8.0  
+**Version:** 5.9.0  
 **Updated:** 2026-05-26  
-**Phase:** 5I
+**Phase:** 5J
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.
@@ -361,6 +361,26 @@ All Phase 5I visual regression artifacts: `credentials_used=False`, `auth_perfor
 | `github_smoke.cjs` | JS | system | Runtime Playwright script — **NEVER COMMITTED**, gitignored |
 
 All Phase 5I GitHub auth artifacts: `safe_to_deliver=False`, `human_review_required=True`, `cookies_logged=False`, `tokens_logged=False`, `storage_state_content_read=False`, `captcha_bypass_attempted=False`, `personal_account_used=False`, `production_account_used=False` always.
+
+### `20_e2e_pipeline/` (Phase 5J — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `PIPELINE_RUN_REPORT.json` | JSON | system | `PipelineRunReport` schema — module results, counters, overall status |
+| `PIPELINE_RUN_REPORT.md` | MD | system | Human-readable pipeline run summary with module table |
+| `PIPELINE_SAFETY_CHECKLIST.md` | MD | system | Pre-delivery safety checklist |
+
+All Phase 5J pipeline artifacts: `raw_secrets_allowed=False`, `production_write_allowed=False`, `client_delivery_allowed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+### `21_db_smoke/` (Phase 5J — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `DB_SMOKE_REPORT.json` | JSON | system | `DBSmokeReport` schema — query results, status, blockers |
+| `DB_SMOKE_REPORT.md` | MD | system | Human-readable DB smoke report |
+| `DB_SMOKE_SAFETY_CHECKLIST.md` | MD | system | Pre-review safety checklist |
+
+All Phase 5J DB smoke artifacts: `raw_secrets_allowed=False`, `destructive_db_actions_allowed=False`, `connection_string_logged=False`, `safe_to_deliver=False`, `human_review_required=True` always.
 
 Run `python tools/docs_audit.py` to check for missing required docs.
 

@@ -1,6 +1,6 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 5.3.0  
+**Version:** 5.4.0  
 **Updated:** 2026-05-26
 
 Status labels:
@@ -2027,6 +2027,146 @@ github_smoke.cjs                 ← runtime only, gitignored
 ```
 
 **Exit codes:** `0` = success, `1` = blocked/failed, `2` = bad flags
+
+---
+
+### 33. E2E Pipeline Runner (`tools/run_e2e_pipeline.py`) `[implemented]`
+
+**Purpose:** Orchestrate enabled Phase 5x runners in a fixed, safe sequence:
+`task_source → browser → api_smoke → google_auth → github_auth → mobile_viewport → visual_regression → db_smoke → qa_report`
+
+Each module is run as a subprocess via its existing CLI tool. Requires `--approve-pipeline-execution` for any actual execution.
+
+```bash
+# Show plan (no execution — always safe):
+python tools/run_e2e_pipeline.py \
+    --project-id my-project \
+    --enable-browser \
+    --enable-api \
+    --enable-qa-report
+
+# Run pipeline with selected modules:
+python tools/run_e2e_pipeline.py \
+    --project-id my-project \
+    --enable-browser \
+    --enable-api \
+    --enable-db \
+    --api-target-url https://restful-booker.herokuapp.com \
+    --browser-target-url https://www.saucedemo.com \
+    --browser-category saucedemo \
+    --db-provider postgresql \
+    --db-url-env-var STAGING_DATABASE_URL \
+    --approve-pipeline-execution \
+    --approve-browser-execution \
+    --approve-api-smoke \
+    --approve-db-smoke
+```
+
+**Module enable flags:**
+
+| Flag | Module enabled |
+|---|---|
+| `--enable-task-source` | Task source fetch (requires `--task-source-provider`, `--task-source-token-env-var`) |
+| `--enable-browser` | Browser UI execution (requires `--browser-target-url`, `--browser-category`) |
+| `--enable-api` | API smoke (requires `--api-target-url`) |
+| `--enable-google-auth` | Google OAuth runner |
+| `--enable-github-auth` | GitHub OAuth runner |
+| `--enable-mobile` | Mobile viewport runner (requires `--mobile-device`) |
+| `--enable-visual` | Visual regression runner (requires `--visual-target-url`) |
+| `--enable-db` | DB smoke (requires `--db-provider`, `--db-url-env-var`) |
+| `--enable-qa-report` | QA evidence report aggregator |
+
+**Blocked flags (never accepted):** `--password`, `--token`, `--secret`, `--api-key`,
+`--cookie`, `--pat`, `--access-token`, `--bearer`, `--db-url`
+
+**Safety invariants (hardcoded):**
+- `raw_secrets_allowed=False`, `production_write_allowed=False`
+- `client_delivery_allowed=False`, `human_review_required=True`
+- `safe_to_deliver=False` — always on `PipelineRunReport`
+
+**Generated artifacts** (`outputs/<project_id>/20_e2e_pipeline/`):
+```
+PIPELINE_RUN_REPORT.json
+PIPELINE_RUN_REPORT.md
+PIPELINE_SAFETY_CHECKLIST.md
+```
+
+**Exit codes:** `0` = overall complete, `1` = failed/blocked/partial, `2` = bad flags
+
+---
+
+### 34. DB Smoke Runner (`tools/run_db_smoke.py`) `[implemented]`
+
+**Purpose:** Read-only database smoke for PostgreSQL, MySQL, and MongoDB.
+Accepts a connection string via env var name only — raw URLs are always blocked.
+Destructive operations (INSERT/UPDATE/DELETE/DROP etc.) are always blocked.
+
+```bash
+# PostgreSQL — default SELECT * FROM <table> LIMIT 10:
+python tools/run_db_smoke.py \
+    --project-id my-project \
+    --provider postgresql \
+    --db-url-env-var STAGING_DATABASE_URL \
+    --table users \
+    --approve-db-smoke
+
+# MySQL — custom SELECT:
+python tools/run_db_smoke.py \
+    --project-id my-project \
+    --provider mysql \
+    --db-url-env-var STAGING_MYSQL_URL \
+    --query "SELECT id, name FROM products LIMIT 5" \
+    --approve-db-smoke
+
+# MongoDB — find operation:
+python tools/run_db_smoke.py \
+    --project-id my-project \
+    --provider mongodb \
+    --db-url-env-var STAGING_MONGO_URL \
+    --mongo-operation find \
+    --table products \
+    --row-limit 10 \
+    --approve-db-smoke
+```
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--project-id` | Required — output project identifier |
+| `--provider` | Required — `postgresql`, `mysql`, or `mongodb` |
+| `--db-url-env-var` | Required — env var NAME holding the connection string (e.g. `STAGING_DATABASE_URL`) |
+| `--table` | Table or collection name for default queries |
+| `--query` | Custom SQL query (SELECT/SHOW/DESCRIBE/EXPLAIN only) |
+| `--mongo-operation` | MongoDB operation (`find`, `aggregate`, `count`, etc.) |
+| `--row-limit` | Max rows returned (default 10, max 100) |
+| `--timeout` | Query timeout in seconds (default 30) |
+| `--approve-db-smoke` | Required — confirms intent to perform a read-only DB smoke |
+
+**Blocked flags (never accepted):** `--password`, `--token`, `--secret`, `--api-key`,
+`--cookie`, `--db-url`, `--connection-string`, `--dsn`
+
+**Allowed SQL:** `SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN` only.
+
+**Blocked SQL keywords:** `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`,
+`TRUNCATE`, `EXEC`, `EXECUTE`, `GRANT`, `REVOKE`, `MERGE`, `REPLACE`, `CALL`, `LOAD`, `IMPORT`
+
+**Allowed MongoDB operations:** `find`, `findOne`, `aggregate`, `count`, `countDocuments`,
+`estimatedDocumentCount`, `distinct`, `listCollections`, `listDatabases`
+
+**Safety invariants (hardcoded):**
+- `raw_secrets_allowed=False`, `production_write_allowed=False`
+- `destructive_db_actions_allowed=False`, `connection_string_logged=False`
+- `client_delivery_allowed=False`, `human_review_required=True`
+
+**Generated artifacts** (`outputs/<project_id>/21_db_smoke/`):
+```
+DB_SMOKE_REPORT.json
+DB_SMOKE_REPORT.md
+DB_SMOKE_SAFETY_CHECKLIST.md
+```
+
+**Exit codes:** `0` = complete + rows returned, `1` = blocked/failed, `2` = bad flags
 
 ---
 

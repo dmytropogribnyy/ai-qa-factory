@@ -1,8 +1,8 @@
 # Agent Operating Contract — Guided QA Automation Workbench
 
-**Version:** 5.5.0
+**Version:** 5.6.0
 **Updated:** 2026-05-26
-**Phase:** 5I
+**Phase:** 5J
 
 This document defines the operating contract for any agent — Claude Code, ChatGPT/GPT,
 future local automation, or any AI assistant — that edits, reviews, or runs code in this
@@ -567,6 +567,47 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
   5 files: `QA_EVIDENCE_REPORT.json/md`, `QA_REPORT_REVIEW_CHECKLIST.md`,
   `QA_REPORT_SECRET_SCAN.json/md`.
 - **Do not include `14_qa_report/` in client delivery packages.**
+
+---
+
+## Section 15 — Phase 5J — E2E Pipeline Runner + DB Smoke Rules
+
+### Rules
+
+- **Pipeline execution requires explicit approval flag.**
+  `tools/run_e2e_pipeline.py` is blocked unless `--approve-pipeline-execution` is present.
+  Plan mode (omitting that flag) is always safe — no subprocess is called.
+- **Execution order is hardcoded and cannot be changed.**
+  The fixed sequence `task_source → browser → api_smoke → google_auth → github_auth →
+  mobile_viewport → visual_regression → db_smoke → qa_report` cannot be reordered.
+- **Each module's own safety gates remain fully in effect via the pipeline runner.**
+  The pipeline runner does not bypass module-level approval or safety checks.
+- **Raw secrets are never accepted by the pipeline or DB smoke CLI.**
+  Flags `--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--pat`,
+  `--access-token`, `--bearer`, `--db-url`, `--connection-string`, `--dsn` block
+  immediately with exit code 2.
+- **DB connection strings passed via env var NAME only.**
+  `--db-url-env-var` accepts only an env var name (`[A-Z][A-Z0-9_]{0,79}`). Raw URLs
+  are rejected at the CLI and runner level. The resolved value is never logged.
+- **Only read-only SQL is allowed.**
+  `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `EXEC`, `EXECUTE`,
+  `GRANT`, `REVOKE`, `MERGE`, `REPLACE`, `CALL`, `LOAD`, `IMPORT` — all blocked by
+  word-boundary regex, even inside subqueries.
+- **Only approved MongoDB operations are allowed.**
+  Allowlist: `find`, `findOne`, `aggregate`, `count`, `countDocuments`,
+  `estimatedDocumentCount`, `distinct`, `listCollections`, `listDatabases`.
+  Validation happens before any driver connection.
+- **Row limit is hard-capped at 100.** Default is 10.
+- **`E2EPipelineRunner` does not replace existing orchestration layers.**
+  It is a subprocess orchestration layer. `QAFactoryOrchestrator`, `WorkbenchController`,
+  and `EvidenceManager` remain independent.
+- **Safety invariants are unconditional.**
+  `PipelineRunReport`: `raw_secrets_allowed=False`, `production_write_allowed=False`,
+  `client_delivery_allowed=False`, `safe_to_deliver=False`, `human_review_required=True`.
+  `DBSmokeReport`: + `destructive_db_actions_allowed=False`, `connection_string_logged=False`.
+  All hardcoded in `__post_init__` AND `from_dict`.
+- **Artifacts:** `outputs/<project_id>/20_e2e_pipeline/` and `21_db_smoke/` only.
+- **Do not include any Phase 5J artifacts in client delivery packages.**
 
 ---
 

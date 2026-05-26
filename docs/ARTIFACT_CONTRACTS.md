@@ -1,8 +1,8 @@
 # Artifact Contracts — Guided QA Automation Workbench
 
-**Version:** 5.8.0
+**Version:** 5.9.0
 **Updated:** 2026-05-26
-**Phase:** 5I
+**Phase:** 5J
 
 This document defines the stable artifact paths, formats, and ownership rules for all
 workbench-generated files. Agents and scripts should use these paths and respect the
@@ -525,6 +525,26 @@ Safety guarantees: `credentials_used=False`, `auth_performed=False`, `safe_to_de
 Safety guarantees: `safe_to_deliver=False`, `human_review_required=True`, `cookies_logged=False`,
 `tokens_logged=False`, `storage_state_content_read=False`, `personal_account_used=False`,
 `production_account_used=False`, `captcha_bypass_attempted=False` always.
+
+### `outputs/<project_id>/20_e2e_pipeline/` (Phase 5J)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `PIPELINE_RUN_REPORT.json` | `PipelineRunReport` | system | Module results, counters, overall status |
+| `PIPELINE_RUN_REPORT.md` | — | system | Human-readable pipeline run summary |
+| `PIPELINE_SAFETY_CHECKLIST.md` | — | system | Pre-delivery safety checklist |
+
+Safety guarantees: `raw_secrets_allowed=False`, `production_write_allowed=False`, `client_delivery_allowed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+### `outputs/<project_id>/21_db_smoke/` (Phase 5J)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `DB_SMOKE_REPORT.json` | `DBSmokeReport` | system | Query results, provider, status, blockers |
+| `DB_SMOKE_REPORT.md` | — | system | Human-readable DB smoke report |
+| `DB_SMOKE_SAFETY_CHECKLIST.md` | — | system | Pre-delivery safety checklist |
+
+Safety guarantees: `raw_secrets_allowed=False`, `destructive_db_actions_allowed=False`, `connection_string_logged=False`, `safe_to_deliver=False`, `human_review_required=True` always.
 
 ---
 

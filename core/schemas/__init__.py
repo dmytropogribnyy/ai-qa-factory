@@ -222,6 +222,28 @@ from core.schemas.github_auth import (
     GitHubAuthExecutionDecision,
     GitHubAuthEvidenceReport,
 )
+# Phase 5J — E2E Pipeline
+from core.schemas.pipeline import (
+    PIPELINE_MODULES,
+    PIPELINE_MODULE_STATUSES,
+    PIPELINE_OVERALL_STATUSES,
+    PipelineModuleConfig,
+    PipelineModuleResult,
+    PipelineRunPlan,
+    PipelineRunReport,
+)
+# Phase 5J — DB Smoke
+from core.schemas.db_smoke import (
+    DB_PROVIDERS,
+    DB_SMOKE_STATUSES,
+    DB_ALLOWED_SQL_PREFIXES,
+    DB_BLOCKED_SQL_KEYWORDS,
+    MONGODB_ALLOWED_OPERATIONS,
+    MONGODB_BLOCKED_OPERATIONS,
+    DBSmokeTarget,
+    DBSmokeQueryResult,
+    DBSmokeReport,
+)
 
 __all__ = [
     # Base
@@ -465,4 +487,22 @@ __all__ = [
     "GitHubAuthCapability",
     "GitHubAuthExecutionDecision",
     "GitHubAuthEvidenceReport",
+    # Phase 5J — E2E Pipeline
+    "PIPELINE_MODULES",
+    "PIPELINE_MODULE_STATUSES",
+    "PIPELINE_OVERALL_STATUSES",
+    "PipelineModuleConfig",
+    "PipelineModuleResult",
+    "PipelineRunPlan",
+    "PipelineRunReport",
+    # Phase 5J — DB Smoke
+    "DB_PROVIDERS",
+    "DB_SMOKE_STATUSES",
+    "DB_ALLOWED_SQL_PREFIXES",
+    "DB_BLOCKED_SQL_KEYWORDS",
+    "MONGODB_ALLOWED_OPERATIONS",
+    "MONGODB_BLOCKED_OPERATIONS",
+    "DBSmokeTarget",
+    "DBSmokeQueryResult",
+    "DBSmokeReport",
 ]

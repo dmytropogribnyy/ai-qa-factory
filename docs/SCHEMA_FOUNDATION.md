@@ -1,8 +1,8 @@
 # Schema Foundation — Guided QA Automation Workbench
 
-**Version:** 5.8.0  
+**Version:** 5.9.0  
 **Updated:** 2026-05-26  
-**Phase:** 5I — Schema foundations + all phases through Phase 5I
+**Phase:** 5J — Schema foundations + all phases through Phase 5J
 
 ---
 
@@ -870,6 +870,68 @@ NOT forced (reflect real routing state):
 | `production_account_used` | `False` | Production accounts never used |
 | `safe_to_deliver` | `False` | Always requires human review |
 | `human_review_required` | `True` | Always requires human review |
+
+---
+
+---
+
+### Phase 5J — E2E Pipeline (`core/schemas/pipeline.py`)
+
+| Class | Export | Description |
+|---|---|---|
+| `PipelineModuleConfig` | `PipelineModuleConfig` | Per-module configuration for all pipeline modules |
+| `PipelineModuleResult` | `PipelineModuleResult` | Result of running one module — status, exit code, stdout excerpt, blockers |
+| `PipelineRunPlan` | `PipelineRunPlan` | Execution plan — enabled modules, execution order, planned commands, blockers |
+| `PipelineRunReport` | `PipelineRunReport` | Full pipeline run report — module results, counters, overall status |
+
+**Constants:**
+- `PIPELINE_MODULES` — fixed ordered tuple of 9 module names
+- `PIPELINE_MODULE_STATUSES` — `pending`, `complete`, `failed`, `blocked`, `skipped`
+- `PIPELINE_OVERALL_STATUSES` — `planned`, `running`, `complete`, `partial`, `failed`, `blocked`
+- `PIPELINE_MODULE_CLI_TOOLS` — maps module name → CLI tool path
+- `PIPELINE_MODULE_ARTIFACT_DIRS` — maps module name → artifact directory path
+
+**Hardcoded safety defaults in `PipelineRunPlan` and `PipelineRunReport` (set in `__post_init__` AND `from_dict`):**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `raw_secrets_allowed` | `False` | `__post_init__` + `from_dict` |
+| `production_write_allowed` | `False` | `__post_init__` + `from_dict` |
+| `client_delivery_allowed` | `False` | `__post_init__` + `from_dict` |
+| `safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
+
+---
+
+### Phase 5J — DB Smoke (`core/schemas/db_smoke.py`)
+
+| Class | Export | Description |
+|---|---|---|
+| `DBSmokeTarget` | `DBSmokeTarget` | Target DB — provider, env var name, table, operation, row limit |
+| `DBSmokeQueryResult` | `DBSmokeQueryResult` | Result of one query — rows, columns, duration, error |
+| `DBSmokeReport` | `DBSmokeReport` | Full DB smoke report — target, query results, status, blockers |
+
+**Constants:**
+- `DB_PROVIDERS` — `postgresql`, `mysql`, `mongodb`
+- `DB_ALLOWED_SQL_PREFIXES` — `SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`
+- `DB_BLOCKED_SQL_KEYWORDS` — 16 destructive keywords
+- `MONGODB_ALLOWED_OPERATIONS` — 9 read-only operations
+- `MONGODB_BLOCKED_OPERATIONS` — 14 destructive operations
+- `DB_SMOKE_STATUSES` — `pending`, `complete`, `failed`, `blocked`, `skipped`
+- `DEFAULT_ROW_LIMIT` — `10`
+- `DEFAULT_TIMEOUT_SECONDS` — `30`
+- `MAX_ROW_LIMIT` — `100`
+
+**Hardcoded safety defaults in `DBSmokeReport` (set in `__post_init__` AND `from_dict`):**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `raw_secrets_allowed` | `False` | `__post_init__` + `from_dict` |
+| `production_write_allowed` | `False` | `__post_init__` + `from_dict` |
+| `destructive_db_actions_allowed` | `False` | `__post_init__` + `from_dict` |
+| `client_delivery_allowed` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
+| `connection_string_logged` | `False` | `__post_init__` + `from_dict` |
 
 ---
 

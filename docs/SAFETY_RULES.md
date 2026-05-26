@@ -928,6 +928,72 @@ No Phase 5I artifact is approved for client delivery without human review.
 
 ---
 
+---
+
+## Phase 5J — E2E Pipeline Runner + DB Smoke Safety Rules
+
+**5J-1. Pipeline execution requires explicit approval.**
+`E2EPipelineRunner.run()` is blocked unless `approve_pipeline_execution=True`.
+The plan method (`plan()`) is always safe and never calls any subprocess.
+
+**5J-2. Execution order is fixed and cannot be reordered.**
+The pipeline always runs modules in the hardcoded sequence: `task_source → browser →
+api_smoke → google_auth → github_auth → mobile_viewport → visual_regression → db_smoke →
+qa_report`. No config flag can change this order.
+
+**5J-3. Each module's own safety gates remain fully in effect.**
+The pipeline runner does not bypass any module-level approval or safety check.
+A module that requires `--approve-browser-execution` still requires it when invoked
+via the pipeline runner.
+
+**5J-4. Raw secrets are never accepted by the pipeline CLI.**
+Flags `--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--pat`,
+`--access-token`, `--bearer`, `--db-url` are blocked at CLI entry (exit code 2).
+Any of these flags triggers an immediate block with no override.
+
+**5J-5. DB smoke accepts connection strings via env var NAME only.**
+`--db-url-env-var` must be an env var name matching `[A-Z][A-Z0-9_]{0,79}`. Raw
+PostgreSQL, MySQL, or MongoDB URLs are rejected at the CLI and at the runner level.
+The env var value is read from `os.environ` at runtime and never logged, echoed, or
+stored in any artifact. `connection_string_logged=False` is hardcoded.
+
+**5J-6. Only read-only SQL is allowed.**
+`validate_sql()` enforces a word-boundary regex. The following keywords block execution
+regardless of context (including subqueries and SQL injection attempts):
+`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `EXEC`, `EXECUTE`,
+`GRANT`, `REVOKE`, `MERGE`, `REPLACE`, `CALL`, `LOAD`, `IMPORT`. Empty queries are also blocked.
+
+**5J-7. Only approved MongoDB operations are allowed.**
+`validate_mongo_operation()` enforces an explicit allowlist: `find`, `findOne`,
+`aggregate`, `count`, `countDocuments`, `estimatedDocumentCount`, `distinct`,
+`listCollections`, `listDatabases`. All other operations are blocked before any driver
+connection is attempted.
+
+**5J-8. Row limit is hard-capped at 100.**
+`DBSmokeRunner` enforces `MAX_ROW_LIMIT = 100`. Any `row_limit` above 100 is silently
+capped to 100. The default is 10. This prevents accidental full-table reads.
+
+**5J-9. DB driver absence produces a `blocked` result, not an error.**
+If `psycopg2`, `mysql-connector-python`, or `pymongo` is not installed, the runner
+returns `execution_status="blocked"` with a blocker message that includes the install
+command. No exception propagates to the caller.
+
+**5J-10. `destructive_db_actions_allowed=False` is hardcoded.**
+`DBSmokeReport.destructive_db_actions_allowed=False` is set unconditionally in
+`__post_init__` AND `from_dict`. It cannot be overridden via constructor or deserialization.
+
+**5J-11. `safe_to_deliver=False` in all Phase 5J artifacts.**
+`PipelineRunReport` and `DBSmokeReport` both set `safe_to_deliver=False` and
+`human_review_required=True` unconditionally. No Phase 5J artifact is approved for
+client delivery without human review.
+
+**5J-12. `E2EPipelineRunner` does not replace existing orchestration layers.**
+`E2EPipelineRunner` is a subprocess orchestration layer only. It does not replace
+`QAFactoryOrchestrator` (AI/LLM), `WorkbenchController` (Phase 2A), or
+`EvidenceManager` (Phase 4B). These layers remain independent and unchanged.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

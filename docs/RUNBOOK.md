@@ -1593,3 +1593,103 @@ github_smoke.cjs                 ← runtime only, NEVER COMMITTED
 
 All artifacts: `personal_account_used=False`, `production_account_used=False`,
 `captcha_bypass_attempted=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+---
+
+### 33. E2E Pipeline Runner (Phase 5J)
+
+**Purpose:** Orchestrate all enabled Phase 5x runners in a fixed, safe sequence.
+Requires `--approve-pipeline-execution`. Each module's own safety gates remain in effect.
+
+**Checklist:**
+- [ ] All enabled modules have their own approval flags included
+- [ ] DB connection string is an env var NAME (e.g. `STAGING_DATABASE_URL`), not a raw URL
+- [ ] No `--password`, `--token`, `--secret`, `--api-key`, `--cookie`, or `--db-url` flags used
+- [ ] Plan reviewed before execution (`--approve-pipeline-execution` omitted for plan-only)
+- [ ] `outputs/<project_id>/20_e2e_pipeline/` artifacts reviewed by a human before any delivery
+
+**Command (plan only — no execution):**
+```bash
+python tools/run_e2e_pipeline.py \
+    --project-id my-project \
+    --enable-browser \
+    --enable-api \
+    --enable-qa-report
+```
+
+**Command (run pipeline):**
+```bash
+python tools/run_e2e_pipeline.py \
+    --project-id my-project \
+    --enable-browser \
+    --enable-api \
+    --enable-db \
+    --api-target-url https://restful-booker.herokuapp.com \
+    --browser-target-url https://www.saucedemo.com \
+    --browser-category saucedemo \
+    --db-provider postgresql \
+    --db-url-env-var STAGING_DATABASE_URL \
+    --approve-pipeline-execution \
+    --approve-browser-execution \
+    --approve-api-smoke \
+    --approve-db-smoke
+```
+
+**Output artifacts (`outputs/<project_id>/20_e2e_pipeline/`):**
+```
+PIPELINE_RUN_REPORT.json
+PIPELINE_RUN_REPORT.md
+PIPELINE_SAFETY_CHECKLIST.md
+```
+
+All artifacts: `raw_secrets_allowed=False`, `production_write_allowed=False`,
+`client_delivery_allowed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+---
+
+### 34. DB Smoke Runner (Phase 5J)
+
+**Purpose:** Read-only database connectivity smoke. Verifies the connection string env var
+is set, the driver is available, and the target table/collection is queryable.
+Only SELECT/SHOW/DESCRIBE/EXPLAIN and approved MongoDB operations are allowed.
+
+**Checklist:**
+- [ ] Env var (e.g. `STAGING_DATABASE_URL`) is set in the shell environment before running
+- [ ] `--db-url-env-var` flag contains an env var NAME, not a raw URL
+- [ ] No `--password`, `--token`, `--secret`, `--db-url`, `--connection-string` flags used
+- [ ] Custom `--query` (if used) starts with SELECT/SHOW/DESCRIBE/EXPLAIN
+- [ ] MongoDB `--mongo-operation` (if used) is in the allowed list
+- [ ] `--approve-db-smoke` flag included
+- [ ] `outputs/<project_id>/21_db_smoke/` artifacts reviewed by a human
+
+**Command (PostgreSQL — default SELECT):**
+```bash
+python tools/run_db_smoke.py \
+    --project-id my-project \
+    --provider postgresql \
+    --db-url-env-var STAGING_DATABASE_URL \
+    --table users \
+    --approve-db-smoke
+```
+
+**Command (MongoDB — find):**
+```bash
+python tools/run_db_smoke.py \
+    --project-id my-project \
+    --provider mongodb \
+    --db-url-env-var STAGING_MONGO_URL \
+    --mongo-operation find \
+    --table products \
+    --row-limit 10 \
+    --approve-db-smoke
+```
+
+**Output artifacts (`outputs/<project_id>/21_db_smoke/`):**
+```
+DB_SMOKE_REPORT.json
+DB_SMOKE_REPORT.md
+DB_SMOKE_SAFETY_CHECKLIST.md
+```
+
+All artifacts: `raw_secrets_allowed=False`, `destructive_db_actions_allowed=False`,
+`connection_string_logged=False`, `safe_to_deliver=False`, `human_review_required=True` always.
