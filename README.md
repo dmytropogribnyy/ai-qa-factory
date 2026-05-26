@@ -82,7 +82,7 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 1335 tests, mock mode, no API keys needed
+python -m pytest -q             # 1931 tests, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
@@ -136,6 +136,20 @@ python tools/run_demo_auth.py --project-id <id> \
 python tools/build_execution_matrix.py --project-id <id>
 python tools/build_execution_matrix.py --project-id <id> \
     --decide-url https://www.saucedemo.com --scenario-type no_auth_smoke
+
+# AI Intelligence Core (Phase 5K)
+python tools/run_intake_agent.py --project-id <id> \
+    --input-text "We need to test the login API and session management"
+python tools/run_test_oracle.py --project-id <id> --classification api_testing
+python tools/run_evidence_intelligence.py --project-id <id>
+
+# E2E Pipeline (Phase 5J)
+python tools/run_e2e_pipeline.py --project-id <id>          # plan mode
+python tools/run_e2e_pipeline.py --project-id <id> \
+    --enable-api-smoke --approve-pipeline-execution         # execute
+python tools/run_db_smoke.py --project-id <id> \
+    --provider postgresql --db-url-env-var STAGING_DB_URL \
+    --table users --approve-db-smoke
 ```
 
 Full command reference with planned future commands: [`docs/COMMANDS.md`](docs/COMMANDS.md)
@@ -183,7 +197,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **1335 passed** (all phases through 4G — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, approved demo auth execution, scenario execution matrix)
+Expected: **1931 passed** (all phases through 5K — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core)
 
 ---
 
@@ -211,7 +225,21 @@ Expected: **1335 passed** (all phases through 4G — schema foundations, classif
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v5.2.0 — Controlled Execution + Scenario Matrix (current)
+### v5.5.0 — AI Intelligence Core + Full Pipeline (current)
+
+- Phase 5K: `IntakeAgent` — heuristic work-request classifier; raw input never stored
+- Phase 5K: `TestOracle` — prioritized scenario generator; planning artifact, not executable
+- Phase 5K: `EvidenceIntelligence` — read-only artifact gap analyzer; no network/subprocess
+- Phase 5K: 3 new CLI tools (`run_intake_agent.py`, `run_test_oracle.py`, `run_evidence_intelligence.py`)
+- Phase 5K: 3 new artifact dirs (`22_intake/`, `23_test_oracle/`, `24_evidence_intelligence/`)
+- Phase 5J-R: `stop_on_first_failure` pipeline mode; demo pipeline CLI (`run_demo_pipeline.py`)
+- Phase 5J: `E2EPipelineRunner` + `DBSmokeRunner`; 9-module fixed execution order
+- Phase 5I: mobile viewport emulation, visual regression, GitHub OAuth
+- Phase 5H: multi-target expansion, task source integration, Google Auth modes
+- All safety invariants double-enforced in `__post_init__` + `from_dict`
+- 1931 tests passing
+
+### v5.2.0 — Controlled Execution + Scenario Matrix
 
 - Phase 3A: `core/framework_scaffold_builder.py` — Playwright TypeScript scaffold generator
 - Phase 3B: `core/scaffold_validator.py`, client scenario fixtures (`fixtures/client_scenarios/`) — scaffold validation and scenario library
