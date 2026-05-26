@@ -543,7 +543,7 @@ class DedicatedAuthRunner:
         auth_out = self.outputs_root / project_id / "12_dedicated_auth"
         auth_dir = auth_out / ".auth"
         auth_dir.mkdir(parents=True, exist_ok=True)
-        storage_state_path = auth_dir / "storageState.json"
+        storage_state_path = (auth_dir / "storageState.json").resolve()
 
         # subprocess env inherits process env (which has the secrets already)
         proc_env = os.environ.copy()
