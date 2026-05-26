@@ -188,6 +188,31 @@ _SECRET_ENV_PATTERNS = [
 # Maximum stdout/stderr excerpt length
 _EXCERPT_LIMIT = 2000
 
+# ---------------------------------------------------------------------------
+# Ecommerce readonly — dangerous selector/action patterns (Phase 5H hardening)
+# Scanned in test files before subprocess execution for ecommerce readonly profiles.
+# Any match blocks execution with a clear reason.
+# ---------------------------------------------------------------------------
+
+_ECOMMERCE_READONLY_DANGEROUS_PATTERNS: List[str] = [
+    # Cart / purchase actions (case-insensitive substrings in test source)
+    "add-to-cart", "add_to_cart", "addtocart", "addToCart",
+    "buy-now", "buy_now", "buynow", "buyNow",
+    "proceed-to-checkout", "proceed_to_checkout",
+    "place-order", "place_order", "placeOrder",
+    "submit-order", "submit_order",
+    # Checkout/payment selectors
+    "checkout-button", "checkout_button",
+    "/cart", "/checkout", "/order", "/payment",
+    # Auth selectors
+    "sign-in", "sign_in", "signin", "login-button", "login_button",
+    "password", "/signin", "/ap/signin", "/account",
+    # Form fills that would be dangerous in readonly context
+    "page.fill", "page.type", "page.selectOption",
+    # Wishlist
+    "wishlist", "add-to-list", "add_to_list",
+]
+
 
 class BrowserExecutionRunner:
     """Runs approved controlled browser execution. subprocess only for allowlisted commands."""
@@ -276,6 +301,18 @@ class BrowserExecutionRunner:
             cmd = self._build_blocked_command(command_mode, resolved_scaffold, cmd_block_reason)
             report.commands.append(cmd)
             return report
+
+        # Ecommerce readonly: scan test files for dangerous selectors before subprocess
+        if resolved_category == "ecommerce_public_readonly":
+            scan_block = self._scan_ecommerce_test_files(resolved_scaffold)
+            if scan_block:
+                report.execution_status = "blocked"
+                report.blockers.append(scan_block)
+                cmd = self._build_blocked_command(command_mode, resolved_scaffold, scan_block)
+                report.commands.append(cmd)
+                report.notes.append("Ecommerce readonly safety scan blocked execution.")
+                report.notes.append("Remove dangerous selectors/actions from test files.")
+                return report
 
         exec_cmd, cmd_result = self._run_command(
             command_str=command_str,
@@ -637,6 +674,37 @@ class BrowserExecutionRunner:
                         f"(auth/cart/checkout/account). URL: {base_url}"
                     )
 
+        return None
+
+    def _scan_ecommerce_test_files(self, scaffold_root: Path) -> Optional[str]:
+        """Scan test files for dangerous selectors before ecommerce readonly execution.
+
+        Returns a block reason string if a dangerous pattern is found, else None.
+        Only .spec.ts / .spec.js / .test.ts / .test.js files under tests/ are scanned.
+        """
+        tests_dir = scaffold_root / "tests"
+        if not tests_dir.exists():
+            return None  # no tests dir — nothing to scan, let Playwright handle it
+
+        extensions = (".spec.ts", ".spec.js", ".test.ts", ".test.js")
+        scanned: List[Path] = []
+        for ext in extensions:
+            scanned.extend(tests_dir.rglob(f"*{ext}"))
+
+        for test_file in scanned:
+            try:
+                content = Path(test_file).read_text(encoding="utf-8", errors="replace").lower()
+            except OSError:
+                continue
+            for pattern in _ECOMMERCE_READONLY_DANGEROUS_PATTERNS:
+                if pattern.lower() in content:
+                    rel = Path(test_file).relative_to(scaffold_root)
+                    return (
+                        f"Ecommerce readonly safety scan: dangerous pattern '{pattern}' "
+                        f"found in '{rel}'. "
+                        f"Ecommerce readonly tests must not contain cart/checkout/auth/payment "
+                        f"selectors or actions. Remove or move to a non-readonly test suite."
+                    )
         return None
 
     # ------------------------------------------------------------------

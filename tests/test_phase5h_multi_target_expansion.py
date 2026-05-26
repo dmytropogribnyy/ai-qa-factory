@@ -783,3 +783,102 @@ class TestPhase5HSchemaExports:
         assert len(_AMAZON_READONLY_DOMAINS) >= 5
         assert len(_ALZA_READONLY_DOMAINS) >= 5
         assert _ECOMMERCE_READONLY_DOMAINS == _AMAZON_READONLY_DOMAINS | _ALZA_READONLY_DOMAINS
+
+
+# ---------------------------------------------------------------------------
+# 9. Ecommerce readonly — dangerous selector scan (Phase 5H hardening)
+# ---------------------------------------------------------------------------
+
+class TestEcommerceReadonlySelectorScan:
+    def test_dangerous_patterns_list_exists(self):
+        from core.browser_execution_runner import _ECOMMERCE_READONLY_DANGEROUS_PATTERNS
+        assert len(_ECOMMERCE_READONLY_DANGEROUS_PATTERNS) >= 10
+        assert "add-to-cart" in _ECOMMERCE_READONLY_DANGEROUS_PATTERNS
+        assert "/checkout" in _ECOMMERCE_READONLY_DANGEROUS_PATTERNS
+        assert "password" in _ECOMMERCE_READONLY_DANGEROUS_PATTERNS
+
+    def test_scan_returns_none_for_empty_dir(self, tmp_path):
+        from core.browser_execution_runner import BrowserExecutionRunner
+        runner = BrowserExecutionRunner()
+        # No tests/ dir at all
+        result = runner._scan_ecommerce_test_files(tmp_path)
+        assert result is None
+
+    def test_scan_returns_none_for_clean_test(self, tmp_path):
+        from core.browser_execution_runner import BrowserExecutionRunner
+        tests_dir = tmp_path / "tests" / "smoke"
+        tests_dir.mkdir(parents=True)
+        (tests_dir / "product.spec.ts").write_text(
+            "test('product page loads', async ({ page }) => {\n"
+            "  await page.goto('https://amazon.com/dp/B08N5W');\n"
+            "  await expect(page.locator('h1')).toBeVisible();\n"
+            "});\n",
+            encoding="utf-8",
+        )
+        runner = BrowserExecutionRunner()
+        result = runner._scan_ecommerce_test_files(tmp_path)
+        assert result is None
+
+    def test_scan_blocks_add_to_cart(self, tmp_path):
+        from core.browser_execution_runner import BrowserExecutionRunner
+        tests_dir = tmp_path / "tests" / "smoke"
+        tests_dir.mkdir(parents=True)
+        (tests_dir / "bad.spec.ts").write_text(
+            "await page.click('[data-testid=\"add-to-cart\"]');\n",
+            encoding="utf-8",
+        )
+        runner = BrowserExecutionRunner()
+        result = runner._scan_ecommerce_test_files(tmp_path)
+        assert result is not None
+        assert "dangerous pattern" in result
+        assert "add-to-cart" in result
+
+    def test_scan_blocks_checkout_url(self, tmp_path):
+        from core.browser_execution_runner import BrowserExecutionRunner
+        tests_dir = tmp_path / "tests" / "smoke"
+        tests_dir.mkdir(parents=True)
+        (tests_dir / "bad.spec.ts").write_text(
+            "await page.goto('https://amazon.com/checkout');\n",
+            encoding="utf-8",
+        )
+        runner = BrowserExecutionRunner()
+        result = runner._scan_ecommerce_test_files(tmp_path)
+        assert result is not None
+        assert "/checkout" in result
+
+    def test_scan_blocks_password_fill(self, tmp_path):
+        from core.browser_execution_runner import BrowserExecutionRunner
+        tests_dir = tmp_path / "tests" / "smoke"
+        tests_dir.mkdir(parents=True)
+        (tests_dir / "bad.spec.ts").write_text(
+            "await page.fill('#password', process.env.TEST_PASSWORD);\n",
+            encoding="utf-8",
+        )
+        runner = BrowserExecutionRunner()
+        result = runner._scan_ecommerce_test_files(tmp_path)
+        assert result is not None
+        assert "password" in result
+
+    def test_scan_blocks_buy_now(self, tmp_path):
+        from core.browser_execution_runner import BrowserExecutionRunner
+        tests_dir = tmp_path / "tests" / "smoke"
+        tests_dir.mkdir(parents=True)
+        (tests_dir / "bad.spec.ts").write_text(
+            "await page.locator('#buyNow').click();\n",
+            encoding="utf-8",
+        )
+        runner = BrowserExecutionRunner()
+        result = runner._scan_ecommerce_test_files(tmp_path)
+        assert result is not None
+
+    def test_scan_only_applies_to_ecommerce_profile(self):
+        """The scan constant exists — profile routing decides when to apply it."""
+        from core.browser_execution_runner import (
+            _ECOMMERCE_READONLY_DANGEROUS_PATTERNS,
+            _READONLY_PROFILES,
+        )
+        # ecommerce profiles exist
+        assert "amazon_public_readonly" in _READONLY_PROFILES
+        assert _READONLY_PROFILES["amazon_public_readonly"]["target_category"] == "ecommerce_public_readonly"
+        # patterns list is non-empty
+        assert _ECOMMERCE_READONLY_DANGEROUS_PATTERNS
