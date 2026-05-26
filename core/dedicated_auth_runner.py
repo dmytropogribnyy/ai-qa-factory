@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -429,6 +431,9 @@ class DedicatedAuthRunner:
             target_category=target_category,
             target_url=target_url,
             secret_values=secret_values,
+            username_env_var=username_env_var,
+            password_env_var=password_env_var,
+            target_url_for_env=target_url,
             timeout=timeout,
         )
 
@@ -511,11 +516,19 @@ class DedicatedAuthRunner:
         target_category: str,
         target_url: Optional[str],
         secret_values: List[str],
+        username_env_var: Optional[str],
+        password_env_var: Optional[str],
+        target_url_for_env: Optional[str],
         timeout: int,
     ) -> DedicatedAuthExecutionReport:
         # Build allowlisted command
         cmd_str = "npx playwright test tests/auth --reporter=list"
-        cmd = cmd_str.split()
+        # On Windows, subprocess cannot resolve .cmd shims without shell=True.
+        # Resolve npx to its full path so the list-form exec works cross-platform.
+        npx_exe = shutil.which("npx") if sys.platform == "win32" else "npx"
+        if not npx_exe:
+            npx_exe = "npx"
+        cmd = [npx_exe] + cmd_str.split()[1:]
 
         # Verify against allowlist
         if not any(cmd_str.startswith(base) for base in _ALLOWED_COMMAND_BASES):
@@ -534,6 +547,16 @@ class DedicatedAuthRunner:
 
         # subprocess env inherits process env (which has the secrets already)
         proc_env = os.environ.copy()
+
+        # Map target-specific env var names to the standard names the spec reads.
+        # e.g. ORANGEHRM_USERNAME → QA_TEST_USERNAME so the spec's process.env lookup works.
+        if username_env_var and proc_env.get(username_env_var):
+            proc_env["QA_TEST_USERNAME"] = proc_env[username_env_var]
+        if password_env_var and proc_env.get(password_env_var):
+            proc_env["QA_TEST_PASSWORD"] = proc_env[password_env_var]
+        if target_url_for_env:
+            proc_env["BASE_URL"] = target_url_for_env
+        proc_env["AUTH_STORAGE_STATE_PATH"] = str(storage_state_path)
 
         start = time.time()
         status = "unknown"
