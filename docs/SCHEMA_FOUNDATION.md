@@ -664,6 +664,58 @@ NOT forced (reflect real routing state):
 
 ---
 
+### Phase 5G — Google/OAuth Test Account Capability (`core/schemas/google_auth.py`)
+
+| Class | Export | Description |
+|---|---|---|
+| `GoogleTestAccountProfile` | `GoogleTestAccountProfile` | Identification of a dedicated test account (labels only, never raw email values as credentials) |
+| `GoogleAuthModePolicy` | `GoogleAuthModePolicy` | Policy decision for a single auth mode (allowed/blocked + reasons) |
+| `GoogleStorageStatePolicy` | `GoogleStorageStatePolicy` | Policy for handling Google storageState files (path/metadata only) |
+| `GoogleAuthCapability` | `GoogleAuthCapability` | Top-level capability plan covering all 8 supported modes |
+| `GoogleAuthExecutionDecision` | `GoogleAuthExecutionDecision` | Per-request decision: can this specific request run now? |
+| `GoogleAuthEvidenceReport` | `GoogleAuthEvidenceReport` | Evidence report for executed (or planned-only) Google auth flow |
+
+**Constants:**
+- `GOOGLE_AUTH_MODES` — all 8 supported mode names
+- `GOOGLE_AUTH_MODES_EXECUTABLE_5G` — modes with real execution support: `manual_storage_state_capture`, `storage_state_reuse`
+- `GOOGLE_AUTH_MODES_PLANNING_ONLY_5G` — modes deferred to later phases (cdp_attach, dedicated_profile_context, google_api_oauth_token_future, google_service_account_future, totp_test_account_future, mock_oauth_provider_future)
+- `GOOGLE_TARGET_KINDS` — target categorization: `google_account_ui`, `sign_in_with_google_oauth`, `google_api_endpoint`, `mock_oauth_endpoint`
+
+**Hardcoded safety defaults (set in `__post_init__` AND `from_dict`):**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `GoogleAuthCapability.raw_secrets_allowed` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthCapability.storage_state_content_read` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthCapability.browser_profile_content_read` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthCapability.captcha_bypass_allowed` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthCapability.anti_bot_bypass_allowed` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthCapability.client_delivery_allowed` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthCapability.personal_account_always_blocked` | `True` | `__post_init__` + `from_dict` |
+| `GoogleAuthCapability.production_account_always_blocked` | `True` | `__post_init__` + `from_dict` |
+| `GoogleAuthCapability.stealth_live_login_as_core_path` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthExecutionDecision.*` | same set as Capability | `__post_init__` + `from_dict` |
+| `GoogleStorageStatePolicy.internal_only` | `True` | `__post_init__` + `from_dict` |
+| `GoogleStorageStatePolicy.approved_for_commit` | `False` | `__post_init__` + `from_dict` |
+| `GoogleStorageStatePolicy.client_visible` | `False` | `__post_init__` + `from_dict` |
+| `GoogleStorageStatePolicy.storage_state_content_read` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.raw_credentials_logged` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.cookies_logged` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.tokens_logged` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.storage_state_content_read` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.browser_profile_content_read` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.captcha_bypass_attempted` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.anti_bot_bypass_attempted` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.personal_account_used` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.production_account_used` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.approved_for_client_delivery` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.client_visible` | `False` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.internal_only` | `True` | `__post_init__` + `from_dict` |
+| `GoogleAuthEvidenceReport.human_review_required` | `True` | `__post_init__` + `from_dict` |
+
+---
+
 ### Phase 5F — QA Evidence Report (`core/schemas/qa_report.py`)
 
 | Class | Export | Description |

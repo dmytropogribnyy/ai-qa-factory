@@ -1307,3 +1307,86 @@ QA_REPORT_SECRET_SCAN.md
 ```
 
 All Phase 5F artifacts: `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+---
+
+## Section 28 — Phase 5G — Google/OAuth Test Account Capability
+
+### What it does
+
+Permissioned Google auth path for dedicated test accounts. Replaces the blanket Google
+block with a capability model: personal/production accounts stay blocked, dedicated
+test accounts are allowed under explicit approval flags with safe modes only.
+
+### Pre-flight checklist
+
+- [ ] Dedicated Google test account exists (NOT your personal account)
+- [ ] You are NOT signed into a production/admin Google account in the browser session
+- [ ] Phase 3A scaffold exists at `outputs/<project_id>/03_framework/playwright/`
+- [ ] Node.js is installed and on PATH
+- [ ] `.gitignore` covers `15_google_auth/.auth/` and `*.cjs` runtime scripts
+- [ ] You understand: this runner does NOT bypass CAPTCHA or 2FA — you solve them yourself
+
+### Three-step workflow
+
+```bash
+# Step 1 — plan capability (no browser, no network):
+python tools/plan_google_auth.py \
+    --project-id my-google-smoke \
+    --account-email-label danrobinson_artist_gmail \
+    --dedicated-test-account-confirmed \
+    --google-test-account-confirmed
+
+# Step 2 — capture storageState (you log in manually in the visible browser):
+python tools/capture_google_storage_state.py \
+    --project-id my-google-smoke \
+    --approve-google-test-account \
+    --google-test-account-confirmed \
+    --dedicated-test-account-confirmed \
+    --account-email-label danrobinson_artist_gmail \
+    --target-url https://accounts.google.com
+
+# Step 3 — read-only smoke using captured state:
+python tools/run_google_auth_smoke.py \
+    --project-id my-google-smoke \
+    --approve-google-test-account \
+    --google-test-account-confirmed \
+    --dedicated-test-account-confirmed \
+    --storage-state-path outputs/my-google-smoke/15_google_auth/.auth/google-storageState.json \
+    --target-url https://myaccount.google.com
+```
+
+### Always-blocked sub-paths (hardcoded)
+
+- Personal/production Google accounts
+- CAPTCHA bypass / anti-bot bypass
+- Stealth or undetected-browser as core path
+- Raw secrets in CLI args (`--password`, `--token`, `--cookie`, etc.)
+- Reading storageState content / Chrome profile content
+- Reading Gmail/Drive content
+- Writing/deleting Google account data
+- Copying main Chrome profile
+
+### What about "I'm not a robot" / CAPTCHA?
+
+Phase 5G NEVER bypasses CAPTCHA. Workflow:
+1. In manual capture, browser is visible; you solve any challenge.
+2. The captured storageState contains the post-login session.
+3. Subsequent smokes reuse that session — Google does not show CAPTCHA again until the session expires (~2-4 weeks).
+
+### Artifacts
+
+**`outputs/<project_id>/15_google_auth/`**:
+```
+GOOGLE_AUTH_CAPABILITY_PLAN.json/md
+GOOGLE_STORAGE_STATE_POLICY.json/md
+GOOGLE_AUTH_EXECUTION_DECISION.json/md
+GOOGLE_AUTH_EVIDENCE_REPORT.json/md
+GOOGLE_AUTH_REDACTION_CHECKLIST.md
+.auth/google-storageState.json    ← gitignored, internal-only
+manual_capture.cjs                 ← runtime script, gitignored
+storage_state_smoke.cjs            ← runtime script, gitignored
+smoke_redacted.png                 ← optional screenshot, gitignored
+```
+
+All Phase 5G artifacts: `safe_to_deliver=False`, `human_review_required=True` always.

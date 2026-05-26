@@ -458,6 +458,52 @@ Agents must follow these rules when proposing or evaluating test execution:
 
 ---
 
+## Section 14 — Phase 5G — Google/OAuth Test Account Capability Rules
+
+### Permissioned capability model
+
+Google is **NOT globally unblocked.** Generic runners (`dedicated_auth_runner.py`,
+`api_auth_runner.py`) continue to block `accounts.google.com`. Google is allowed
+ONLY through the Phase 5G dedicated runner with explicit approval flags.
+
+### Rules
+
+- **Personal Google accounts → always blocked.** `personal_account_confirmed=True`
+  produces an unconditional BLOCK regardless of all other approvals.
+- **Production Google accounts → always blocked.** Same as above for `production_account_confirmed=True`.
+- **CAPTCHA bypass → always blocked.** `captcha_bypass_allowed=False` hardcoded.
+  Manual challenge solving during `manual_storage_state_capture` is the only path.
+- **Anti-bot bypass → always blocked.** `anti_bot_bypass_allowed=False` hardcoded.
+- **Stealth/undetected-browser as core path → never.** The system does not ship
+  with bot-detection bypass libraries.
+- **Raw secrets never via CLI flags.** `--password`, `--token`, `--cookie`,
+  `--api-key`, `--username`, `--email`, `--service-account-json`, `--totp-seed`
+  are blocked by all Phase 5G CLIs at startup.
+- **storageState content never read by the system.** Path/metadata only.
+- **Chrome profile content never read.** `dedicated_profile_context` mode requires
+  an internal user-data-dir under `outputs/<project_id>/15_google_auth/user-data-dir/`.
+- **Gmail/Drive content never read.** Read-only smoke verifies authentication state
+  and page response only.
+- **Writing/deleting Google account data → never.** No `send`, `delete`, `update`,
+  or `share` actions.
+- **storageState files never committed.** `.gitignore` enforces this.
+- **Allowed target URL prefixes (https only):** `accounts.google.com`,
+  `mail.google.com`, `drive.google.com`, `docs.google.com`, `myaccount.google.com`,
+  `workspace.google.com`. URLs with `captcha`, `recaptcha`, `challenge`, `anti-bot`
+  substrings are always blocked.
+- **`safe_to_deliver=False` and `approved_for_client_delivery=False` always.**
+- **Required approval flags for every executable mode:**
+  `--approve-google-test-account`, `--google-test-account-confirmed`,
+  `--dedicated-test-account-confirmed`.
+- **Executable modes in Phase 5G:** `manual_storage_state_capture`, `storage_state_reuse`.
+  All other modes (`cdp_attach`, `dedicated_profile_context`,
+  `google_api_oauth_token_future`, `google_service_account_future`,
+  `totp_test_account_future`, `mock_oauth_provider_future`) are planning-only.
+- **Artifacts:** `outputs/<project_id>/15_google_auth/` only.
+- **Do not include `15_google_auth/` in client delivery packages.**
+
+---
+
 ## Section 13 — Phase 5F — QA Evidence Report Rules
 
 ### Rules

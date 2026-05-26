@@ -903,6 +903,126 @@ class WorkbenchController:
         )
 
     # ------------------------------------------------------------------
+    # Phase 5G — Google/OAuth Test Account Capability API
+    # ------------------------------------------------------------------
+
+    def plan_google_auth_capability(
+        self,
+        project_id: str,
+        account_email_label: str = "",
+        account_type: str = "dedicated_test",
+        workspace_account: bool = False,
+        two_factor_enabled: Optional[bool] = None,
+        dedicated_test_account_confirmed: bool = False,
+        google_test_account_confirmed: bool = False,
+        personal_account_confirmed: bool = False,
+        production_account_confirmed: bool = False,
+    ):
+        """Build a Google/OAuth test-account capability plan. No browser, no network."""
+        from core.google_auth_capability import GoogleAuthCapabilityPlanner
+        planner = GoogleAuthCapabilityPlanner(outputs_root=self._outputs_root)
+        return planner.build_capability(
+            project_id=project_id,
+            account_email_label=account_email_label,
+            account_type=account_type,
+            workspace_account=workspace_account,
+            two_factor_enabled=two_factor_enabled,
+            dedicated_test_account_confirmed=dedicated_test_account_confirmed,
+            google_test_account_confirmed=google_test_account_confirmed,
+            personal_account_confirmed=personal_account_confirmed,
+            production_account_confirmed=production_account_confirmed,
+        )
+
+    def decide_google_auth_execution(
+        self,
+        project_id: str,
+        target_url: str,
+        target_kind: str,
+        auth_mode: str,
+        **kwargs,
+    ):
+        """Per-request decision on whether a Google auth flow can run now."""
+        from core.google_auth_capability import GoogleAuthCapabilityPlanner
+        planner = GoogleAuthCapabilityPlanner(outputs_root=self._outputs_root)
+        return planner.decide_execution(
+            project_id=project_id,
+            target_url=target_url,
+            target_kind=target_kind,
+            auth_mode=auth_mode,
+            **kwargs,
+        )
+
+    def render_google_auth_capability_artifacts(self, capability, project_id: str) -> dict:
+        """Write Phase 5G capability artifacts to outputs/<project_id>/15_google_auth/."""
+        from core.google_auth_capability import GoogleAuthCapabilityPlanner
+        planner = GoogleAuthCapabilityPlanner(outputs_root=self._outputs_root)
+        return planner.render_capability_artifacts(capability, project_id)
+
+    def capture_google_storage_state(
+        self,
+        project_id: str,
+        target_url: str,
+        approve_google_test_account: bool = False,
+        google_test_account_confirmed: bool = False,
+        dedicated_test_account_confirmed: bool = False,
+        personal_account_confirmed: bool = False,
+        production_account_confirmed: bool = False,
+        account_email_label: str = "",
+        timeout_seconds: int = 300,
+    ):
+        """Approved manual Google storageState capture. User logs in manually."""
+        from core.google_auth_runner import GoogleAuthRunner
+        runner = GoogleAuthRunner(outputs_root=self._outputs_root)
+        return runner.capture_storage_state(
+            project_id=project_id,
+            target_url=target_url,
+            approve_google_test_account=approve_google_test_account,
+            google_test_account_confirmed=google_test_account_confirmed,
+            dedicated_test_account_confirmed=dedicated_test_account_confirmed,
+            personal_account_confirmed=personal_account_confirmed,
+            production_account_confirmed=production_account_confirmed,
+            account_email_label=account_email_label,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def run_google_auth_smoke(
+        self,
+        project_id: str,
+        target_url: str,
+        storage_state_path: str,
+        approve_google_test_account: bool = False,
+        google_test_account_confirmed: bool = False,
+        dedicated_test_account_confirmed: bool = False,
+        personal_account_confirmed: bool = False,
+        production_account_confirmed: bool = False,
+        account_email_label: str = "",
+        target_kind: str = "google_account_ui",
+        timeout_seconds: int = 90,
+    ):
+        """Read-only Google auth smoke using captured storageState."""
+        from core.google_auth_runner import GoogleAuthRunner
+        runner = GoogleAuthRunner(outputs_root=self._outputs_root)
+        return runner.run_storage_state_smoke(
+            project_id=project_id,
+            target_url=target_url,
+            storage_state_path=storage_state_path,
+            approve_google_test_account=approve_google_test_account,
+            google_test_account_confirmed=google_test_account_confirmed,
+            dedicated_test_account_confirmed=dedicated_test_account_confirmed,
+            personal_account_confirmed=personal_account_confirmed,
+            production_account_confirmed=production_account_confirmed,
+            account_email_label=account_email_label,
+            target_kind=target_kind,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def render_google_auth_evidence_artifacts(self, report, project_id: str) -> dict:
+        """Write Phase 5G evidence artifacts to outputs/<project_id>/15_google_auth/."""
+        from core.google_auth_runner import GoogleAuthRunner
+        runner = GoogleAuthRunner(outputs_root=self._outputs_root)
+        return runner.render_evidence_artifacts(report, project_id)
+
+    # ------------------------------------------------------------------
     # Phase 5F — QA Evidence Report API
     # ------------------------------------------------------------------
 

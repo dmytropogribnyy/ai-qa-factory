@@ -1555,6 +1555,90 @@ API_AUTH_EXECUTION_REPORT.json/md
 
 ---
 
+### `python tools/plan_google_auth.py`
+
+Phase 5G — Planning/policy CLI for Google/OAuth test-account capabilities.
+No browser. No network. No credentials.
+
+```bash
+# Full capability plan:
+python tools/plan_google_auth.py \
+    --project-id my-google-smoke \
+    --account-email-label danrobinson_artist_gmail \
+    --dedicated-test-account-confirmed \
+    --google-test-account-confirmed
+
+# Per-request decision:
+python tools/plan_google_auth.py \
+    --project-id my-google-smoke \
+    --decide \
+    --auth-mode storage_state_reuse \
+    --target-url https://myaccount.google.com \
+    --target-kind google_account_ui \
+    --storage-state-path outputs/my-google-smoke/15_google_auth/.auth/google-storageState.json \
+    --approve-google-test-account \
+    --google-test-account-confirmed \
+    --dedicated-test-account-confirmed
+```
+
+**Supported modes** (declared in plan; execution availability differs):
+- `manual_storage_state_capture` — executable in Phase 5G
+- `storage_state_reuse` — executable in Phase 5G
+- `cdp_attach` — planning-only in Phase 5G
+- `dedicated_profile_context` — planning-only in Phase 5G
+- `google_api_oauth_token_future` — planning-only
+- `google_service_account_future` — planning-only
+- `totp_test_account_future` — planning-only
+- `mock_oauth_provider_future` — planning-only
+
+**Always blocked (hardcoded):** personal Google accounts, production Google accounts,
+CAPTCHA bypass, anti-bot bypass, stealth as core path, raw secrets in CLI args.
+
+---
+
+### `python tools/capture_google_storage_state.py`
+
+Phase 5G — Approved manual Google storageState capture. Browser opens; user logs
+in manually with the dedicated test account; storageState saved to internal path.
+**Does not** automate password entry. **Does not** bypass CAPTCHA or 2FA.
+
+```bash
+python tools/capture_google_storage_state.py \
+    --project-id my-google-smoke \
+    --approve-google-test-account \
+    --google-test-account-confirmed \
+    --dedicated-test-account-confirmed \
+    --account-email-label danrobinson_artist_gmail \
+    --target-url https://accounts.google.com
+```
+
+**Prereqs:** Phase 3A scaffold must already exist at
+`outputs/<project_id>/03_framework/playwright/` with `@playwright/test` installed.
+
+**Saved to:** `outputs/<project_id>/15_google_auth/.auth/google-storageState.json` (gitignored)
+
+---
+
+### `python tools/run_google_auth_smoke.py`
+
+Phase 5G — Read-only smoke that reuses captured storageState. No content extraction,
+no email/file reads, no admin actions.
+
+```bash
+python tools/run_google_auth_smoke.py \
+    --project-id my-google-smoke \
+    --approve-google-test-account \
+    --google-test-account-confirmed \
+    --dedicated-test-account-confirmed \
+    --auth-mode storage_state_reuse \
+    --storage-state-path outputs/my-google-smoke/15_google_auth/.auth/google-storageState.json \
+    --target-url https://myaccount.google.com
+```
+
+**Always blocked:** raw secret flags (`--password`, `--token`, `--cookie`, etc.).
+
+---
+
 ### `python tools/generate_qa_report.py`
 
 Phase 5F — Read-only QA Evidence Report Generator. Aggregates evidence from one or

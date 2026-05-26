@@ -11,6 +11,13 @@ storageState*.json
 **/storageState.json
 **/storageState*.json
 
+# ── Phase 5G — Google auth storage state and runtime scripts (never committed) ─
+**/15_google_auth/.auth/
+**/15_google_auth/user-data-dir/
+**/15_google_auth/*.cjs
+**/google-storageState*.json
+**/smoke_redacted*.png
+
 # ── Python runtime ────────────────────────────────────────────────────────────
 .venv/
 __pycache__/

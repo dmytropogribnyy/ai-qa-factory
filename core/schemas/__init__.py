@@ -169,6 +169,18 @@ from core.schemas.qa_report import (
     QASecretScanResult,
     QAEvidenceReport,
 )
+from core.schemas.google_auth import (
+    GOOGLE_AUTH_MODES,
+    GOOGLE_AUTH_MODES_EXECUTABLE_5G,
+    GOOGLE_AUTH_MODES_PLANNING_ONLY_5G,
+    GOOGLE_TARGET_KINDS,
+    GoogleTestAccountProfile,
+    GoogleAuthModePolicy,
+    GoogleStorageStatePolicy,
+    GoogleAuthCapability,
+    GoogleAuthExecutionDecision,
+    GoogleAuthEvidenceReport,
+)
 
 __all__ = [
     # Base
@@ -368,4 +380,15 @@ __all__ = [
     "QACoverageSummary",
     "QASecretScanResult",
     "QAEvidenceReport",
+    # Phase 5G — Google/OAuth Test Account Capability
+    "GOOGLE_AUTH_MODES",
+    "GOOGLE_AUTH_MODES_EXECUTABLE_5G",
+    "GOOGLE_AUTH_MODES_PLANNING_ONLY_5G",
+    "GOOGLE_TARGET_KINDS",
+    "GoogleTestAccountProfile",
+    "GoogleAuthModePolicy",
+    "GoogleStorageStatePolicy",
+    "GoogleAuthCapability",
+    "GoogleAuthExecutionDecision",
+    "GoogleAuthEvidenceReport",
 ]

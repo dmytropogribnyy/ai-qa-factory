@@ -728,6 +728,78 @@ Instruct immediate password rotation. Do not use shared credentials.
 
 ---
 
+## Phase 5G — Google/OAuth Test Account Capability Safety Rules
+
+**5G-1. Google is not globally unblocked.**
+Generic runners (`dedicated_auth_runner.py`, `api_auth_runner.py`) continue to block
+`accounts.google.com` and `google.com/o/oauth2`. Google is allowed ONLY via the Phase 5G
+dedicated runner with explicit approval flags.
+
+**5G-2. Personal Google accounts are always blocked.**
+`personal_account_confirmed=True` → BLOCK regardless of all other approvals.
+This rule cannot be overridden via CLI or schema.
+
+**5G-3. Production Google accounts are always blocked.**
+`production_account_confirmed=True` → BLOCK regardless of all other approvals.
+
+**5G-4. CAPTCHA and anti-bot bypass are always blocked.**
+`captcha_bypass_allowed=False` and `anti_bot_bypass_allowed=False` are hardcoded in
+`__post_init__` and `from_dict`. The system never bypasses Google's reCAPTCHA or any
+anti-bot challenge. The user solves them manually during `manual_storage_state_capture`.
+
+**5G-5. Stealth/undetected-browser is not a core path.**
+The system does not ship with `playwright-extra`, `undetected-chromedriver`, or any
+bot-detection bypass library. `stealth_live_login_as_core_path=False` hardcoded.
+
+**5G-6. Raw secrets are never accepted via CLI flags.**
+`--password`, `--secret`, `--token`, `--cookie`, `--api-key`, `--username`, `--email`,
+`--service-account-json`, `--totp-seed` — all blocked by all three Phase 5G CLIs at
+startup. Only env var name references and storageState paths are accepted.
+
+**5G-7. storageState content is never read by the system.**
+`storage_state_content_read=False` hardcoded. The planner records only path existence
+and file size. Playwright loads storageState directly; Python never reads the file.
+
+**5G-8. Browser profile content is never read by the system.**
+`browser_profile_content_read=False` hardcoded. The main Chrome profile is never
+copied or read. `dedicated_profile_context` mode requires a user-data-dir under
+the internal output directory only.
+
+**5G-9. storageState files must never be committed.**
+`.gitignore` excludes `**/15_google_auth/.auth/`, `**/google-storageState*.json`,
+runtime `*.cjs` scripts, and `smoke_redacted*.png` screenshots.
+
+**5G-10. Allowed Google target URL prefixes.**
+Only `https://` URLs starting with `accounts.google.com`, `mail.google.com`,
+`drive.google.com`, `docs.google.com`, `myaccount.google.com`, or `workspace.google.com`
+are accepted as Google targets. URLs containing `captcha`, `recaptcha`, `challenge`,
+or `anti-bot` are always blocked.
+
+**5G-11. Account email label allowlist.**
+The system maintains an allowlist of dedicated test-account labels in
+`core/google_auth_capability.py:_PERMITTED_TEST_ACCOUNT_LABELS`. Unknown labels
+produce a warning and require manual review before execution.
+
+**5G-12. Reading Gmail/Drive content is blocked.**
+The read-only smoke only verifies authentication state, page response, and may
+take a redacted screenshot. It does NOT read emails, files, or any account content.
+
+**5G-13. Writing/deleting Google account data is blocked.**
+No `send`, `delete`, `update`, or `share` actions on any Google account. The runner
+performs navigation + screenshot only.
+
+**5G-14. `safe_to_deliver=False` and `approved_for_client_delivery=False` always.**
+Hardcoded in `GoogleAuthEvidenceReport.__post_init__` and `from_dict`. Phase 5G
+artifacts are internal-only and require human review before any client-facing use.
+
+**5G-15. TOTP / 2FA handling.**
+TOTP automation is planning-only in Phase 5G (`totp_test_account_future`). 2FA on
+the dedicated test account is solved manually during `manual_storage_state_capture`.
+Raw TOTP seeds must never appear in CLI args, JSON, MD, logs, or reports — only
+env var name references via `--totp-seed-env-var`.
+
+---
+
 ## Phase 5F — QA Evidence Report Safety Rules
 
 **5F-1. No execution in report generation.**

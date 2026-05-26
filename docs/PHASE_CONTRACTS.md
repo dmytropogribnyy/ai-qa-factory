@@ -878,6 +878,85 @@ test-account planning. Policy/schema/routing only — no execution, no credentia
 
 ---
 
+## Phase 5G — Google/OAuth Test Account Capability [implemented]
+
+**Scope:** Permissioned capability path for dedicated Google test-account authentication.
+Replaces the blanket Google block (which remains in generic runners) with a Google-specific
+runner that supports manual storageState capture and storageState reuse smoke.
+
+**Planner:** `GoogleAuthCapabilityPlanner` (`core/google_auth_capability.py`)
+**Runner:** `GoogleAuthRunner` (`core/google_auth_runner.py`)
+**CLIs:** `tools/plan_google_auth.py`, `tools/capture_google_storage_state.py`, `tools/run_google_auth_smoke.py`
+**Artifacts:** `outputs/<project_id>/15_google_auth/`
+
+**Supported modes:**
+
+| Mode | Status in 5G | Notes |
+|---|---|---|
+| `manual_storage_state_capture` | **executable** | Browser opens, user logs in manually |
+| `storage_state_reuse` | **executable** | Read-only smoke using captured state |
+| `cdp_attach` | planning-only | Execution deferred |
+| `dedicated_profile_context` | planning-only | Execution deferred |
+| `google_api_oauth_token_future` | planning-only | Execution deferred |
+| `google_service_account_future` | planning-only | Execution deferred |
+| `totp_test_account_future` | planning-only | Execution deferred |
+| `mock_oauth_provider_future` | planning-only | Execution deferred |
+
+**Allowed Google target URL prefixes (https only):**
+- `https://accounts.google.com`
+- `https://mail.google.com`
+- `https://drive.google.com`
+- `https://docs.google.com`
+- `https://myaccount.google.com`
+- `https://workspace.google.com`
+
+**Required approval flags (every executable mode):**
+- `--approve-google-test-account`
+- `--google-test-account-confirmed`
+- `--dedicated-test-account-confirmed`
+
+**Always blocked (hardcoded, cannot be overridden):**
+- `personal_account_confirmed=True` → BLOCK
+- `production_account_confirmed=True` → BLOCK
+- `captcha_bypass_allowed` → always `False`
+- `anti_bot_bypass_allowed` → always `False`
+- `client_delivery_allowed` → always `False`
+- Stealth/undetected-browser as core path → never
+- Raw secrets in CLI args / JSON / MD / logs / reports → never
+- Reading storageState content / Chrome profile content → never
+
+**Generic runners still block Google:**
+- `core/dedicated_auth_runner.py` — `accounts.google.com` remains in `_STRICTLY_BLOCKED_URL_PATTERNS`
+- `core/api_auth_runner.py` — same
+- Google is only allowed via Phase 5G dedicated runner.
+
+**Safety invariants (hardcoded in `__post_init__` + `from_dict`):**
+- `GoogleAuthCapability.raw_secrets_allowed=False`
+- `GoogleAuthCapability.captcha_bypass_allowed=False`
+- `GoogleAuthCapability.anti_bot_bypass_allowed=False`
+- `GoogleAuthCapability.client_delivery_allowed=False`
+- `GoogleAuthCapability.personal_account_always_blocked=True`
+- `GoogleAuthCapability.production_account_always_blocked=True`
+- `GoogleAuthEvidenceReport.cookies_logged=False`
+- `GoogleAuthEvidenceReport.tokens_logged=False`
+- `GoogleAuthEvidenceReport.storage_state_content_read=False`
+- `GoogleAuthEvidenceReport.captcha_bypass_attempted=False`
+- `GoogleAuthEvidenceReport.anti_bot_bypass_attempted=False`
+- `GoogleAuthEvidenceReport.safe_to_deliver=False`
+- `GoogleAuthEvidenceReport.human_review_required=True`
+
+**What Phase 5G is NOT:**
+- Not unblocking Google globally — only the Phase 5G dedicated runner accepts Google.
+- Not approval for personal Google accounts.
+- Not approval for production Google accounts.
+- Not approval for CAPTCHA or anti-bot bypass.
+- Not approval for reading Gmail/Drive content.
+- Not approval for writing/deleting Google account data.
+- Not approval to copy main Chrome profile.
+- Not approval for client delivery.
+
+---
+
 ## Phase 5F — QA Evidence Report Generator [implemented]
 
 **Scope:** Read-only aggregation of Phase 5AB and Phase 5E execution artifacts into a

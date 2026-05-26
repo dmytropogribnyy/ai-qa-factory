@@ -340,6 +340,9 @@ outputs/<project_id>/
         .auth/           ← storageState (gitignored, internal-only, never committed)
     13_api_auth/         ← API auth execution artifacts (Phase 5E — implemented)
     14_qa_report/        ← QA Evidence Report (Phase 5F — implemented)
+    15_google_auth/      ← Google/OAuth test-account capability (Phase 5G — implemented)
+        .auth/           ← Google storageState (gitignored, internal-only, never committed)
+        user-data-dir/   ← Optional dedicated Chrome profile dir (gitignored)
     99_internal/         ← Internal notes, quality gate reports, debug logs
         scenario_evaluation/  ← Scenario batch evaluation (Phase 4ABC — implemented)
 ```
@@ -365,6 +368,9 @@ outputs/<project_id>/
 | `12_dedicated_auth/.auth/` | **Never committed** | Never | storageState (gitignored always) |
 | `13_api_auth/` | No | Never — internal only | API auth execution report, command log, token check result, safety boundary |
 | `14_qa_report/` | No | Never — internal only | QA Evidence Report, secret scan result, review checklist |
+| `15_google_auth/` | No | Never — internal only | Google capability plan, storage-state policy, execution decision, evidence report, redaction checklist |
+| `15_google_auth/.auth/` | **Never committed** | Never | Google storageState (gitignored always) |
+| `15_google_auth/user-data-dir/` | **Never committed** | Never | Optional dedicated Chrome profile dir (gitignored) |
 | `99_internal/` | No | Never | Internal quality gates, debug, scenario evaluation |
 
 **`06_client_draft/` is never sent without completing `DELIVERY_SAFETY_CHECKLIST.md`.**
@@ -376,6 +382,7 @@ outputs/<project_id>/
 **`12_dedicated_auth/` is always internal-only. `raw_credentials_logged=False`, `raw_credentials_serialized=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False` always. storageState `approved_for_commit=False` always.**
 **`13_api_auth/` is always internal-only. Phase 5E. `raw_credentials_logged=False`, `raw_credentials_serialized=False`, `token_logged=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False` always.**
 **`14_qa_report/` is always internal-only. Phase 5F. `execution_performed=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False`, `human_review_required=True` always. storageState content never read.**
+**`15_google_auth/` is always internal-only. Phase 5G. `cookies_logged=False`, `tokens_logged=False`, `storage_state_content_read=False`, `browser_profile_content_read=False`, `captcha_bypass_attempted=False`, `anti_bot_bypass_attempted=False`, `personal_account_used=False`, `production_account_used=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False` always. Google `accounts.google.com` is still blocked in generic runners — Google is allowed ONLY through Phase 5G dedicated runner.**
 **`99_internal/` must never be included in client delivery packages.**
 
 ---

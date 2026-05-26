@@ -293,6 +293,26 @@ All Phase 5E artifacts: `internal_only=True`, `client_visible=False`, `token_log
 
 All Phase 5F artifacts: `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
 
+### `15_google_auth/` (Phase 5G — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `GOOGLE_AUTH_CAPABILITY_PLAN.json` | JSON | system | `GoogleAuthCapability` schema — mode policies and account profile |
+| `GOOGLE_AUTH_CAPABILITY_PLAN.md` | MD | system | Human-readable capability plan |
+| `GOOGLE_STORAGE_STATE_POLICY.json` | JSON | system | `GoogleStorageStatePolicy` schema — path/metadata only |
+| `GOOGLE_STORAGE_STATE_POLICY.md` | MD | system | Human-readable storage-state policy |
+| `GOOGLE_AUTH_EXECUTION_DECISION.json` | JSON | system | `GoogleAuthExecutionDecision` schema — per-request allow/block |
+| `GOOGLE_AUTH_EXECUTION_DECISION.md` | MD | system | Human-readable execution decision |
+| `GOOGLE_AUTH_EVIDENCE_REPORT.json` | JSON | system | `GoogleAuthEvidenceReport` schema — execution evidence |
+| `GOOGLE_AUTH_EVIDENCE_REPORT.md` | MD | system | Human-readable evidence report |
+| `GOOGLE_AUTH_REDACTION_CHECKLIST.md` | MD | system | Pre-review redaction checklist |
+| `.auth/google-storageState.json` | JSON | system | Captured session — **NEVER COMMITTED**, gitignored |
+| `manual_capture.cjs` | JS | system | Runtime Playwright script — **NEVER COMMITTED**, gitignored |
+| `storage_state_smoke.cjs` | JS | system | Runtime Playwright script — **NEVER COMMITTED**, gitignored |
+| `smoke_redacted.png` | PNG | system | Optional redacted screenshot — **NEVER COMMITTED**, gitignored |
+
+All Phase 5G artifacts: `safe_to_deliver=False`, `human_review_required=True`, `cookies_logged=False`, `tokens_logged=False`, `storage_state_content_read=False`, `captcha_bypass_attempted=False`, `anti_bot_bypass_attempted=False`, `personal_account_used=False`, `production_account_used=False` always.
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---
