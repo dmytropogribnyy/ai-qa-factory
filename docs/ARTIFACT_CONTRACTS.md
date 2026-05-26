@@ -546,6 +546,33 @@ Safety guarantees: `raw_secrets_allowed=False`, `production_write_allowed=False`
 
 Safety guarantees: `raw_secrets_allowed=False`, `destructive_db_actions_allowed=False`, `connection_string_logged=False`, `safe_to_deliver=False`, `human_review_required=True` always.
 
+### `outputs/<project_id>/22_intake/` (Phase 5K)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `INTAKE_REPORT.json` | `IntakeReport` | system | Classification, risk level, recommended modules |
+| `INTAKE_REPORT.md` | — | system | Human-readable intake summary |
+
+Safety guarantees: `raw_input_stored=False`, `credentials_in_output=False`, `safe_to_deliver=False`, `human_review_required=True` always. Raw input text is never stored in any artifact.
+
+### `outputs/<project_id>/23_test_oracle/` (Phase 5K)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `TEST_ORACLE_REPORT.json` | `TestOracleReport` | system | Prioritized test scenarios, deferred items |
+| `TEST_ORACLE_REPORT.md` | — | system | Human-readable scenario list |
+
+Safety guarantees: `raw_input_stored=False`, `executable_without_approval=False`, `safe_to_deliver=False`, `human_review_required=True` always. All scenarios are planning artifacts only.
+
+### `outputs/<project_id>/24_evidence_intelligence/` (Phase 5K)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `EVIDENCE_INTELLIGENCE_REPORT.json` | `EvidenceIntelligenceReport` | system | Coverage score, gaps, recommendations |
+| `EVIDENCE_INTELLIGENCE_REPORT.md` | — | system | Human-readable gap analysis |
+
+Safety guarantees: `network_calls_made=False`, `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always. Read-only file analysis — no subprocess or network calls.
+
 ---
 
 ## Related Documents

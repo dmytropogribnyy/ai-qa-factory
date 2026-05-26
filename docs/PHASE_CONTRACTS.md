@@ -1185,6 +1185,55 @@ consolidated QA Evidence Report with multi-source aggregation and secret scan.
 
 ---
 
+## Phase 5K — AI Intelligence Core [implemented]
+
+**What Phase 5K IS:**
+- `IntakeAgent` — heuristic classifier: classifies work requests into test type, risk level,
+  and recommended pipeline modules. Raw input text is **never** stored in any artifact.
+- `TestOracle` — scenario generator: produces prioritized test scenarios from an `IntakeReport`
+  or a classification string. Defers performance/security to Phase 5N.
+- `EvidenceIntelligence` — static gap analyzer: reads existing artifact directories and
+  computes a coverage score with severity-ranked gaps and recommendations. No subprocess,
+  no network calls.
+- Three CLI tools: `run_intake_agent.py`, `run_test_oracle.py`, `run_evidence_intelligence.py`
+- Three artifact directories: `22_intake/`, `23_test_oracle/`, `24_evidence_intelligence/`
+
+**What Phase 5K is NOT:**
+- Not an LLM integration (heuristic-only in Phase 5K; LLM mode planned for a later phase)
+- Not a test executor — all outputs are planning artifacts (`executable_without_approval=False`)
+- Not a replacement for `QAFactoryOrchestrator`, `WorkbenchController`, or `EvidenceManager`
+- Not a credentials store — no tokens, passwords, or secrets accepted via CLI or stored in artifacts
+
+**Allowed Actions:**
+- Heuristic keyword scoring against a fixed vocabulary
+- Reading existing `outputs/<project_id>/` artifact directories (filesystem only)
+- Writing JSON + Markdown planning artifacts to `22_intake/`, `23_test_oracle/`, `24_evidence_intelligence/`
+
+**Blocked Actions:**
+- Storing raw input text in any artifact
+- LLM/API calls (deferred)
+- subprocess, network, or DB calls from any Phase 5K runner
+- Accepting credentials via CLI flags
+
+**Acceptance Criteria:**
+- `tools/run_intake_agent.py` generates artifacts in `22_intake/`
+- `tools/run_test_oracle.py` generates artifacts in `23_test_oracle/`
+- `tools/run_evidence_intelligence.py` generates artifacts in `24_evidence_intelligence/`
+- `IntakeReport.raw_input_stored=False` hardcoded in `__post_init__` AND `from_dict`
+- `IntakeReport.credentials_in_output=False` hardcoded in `__post_init__` AND `from_dict`
+- All three report schemas: `safe_to_deliver=False`, `human_review_required=True` hardcoded
+- `TestOracleReport.executable_without_approval=False` hardcoded in `__post_init__` AND `from_dict`
+- `EvidenceIntelligenceReport.network_calls_made=False`, `execution_performed=False` hardcoded
+- Blocked flags (`--password`, `--token`, etc.) reject immediately with exit code 2
+- ruff: clean; pytest: 1931 passed
+
+**Safety invariants (all hardcoded, cannot be bypassed):**
+- `IntakeReport`: `raw_input_stored=False`, `credentials_in_output=False`, `safe_to_deliver=False`, `human_review_required=True`
+- `TestOracleReport`: `raw_input_stored=False`, `executable_without_approval=False`, `safe_to_deliver=False`, `human_review_required=True`
+- `EvidenceIntelligenceReport`: `network_calls_made=False`, `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True`
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

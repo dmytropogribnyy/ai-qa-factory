@@ -244,6 +244,28 @@ from core.schemas.db_smoke import (
     DBSmokeQueryResult,
     DBSmokeReport,
 )
+from core.schemas.intake import (
+    INTAKE_CLASSIFICATIONS,
+    INTAKE_RISK_LEVELS,
+    INTAKE_MODES,
+    IntakeClassification,
+    IntakeReport,
+)
+from core.schemas.test_oracle import (
+    TEST_COVERAGE_AREAS,
+    TEST_SCENARIO_PRIORITIES,
+    TEST_ORACLE_MODES,
+    TestScenario,
+    TestOracleReport,
+)
+from core.schemas.evidence_intelligence import (
+    EVIDENCE_GAP_SEVERITIES,
+    EVIDENCE_COVERAGE_AREAS,
+    EVIDENCE_ARTIFACT_DIR_MAP,
+    EvidenceGap,
+    EvidenceCoverageItem,
+    EvidenceIntelligenceReport,
+)
 
 __all__ = [
     # Base
@@ -505,4 +527,23 @@ __all__ = [
     "DBSmokeTarget",
     "DBSmokeQueryResult",
     "DBSmokeReport",
+    # Phase 5K — Intake
+    "INTAKE_CLASSIFICATIONS",
+    "INTAKE_RISK_LEVELS",
+    "INTAKE_MODES",
+    "IntakeClassification",
+    "IntakeReport",
+    # Phase 5K — Test Oracle
+    "TEST_COVERAGE_AREAS",
+    "TEST_SCENARIO_PRIORITIES",
+    "TEST_ORACLE_MODES",
+    "TestScenario",
+    "TestOracleReport",
+    # Phase 5K — Evidence Intelligence
+    "EVIDENCE_GAP_SEVERITIES",
+    "EVIDENCE_COVERAGE_AREAS",
+    "EVIDENCE_ARTIFACT_DIR_MAP",
+    "EvidenceGap",
+    "EvidenceCoverageItem",
+    "EvidenceIntelligenceReport",
 ]

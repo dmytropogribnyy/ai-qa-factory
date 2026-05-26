@@ -994,6 +994,41 @@ client delivery without human review.
 
 ---
 
+## Phase 5K Safety Rules
+
+**5K-1. Raw input text is never stored in any artifact.**
+`IntakeAgent.analyze()` stores only `raw_input_length` (an integer count), never the
+original text. `IntakeReport.raw_input_stored=False` is set in `__post_init__` AND
+`from_dict`. Any serialization of `IntakeReport` that shows the raw text is a bug.
+
+**5K-2. `credentials_in_output=False` is hardcoded in `IntakeReport`.**
+Set unconditionally in `__post_init__` AND `from_dict`. No credential material
+(passwords, tokens, API keys) may appear in any Phase 5K artifact.
+
+**5K-3. `executable_without_approval=False` is hardcoded in `TestOracleReport`.**
+Test Oracle scenarios are planning artifacts only. They must never be auto-executed
+without explicit human review and approval. Set unconditionally in `__post_init__` AND `from_dict`.
+
+**5K-4. `network_calls_made=False` and `execution_performed=False` are hardcoded in `EvidenceIntelligenceReport`.**
+`EvidenceIntelligence.analyze()` is read-only file analysis only. It never makes
+subprocess, network, or DB calls. Both flags set unconditionally in `__post_init__` AND `from_dict`.
+
+**5K-5. `safe_to_deliver=False` and `human_review_required=True` in all Phase 5K artifacts.**
+`IntakeReport`, `TestOracleReport`, and `EvidenceIntelligenceReport` all set these
+fields unconditionally. No Phase 5K artifact is approved for client delivery without human review.
+
+**5K-6. Phase 5K CLI tools block credential flags.**
+`run_intake_agent.py`, `run_test_oracle.py`, and `run_evidence_intelligence.py` all
+reject `--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--pat`,
+`--access-token`, `--bearer` with exit code 2 before any parsing occurs.
+
+**5K-7. Phase 5K runners do not make LLM calls.**
+All classification and analysis is heuristic-only in Phase 5K. `IntakeReport.llm_calls_made`
+is an informational field (not safety-hardcoded) but is always `False` in Phase 5K operation.
+LLM integration is planned for a later phase under separate safety constraints.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

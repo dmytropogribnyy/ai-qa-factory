@@ -382,6 +382,33 @@ All Phase 5J pipeline artifacts: `raw_secrets_allowed=False`, `production_write_
 
 All Phase 5J DB smoke artifacts: `raw_secrets_allowed=False`, `destructive_db_actions_allowed=False`, `connection_string_logged=False`, `safe_to_deliver=False`, `human_review_required=True` always.
 
+### `22_intake/` (Phase 5K — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `INTAKE_REPORT.json` | JSON | system | `IntakeReport` schema — classification, risk level, recommended modules |
+| `INTAKE_REPORT.md` | MD | system | Human-readable intake summary |
+
+All Phase 5K intake artifacts: `raw_input_stored=False`, `credentials_in_output=False`, `safe_to_deliver=False`, `human_review_required=True` always. Raw input text is never stored.
+
+### `23_test_oracle/` (Phase 5K — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `TEST_ORACLE_REPORT.json` | JSON | system | `TestOracleReport` schema — prioritized scenarios, deferred items |
+| `TEST_ORACLE_REPORT.md` | MD | system | Human-readable scenario list |
+
+All Phase 5K oracle artifacts: `raw_input_stored=False`, `executable_without_approval=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+### `24_evidence_intelligence/` (Phase 5K — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `EVIDENCE_INTELLIGENCE_REPORT.json` | JSON | system | `EvidenceIntelligenceReport` schema — coverage score, gaps, recommendations |
+| `EVIDENCE_INTELLIGENCE_REPORT.md` | MD | system | Human-readable gap analysis |
+
+All Phase 5K evidence intelligence artifacts: `network_calls_made=False`, `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

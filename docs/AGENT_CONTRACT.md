@@ -1,8 +1,8 @@
 # Agent Operating Contract — Guided QA Automation Workbench
 
-**Version:** 5.6.0
+**Version:** 5.7.0
 **Updated:** 2026-05-26
-**Phase:** 5J
+**Phase:** 5K
 
 This document defines the operating contract for any agent — Claude Code, ChatGPT/GPT,
 future local automation, or any AI assistant — that edits, reviews, or runs code in this
@@ -608,6 +608,43 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
   All hardcoded in `__post_init__` AND `from_dict`.
 - **Artifacts:** `outputs/<project_id>/20_e2e_pipeline/` and `21_db_smoke/` only.
 - **Do not include any Phase 5J artifacts in client delivery packages.**
+
+---
+
+## Section 16 — Phase 5K — AI Intelligence Core Rules
+
+### Rules
+
+- **Raw input text is never stored.**
+  `IntakeAgent.analyze()` stores only `raw_input_length` (integer). The original
+  text never appears in `IntakeReport.to_dict()` output or any written artifact.
+  `raw_input_stored=False` is hardcoded in `__post_init__` AND `from_dict`.
+- **No credentials in any Phase 5K artifact.**
+  `IntakeReport.credentials_in_output=False` is unconditionally hardcoded.
+  No token, password, API key, or cookie may appear in any intake, oracle, or
+  evidence intelligence artifact.
+- **Test Oracle scenarios are not auto-executable.**
+  `TestOracleReport.executable_without_approval=False` is hardcoded. All generated
+  scenarios require human review and explicit approval before execution.
+- **Evidence Intelligence is read-only.**
+  `EvidenceIntelligenceReport.network_calls_made=False` and `execution_performed=False`
+  are hardcoded. `EvidenceIntelligence.analyze()` only reads the local filesystem.
+  No subprocess, no network, no DB calls.
+- **All Phase 5K CLI tools block credential flags.**
+  `--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--pat`,
+  `--access-token`, `--bearer` → exit code 2 immediately.
+- **Phase 5K is heuristic-only — no LLM calls.**
+  `IntakeAgent` uses keyword scoring only. No LLM or external API is called.
+  `IntakeReport.llm_calls_made` is always `False` in Phase 5K.
+- **Phase 5K runners do not replace existing layers.**
+  `IntakeAgent`, `TestOracle`, `EvidenceIntelligence` are AI planning layers.
+  They do not replace `QAFactoryOrchestrator`, `WorkbenchController`, `EvidenceManager`,
+  or any other existing orchestration component.
+- **Safety invariants are unconditional.**
+  All three report schemas have `safe_to_deliver=False` and `human_review_required=True`
+  hardcoded in `__post_init__` AND `from_dict`.
+- **Artifacts:** `22_intake/`, `23_test_oracle/`, `24_evidence_intelligence/` only.
+- **Do not include any Phase 5K artifacts in client delivery packages.**
 
 ---
 

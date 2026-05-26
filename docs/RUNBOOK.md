@@ -1693,3 +1693,95 @@ DB_SMOKE_SAFETY_CHECKLIST.md
 
 All artifacts: `raw_secrets_allowed=False`, `destructive_db_actions_allowed=False`,
 `connection_string_logged=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+### 35. Intake Agent (Phase 5K)
+
+**Purpose:** Heuristic classification of work requests into test type, risk level,
+and recommended pipeline modules. Raw input text is never stored.
+
+**Checklist:**
+- [ ] No credentials, tokens, or secrets in input text
+- [ ] `--input-file` or `--input-text` provided (not both)
+- [ ] Review `INTAKE_REPORT.md` — classification, risk level, recommended modules
+- [ ] If classification is `unknown`, provide more specific requirements
+- [ ] Human review completed before acting on recommendations
+
+**Command:**
+```bash
+python tools/run_intake_agent.py \
+    --project-id my-project \
+    --input-text "We need to test the login API and session management"
+```
+
+**Output artifacts (`outputs/<project_id>/22_intake/`):**
+```
+INTAKE_REPORT.json
+INTAKE_REPORT.md
+```
+
+All artifacts: `raw_input_stored=False`, `credentials_in_output=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+---
+
+### 36. Test Oracle (Phase 5K)
+
+**Purpose:** Generates prioritized test scenarios from a classification or intake report.
+All scenarios are planning artifacts — not executable without human approval.
+
+**Checklist:**
+- [ ] `--intake-report-path` or `--classification` provided (not both)
+- [ ] Review `TEST_ORACLE_REPORT.md` — priority order, risk scores, deferred items
+- [ ] Performance/security scenarios are deferred to Phase 5N
+- [ ] Human review and explicit approval before any scenario is executed
+
+**Command (from classification):**
+```bash
+python tools/run_test_oracle.py \
+    --project-id my-project \
+    --classification api_testing
+```
+
+**Command (from intake report):**
+```bash
+python tools/run_test_oracle.py \
+    --project-id my-project \
+    --intake-report-path outputs/my-project/22_intake/INTAKE_REPORT.json
+```
+
+**Output artifacts (`outputs/<project_id>/23_test_oracle/`):**
+```
+TEST_ORACLE_REPORT.json
+TEST_ORACLE_REPORT.md
+```
+
+All artifacts: `raw_input_stored=False`, `executable_without_approval=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+---
+
+### 37. Evidence Intelligence (Phase 5K)
+
+**Purpose:** Read-only static analysis of existing artifact directories — computes
+coverage score, identifies gaps, and generates recommendations. No approval needed.
+
+**Checklist:**
+- [ ] Run after other pipeline modules have produced artifacts
+- [ ] Review `EVIDENCE_INTELLIGENCE_REPORT.md` — coverage score, high-severity gaps
+- [ ] Act on recommendations before proceeding to client delivery
+
+**Command:**
+```bash
+python tools/run_evidence_intelligence.py --project-id my-project
+
+# Check specific areas only
+python tools/run_evidence_intelligence.py \
+    --project-id my-project \
+    --areas auth api database
+```
+
+**Output artifacts (`outputs/<project_id>/24_evidence_intelligence/`):**
+```
+EVIDENCE_INTELLIGENCE_REPORT.json
+EVIDENCE_INTELLIGENCE_REPORT.md
+```
+
+All artifacts: `network_calls_made=False`, `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.

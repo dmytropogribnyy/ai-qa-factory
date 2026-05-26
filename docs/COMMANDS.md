@@ -2210,6 +2210,129 @@ DB_SMOKE_SAFETY_CHECKLIST.md
 
 ---
 
+## Phase 5K — AI Intelligence Core
+
+### `tools/run_intake_agent.py` — Intake Agent (heuristic classifier)
+
+Classifies a work request into a test type, risk level, and recommended modules.
+Raw input text is never stored in any artifact.
+
+```bash
+# From a text file
+python tools/run_intake_agent.py \
+  --project-id my-project \
+  --input-file path/to/requirements.txt
+
+# From inline text
+python tools/run_intake_agent.py \
+  --project-id my-project \
+  --input-text "We need to test the login API and session management"
+
+# Skip writing artifacts
+python tools/run_intake_agent.py --project-id my-project --input-text "..." --no-write
+```
+
+**Flags:**
+- `--project-id NAME` *(required)*
+- `--input-file PATH` — text file with requirements (mutually exclusive with `--input-text`)
+- `--input-text TEXT` — inline requirements text (mutually exclusive with `--input-file`)
+- `--no-write` — skip writing artifacts to disk
+
+**No approval flag required** — heuristic analysis only, no execution, no network calls.
+
+**Blocked flags:** `--password`, `--token`, `--secret`, `--api-key`, `--cookie`,
+`--pat`, `--access-token`, `--bearer` → exit code `2` immediately.
+
+**Safety invariants (hardcoded):**
+- `raw_input_stored=False`, `credentials_in_output=False`
+- `safe_to_deliver=False`, `human_review_required=True`
+
+**Generated artifacts** (`outputs/<project_id>/22_intake/`):
+```
+INTAKE_REPORT.json
+INTAKE_REPORT.md
+```
+
+**Exit codes:** `0` = classified (no blockers), `1` = blocked, `2` = bad flags
+
+---
+
+### `tools/run_test_oracle.py` — Test Oracle (scenario generator)
+
+Generates prioritized test scenarios from an IntakeReport or a classification string.
+Output is a planning artifact only — not executable without human approval.
+
+```bash
+# From a previously generated intake report
+python tools/run_test_oracle.py \
+  --project-id my-project \
+  --intake-report-path outputs/my-project/22_intake/INTAKE_REPORT.json
+
+# From a classification string directly
+python tools/run_test_oracle.py \
+  --project-id my-project \
+  --classification api_testing
+```
+
+**Valid classifications:** `auth_testing`, `api_testing`, `mobile_testing`,
+`database_testing`, `visual_testing`, `performance_testing`, `security_testing`,
+`functional_testing`, `unknown`
+
+**Flags:**
+- `--project-id NAME` *(required)*
+- `--intake-report-path PATH` — path to `INTAKE_REPORT.json` (or use `--classification`)
+- `--classification STRING` — classification string (or use `--intake-report-path`)
+- `--no-write` — skip writing artifacts to disk
+
+**Safety invariants (hardcoded):**
+- `raw_input_stored=False`, `executable_without_approval=False`
+- `safe_to_deliver=False`, `human_review_required=True`
+
+**Generated artifacts** (`outputs/<project_id>/23_test_oracle/`):
+```
+TEST_ORACLE_REPORT.json
+TEST_ORACLE_REPORT.md
+```
+
+**Exit codes:** `0` = scenarios generated, `1` = blocked, `2` = bad flags
+
+---
+
+### `tools/run_evidence_intelligence.py` — Evidence Intelligence (gap analyzer)
+
+Read-only static analysis of existing evidence artifacts for a project.
+No approval flag required — never executes tests or makes network calls.
+
+```bash
+python tools/run_evidence_intelligence.py --project-id my-project
+
+python tools/run_evidence_intelligence.py \
+  --project-id my-project \
+  --areas auth api database
+```
+
+**Flags:**
+- `--project-id NAME` *(required)*
+- `--areas AREA [AREA ...]` — specific coverage areas to check (default: all)
+- `--no-write` — skip writing artifacts to disk
+
+**Coverage areas:** `auth`, `api`, `qa_report`, `google_auth`, `task_source`,
+`mobile`, `visual`, `github_auth`, `pipeline`, `database`, `intake`, `test_oracle`
+
+**Safety invariants (hardcoded):**
+- `network_calls_made=False`, `execution_performed=False`
+- `safe_to_deliver=False`, `human_review_required=True`
+
+**Generated artifacts** (`outputs/<project_id>/24_evidence_intelligence/`):
+```
+EVIDENCE_INTELLIGENCE_REPORT.json
+EVIDENCE_INTELLIGENCE_REPORT.md
+```
+
+**Exit codes:** `0` = analyzed (no blockers), `1` = blockers present, `2` = bad flags
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

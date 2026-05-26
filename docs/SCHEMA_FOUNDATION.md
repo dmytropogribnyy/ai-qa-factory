@@ -1,8 +1,8 @@
 # Schema Foundation — Guided QA Automation Workbench
 
-**Version:** 5.9.0  
+**Version:** 5.10.0  
 **Updated:** 2026-05-26  
-**Phase:** 5J — Schema foundations + all phases through Phase 5J
+**Phase:** 5K — Schema foundations + all phases through Phase 5K
 
 ---
 
@@ -932,6 +932,74 @@ NOT forced (reflect real routing state):
 | `client_delivery_allowed` | `False` | `__post_init__` + `from_dict` |
 | `human_review_required` | `True` | `__post_init__` + `from_dict` |
 | `connection_string_logged` | `False` | `__post_init__` + `from_dict` |
+
+---
+
+### Phase 5K — AI Intelligence Core
+
+#### `core/schemas/intake.py`
+
+| Class | Schema class | Purpose |
+|---|---|---|
+| `IntakeClassification` | `IntakeClassification` | Single classification result — type, confidence, risk, modules |
+| `IntakeReport` | `IntakeReport` | Full intake analysis — classification + safety flags |
+
+**Constants:**
+- `INTAKE_CLASSIFICATIONS` — 9 values: `auth_testing`, `api_testing`, `mobile_testing`, `database_testing`, `visual_testing`, `performance_testing`, `security_testing`, `functional_testing`, `unknown`
+- `INTAKE_RISK_LEVELS` — `low`, `medium`, `high`, `critical`
+- `INTAKE_MODES` — `heuristic`, `llm_enhanced`
+
+**Hardcoded safety defaults in `IntakeReport` (set in `__post_init__` AND `from_dict`):**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `raw_input_stored` | `False` | `__post_init__` + `from_dict` |
+| `credentials_in_output` | `False` | `__post_init__` + `from_dict` |
+| `safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
+
+#### `core/schemas/test_oracle.py`
+
+| Class | Schema class | Purpose |
+|---|---|---|
+| `TestScenario` | `TestScenario` | One test scenario — name, area, priority, risk score, tags |
+| `TestOracleReport` | `TestOracleReport` | Full oracle report — scenarios, deferred, source classification |
+
+**Constants:**
+- `TEST_COVERAGE_AREAS` — coverage area identifiers
+- `TEST_SCENARIO_PRIORITIES` — `1` (critical) through `4` (low)
+- `TEST_ORACLE_MODES` — `heuristic`, `llm_enhanced`
+
+**Hardcoded safety defaults in `TestOracleReport`:**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `raw_input_stored` | `False` | `__post_init__` + `from_dict` |
+| `executable_without_approval` | `False` | `__post_init__` + `from_dict` |
+| `safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
+
+#### `core/schemas/evidence_intelligence.py`
+
+| Class | Schema class | Purpose |
+|---|---|---|
+| `EvidenceGap` | `EvidenceGap` | One coverage gap — area, severity, description, recommendation |
+| `EvidenceCoverageItem` | `EvidenceCoverageItem` | Coverage status per area — present, artifact count |
+| `EvidenceIntelligenceReport` | `EvidenceIntelligenceReport` | Full gap analysis — score, items, gaps, recommendations |
+
+**Constants:**
+- `EVIDENCE_GAP_SEVERITIES` — `low`, `medium`, `high`, `critical`
+- `EVIDENCE_COVERAGE_AREAS` — 12 areas matching artifact directories
+- `EVIDENCE_ARTIFACT_DIR_MAP` — area → artifact directory name mapping
+
+**Hardcoded safety defaults in `EvidenceIntelligenceReport`:**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `network_calls_made` | `False` | `__post_init__` + `from_dict` |
+| `execution_performed` | `False` | `__post_init__` + `from_dict` |
+| `safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
 
 ---
 
