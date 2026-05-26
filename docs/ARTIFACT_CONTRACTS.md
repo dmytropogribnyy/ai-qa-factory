@@ -331,6 +331,7 @@ outputs/<project_id>/
     06_client_draft/     ← Draft reports, delivery preview (Phase 4C — implemented)
         packages/        ← Zipped delivery packages (require delivery approval — planned Phase 5A+)
     07_execution/        ← Controlled browser execution artifacts (Phase 4D — implemented)
+    08_credentials/      ← Credential safety artifacts (Phase 4E — implemented)
     99_internal/         ← Internal notes, quality gate reports, debug logs
         scenario_evaluation/  ← Scenario batch evaluation (Phase 4ABC — implemented)
 ```
@@ -347,10 +348,12 @@ outputs/<project_id>/
 | `05_evidence/` | No | Internal only by default | Evidence records (client_visible=False) |
 | `06_client_draft/` | No | After human review only | DRAFT — not approved for delivery |
 | `07_execution/` | No | Never — internal only | Browser execution approval, report, command log, evidence manifest |
+| `08_credentials/` | No | Never — internal only | Credential policy, safety report, storageState policy, auth approval draft, sandbox classification, redaction checklist |
 | `99_internal/` | No | Never | Internal quality gates, debug, scenario evaluation |
 
 **`06_client_draft/` is never sent without completing `DELIVERY_SAFETY_CHECKLIST.md`.**
 **`07_execution/` is always internal-only. Evidence remains `client_visible=False` until explicit future approval.**
+**`08_credentials/` is always internal-only. All credential safety artifacts remain `client_visible=False`. Human redaction review required before any client-facing use.**
 **`99_internal/` must never be included in client delivery packages.**
 
 ---

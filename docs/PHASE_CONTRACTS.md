@@ -648,6 +648,56 @@ No browser execution. No Playwright test execution. No target URL access. No cre
 
 ---
 
+## Phase 4E — Credential and Test-Account Safety Layer `[implemented]`
+
+**Purpose:** Define credential safety policy, schema, and tooling for safe credential handling in future auth execution phases. Policy, schema, CLI inspection only — no real credentials, no login, no auth execution.
+
+**Inputs:**
+- Project ID (from any prior phase)
+- Optional: fixture scan, scaffold scan, sandbox label
+
+**Outputs:** `outputs/<project_id>/08_credentials/` (11 artifacts — all internal-only)
+
+**Allowed actions:**
+- Static text scanning of safe local files (.md, .json, .ts, .js, .example)
+- Sandbox profile classification from labels
+- Writing credential safety artifacts to `outputs/`
+- Producing `CredentialPolicy`, `CredentialSafetyReport`, `StorageStatePolicy`, `AuthExecutionApproval`
+
+**Blocked actions:**
+- Reading `.env`, `.env.local`, `.auth/*.json`, `storageState` files
+- Using, storing, or logging real credentials
+- Login or auth execution
+- Reading node_modules, test-results, playwright-report
+- External API calls
+- subprocess execution
+- Staging `outputs/`
+
+**Safety invariants (always True in Phase 4E):**
+- `safe_for_auth_execution=False`
+- `safe_for_client_visibility=False`
+- `approved_for_commit=False` (StorageStatePolicy)
+- `AuthExecutionApproval.approved=False`
+- `SandboxProfileClassification.blocked_in_current_phase=True`
+- `allow_real_credentials=False` (CredentialPolicy, enforced by `__post_init__`)
+- `allow_personal_accounts=False`
+- `allow_production_accounts=False`
+
+**Acceptance criteria:**
+- All existing tests pass; new Phase 4E tests pass
+- `python tools/inspect_credentials.py --project-id demo --no-write` exits cleanly
+- `--classify-sandbox "Amazon Pay Sandbox"` → `future_sandbox_integration`, blocked
+- `--classify-sandbox "Alza production account"` → `blocked_production_ecommerce`, blocked
+- docs_audit passes; agent_readiness_audit passes
+
+**What Phase 4E is NOT:**
+- Not auth execution (→ future explicit auth execution phase)
+- Not credential provisioning (→ client provides test credentials at execution time)
+- Not payment/sandbox testing (→ future explicit sandbox phase)
+- Not final client delivery
+
+---
+
 ## Phase 5A — Approval-Gated External/Auth/Mobile/Integration Adapters `[planned]`
 
 **Purpose:** Add execution adapters for auth flows, mobile platforms, and optional

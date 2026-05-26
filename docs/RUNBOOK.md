@@ -836,3 +836,71 @@ outputs/<id>/07_execution/
 ```
 
 All evidence: `internal_only=True`, `client_visible=False`, `requires_redaction=True`. Client delivery remains blocked.
+
+---
+
+## 22. Phase 4E: Credential and Test-Account Safety Layer
+
+**Purpose:** Create a credential and test-account safety infrastructure. Policy, schema, validation, and CLI inspection only — no real credentials, no login, no auth execution.
+
+### Pre-flight checklist
+
+Before running any Phase 4E command, confirm:
+- [ ] No real credentials in repo or fixtures
+- [ ] No personal accounts will be used
+- [ ] No production accounts will be used
+- [ ] No .env files will be read
+- [ ] No login or auth execution will occur
+
+### Workflow
+
+```bash
+# Generate scaffold (if not already done)
+python tools/generate_scaffold.py --project-id demo-4e --input "SaaS login and API"
+
+# Inspect credential safety (no-write preview)
+python tools/inspect_credentials.py --project-id demo-4e --no-write
+
+# Full inspection with artifacts
+python tools/inspect_credentials.py --project-id demo-4e
+
+# Include fixture scanning
+python tools/inspect_credentials.py --project-id demo-4e --include-fixtures
+
+# Classify a sandbox profile
+python tools/inspect_credentials.py --project-id demo-4e --classify-sandbox "Amazon Pay Sandbox"
+```
+
+### Key rules
+
+- **Personal accounts are forbidden** — always use dedicated test accounts
+- **Production accounts are forbidden** — use sandbox/staging only
+- **storageState must be internal-only** — never commit to repo; must be in .gitignore
+- **Auth execution requires explicit future phase approval** — blocked in Phase 4E
+- **No real credentials in any artifact** — placeholders and env refs only
+
+### Sandbox account distinctions
+
+| Profile | Status | Notes |
+|---|---|---|
+| Amazon.com retail account | Always blocked | Production marketplace — do not use |
+| Amazon Pay Sandbox | Blocked in Phase 4E | Future sandbox integration — requires merchant setup |
+| Alza.sk production account | Blocked in Phase 4E | Requires client-provided staging/test access |
+| Alza staging/test account | Blocked in Phase 4E | Future candidate with explicit client scope |
+| Google/OAuth personal account | Always blocked | Personal accounts forbidden |
+| Linear/Jira/ClickUp token | Always blocked | Task source integration — not an execution target |
+| SauceDemo public demo | Allowed (Phase 4D) | Public credentials — not a secret |
+| Dedicated staging/test account | Blocked in Phase 4E | Required for future auth execution phases |
+
+### Artifacts written to `outputs/<project_id>/08_credentials/`
+
+```
+CREDENTIAL_POLICY.json/md
+CREDENTIAL_SAFETY_REPORT.json/md
+STORAGE_STATE_POLICY.json/md
+AUTH_EXECUTION_APPROVAL_DRAFT.json/md
+SANDBOX_PROFILE_CLASSIFICATION.json/md
+CREDENTIAL_REDACTION_CHECKLIST.md
+```
+
+All credential artifacts are `internal_only=True`, `client_visible=False`. Client delivery requires human redaction review.

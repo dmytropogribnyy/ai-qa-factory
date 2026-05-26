@@ -198,6 +198,24 @@ Any doc describing them must include a qualifier: `schema-only`, `foundation-onl
 4. **When a doc becomes stale:** change its status to `needs_review` or `stale` and add a note.
 5. **When a doc is superseded:** move to the legacy section, set status to `deprecated`.
 
+### Phase 4E — Credential Safety artifacts (`outputs/<id>/08_credentials/`)
+
+| Artifact | Format | Owner | Notes |
+|---|---|---|---|
+| `CREDENTIAL_POLICY.json` | JSON | system | Credential safety policy — internal-only |
+| `CREDENTIAL_POLICY.md` | MD | system | Human-readable policy |
+| `CREDENTIAL_SAFETY_REPORT.json` | JSON | system | Full inspection report — internal-only |
+| `CREDENTIAL_SAFETY_REPORT.md` | MD | system | Human-readable report |
+| `STORAGE_STATE_POLICY.json` | JSON | system | storageState handling policy |
+| `STORAGE_STATE_POLICY.md` | MD | system | Human-readable storageState policy |
+| `AUTH_EXECUTION_APPROVAL_DRAFT.json` | JSON | system | Draft auth approval — not an active approval |
+| `AUTH_EXECUTION_APPROVAL_DRAFT.md` | MD | system | Human-readable draft |
+| `SANDBOX_PROFILE_CLASSIFICATION.json` | JSON | system | Sandbox/account classifications |
+| `SANDBOX_PROFILE_CLASSIFICATION.md` | MD | system | Human-readable classification |
+| `CREDENTIAL_REDACTION_CHECKLIST.md` | MD | human | Checklist before any client-visible delivery |
+
+All Phase 4E artifacts: `internal_only=True`, `client_visible=False`. Human redaction review required before delivery.
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

@@ -123,6 +123,15 @@ from core.schemas.browser_execution import (
     BrowserExecutionEvidence,
     BrowserExecutionReport,
 )
+from core.schemas.credential_safety import (
+    CredentialReference as CredentialSafetyReference,
+    CredentialPolicy as CredentialSafetyPolicy,
+    CredentialSafetyReport,
+    TestAccountProfile,
+    StorageStatePolicy,
+    AuthExecutionApproval,
+    SandboxProfileClassification,
+)
 
 __all__ = [
     # Base
@@ -281,4 +290,13 @@ __all__ = [
     "BrowserExecutionCommand",
     "BrowserExecutionEvidence",
     "BrowserExecutionReport",
+    # Credential Safety (Phase 4E)
+    # Note: exported with Safety prefix to avoid conflict with Phase 2A credential schemas
+    "CredentialSafetyReference",
+    "CredentialSafetyPolicy",
+    "CredentialSafetyReport",
+    "TestAccountProfile",
+    "StorageStatePolicy",
+    "AuthExecutionApproval",
+    "SandboxProfileClassification",
 ]

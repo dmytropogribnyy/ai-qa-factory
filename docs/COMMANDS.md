@@ -1117,6 +1117,79 @@ Exit codes: `0` = success. `1` = blocked. `2` = error.
 
 ---
 
+---
+
+## Phase 4E — Credential Safety Inspector `[implemented]`
+
+### `tools/inspect_credentials.py`
+
+**Scan/report/classification only. No real credentials. No login. No .env reading.**
+
+```bash
+# Basic inspection (no-write preview)
+python tools/inspect_credentials.py --project-id demo --no-write
+
+# Full inspection with artifact output
+python tools/inspect_credentials.py --project-id demo
+
+# Include fixture scanning (FakeSecret123 allowed in fixture context)
+python tools/inspect_credentials.py --project-id demo --include-fixtures
+
+# JSON output
+python tools/inspect_credentials.py --project-id demo --json
+
+# Classify a sandbox/account profile
+python tools/inspect_credentials.py --project-id demo --classify-sandbox "Amazon Pay Sandbox"
+python tools/inspect_credentials.py --project-id demo --classify-sandbox "Alza production account"
+```
+
+### Flags
+
+| Flag | Description |
+|---|---|
+| `--project-id` | Project ID (required unless `--from-output`) |
+| `--from-output` | Path to `outputs/<project_id>` directory |
+| `--json` | Print JSON to stdout only |
+| `--no-write` | Do not write artifacts to disk |
+| `--include-fixtures` | Also scan `fixtures/client_scenarios/` |
+| `--include-scaffold` | Also scan generated scaffold under `outputs/<id>/03_framework/` |
+| `--classify-sandbox` | Classify a sandbox/account label string |
+| `--strict` | Treat warnings as blockers |
+
+### Sandbox classification
+
+| Label | Classification | Blocked in Phase 4E |
+|---|---|---|
+| `Amazon Pay Sandbox` | `future_sandbox_integration` | Yes — requires merchant setup + explicit future phase |
+| `Amazon.com` / `Amazon retail` | `blocked_production_retail` | Always blocked |
+| `Alza production account` | `blocked_production_ecommerce` | Yes — blocked unless client staging/test access |
+| `Alza staging` / `Alza test account` | `future_sandbox_integration` | Yes — requires client scope approval |
+| `Google account` / `OAuth personal` | `blocked_personal_account` | Always blocked |
+| `Linear token` / `Linear.app` | `blocked_task_source` | Always blocked |
+| `SauceDemo` | `public_demo` | Allowed in Phase 4D with `--approve-demo-execution` |
+| `dedicated staging account` | `future_sandbox_integration` | Yes — blocked until explicit phase approval |
+
+### Safety invariants
+
+- `safe_for_auth_execution=False` — always in Phase 4E
+- `safe_for_client_visibility=False` — always in Phase 4E
+- `storageState approved_for_commit=False` — always
+- No `.env`, `.auth`, or `storageState` files are read
+- No subprocess calls, no external API calls
+
+### Generated artifacts (`outputs/<project_id>/08_credentials/`)
+
+```
+CREDENTIAL_POLICY.json/md
+CREDENTIAL_SAFETY_REPORT.json/md
+STORAGE_STATE_POLICY.json/md
+AUTH_EXECUTION_APPROVAL_DRAFT.json/md
+SANDBOX_PROFILE_CLASSIFICATION.json/md
+CREDENTIAL_REDACTION_CHECKLIST.md
+```
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

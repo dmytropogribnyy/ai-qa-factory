@@ -498,6 +498,42 @@ New constants: `INTEGRATION_PROVIDERS`, `INTEGRATION_DIRECTIONS`, `INTEGRATION_E
 
 ---
 
+## Phase 4E — Credential Safety schemas
+
+**Module:** `core/schemas/credential_safety.py`
+
+**Exported from `core/schemas/__init__.py` with Safety prefix to avoid conflict with Phase 2A schemas.**
+
+| Class (in module) | Exported as | Purpose |
+|---|---|---|
+| `CredentialReference` | `CredentialSafetyReference` | Metadata ref to a credential found in scan |
+| `CredentialPolicy` | `CredentialSafetyPolicy` | Project-level credential safety policy |
+| `CredentialSafetyReport` | `CredentialSafetyReport` | Full inspection report |
+| `TestAccountProfile` | `TestAccountProfile` | Test account safety classification |
+| `StorageStatePolicy` | `StorageStatePolicy` | storageState handling policy |
+| `AuthExecutionApproval` | `AuthExecutionApproval` | Blocked draft approval for future auth execution |
+| `SandboxProfileClassification` | `SandboxProfileClassification` | Sandbox/test-account profile classification |
+
+### Safety defaults (hardcoded, cannot be bypassed)
+
+| Field | Always | Guard |
+|---|---|---|
+| `CredentialPolicy.allow_real_credentials` | `False` | `__post_init__` + `from_dict` |
+| `CredentialPolicy.allow_personal_accounts` | `False` | `__post_init__` + `from_dict` |
+| `CredentialPolicy.allow_production_accounts` | `False` | `__post_init__` + `from_dict` |
+| `CredentialPolicy.allow_repo_storage` | `False` | `__post_init__` + `from_dict` |
+| `CredentialPolicy.allow_logging` | `False` | `__post_init__` + `from_dict` |
+| `CredentialPolicy.allow_client_visible_credentials` | `False` | `__post_init__` + `from_dict` |
+| `CredentialSafetyReport.safe_for_auth_execution` | `False` | `__post_init__` + `from_dict` |
+| `CredentialSafetyReport.safe_for_client_visibility` | `False` | `__post_init__` + `from_dict` |
+| `StorageStatePolicy.approved_for_commit` | `False` | `__post_init__` + `from_dict` |
+| `AuthExecutionApproval.approved` | `False` | `__post_init__` |
+| `AuthExecutionApproval.real_credentials_allowed` | `False` | `__post_init__` |
+| `AuthExecutionApproval.personal_account_allowed` | `False` | `__post_init__` |
+| `SandboxProfileClassification.blocked_in_current_phase` | `True` | `__post_init__` |
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic

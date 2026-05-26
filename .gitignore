@@ -2,6 +2,14 @@
 .env
 .env.local
 .env.*.local
+.env.production
+.env.staging
+
+# ── Playwright auth state (Phase 4E — must never be committed) ────────────────
+.auth/
+storageState*.json
+**/storageState.json
+**/storageState*.json
 
 # ── Python runtime ────────────────────────────────────────────────────────────
 .venv/

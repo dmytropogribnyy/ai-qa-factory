@@ -223,6 +223,19 @@ documented outside the system.
 - **Do not run npm install or playwright install** — toolchain setup is Phase 3C responsibility
 - **Do not set delivery flags True** — `safe_to_deliver`, `approved_for_client_delivery`, `client_delivery_created` are hardcoded False
 
+### Credential safety rules (Phase 4E)
+
+- **Do not ask for or store real credentials** — no passwords, tokens, API keys, OAuth secrets, or session cookies in any file, artifact, or log
+- **Do not use personal accounts** — personal Google, Amazon, Alza, LinkedIn, Upwork, or any personal account is forbidden for QA automation
+- **Do not use production accounts** — production marketplace/e-commerce accounts are always blocked
+- **Do not read `.env`, `.auth`, or `storageState` files** unless a future explicitly approved phase enables it
+- **Do not run auth execution in Phase 4E** — login flows, session management, and account-based testing require a future explicit phase approval
+- **Do not commit storageState** — `.auth/*.json` and `storageState*.json` must be gitignored and never committed
+- **Do distinguish Amazon.com retail from Amazon Pay Sandbox** — retail account = always blocked; Pay Sandbox = future sandbox integration profile, blocked in Phase 4E
+- **Do distinguish Alza.sk production from Alza staging/test** — production account = blocked; staging/test = future candidate with client-provided test account and explicit scope
+- **Do not mark `safe_for_auth_execution=True`** — auth execution safety gate requires explicit human approval
+- **Do not mark `safe_for_client_visibility=True`** for credential artifacts — redaction checklist must be completed by a human first
+
 ### Architecture integrity
 
 - **Do not replace `core/orchestrator.py`** without explicit architecture review

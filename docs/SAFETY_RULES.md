@@ -514,6 +514,42 @@ Phase 4D must not run `npm install` or `npx playwright install`. Toolchain setup
 
 ---
 
+## Credential Safety Rules (Phase 4E)
+
+**4E-1. No real credentials in the repository.**
+Do not add passwords, API tokens, OAuth secrets, session cookies, or any real secret value to any file committed to the repository. Env var names are acceptable references; actual values are never acceptable.
+
+**4E-2. No personal accounts.**
+Personal Google, Amazon, Alza, LinkedIn, Upwork, or any other personal account must never be used for QA automation. Always use dedicated test accounts provided by the client.
+
+**4E-3. No production accounts.**
+Production marketplace or e-commerce accounts (Amazon.com retail, Alza.sk production) are always blocked. Amazon Pay Sandbox and Alza staging/test accounts are future candidates — blocked in Phase 4E.
+
+**4E-4. No .env reading without explicit approval.**
+Do not read `.env`, `.env.local`, `.env.production`, `.auth/*.json`, or `storageState` files programmatically unless a future explicitly approved phase enables it.
+
+**4E-5. storageState must never be committed.**
+Playwright `storageState` / `.auth/*.json` files capture authentication state and must be treated as secrets. They must be in `.gitignore`, never committed, never delivered to clients, and always `internal_only=True`.
+
+**4E-6. No client-visible credentials.**
+Credential values, session tokens, or auth state must never appear in client-facing reports, delivery packages, or public artifacts. All credential-adjacent evidence is `internal_only=True` by default.
+
+**4E-7. Auth execution requires explicit future phase approval.**
+Running auth-gated Playwright tests (login flows, session management, account-based testing) requires a separate future explicit phase approval. Not approved in Phase 4E.
+
+**4E-8. Sandbox credentials require separate future phase approval.**
+Amazon Pay Sandbox, Alza staging, and similar sandbox credentials require their own explicit phase approval plus official merchant/test account setup. Not approved in Phase 4E.
+
+**4E-9. Agents must distinguish Amazon retail from Amazon Pay Sandbox.**
+Amazon.com retail/marketplace account = always blocked production account.
+Amazon Pay Sandbox = future sandbox integration profile, blocked in Phase 4E, allowed only with official merchant setup in a future explicit phase.
+
+**4E-10. Agents must distinguish Alza retail from Alza staging/test.**
+Alza.sk production retail account = blocked production e-commerce account.
+Alza staging/test account = future candidate, requires client-provided test account and explicit phase scope.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

@@ -645,6 +645,49 @@ class WorkbenchController:
         return runner.render_execution_artifacts(approval, report, project_id)
 
     # ------------------------------------------------------------------
+    # Phase 4E — Credential Safety API
+    # ------------------------------------------------------------------
+
+    def inspect_credential_safety(
+        self,
+        project_id: str,
+        include_fixtures: bool = False,
+        include_scaffold: bool = False,
+        strict: bool = False,
+    ):
+        """Inspect credential safety for a project. Returns (policy, report, storage_policy, auth_approval).
+
+        No real credentials used. No login. No .env reading. Static inspection only.
+        """
+        from core.credential_safety_inspector import CredentialSafetyInspector
+        inspector = CredentialSafetyInspector(outputs_root=self._outputs_root)
+        report = inspector.inspect_credentials(
+            project_id=project_id,
+            include_fixtures=include_fixtures,
+            include_scaffold=include_scaffold,
+            strict=strict,
+        )
+        policy = inspector.build_credential_policy(project_id)
+        storage_policy = inspector.build_storage_state_policy(project_id)
+        auth_approval = inspector.build_auth_execution_approval(project_id)
+        return policy, report, storage_policy, auth_approval
+
+    def render_credential_safety_artifacts(
+        self,
+        policy,
+        report,
+        storage_policy,
+        auth_approval,
+        project_id: str,
+    ) -> dict:
+        """Write credential safety artifacts to outputs/<project_id>/08_credentials/."""
+        from core.credential_safety_inspector import CredentialSafetyInspector
+        inspector = CredentialSafetyInspector(outputs_root=self._outputs_root)
+        return inspector.render_credential_safety_artifacts(
+            policy, report, storage_policy, auth_approval, project_id
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
