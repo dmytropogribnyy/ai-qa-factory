@@ -1029,6 +1029,40 @@ LLM integration is planned for a later phase under separate safety constraints.
 
 ---
 
+## Phase 5L Safety Rules
+
+**5L-1. Credential flags are blocked at entry, before any parsing.**
+`run_browser_execution.py` checks for `--password`, `--token`, `--secret`,
+`--api-key`, `--cookie`, `--pat`, `--access-token`, `--bearer`, `--db-url`,
+`--connection-string`, `--dsn` and exits with code 2 before any argparse invocation.
+
+**5L-2. Ecommerce targets require dual approval.**
+Amazon.com and Alza.cz are classified as `ecommerce_public_readonly`. They require
+both `--approve-demo-execution` AND `--approve-public-readonly-execution` to be passed
+simultaneously. A single flag is insufficient and the runner falls back to plan-only mode.
+
+**5L-3. `captcha_bypass_allowed=False` is hardcoded and cannot be changed.**
+No CAPTCHA bypass, no anti-bot bypass, no headless fingerprint spoofing is permitted.
+Bot-check pages must be handled by soft assertions (`console.warn`, `toBeGreaterThanOrEqual(0)`).
+
+**5L-4. No personal or production accounts.**
+`personal_accounts_blocked=True` and `production_accounts_blocked=True` are hardcoded.
+No Google, GitHub, Amazon, or other OAuth session may be injected into the browser context.
+
+**5L-5. Smoke tests are read-only only.**
+No checkout, no cart, no form submission, no payment, no login, no search with PII.
+Spec files must be audited before execution if modified outside the approved scaffold pattern.
+
+**5L-6. `test.skip()` guards protect dual-viewport correctness.**
+Mobile assertions must skip on desktop viewport (`vw >= 768`). Desktop assertions must
+skip on mobile viewport (`vw < 1024`). Removing these guards is a correctness violation.
+
+**5L-7. Hardcode site URLs in site-specific spec files.**
+Never use `process.env.BASE_URL` in Amazon or Alza spec files. The runner sets `BASE_URL`
+to the current target, causing cross-site contamination. Use `const BASE = 'https://...'`.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

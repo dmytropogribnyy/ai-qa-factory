@@ -2333,6 +2333,89 @@ EVIDENCE_INTELLIGENCE_REPORT.md
 
 ---
 
+## Phase 5L — Desktop Browser Execution CLI
+
+### `tools/run_browser_execution.py` — Desktop Playwright Smoke Runner
+
+Approval-gated CLI for controlled desktop Playwright smoke execution. Requires explicit
+double-approval flags for ecommerce public-readonly targets.
+
+```bash
+# List available execution profiles (no approval needed)
+python tools/run_browser_execution.py \
+  --project-id my-project \
+  --command-mode list
+
+# Plan mode — print what would run, write artifacts, no execution
+python tools/run_browser_execution.py \
+  --project-id my-project \
+  --demo-profile \
+  --command-mode smoke
+
+# Amazon.com readonly smoke (requires BOTH approval flags)
+python tools/run_browser_execution.py \
+  --project-id my-project \
+  --readonly-profile \
+  --command-mode readonly_smoke \
+  --approve-demo-execution \
+  --approve-public-readonly-execution \
+  --scaffold-root outputs/amazon-alza-viewport/03_framework/playwright
+
+# Alza.cz readonly smoke (same dual-flag requirement)
+python tools/run_browser_execution.py \
+  --project-id my-project \
+  --readonly-profile \
+  --command-mode readonly_smoke \
+  --approve-demo-execution \
+  --approve-public-readonly-execution \
+  --scaffold-root outputs/amazon-alza-viewport/03_framework/playwright
+```
+
+**Flags:**
+- `--project-id NAME` *(required)*
+- `--demo-profile` / `--readonly-profile` — mutually exclusive; selects execution profile
+- `--command-mode {list,smoke,readonly_smoke}` — what to do
+- `--approve-demo-execution` — approval gate for demo execution
+- `--approve-public-readonly-execution` — approval gate for ecommerce public-readonly targets
+- `--scaffold-root PATH` — path to Playwright scaffold with `node_modules`
+- `--no-write` — skip writing artifacts to disk
+
+**Dual-approval requirement for ecommerce targets:**
+Amazon.com and Alza.cz are `ecommerce_public_readonly` profile targets. Both
+`--approve-demo-execution` AND `--approve-public-readonly-execution` must be passed
+simultaneously. Passing only one flag is insufficient and will result in plan-only mode.
+
+**Blocked flags (exit code 2 immediately):**
+`--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--pat`,
+`--access-token`, `--bearer`, `--db-url`, `--connection-string`, `--dsn`
+
+**Safety invariants (hardcoded):**
+- `captcha_bypass_allowed=False` — cannot be bypassed
+- `anti_bot_bypass_allowed=False` — cannot be bypassed
+- `personal_accounts_blocked=True`, `production_accounts_blocked=True`
+- No credentials, no auth, no checkout, no form submission, no destructive writes
+
+**Smoke test scaffold:**
+```
+outputs/<project_id>/03_framework/playwright/
+  playwright.config.cjs          # headless chromium, screenshot/video on failure
+  tests/smoke/
+    amazon_desktop.spec.ts       # Amazon.com desktop assertions (skip on mobile vp)
+    alza_desktop.spec.ts         # Alza.cz desktop assertions (skip on mobile vp)
+    amazon_mobile.spec.ts        # Amazon.com mobile assertions (skip on desktop vp)
+    alza_mobile.spec.ts          # Alza.cz mobile assertions (skip on desktop vp)
+```
+
+**Reporting / artifacts:**
+- Screenshots: `test-results/*/test-failed-*.png` (on failure only)
+- Videos: `test-results/*/video.webm` (retained on failure)
+- Traces: `test-results/*/trace.zip` (retained on failure)
+- HTML report: `playwright-report/index.html` (always generated)
+
+**Exit codes:** `0` = build/plan OK, `1` = blocked, `2` = bad flags
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

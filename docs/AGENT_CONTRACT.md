@@ -648,6 +648,36 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Section 17 — Phase 5L — Desktop Browser Execution CLI Rules
+
+### Rules
+
+- **Credential flags are blocked before argument parsing.**
+  `run_browser_execution.py` exits with code 2 on any blocked flag (`--password`,
+  `--token`, `--secret`, `--api-key`, `--cookie`, `--pat`, `--access-token`, `--bearer`,
+  `--db-url`, `--connection-string`, `--dsn`) before any other logic runs.
+- **Ecommerce targets require dual approval — single flag is not sufficient.**
+  Amazon.com and Alza.cz (`ecommerce_public_readonly`) require both
+  `--approve-demo-execution` AND `--approve-public-readonly-execution`. This is by design.
+- **`captcha_bypass_allowed=False` is hardcoded and non-negotiable.**
+  Bot-check pages are handled with soft assertions. Do not attempt CAPTCHA bypass.
+- **No personal or production accounts in any browser context.**
+  No storageState injection, no cookie injection, no OAuth session reuse for personal/prod accounts.
+- **Spec files use hardcoded URLs — never `process.env.BASE_URL` for site-specific specs.**
+  Using `BASE_URL` in Amazon or Alza specs causes cross-site contamination when the runner
+  sets the env var for a different target. Use `const BASE = 'https://...'` in every site spec.
+- **Dual-viewport `test.skip()` guards are required.**
+  Mobile assertions: `test.skip(vw >= 768, ...)`. Desktop assertions: `test.skip(vw < 1024, ...)`.
+  Removing these causes false failures when the desktop runner executes mobile spec files.
+- **`tsconfig.json` must have `noEmit: true`, `rootDir: "."`, `lib: ["ES2020", "DOM"]`.**
+  Omitting `rootDir` causes a VS Code language server error that masks all `document` type errors.
+  `outDir` must not be set (use `noEmit` instead — Playwright does not compile via tsc).
+- **Smoke tests are read-only. No writes to the target site.**
+  No checkout, no cart, no form POST, no account creation, no order placement.
+- **Do not include `playwright-report/` or `test-results/` in client delivery packages.**
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

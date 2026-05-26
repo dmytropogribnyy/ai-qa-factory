@@ -1234,6 +1234,55 @@ consolidated QA Evidence Report with multi-source aggregation and secret scan.
 
 ---
 
+## Phase 5L — Desktop Browser Execution CLI [implemented]
+
+**What Phase 5L IS:**
+- `tools/run_browser_execution.py` — approval-gated CLI for desktop Playwright smoke execution
+- Wraps `core/browser_execution_runner.py` with a hardened, flag-checked entry point
+- Supports `list`, `smoke`, and `readonly_smoke` command modes
+- Dual-approval model for `ecommerce_public_readonly` targets (Amazon, Alza): requires
+  both `--approve-demo-execution` AND `--approve-public-readonly-execution` simultaneously
+- Generates `playwright-report/index.html` + screenshots/videos/traces on failure
+- Smoke test scaffold: `outputs/<project_id>/03_framework/playwright/tests/smoke/`
+  with desktop + mobile spec files that skip gracefully on wrong viewport
+
+**What Phase 5L is NOT:**
+- Not a test generator — spec files are hand-authored or scaffold-generated artifacts
+- Not a CI/CD runner — designed for local controlled execution under human oversight
+- Not an auth flow runner — no credentials, no login, no storageState
+- Not a CAPTCHA/anti-bot bypass tool — `captcha_bypass_allowed=False` hardcoded
+
+**Allowed Actions:**
+- Running `npx playwright test` with headless Chromium against public read-only URLs
+- Writing `playwright-report/`, `test-results/` under the scaffold root
+- Writing execution plan artifacts under `outputs/<project_id>/`
+
+**Blocked Actions:**
+- Accepting credentials via CLI flags (`--password`, `--token`, `--secret`, etc.)
+- CAPTCHA bypass or anti-bot bypass (hardcoded False)
+- Checkout, payment, form submission, or any write action against the target site
+- Running with personal or production accounts
+- Running ecommerce targets without both approval flags
+
+**Acceptance Criteria:**
+- `tools/run_browser_execution.py` exists and is importable
+- Blocked flags exit with code 2 before any other action
+- `ecommerce_public_readonly` targets blocked unless both `approve_demo=True` AND
+  `approve_public_readonly=True` are set
+- `playwright.config.cjs` generates screenshots/videos/traces on failure
+- Desktop spec files skip mobile-specific assertions (and vice versa) via `test.skip()`
+- `tsconfig.json` uses `noEmit: true`, `rootDir: "."`, `lib: ["ES2020", "DOM"]`
+- pytest: 35 Phase 5L tests pass; Playwright: 23 passed, 7 skipped (dual-viewport suite)
+
+**Safety invariants (all hardcoded, cannot be bypassed):**
+- `captcha_bypass_allowed=False`
+- `anti_bot_bypass_allowed=False`
+- `personal_accounts_blocked=True`
+- `production_accounts_blocked=True`
+- No credentials accepted or stored in any artifact
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

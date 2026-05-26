@@ -82,7 +82,7 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 1931 tests, mock mode, no API keys needed
+python -m pytest -q             # 1966 tests, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
@@ -197,7 +197,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **1931 passed** (all phases through 5K — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core)
+Expected: **1966 passed** (all phases through 5L — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI)
 
 ---
 
@@ -225,19 +225,25 @@ Expected: **1931 passed** (all phases through 5K — schema foundations, classif
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v5.5.0 — AI Intelligence Core + Full Pipeline (current)
+### v5.6.0 — Desktop Browser Execution CLI + Advanced Smoke Suite (current)
 
+- Phase 5L: `tools/run_browser_execution.py` — approval-gated desktop Playwright smoke CLI
+- Phase 5L: Dual-approval model for ecommerce targets (Amazon, Alza): both `--approve-demo-execution` AND `--approve-public-readonly-execution` required
+- Phase 5L: 4 advanced smoke spec files (desktop + mobile, Amazon + Alza) with dual-viewport `test.skip()` guards
+- Phase 5L: Hardcoded site URLs in spec files to prevent cross-site BASE_URL contamination
+- Phase 5L: Playwright scaffold with `screenshot/video/trace: retain-on-failure`, HTML reporter
+- Phase 5L: 35 new tests in `tests/test_phase5l_browser_execution_cli.py`
+- Phase 5L: `tsconfig.json` fixed — `noEmit: true`, `rootDir: "."`, `lib: ["ES2020", "DOM"]` (resolves 9 VS Code TS errors)
 - Phase 5K: `IntakeAgent` — heuristic work-request classifier; raw input never stored
 - Phase 5K: `TestOracle` — prioritized scenario generator; planning artifact, not executable
 - Phase 5K: `EvidenceIntelligence` — read-only artifact gap analyzer; no network/subprocess
-- Phase 5K: 3 new CLI tools (`run_intake_agent.py`, `run_test_oracle.py`, `run_evidence_intelligence.py`)
-- Phase 5K: 3 new artifact dirs (`22_intake/`, `23_test_oracle/`, `24_evidence_intelligence/`)
+- Phase 5K: risk level detection bug fixed — keywords checked before `if not scores:` early return
 - Phase 5J-R: `stop_on_first_failure` pipeline mode; demo pipeline CLI (`run_demo_pipeline.py`)
 - Phase 5J: `E2EPipelineRunner` + `DBSmokeRunner`; 9-module fixed execution order
 - Phase 5I: mobile viewport emulation, visual regression, GitHub OAuth
 - Phase 5H: multi-target expansion, task source integration, Google Auth modes
 - All safety invariants double-enforced in `__post_init__` + `from_dict`
-- 1931 tests passing
+- 1966 tests passing (1931 Python + 35 Phase 5L)
 
 ### v5.2.0 — Controlled Execution + Scenario Matrix
 

@@ -1785,3 +1785,48 @@ EVIDENCE_INTELLIGENCE_REPORT.md
 ```
 
 All artifacts: `network_calls_made=False`, `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+### 38. Desktop Browser Execution CLI (Phase 5L)
+
+**Purpose:** Approval-gated desktop Playwright smoke execution against public read-only
+targets. Requires explicit dual-approval for ecommerce sites (Amazon, Alza).
+
+**Checklist:**
+- [ ] Scaffold has `node_modules` (`npm install` run inside `03_framework/playwright/`)
+- [ ] Both approval flags present for Amazon/Alza: `--approve-demo-execution` AND `--approve-public-readonly-execution`
+- [ ] No credential flags passed (`--password`, `--token`, etc.)
+- [ ] Review `playwright-report/index.html` after run
+- [ ] Check `test-results/` for screenshots/videos/traces on failures
+
+**Commands:**
+```bash
+# List available profiles (no approval required)
+python tools/run_browser_execution.py --project-id my-project --command-mode list
+
+# Amazon/Alza readonly smoke (both approval flags required)
+python tools/run_browser_execution.py \
+    --project-id my-project \
+    --readonly-profile \
+    --command-mode readonly_smoke \
+    --approve-demo-execution \
+    --approve-public-readonly-execution \
+    --scaffold-root outputs/amazon-alza-viewport/03_framework/playwright
+
+# Run Playwright directly in the scaffold
+cd outputs/amazon-alza-viewport/03_framework/playwright
+npx playwright test tests/smoke --config playwright.config.cjs --reporter=list
+```
+
+**Reporting artifacts (under scaffold root):**
+```
+playwright-report/index.html        # HTML report (always generated)
+test-results/*/test-failed-*.png    # Screenshots (on failure only)
+test-results/*/video.webm           # Video (retained on failure)
+test-results/*/trace.zip            # Trace (retained on failure)
+```
+
+**Safety invariants:**
+- `captcha_bypass_allowed=False` — hardcoded, cannot be changed
+- `personal_accounts_blocked=True`, `production_accounts_blocked=True` — hardcoded
+- Ecommerce dual-approval: both `--approve-demo-execution` AND `--approve-public-readonly-execution`
+- No credentials, no auth, no checkout, no form submission
