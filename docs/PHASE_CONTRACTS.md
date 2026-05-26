@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.9.0
+**Version:** 5.10.0
 **Updated:** 2026-05-26
-**Phase:** 5J
+**Phase:** 5J-R
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1101,6 +1101,33 @@ consolidated QA Evidence Report with multi-source aggregation and secret scan.
 - `GitHubAuthEvidenceReport`: `cookies_logged=False`, `tokens_logged=False`, `storage_state_content_read=False`, `safe_to_deliver=False`, `human_review_required=True`
 
 ---
+
+---
+
+## Phase 5J-R — E2E Pipeline Hardening + Demo Workflows [implemented]
+
+**Scope:**
+1. `stop_on_first_failure` — pipeline stops after the first failed or blocked module (new flag)
+2. `stopped_early` field on `PipelineRunReport` — records whether the pipeline was cut short
+3. qa_report-only note — `plan()` warns when qa_report is the only enabled module (no source artifacts)
+4. Demo pipeline runner (`tools/run_demo_pipeline.py`) — pre-configured for Restful Booker + SauceDemo
+
+**What Phase 5J-R IS:**
+- Hardening of `E2EPipelineRunner.run()` with an optional `stop_on_first_failure` parameter
+- A pre-configured demo CLI that requires no module config — safe public targets are built in
+- 54 new integration tests targeting the hardened runner and demo workflows
+
+**What Phase 5J-R is NOT:**
+- Not changing the fixed execution order (still hardcoded)
+- Not adding new modules or new safety-gate types
+- Not real network-connected integration tests (demo tests run in plan mode or via `_run_module` mocking)
+
+**Acceptance Criteria:**
+- `--stop-on-failure` flag in `run_e2e_pipeline.py` and `run_demo_pipeline.py`
+- `PipelineRunReport.stopped_early` set correctly when stop_on_first_failure triggers
+- `plan()` adds note when qa_report is the only enabled module
+- `tools/run_demo_pipeline.py` exits 0 in plan mode; blocked flags exit 2
+- ruff: clean; pytest: 1832 passed
 
 ---
 

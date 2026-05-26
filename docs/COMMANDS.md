@@ -1,6 +1,6 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 5.4.0  
+**Version:** 5.5.0  
 **Updated:** 2026-05-26
 
 Status labels:
@@ -2092,6 +2092,46 @@ PIPELINE_SAFETY_CHECKLIST.md
 ```
 
 **Exit codes:** `0` = overall complete, `1` = failed/blocked/partial, `2` = bad flags
+
+---
+
+### 35. Demo Pipeline Runner (`tools/run_demo_pipeline.py`) `[implemented]`
+
+**Purpose:** Pre-configured pipeline for known safe public demo targets.
+No module config required — preset URLs and profiles are built in.
+
+Demo targets:
+- `api` — Restful Booker API smoke + qa_report
+- `browser` — SauceDemo browser smoke + qa_report
+- `full` — api + browser + qa_report (default)
+
+```bash
+# Show plan (no execution):
+python tools/run_demo_pipeline.py --project-id demo-run
+
+# Run API demo:
+python tools/run_demo_pipeline.py \
+    --project-id demo-run \
+    --demo-target api \
+    --approve-pipeline-execution \
+    --approve-api-smoke
+
+# Run full demo (API + browser):
+python tools/run_demo_pipeline.py \
+    --project-id demo-run \
+    --demo-target full \
+    --approve-pipeline-execution \
+    --approve-api-smoke \
+    --approve-browser-execution \
+    --stop-on-failure
+```
+
+**Flags:** `--demo-target`, `--approve-pipeline-execution`, `--approve-api-smoke`,
+`--approve-browser-execution`, `--stop-on-failure`, `--no-write`, `--timeout-per-module`
+
+**Blocked flags (never accepted):** same as `run_e2e_pipeline.py`
+
+**Generated artifacts** (`outputs/<project_id>/20_e2e_pipeline/`): same as run_e2e_pipeline.py
 
 ---
 

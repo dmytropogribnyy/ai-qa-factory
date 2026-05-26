@@ -71,6 +71,8 @@ def main() -> None:
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--timeout-per-module", type=int, default=300,
                         help="Timeout per module in seconds (default 300)")
+    parser.add_argument("--stop-on-failure", action="store_true",
+                        help="Stop pipeline after the first failed or blocked module")
 
     # Module enable flags
     parser.add_argument("--enable-task-source", action="store_true")
@@ -222,9 +224,11 @@ def main() -> None:
         module_config=cfg,
         approve_pipeline_execution=args.approve_pipeline_execution,
         timeout_per_module=args.timeout_per_module,
+        stop_on_first_failure=args.stop_on_failure,
     )
 
-    print(f"\nStatus:     {report.overall_status}")
+    stopped_note = " (stopped early)" if report.stopped_early else ""
+    print(f"\nStatus:     {report.overall_status}{stopped_note}")
     print(f"Complete:   {report.modules_complete}")
     print(f"Failed:     {report.modules_failed}")
     print(f"Blocked:    {report.modules_blocked}")

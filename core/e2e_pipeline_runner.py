@@ -113,6 +113,13 @@ class E2EPipelineRunner:
                     f"python {cli_tool} --project-id {project_id} [module-args]"
                 )
 
+        # Warn when qa_report is the only enabled module (no source artifacts to aggregate)
+        source_modules = [m for m in enabled_modules if m != "qa_report"]
+        if "qa_report" in enabled_modules and not source_modules:
+            notes.append(
+                "qa_report is the only enabled module — no source artifacts will be available to aggregate."
+            )
+
         # Execution order: only the enabled modules, in fixed order
         execution_order = [m for m in _EXECUTION_ORDER if m in enabled_modules and m not in blocked_modules]
 
@@ -134,6 +141,7 @@ class E2EPipelineRunner:
         module_config: Optional[PipelineModuleConfig] = None,
         approve_pipeline_execution: bool = False,
         timeout_per_module: int = 300,
+        stop_on_first_failure: bool = False,
     ) -> PipelineRunReport:
         """Run all enabled modules in order; aggregate into PipelineRunReport."""
         report = PipelineRunReport(
@@ -165,10 +173,11 @@ class E2EPipelineRunner:
         cfg = module_config or PipelineModuleConfig()
         execution_order = [m for m in _EXECUTION_ORDER if m in enabled_modules]
         report.execution_order = execution_order
+        report.stop_on_first_failure = stop_on_first_failure
 
         pipeline_start = time.time()
 
-        for module_name in execution_order:
+        for idx, module_name in enumerate(execution_order):
             result = self._run_module(
                 module_name=module_name,
                 project_id=project_id,
@@ -184,6 +193,24 @@ class E2EPipelineRunner:
                 report.modules_blocked += 1
             elif result.status == "skipped":
                 report.modules_skipped += 1
+
+            if stop_on_first_failure and result.status in ("failed", "blocked"):
+                report.stopped_early = True
+                for remaining in execution_order[idx + 1:]:
+                    cli_tool = PIPELINE_MODULE_CLI_TOOLS.get(remaining, "")
+                    artifact_dir = PIPELINE_MODULE_ARTIFACT_DIRS.get(remaining, "")
+                    skipped = PipelineModuleResult(
+                        module_name=remaining,
+                        status="skipped",
+                        cli_tool=cli_tool,
+                        artifact_dir=str(self._outputs_root / project_id / artifact_dir),
+                    )
+                    skipped.notes.append(
+                        f"Skipped: module '{module_name}' {result.status} and stop_on_first_failure=True"
+                    )
+                    report.module_results.append(skipped)
+                    report.modules_skipped += 1
+                break
 
         report.total_duration_seconds = round(time.time() - pipeline_start, 2)
 
@@ -423,11 +450,12 @@ class E2EPipelineRunner:
         return None
 
     def _render_md(self, report: PipelineRunReport, ts: str) -> str:
+        stopped_note = " *(stopped early)*" if report.stopped_early else ""
         lines = [
             "# E2E Pipeline Run Report",
             "",
             f"**Project:** {report.project_id}",
-            f"**Status:** {report.overall_status}",
+            f"**Status:** {report.overall_status}{stopped_note}",
             f"**Generated:** {ts}",
             f"**Duration:** {report.total_duration_seconds}s",
             "",

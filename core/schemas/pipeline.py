@@ -113,6 +113,8 @@ class PipelineModuleConfig(SchemaMixin):
     db_approve: bool = False
     # qa_report (always runs last if enabled)
     qa_report_source_project_ids: List[str] = field(default_factory=list)
+    # pipeline control
+    stop_on_first_failure: bool = False
 
 
 @dataclass
@@ -187,6 +189,9 @@ class PipelineRunReport(SchemaMixin):
     final_report_path: str = ""
     blockers: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    # run control
+    stop_on_first_failure: bool = False
+    stopped_early: bool = False
     # Safety
     raw_secrets_allowed: bool = False
     production_write_allowed: bool = False
@@ -219,6 +224,8 @@ class PipelineRunReport(SchemaMixin):
             final_report_path=str(data.get("final_report_path", "")),
             blockers=list(data.get("blockers", [])),
             notes=list(data.get("notes", [])),
+            stop_on_first_failure=bool(data.get("stop_on_first_failure", False)),
+            stopped_early=bool(data.get("stopped_early", False)),
         )
         object.__setattr__(obj, "raw_secrets_allowed", False)
         object.__setattr__(obj, "production_write_allowed", False)
