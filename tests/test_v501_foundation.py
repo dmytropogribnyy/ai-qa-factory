@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 from core.agent_registry import build_agent_registry
 from core.config import get_settings

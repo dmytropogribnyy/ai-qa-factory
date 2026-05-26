@@ -55,6 +55,9 @@ _ALLOWED_TARGET_CATEGORIES = frozenset({
     "orangehrm_demo_auth",
     "restful_booker_demo_auth",
     "dedicated_test_account_custom_target",
+    # Phase 5H: public demo auth targets (known demo credentials, no personal accounts)
+    "saucedemo_demo_auth",       # standard_user / secret_sauce — public demo credentials
+    "practice_site_demo_auth",   # practicesoftwaretesting.com, the-internet.herokuapp.com, demoqa.com
 })
 
 # URL patterns that are always blocked regardless of credentials

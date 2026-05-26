@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from core.config import get_settings
 from core.orchestrator import QAFactoryOrchestrator
-from core.quality_gate import QualityGate
-from core.state import QAFactoryState
 from tools.file_manager import FileManager
 import pytest
 

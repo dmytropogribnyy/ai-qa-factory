@@ -1390,3 +1390,77 @@ smoke_redacted.png                 ← optional screenshot, gitignored
 ```
 
 All Phase 5G artifacts: `safe_to_deliver=False`, `human_review_required=True` always.
+
+---
+
+## Section 29 — Phase 5H — Multi-Target Expansion + Task Source Integration
+
+### 29a. Linear Task Source Fetch
+
+**Purpose:** Read Linear issues as requirements input and derive test scenarios. Linear is never
+an app-under-test — it is a task source (requirements input) only.
+
+**Prerequisites:**
+- [ ] Linear API token in env var (e.g. `LINEAR_API_TOKEN`) — must be a read-only token
+- [ ] Project scaffold exists at `outputs/<project_id>/` (or will be created on first run)
+- [ ] Confirm `--approve-task-source-integration` is appropriate for client engagement
+
+**Command:**
+```bash
+python tools/fetch_task_source.py \
+    --project-id my-project \
+    --provider linear \
+    --token-env-var LINEAR_API_TOKEN \
+    --team-key ENG \
+    --approve-task-source-integration
+```
+
+**Safety checklist:**
+- [ ] `--token-env-var` contains an env var NAME (not a raw token value)
+- [ ] Env var NAME matches `^[A-Z][A-Z0-9_]{0,79}$`
+- [ ] Linear API token has read-only scope (no create/update/comment permissions)
+- [ ] `writeback_allowed=False` confirmed (hardcoded — cannot be bypassed)
+- [ ] `raw_token_in_output=False` confirmed (hardcoded — cannot be bypassed)
+
+**Output artifacts (`outputs/<project_id>/16_task_source/`):**
+```
+task_source_report.json     ← TaskSourceFetchReport schema
+derived_scenarios.json      ← List of derived test scenarios
+task_source_summary.md      ← Human-readable fetch summary
+```
+
+All Phase 5H task source artifacts: `writeback_performed=False`, `raw_token_in_output=False`,
+`client_delivery_allowed=False` always.
+
+### 29b. Amazon/Alza Public Readonly Navigation
+
+**Purpose:** Test public product, search, and category pages on Amazon and Alza.
+Auth/cart/checkout paths remain hard-blocked at all levels.
+
+**Command (scenario matrix decision):**
+```bash
+python tools/decide_scenario.py \
+    --project-id my-ecommerce-test \
+    --decide-url https://www.amazon.com/dp/B08N5WRWNW \
+    --scenario-type public_search_browse \
+    --approve-public-readonly-execution \
+    --readonly-profile amazon_public_readonly
+```
+
+**Always-blocked paths (cannot be unlocked):**
+`/signin`, `/ap/`, `/gp/buy`, `/cart`, `/checkout`, `/account`, `/order`, `/orders`, `/your-account`, `/wishlist/`
+
+### 29c. CDP Attach Mode (Google Auth)
+
+**Purpose:** Attach to an already-running Chrome session the user launched and authenticated
+manually. No password automation. No CAPTCHA bypass.
+
+**User flow:**
+1. Launch Chrome with debugging port:
+   ```bash
+   google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-test
+   ```
+2. Navigate and log in manually (solve CAPTCHA/2FA yourself)
+3. Run the auth runner with `--auth-mode cdp_attach --cdp-port 9222`
+
+**Safety:** CDP port must be 1024–65535. The system attaches only — never automates login.

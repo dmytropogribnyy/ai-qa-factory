@@ -353,12 +353,17 @@ Agents must follow these rules when proposing or evaluating test execution:
 | SauceDemo (no auth) | `no_auth_demo_smoke` | Yes |
 | Public read-only docs | `no_auth_public_readonly_smoke` | Yes |
 | SauceDemo (with auth) | `demo_auth_smoke` | Yes |
+| SauceDemo demo auth | `saucedemo_demo_auth` | Yes — Phase 5H |
+| Practice site demo auth | `practice_site_demo_auth` | Yes — Phase 5H |
+| Amazon public readonly (product/search/category) | `amazon_public_readonly` | Yes — Phase 5H (auth/cart/checkout blocked) |
+| Alza public readonly (product/search/category) | `alza_public_readonly` | Yes — Phase 5H (auth/cart/checkout blocked) |
+| Linear task source (API read-only) | `linear` provider | Yes — Phase 5H (`fetch_task_source.py`) |
 | Dedicated test account | `dedicated_test_account_auth_future` | No — Phase 5A |
 | Staging/client app | `staging_client_app_future` | No — Phase 5A |
 | Production (read-only) | `production_readonly_future` | No — Phase 5B |
 | Sandbox payment | `sandbox_payment_future` | No — Phase 5C |
-| Task source integration (Linear, Jira, etc.) | `task_source_integration_future` | No — Phase 5D |
-| Real e-commerce / OAuth (Amazon, Alza, Google OAuth, LinkedIn, Upwork) | `strictly_blocked` | Never |
+| Task source integration (Jira, ClickUp, GitHub Issues) | `task_source_integration_future` | No — future phase |
+| Real e-commerce auth / OAuth (Amazon auth, Alza auth, Google OAuth, LinkedIn, Upwork) | `strictly_blocked` | Never |
 
 ### Credential and account rules (never bypass)
 

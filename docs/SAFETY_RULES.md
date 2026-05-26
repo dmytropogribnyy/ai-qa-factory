@@ -830,6 +830,48 @@ directories. All output goes to `outputs/<report_project_id>/14_qa_report/` only
 
 ---
 
+## Phase 5H — Multi-Target Expansion + Task Source Integration Safety Rules
+
+**5H-1. Linear is a task source — never an app-under-test.**
+`linear.app` remains in `_ALWAYS_BLOCKED_DOMAINS` in `browser_execution_runner.py`.
+The only permitted Linear integration is the read-only GraphQL API via `TaskSourceFetcher`.
+No browser navigation to Linear. No status changes, comments, or webhooks.
+
+**5H-2. Raw Linear API tokens are never accepted via CLI flags or stored in artifacts.**
+`--token-env-var` accepts only an env var **name** (format `^[A-Z][A-Z0-9_]{0,79}$`).
+Flags `--token`, `--api-key`, `--secret`, `--password`, `--linear-token`, `--bearer` are rejected.
+Token values must never appear in logs, reports, JSON artifacts, or Markdown files.
+
+**5H-3. Linear writeback is always blocked.**
+`writeback_allowed=False`, `status_change_allowed=False`, `comment_allowed=False`,
+`webhook_allowed=False` — all hardcoded in `TaskSourceFetchPolicy.__post_init__` and `from_dict`.
+No code path can set any of these to True.
+
+**5H-4. Amazon/Alza public readonly is path-gated.**
+`amazon_public_readonly` and `alza_public_readonly` profiles are allowed only for product,
+search, and category pages. The following paths are hard-blocked regardless of profile or
+approval: `/signin`, `/ap/`, `/gp/buy`, `/cart`, `/checkout`, `/account`, `/order`, `/orders`,
+`/your-account`, `/wishlist/`.
+
+**5H-5. Amazon/Alza auth flows remain blocked.**
+No storageState capture, no CDP attach, and no dedicated profile context is allowed for
+Amazon or Alza domains. These domains are excluded from all auth runners.
+
+**5H-6. CDP Attach requires a user-launched browser session.**
+The system attaches to an already-running Chrome with `--remote-debugging-port`.
+The user logs in manually (including CAPTCHA/2FA). The system never automates login,
+never reads passwords, and never bypasses CAPTCHA in CDP attach mode.
+
+**5H-7. Dedicated Profile Context requires an internal user-data-dir.**
+The `user_data_dir` for `dedicated_profile_context` mode must be inside the approved
+internal output directory. Arbitrary filesystem paths are rejected.
+
+**5H-8. `client_delivery_allowed=False` in all Phase 5H artifacts.**
+`TaskSourceFetchReport.client_delivery_allowed=False` hardcoded. Task source artifacts
+are for internal use only and require human review.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

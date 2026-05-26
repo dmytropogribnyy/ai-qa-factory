@@ -1,15 +1,19 @@
-"""Controlled Browser Execution Runner — Phase 4D.
+"""Controlled Browser Execution Runner — Phase 4D / Phase 5H.
 
 Executes approved Playwright commands against narrowly allowlisted targets:
   - local / localhost
   - explicit public demo profiles (saucedemo_public_demo, the_internet_public_demo)
-  - one public read-only profile: playwright_docs_readonly
+  - public read-only profiles: playwright_docs_readonly, amazon_public_readonly,
+    alza_public_readonly
 
 SAFETY:
 - subprocess.run is called ONLY for allowlisted commands.
 - No .env reading. No credential injection.
 - No production/high-risk/task-source targets.
-- Alza.sk, Amazon.com, Linear.app always blocked.
+- Linear.app always blocked (task source only — not a browser target).
+- Amazon.com and Alza: allowed ONLY in readonly profiles with path gates.
+  Blocked paths (signin, cart, checkout, account, order, payment, etc.)
+  are rejected even within readonly profiles.
 - Playwright.dev only via --approve-public-readonly-execution + readonly_profile.
 - Delivery flags always False (enforced by schema __post_init__).
 """
@@ -75,18 +79,75 @@ _READONLY_PROFILES: Dict[str, Dict[str, Any]] = {
         "allowed_test_paths": ["tests/smoke"],
         "max_pages": 2,
         "description": "Playwright.dev public documentation — read-only smoke only",
+        "blocked_url_paths": [],
+    },
+    "amazon_public_readonly": {
+        "base_url": "https://www.amazon.com",
+        "target_category": "ecommerce_public_readonly",
+        "approval_flag": "public_readonly",
+        "allowed_modes": {"list", "readonly_smoke"},
+        "allowed_test_paths": ["tests/smoke"],
+        "max_pages": 3,
+        "description": "Amazon public product/search pages — no auth, no cart, no checkout",
+        # Paths always blocked within this profile even with approval
+        "blocked_url_paths": [
+            "/signin", "/ap/signin", "/ap/cvf", "/gp/cart", "/cart",
+            "/checkout", "/account", "/order", "/orders", "/payment",
+            "/wishlist", "/address-book", "/subscribe", "/memberships",
+            "/ap/forgotpassword", "/your-account", "/hz/mycd",
+        ],
+        "allowed_url_path_prefixes": ["/dp/", "/s?", "/s/", "/b/", "/"],
+    },
+    "alza_public_readonly": {
+        "base_url": "https://www.alza.sk",
+        "target_category": "ecommerce_public_readonly",
+        "approval_flag": "public_readonly",
+        "allowed_modes": {"list", "readonly_smoke"},
+        "allowed_test_paths": ["tests/smoke"],
+        "max_pages": 3,
+        "description": "Alza public product/category pages — no auth, no cart, no checkout",
+        "blocked_url_paths": [
+            "/prihlasit", "/registracia", "/odhlasit", "/kosik", "/platba",
+            "/objednavka", "/moj-ucet", "/login", "/signin", "/cart",
+            "/checkout", "/order", "/account", "/logout",
+        ],
+        "allowed_url_path_prefixes": ["/d", "/c", "/"],
     },
 }
+
+# Amazon/Alza international base-URL variants accepted under readonly profiles
+_AMAZON_READONLY_DOMAINS = frozenset({
+    "amazon.com", "www.amazon.com",
+    "amazon.de", "www.amazon.de",
+    "amazon.co.uk", "www.amazon.co.uk",
+    "amazon.fr", "www.amazon.fr",
+    "amazon.es", "www.amazon.es",
+    "amazon.it", "www.amazon.it",
+    "amazon.pl", "www.amazon.pl",
+    "amazon.com.au", "www.amazon.com.au",
+})
+
+_ALZA_READONLY_DOMAINS = frozenset({
+    "alza.sk", "www.alza.sk",
+    "alza.cz", "www.alza.cz",
+    "alza.hu", "www.alza.hu",
+    "alza.at", "www.alza.at",
+    "alza.de", "www.alza.de",
+})
 
 # ---------------------------------------------------------------------------
 # Hard-blocked domains (always blocked regardless of approval)
 # ---------------------------------------------------------------------------
 
 _ALWAYS_BLOCKED_DOMAINS = [
-    "alza.sk", "www.alza.sk",
-    "amazon.com", "www.amazon.com",
-    "linear.app", "app.linear.app",
+    # Amazon/Alza: blocked here only for AUTH/demo runners.
+    # Public read-only access is allowed via readonly_profile=amazon_public_readonly
+    # or alza_public_readonly with --approve-public-readonly-execution.
+    "linear.app", "app.linear.app",  # task source only — never a browser target
 ]
+
+# Amazon/Alza domains that may appear in requests — resolved via readonly profile gate
+_ECOMMERCE_READONLY_DOMAINS = _AMAZON_READONLY_DOMAINS | _ALZA_READONLY_DOMAINS
 
 # Playwright.dev is blocked unless readonly_profile=playwright_docs_readonly + public_readonly approval
 _PLAYWRIGHT_DEV_DOMAIN = "playwright.dev"
@@ -537,14 +598,15 @@ class BrowserExecutionRunner:
     ) -> Optional[str]:
         """Return block reason if URL is hard-blocked."""
         url_lower = base_url.lower()
+
+        # Hard-blocked domains (no profile unlocks these)
         for domain in _ALWAYS_BLOCKED_DOMAINS:
             if domain in url_lower:
-                if "alza" in url_lower:
-                    return f"Alza.sk is always blocked as an execution target. URL: {base_url}"
-                if "amazon" in url_lower:
-                    return f"Amazon.com is always blocked as an execution target. URL: {base_url}"
                 if "linear.app" in url_lower:
-                    return f"Linear.app is always blocked as an execution target (task source only). URL: {base_url}"
+                    return (
+                        f"Linear.app is always blocked as a browser execution target. "
+                        f"Use Linear as a task source via fetch_task_source.py. URL: {base_url}"
+                    )
                 return f"Domain is blocked as an execution target. URL: {base_url}"
 
         # Playwright.dev: only with correct approval + readonly profile
@@ -554,6 +616,26 @@ class BrowserExecutionRunner:
                     f"playwright.dev requires --approve-public-readonly-execution "
                     f"and --readonly-profile playwright_docs_readonly. URL: {base_url}"
                 )
+
+        # Amazon / Alza: allowed only via the correct readonly profile + approval
+        is_amazon = any(d in url_lower for d in _AMAZON_READONLY_DOMAINS)
+        is_alza = any(d in url_lower for d in _ALZA_READONLY_DOMAINS)
+        if is_amazon or is_alza:
+            expected_profile = "amazon_public_readonly" if is_amazon else "alza_public_readonly"
+            site_name = "Amazon" if is_amazon else "Alza"
+            if not approve_public_readonly or readonly_profile != expected_profile:
+                return (
+                    f"{site_name} requires --approve-public-readonly-execution "
+                    f"and --readonly-profile {expected_profile}. URL: {base_url}"
+                )
+            # Check that URL does not hit a blocked path
+            blocked = _READONLY_PROFILES[expected_profile].get("blocked_url_paths", [])
+            for path in blocked:
+                if path in url_lower:
+                    return (
+                        f"{site_name} readonly profile: path '{path}' is always blocked "
+                        f"(auth/cart/checkout/account). URL: {base_url}"
+                    )
 
         return None
 

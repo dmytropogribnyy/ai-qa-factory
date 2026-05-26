@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
 
 
 def test_llm_mode_env_is_mock() -> None:

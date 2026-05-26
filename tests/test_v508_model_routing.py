@@ -1,7 +1,6 @@
-import os
 from pathlib import Path
 
-from core.config import Settings, MODEL_PROFILES
+from core.config import Settings
 from core.llm_router import LLMRouter
 
 
@@ -113,7 +112,6 @@ def test_capability_router_profile_map_is_source_of_truth(tmp_path, monkeypatch)
     """CapabilityRouterAgent.run() must overwrite any first-pass prompt_profile
     set by InitialAnalysisEngine with the value from OPPORTUNITY_PROFILE_MAP."""
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
-    from core.config import get_settings
     from core.state import QAFactoryState
     from agents.capability_router import CapabilityRouterAgent
 
@@ -123,7 +121,6 @@ def test_capability_router_profile_map_is_source_of_truth(tmp_path, monkeypatch)
         raw_input="Multi-tenant SaaS billing and stripe integration QA audit",
     )
     state.prompt_profile = "flaky_tests"  # simulate wrong first-pass value
-    settings = get_settings()
     agent = CapabilityRouterAgent()
     state = agent.run(state)
     assert state.opportunity_type == "saas_multi_tenant_billing_auth_audit"

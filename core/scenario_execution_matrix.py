@@ -33,9 +33,9 @@ _OUTPUTS_ROOT = Path("outputs")
 # ---------------------------------------------------------------------------
 
 _STRICTLY_BLOCKED_PATTERNS = [
-    "amazon.com", "www.amazon.com",
-    "alza.sk", "www.alza.sk",
+    # Google OAuth — always blocked (use Phase 5G google_auth_runner instead)
     "accounts.google.com", "google.com/o/oauth2",
+    # Professional platforms — auth always blocked, public readonly too unreliable
     "linkedin.com", "www.linkedin.com",
     "upwork.com", "www.upwork.com",
 ]
@@ -43,6 +43,17 @@ _STRICTLY_BLOCKED_PATTERNS = [
 _PUBLIC_READONLY_PATTERNS = [
     "playwright.dev", "docs.playwright.dev",
 ]
+
+# Amazon/Alza: allowed as public readonly targets (product/search/category pages only)
+# Blocked for auth, cart, checkout, account, payment — enforced by browser_execution_runner path gates
+_AMAZON_READONLY_PATTERNS = [
+    "amazon.com", "amazon.de", "amazon.co.uk", "amazon.fr",
+    "amazon.es", "amazon.it", "amazon.pl", "amazon.com.au",
+]
+_ALZA_READONLY_PATTERNS = [
+    "alza.sk", "alza.cz", "alza.hu", "alza.at", "alza.de",
+]
+_ECOMMERCE_READONLY_PATTERNS = _AMAZON_READONLY_PATTERNS + _ALZA_READONLY_PATTERNS
 
 _SAUCEDEMO_PATTERNS = [
     "saucedemo.com", "www.saucedemo.com",
@@ -139,8 +150,10 @@ class ScenarioExecutionMatrixBuilder:
                 "No external calls were made.",
                 "This is a routing/policy/planning layer only.",
                 "Allowed-now lanes: no_auth_demo_smoke, no_auth_public_readonly_smoke, demo_auth_smoke.",
+                "Phase 5H: Amazon/Alza public readonly enabled via readonly profile + path gates.",
+                "Phase 5H: Linear added as task source integration (read-only API, not browser target).",
                 "Future lanes require explicit future phase approval.",
-                "Strictly blocked lanes remain blocked regardless of approval.",
+                "Strictly blocked: Google OAuth, LinkedIn, Upwork, Amazon/Alza auth/cart/checkout.",
             ],
         )
 
@@ -233,32 +246,56 @@ class ScenarioExecutionMatrixBuilder:
                 notes=["Requires --approve-demo-auth-execution. Public demo credentials only."],
             ),
             ScenarioTargetProfile(
-                id="amazon_retail_blocked",
-                label="Amazon.com retail — strictly blocked",
-                target_url_pattern="amazon.com",
-                target_category="high_risk_marketplace",
-                scenario_type="marketplace_checkout",
-                execution_lane="strictly_blocked",
-                allowed_now=False,
-                approved_profile=False,
+                id="amazon_public_readonly",
+                label="Amazon — public read-only navigation",
+                target_url_pattern="amazon.com / amazon.de / amazon.co.uk / ...",
+                target_category="ecommerce_public_readonly",
+                scenario_type="public_readonly_navigation",
+                execution_lane="no_auth_public_readonly_smoke",
+                allowed_now=True,
+                approved_profile=True,
                 requires_credentials=False,
-                blocked_actions=["login", "cart", "checkout", "payment", "order_creation", "scraping"],
-                examples=["https://www.amazon.com"],
-                notes=["Amazon.com retail is always blocked. Amazon Pay Sandbox is future Phase 5C."],
+                blocked_actions=[
+                    "signin", "cart", "checkout", "payment", "order_creation",
+                    "account_access", "wishlist", "scraping",
+                ],
+                examples=[
+                    "https://www.amazon.com/dp/<ASIN>",
+                    "https://www.amazon.de/s?k=query",
+                ],
+                notes=[
+                    "Requires --approve-public-readonly-execution --readonly-profile amazon_public_readonly.",
+                    "Allowed: product pages (/dp/), search (/s?), category pages, homepage.",
+                    "Path gates enforced: /signin /cart /checkout /account /order /payment always blocked.",
+                    "CAPTCHA: if encountered, test fails gracefully. No bypass.",
+                    "Auth/cart/checkout always blocked regardless of approval.",
+                ],
             ),
             ScenarioTargetProfile(
-                id="alza_production_blocked",
-                label="Alza.sk production — strictly blocked",
-                target_url_pattern="alza.sk",
-                target_category="high_risk_marketplace",
-                scenario_type="production_auth",
-                execution_lane="strictly_blocked",
-                allowed_now=False,
-                approved_profile=False,
+                id="alza_public_readonly",
+                label="Alza — public read-only navigation",
+                target_url_pattern="alza.sk / alza.cz / alza.hu / alza.at / alza.de",
+                target_category="ecommerce_public_readonly",
+                scenario_type="public_readonly_navigation",
+                execution_lane="no_auth_public_readonly_smoke",
+                allowed_now=True,
+                approved_profile=True,
                 requires_credentials=False,
-                blocked_actions=["login", "cart", "checkout", "payment", "order_creation", "scraping"],
-                examples=["https://www.alza.sk"],
-                notes=["Alza production is always blocked. Alza staging requires future explicit approval."],
+                blocked_actions=[
+                    "prihlasit", "kosik", "platba", "objednavka", "moj-ucet",
+                    "cart", "checkout", "payment", "order_creation", "scraping",
+                ],
+                examples=[
+                    "https://www.alza.sk/notebooky/",
+                    "https://www.alza.cz/hledat?q=query",
+                ],
+                notes=[
+                    "Requires --approve-public-readonly-execution --readonly-profile alza_public_readonly.",
+                    "Allowed: product detail, category, search pages.",
+                    "Path gates enforced: /prihlasit /kosik /platba /objednavka /moj-ucet always blocked.",
+                    "CAPTCHA: if encountered, test fails gracefully. No bypass.",
+                    "Auth/cart/checkout always blocked regardless of approval.",
+                ],
             ),
             ScenarioTargetProfile(
                 id="google_oauth_blocked",
@@ -682,6 +719,57 @@ class ScenarioExecutionMatrixBuilder:
         # --- Strictly blocked ---
         if _url_matches_any(url, _STRICTLY_BLOCKED_PATTERNS) and not _url_matches_any(url, _AMAZON_PAY_PATTERNS):
             return self._decision_blocked(project_id, target_url, stype, url)
+
+        # --- E-commerce public readonly (Amazon / Alza) ---
+        # Auth, cart, checkout, payment, orders are always blocked.
+        # Public product/search/category navigation is allowed via readonly profile.
+        if _url_matches_any(url, _ECOMMERCE_READONLY_PATTERNS) and not _url_matches_any(url, _AMAZON_PAY_PATTERNS):
+            is_auth_flow = any(k in stype for k in (
+                "login", "auth", "signin", "checkout", "cart", "payment",
+                "order", "account", "wishlist", "register",
+            ))
+            if is_auth_flow:
+                return ScenarioExecutionDecision(
+                    project_id=project_id,
+                    input_label=f"ecommerce_auth_blocked @ {target_url}",
+                    target_url=target_url,
+                    target_category="high_risk_marketplace",
+                    scenario_type=stype,
+                    execution_lane="strictly_blocked",
+                    allowed_now=False,
+                    implemented_now=False,
+                    blockers=[
+                        "Auth/cart/checkout/payment flows on Amazon/Alza are always blocked.",
+                        "Use a dedicated test account on a staging/sandbox environment instead.",
+                    ],
+                )
+            site = "amazon" if _url_matches_any(url, _AMAZON_READONLY_PATTERNS) else "alza"
+            profile = f"{site}_public_readonly"
+            return ScenarioExecutionDecision(
+                project_id=project_id,
+                input_label=f"ecommerce_readonly @ {target_url}",
+                target_url=target_url,
+                target_category="ecommerce_public_readonly",
+                scenario_type="public_readonly_navigation",
+                execution_lane="no_auth_public_readonly_smoke",
+                allowed_now=True,
+                implemented_now=True,
+                required_approval_flags=[
+                    "--approve-public-readonly-execution",
+                    f"--readonly-profile {profile}",
+                ],
+                blockers=[],
+                safe_next_steps=[
+                    f"Run with --approve-public-readonly-execution --readonly-profile {profile}",
+                    "Scaffold must only navigate to product/search/category pages.",
+                    "Blocked paths: /signin /cart /checkout /account /order /payment",
+                ],
+                notes=[
+                    "Public read-only navigation: product pages, search, categories only.",
+                    "No auth. No form submission. No cookies set. No credentials.",
+                    "CAPTCHA: if encountered, test fails gracefully — no bypass.",
+                ],
+            )
 
         # Load / security / scraping
         if any(k in stype for k in ("scrap", "crawl", "load_test", "security_test", "price_monitor")):
@@ -1441,7 +1529,7 @@ class ScenarioExecutionMatrixBuilder:
             )
         return "\n".join(lines) + "\n"
 
-    def _render_blocked_md(self, report: ScenarioExecutionMatrixReport) -> str:
+    def _render_blocked_md(self, _report: ScenarioExecutionMatrixReport) -> str:
         lines = [
             "# Blocked Scenarios — Phase 4G",
             "",

@@ -677,8 +677,8 @@ NOT forced (reflect real routing state):
 
 **Constants:**
 - `GOOGLE_AUTH_MODES` — all 8 supported mode names
-- `GOOGLE_AUTH_MODES_EXECUTABLE_5G` — modes with real execution support: `manual_storage_state_capture`, `storage_state_reuse`
-- `GOOGLE_AUTH_MODES_PLANNING_ONLY_5G` — modes deferred to later phases (cdp_attach, dedicated_profile_context, google_api_oauth_token_future, google_service_account_future, totp_test_account_future, mock_oauth_provider_future)
+- `GOOGLE_AUTH_MODES_EXECUTABLE_5G` — modes with real execution support in Phase 5G+: `manual_storage_state_capture`, `storage_state_reuse`, `cdp_attach` (Phase 5H), `dedicated_profile_context` (Phase 5H)
+- `GOOGLE_AUTH_MODES_PLANNING_ONLY_5G` — modes deferred to later phases: `google_api_oauth_token_future`, `google_service_account_future`, `totp_test_account_future`, `mock_oauth_provider_future`
 - `GOOGLE_TARGET_KINDS` — target categorization: `google_account_ui`, `sign_in_with_google_oauth`, `google_api_endpoint`, `mock_oauth_endpoint`
 
 **Hardcoded safety defaults (set in `__post_init__` AND `from_dict`):**
@@ -739,6 +739,42 @@ NOT forced (reflect real routing state):
 | `QAEvidenceReport.approved_for_client_delivery` | `False` | `__post_init__` + `from_dict` |
 | `QAEvidenceReport.client_ready` | `False` | `__post_init__` + `from_dict` |
 | `QAEvidenceReport.human_review_required` | `True` | `__post_init__` + `from_dict` |
+
+---
+
+### Phase 5H — Task Source Integration (`core/schemas/task_source.py`)
+
+| Class | Export | Description |
+|---|---|---|
+| `TaskSourceToken` | `TaskSourceToken` | Reference to an API token (env var name only — never a raw value) |
+| `TaskSourceIssue` | `TaskSourceIssue` | Parsed issue from the task source (id, title, description, status, labels, acceptance criteria) |
+| `TaskSourceFetchPolicy` | `TaskSourceFetchPolicy` | Hardcoded read-only policy — no writeback, no comments, no webhooks |
+| `TaskSourceScenario` | `TaskSourceScenario` | A derived test scenario from a task source issue |
+| `TaskSourceFetchReport` | `TaskSourceFetchReport` | Fetch result report — issues fetched, scenarios derived, blockers, artifacts written |
+
+**Constants:**
+- `TASK_SOURCE_PROVIDERS` — all recognized providers: `linear`, `jira`, `clickup`, `github_issues`
+- `TASK_SOURCE_PROVIDERS_EXECUTABLE_5H` — currently executable: `linear`
+- `TASK_SOURCE_PROVIDERS_PLANNING_ONLY_5H` — planning-only: `jira`, `clickup`, `github_issues`
+
+**Hardcoded safety defaults in `TaskSourceFetchPolicy` (set in `__post_init__` AND `from_dict`):**
+
+| Field | Hardcoded value | Description |
+|---|---|---|
+| `writeback_allowed` | `False` | No issue status changes |
+| `status_change_allowed` | `False` | No status updates |
+| `comment_allowed` | `False` | No comments posted |
+| `webhook_allowed` | `False` | No webhooks triggered |
+| `raw_token_logged` | `False` | Token value never logged |
+| `client_delivery_allowed` | `False` | Internal use only |
+
+**Hardcoded safety defaults in `TaskSourceFetchReport`:**
+
+| Field | Hardcoded value | Description |
+|---|---|---|
+| `writeback_performed` | `False` | Confirmed no writeback occurred |
+| `raw_token_in_output` | `False` | Confirmed no token in artifacts |
+| `client_delivery_allowed` | `False` | Requires human review before delivery |
 
 ---
 

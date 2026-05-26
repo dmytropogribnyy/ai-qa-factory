@@ -34,11 +34,13 @@ class ScreeningAnswersAgent:
                 if len(cleaned) > 8:
                     questions.append(cleaned)
         # Deduplicate while preserving order.
-        seen = set(); out = []
+        seen = set()
+        out = []
         for q in questions:
             key = q.lower()
             if key not in seen:
-                seen.add(key); out.append(q)
+                seen.add(key)
+                out.append(q)
         return out[:12]
 
     @staticmethod

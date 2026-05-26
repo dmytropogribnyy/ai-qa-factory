@@ -343,6 +343,7 @@ outputs/<project_id>/
     15_google_auth/      ← Google/OAuth test-account capability (Phase 5G — implemented)
         .auth/           ← Google storageState (gitignored, internal-only, never committed)
         user-data-dir/   ← Optional dedicated Chrome profile dir (gitignored)
+    16_task_source/      ← Linear task source fetch report + derived scenarios (Phase 5H — implemented)
     99_internal/         ← Internal notes, quality gate reports, debug logs
         scenario_evaluation/  ← Scenario batch evaluation (Phase 4ABC — implemented)
 ```
@@ -371,6 +372,7 @@ outputs/<project_id>/
 | `15_google_auth/` | No | Never — internal only | Google capability plan, storage-state policy, execution decision, evidence report, redaction checklist |
 | `15_google_auth/.auth/` | **Never committed** | Never | Google storageState (gitignored always) |
 | `15_google_auth/user-data-dir/` | **Never committed** | Never | Optional dedicated Chrome profile dir (gitignored) |
+| `16_task_source/` | No | Never — internal only | Task source fetch report, derived scenarios, summary |
 | `99_internal/` | No | Never | Internal quality gates, debug, scenario evaluation |
 
 **`06_client_draft/` is never sent without completing `DELIVERY_SAFETY_CHECKLIST.md`.**
@@ -383,6 +385,7 @@ outputs/<project_id>/
 **`13_api_auth/` is always internal-only. Phase 5E. `raw_credentials_logged=False`, `raw_credentials_serialized=False`, `token_logged=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False` always.**
 **`14_qa_report/` is always internal-only. Phase 5F. `execution_performed=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False`, `human_review_required=True` always. storageState content never read.**
 **`15_google_auth/` is always internal-only. Phase 5G. `cookies_logged=False`, `tokens_logged=False`, `storage_state_content_read=False`, `browser_profile_content_read=False`, `captcha_bypass_attempted=False`, `anti_bot_bypass_attempted=False`, `personal_account_used=False`, `production_account_used=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False` always. Google `accounts.google.com` is still blocked in generic runners — Google is allowed ONLY through Phase 5G dedicated runner.**
+**`16_task_source/` is always internal-only. Phase 5H. `writeback_performed=False`, `raw_token_in_output=False`, `client_delivery_allowed=False` always. Linear API token value never appears in any artifact. No status changes, no comments, no webhooks.**
 **`99_internal/` must never be included in client delivery packages.**
 
 ---

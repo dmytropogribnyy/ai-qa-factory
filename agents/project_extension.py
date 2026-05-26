@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from core.state import QAFactoryState
 
 

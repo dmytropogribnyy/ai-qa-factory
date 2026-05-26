@@ -39,6 +39,39 @@ _API_TARGET_PROFILES: dict[str, APIAuthTarget] = {
         target_category="restful_booker_demo_auth",
         description="Restful Booker public demo API — token-based auth",
     ),
+    # Phase 5H: additional public API profiles (no personal accounts, no real data)
+    "jsonplaceholder_public_api": APIAuthTarget(
+        profile_name="jsonplaceholder_public_api",
+        base_url="https://jsonplaceholder.typicode.com",
+        auth_endpoint="",          # no auth endpoint — public read-only
+        safe_read_endpoint="/posts/1",
+        target_category="public_demo_api",
+        description="JSONPlaceholder public fake REST API — read-only, no auth required",
+    ),
+    "reqres_public_api": APIAuthTarget(
+        profile_name="reqres_public_api",
+        base_url="https://reqres.in",
+        auth_endpoint="/api/login",
+        safe_read_endpoint="/api/users/2",
+        target_category="public_demo_api",
+        description="Reqres.in public fake API — token-based auth smoke",
+    ),
+    "dummyjson_public_api": APIAuthTarget(
+        profile_name="dummyjson_public_api",
+        base_url="https://dummyjson.com",
+        auth_endpoint="/auth/login",
+        safe_read_endpoint="/products/1",
+        target_category="public_demo_api",
+        description="DummyJSON public fake API — JWT auth smoke, no real data",
+    ),
+    "petstore_swagger_api": APIAuthTarget(
+        profile_name="petstore_swagger_api",
+        base_url="https://petstore.swagger.io/v2",
+        auth_endpoint="",          # no auth — public read-only
+        safe_read_endpoint="/pet/findByStatus?status=available",
+        target_category="public_demo_api",
+        description="Swagger Petstore public OpenAPI demo — read-only smoke",
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -57,7 +90,7 @@ _STRICTLY_BLOCKED_URL_PATTERNS = [
     "alza.de",
     "linkedin.com",
     "upwork.com",
-    "127.0.0.1",
+    # Note: localhost / 127.0.0.1 allowed for local dev API smoke (Phase 5H)
 ]
 
 # Env var name constraints
@@ -139,6 +172,8 @@ class APIAuthRunner:
             )
 
         # Gate 6: env var name format
+        # For no-auth profiles (auth_endpoint=""), credentials are not required.
+        requires_credentials = bool(profile.auth_endpoint)
         env_var_specs: List[Tuple[str, str]] = []
         for var_type, var_name in [
             ("username", username_env_var),
@@ -155,13 +190,14 @@ class APIAuthRunner:
                 )
             env_var_specs.append((var_type, var_name))
 
-        if not username_env_var:
+        if requires_credentials and not username_env_var:
             return self._blocked(
                 project_id,
-                ["username_env_var is required."],
+                [f"username_env_var is required for profile '{target_profile}' "
+                 f"(auth_endpoint='{profile.auth_endpoint}')."],
             )
 
-        # Gate 7: env vars exist in process environment
+        # Gate 7: env vars exist in process environment (only if credentials required)
         missing: List[str] = []
         secret_values: List[str] = []
         username_val = ""
@@ -239,7 +275,6 @@ class APIAuthRunner:
         import urllib.request
         import urllib.error
 
-        auth_url = effective_url + profile.auth_endpoint
         commands: List[APIAuthCommand] = []
         overall_status = "unknown"
         token_present = False
@@ -247,81 +282,98 @@ class APIAuthRunner:
 
         # ---------------------------------------------------------------
         # Step 1: POST /auth — credentials in JSON body only
+        # Skipped for no-auth profiles (auth_endpoint="")
         # ---------------------------------------------------------------
-        auth_body = json.dumps({
-            "username": username_val,
-            "password": password_val,
-        }).encode("utf-8")
+        if profile.auth_endpoint:
+            auth_url = effective_url + profile.auth_endpoint
+            auth_body = json.dumps({
+                "username": username_val,
+                "password": password_val,
+            }).encode("utf-8")
 
-        start = time.time()
-        try:
-            req = urllib.request.Request(
-                auth_url,
-                data=auth_body,
-                headers={"Content-Type": "application/json", "Accept": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            start = time.time()
+            try:
+                req = urllib.request.Request(
+                    auth_url,
+                    data=auth_body,
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    duration = time.time() - start
+                    status_code = resp.status
+                    body = resp.read().decode("utf-8", errors="replace")
+
+                response_data = json.loads(body) if body else {}
+                token_val = response_data.get("token") or response_data.get("accessToken")
+                token_present = bool(token_val)
+
+                # Mask secrets + token in any logged content
+                all_secrets = secret_values + ([token_val] if token_val else [])
+                safe_body = self._mask(body, all_secrets)
+
+                status = "passed" if status_code < 400 else "failed"
+                cmd = APIAuthCommand(
+                    id="api_auth_step1_post_auth",
+                    method="POST",
+                    url=auth_url,
+                    status_code=status_code,
+                    status=status,
+                    duration_seconds=round(duration, 3),
+                    token_present=token_present,
+                    stdout_excerpt=safe_body[:500],
+                    executed=True,
+                    safety_notes=[
+                        "Credentials sent as JSON body — not in URL or headers.",
+                        "Token value masked in all artifacts.",
+                        "raw_credentials_logged=False always.",
+                    ],
+                )
+                commands.append(cmd)
+
+            except urllib.error.HTTPError as e:
                 duration = time.time() - start
-                status_code = resp.status
-                body = resp.read().decode("utf-8", errors="replace")
+                commands.append(APIAuthCommand(
+                    id="api_auth_step1_post_auth",
+                    method="POST",
+                    url=auth_url,
+                    status_code=e.code,
+                    status="failed",
+                    duration_seconds=round(duration, 3),
+                    stderr_excerpt=self._mask(str(e), secret_values)[:500],
+                    executed=True,
+                ))
 
-            response_data = json.loads(body) if body else {}
-            token_val = response_data.get("token")
-            token_present = bool(token_val)
-
-            # Mask secrets + token in any logged content
-            all_secrets = secret_values + ([token_val] if token_val else [])
-            safe_body = self._mask(body, all_secrets)
-
-            status = "passed" if token_present and status_code < 400 else "failed"
-            cmd = APIAuthCommand(
-                id="api_auth_step1_post_auth",
-                method="POST",
-                url=auth_url,
-                status_code=status_code,
-                status=status,
-                duration_seconds=round(duration, 3),
-                token_present=token_present,
-                stdout_excerpt=safe_body[:500],
-                executed=True,
-                safety_notes=[
-                    "Credentials sent as JSON body — not in URL or headers.",
-                    "Token value masked in all artifacts.",
-                    "raw_credentials_logged=False always.",
-                ],
-            )
-            commands.append(cmd)
-
-        except urllib.error.HTTPError as e:
-            duration = time.time() - start
+            except Exception as e:
+                duration = time.time() - start
+                commands.append(APIAuthCommand(
+                    id="api_auth_step1_post_auth",
+                    method="POST",
+                    url=auth_url,
+                    status="error",
+                    duration_seconds=round(duration, 3),
+                    stderr_excerpt=self._mask(str(e), secret_values)[:500],
+                    executed=True,
+                ))
+        else:
+            # No-auth profile — mark step 1 as skipped
             commands.append(APIAuthCommand(
-                id="api_auth_step1_post_auth",
-                method="POST",
-                url=auth_url,
-                status_code=e.code,
-                status="failed",
-                duration_seconds=round(duration, 3),
-                stderr_excerpt=self._mask(str(e), secret_values)[:500],
-                executed=True,
+                id="api_auth_step1_no_auth",
+                method="SKIP",
+                url=effective_url,
+                status="skipped",
+                duration_seconds=0.0,
+                executed=False,
+                safety_notes=[f"Profile '{profile.profile_name}' requires no auth credentials."],
             ))
-
-        except Exception as e:
-            duration = time.time() - start
-            commands.append(APIAuthCommand(
-                id="api_auth_step1_post_auth",
-                method="POST",
-                url=auth_url,
-                status="error",
-                duration_seconds=round(duration, 3),
-                stderr_excerpt=self._mask(str(e), secret_values)[:500],
-                executed=True,
-            ))
+            token_present = True  # treat as authenticated for purposes of read check
 
         # ---------------------------------------------------------------
-        # Step 2 (optional): GET /booking — safe read-only health check
+        # Step 2 (optional): safe read-only GET check
+        # For auth profiles: requires token. For no-auth profiles: runs unconditionally.
         # ---------------------------------------------------------------
-        if run_safe_read_check and profile.safe_read_endpoint and token_present and token_val:
+        no_auth_profile = not profile.auth_endpoint
+        if run_safe_read_check and profile.safe_read_endpoint and (no_auth_profile or token_val):
             read_url = effective_url + profile.safe_read_endpoint
             all_secrets = secret_values + [token_val]
             start2 = time.time()
@@ -369,7 +421,11 @@ class APIAuthRunner:
         # Determine overall status
         # ---------------------------------------------------------------
         auth_cmd = next((c for c in commands if "step1" in c.id), None)
-        if auth_cmd and auth_cmd.status == "passed" and token_present:
+        read_cmd = next((c for c in commands if "step2" in c.id), None)
+        if auth_cmd and auth_cmd.status == "skipped":
+            # No-auth profile: overall status based on read check
+            overall_status = read_cmd.status if read_cmd else "passed"
+        elif auth_cmd and auth_cmd.status == "passed":
             overall_status = "passed"
         elif auth_cmd and auth_cmd.status in ("failed", "error"):
             overall_status = auth_cmd.status

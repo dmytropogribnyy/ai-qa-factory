@@ -41,16 +41,16 @@ GOOGLE_AUTH_MODES = (
     "mock_oauth_provider_future",
 )
 
-# Modes implemented with real execution support in Phase 5G
+# Modes implemented with real execution support in Phase 5G / Phase 5H
 GOOGLE_AUTH_MODES_EXECUTABLE_5G = (
-    "manual_storage_state_capture",
-    "storage_state_reuse",
+    "manual_storage_state_capture",   # Phase 5G: user logs in manually, saves storageState
+    "storage_state_reuse",            # Phase 5G: headless smoke reusing saved storageState
+    "cdp_attach",                     # Phase 5H: attach to already-running Chrome via CDP port
+    "dedicated_profile_context",      # Phase 5H: launch Chromium with persistent user-data-dir
 )
 
-# Modes that are planning/policy-only in Phase 5G (execution deferred)
+# Modes that are planning/policy-only (execution deferred to future phases)
 GOOGLE_AUTH_MODES_PLANNING_ONLY_5G = (
-    "cdp_attach",
-    "dedicated_profile_context",
     "google_api_oauth_token_future",
     "google_service_account_future",
     "totp_test_account_future",

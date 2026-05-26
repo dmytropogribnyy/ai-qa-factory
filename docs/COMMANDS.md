@@ -1584,8 +1584,8 @@ python tools/plan_google_auth.py \
 **Supported modes** (declared in plan; execution availability differs):
 - `manual_storage_state_capture` — executable in Phase 5G
 - `storage_state_reuse` — executable in Phase 5G
-- `cdp_attach` — planning-only in Phase 5G
-- `dedicated_profile_context` — planning-only in Phase 5G
+- `cdp_attach` — executable in Phase 5H (attach to already-running Chrome via CDP port)
+- `dedicated_profile_context` — executable in Phase 5H (launch Chromium with persistent user-data-dir)
 - `google_api_oauth_token_future` — planning-only
 - `google_service_account_future` — planning-only
 - `totp_test_account_future` — planning-only
@@ -1707,6 +1707,99 @@ QA_REPORT_SECRET_SCAN.md
 ```
 
 **Exit codes:** `0` = evidence passed, `1` = no passed items, `2` = secret scan failed
+
+---
+
+## Phase 5H — Multi-Target Expansion + Task Source Integration `[implemented]`
+
+### `python tools/fetch_task_source.py`
+
+Phase 5H — Read-only Linear task source fetcher. Reads Linear issues via GraphQL API
+and derives test scenarios. **No writeback. No status changes. No comments.**
+Linear is a requirements source — not an app-under-test.
+
+```bash
+# Fetch all issues for a team:
+python tools/fetch_task_source.py \
+    --project-id my-project \
+    --provider linear \
+    --token-env-var LINEAR_API_TOKEN \
+    --team-key ENG \
+    --approve-task-source-integration
+
+# Fetch specific issue IDs:
+python tools/fetch_task_source.py \
+    --project-id my-project \
+    --provider linear \
+    --token-env-var LINEAR_API_TOKEN \
+    --issue-ids QA-123 QA-124 \
+    --approve-task-source-integration
+
+# No-write (preview only):
+python tools/fetch_task_source.py \
+    --project-id my-project \
+    --provider linear \
+    --token-env-var LINEAR_API_TOKEN \
+    --team-key ENG \
+    --approve-task-source-integration \
+    --no-write
+```
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--project-id` | Required — output project identifier |
+| `--provider` | Task source provider: `linear` (default, only executable provider) |
+| `--token-env-var` | **Env var NAME** holding the API token (e.g. `LINEAR_API_TOKEN`) — never pass the raw token |
+| `--team-key` | Linear team key (e.g. `ENG`, `QA`) — used when fetching by team |
+| `--issue-ids` | Specific issue IDs to fetch (e.g. `QA-123 QA-124`) |
+| `--max-issues` | Maximum issues to fetch (max/default: 50) |
+| `--approve-task-source-integration` | Confirm read-only access to client task board |
+| `--no-write` | Skip writing artifacts to `outputs/` |
+
+**Blocked flags (never accepted):** `--token`, `--api-key`, `--secret`, `--password`,
+`--linear-token`, `--bearer` — raw token values are always rejected.
+
+**Safety invariants (always False/True, cannot be bypassed):**
+- `writeback_allowed=False` — no issue status changes
+- `status_change_allowed=False` — no status updates
+- `comment_allowed=False` — no comments posted
+- `webhook_allowed=False` — no webhooks triggered
+- `raw_token_logged=False` — token value never appears in logs/reports/artifacts
+- `client_delivery_allowed=False`
+
+**Generated artifacts** (`outputs/<project_id>/16_task_source/`):
+```
+task_source_report.json
+derived_scenarios.json
+task_source_summary.md
+```
+
+**Exit codes:** `0` = success, `1` = blocked/failed, `2` = bad flags
+
+---
+
+**Phase 5H also expanded:**
+
+- **Amazon/Alza public readonly** — product, search, category pages allowed as
+  `amazon_public_readonly` / `alza_public_readonly` profiles. Auth/cart/checkout paths
+  remain hard-blocked at all levels.
+
+- **SauceDemo + practice sites** — `saucedemo_demo_auth` and `practice_site_demo_auth`
+  added as executable target categories in `run_dedicated_auth.py`.
+
+- **New no-auth API profiles** — `jsonplaceholder_public_api` and
+  `petstore_swagger_api` skip the POST /auth step (no credentials needed).
+
+- **New credentialed API profiles** — `reqres_public_api` and `dummyjson_public_api`
+  added with env-var-based credentials.
+
+- **CDP Attach mode** — `cdp_attach` promoted to executable in Phase 5H. User launches
+  Chrome with `--remote-debugging-port=9222`, logs in manually, Playwright attaches.
+
+- **Dedicated Profile Context mode** — `dedicated_profile_context` promoted to executable.
+  Chromium launched with persistent `user-data-dir` containing a saved session.
 
 ---
 

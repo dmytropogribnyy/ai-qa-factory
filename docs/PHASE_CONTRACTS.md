@@ -1011,6 +1011,39 @@ consolidated QA Evidence Report with multi-source aggregation and secret scan.
 
 ---
 
+## Phase 5H — Multi-Target Expansion + Task Source Integration [implemented]
+
+**Scope:**
+1. Amazon/Alza unblocked as public read-only navigation targets (path-gated; auth/cart/checkout remain blocked)
+2. Linear task source integration — read issues as requirements input, derive test scenarios
+3. SauceDemo + practice site demo auth target categories
+4. New API profiles: JSONPlaceholder (no-auth), PetStore Swagger (no-auth), Reqres.in, DummyJSON
+5. CDP Attach + Dedicated Profile Context promoted from planning-only to executable
+
+**What Phase 5H IS:**
+- Reading Linear issues via official GraphQL API with a read-only token (never writeback)
+- Deriving test scenarios from issue titles/descriptions/acceptance criteria
+- Public product/search/category pages on Amazon and Alza (path-gated readonly)
+- CDP Attach: attaching to an already-running Chrome session the user launched and authenticated manually
+- Dedicated Profile Context: launching Chromium with a persistent `user-data-dir` the user pre-populated
+
+**What Phase 5H is NOT:**
+- Not testing Linear UI (Linear is requirements input only — never navigated)
+- Not testing Amazon/Alza auth, cart, checkout, account, or order pages
+- Not automating login on any Google/Amazon/Alza site
+- Not storing raw Linear API tokens (env var name only)
+- Not posting comments, changing statuses, or creating webhooks in Linear
+
+**Safety invariants (all hardcoded, cannot be bypassed):**
+- `writeback_allowed=False` in `TaskSourceFetchPolicy`
+- `raw_token_logged=False` in `TaskSourceFetchPolicy`
+- `client_delivery_allowed=False` in `TaskSourceFetchReport`
+- Amazon/Alza blocked paths: `/signin`, `/cart`, `/checkout`, `/account`, `/order`, `/gp/buy`, `/ap/`, `/orders`
+- CDP Attach port must be 1024–65535; no password automation
+- `captcha_bypass_allowed=False` — hardcoded, unchanged
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

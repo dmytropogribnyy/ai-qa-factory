@@ -1156,9 +1156,17 @@ class TestPhase4DSafetyStatics:
         assert 'kwargs["safe_to_deliver"] = False' in src
         assert 'kwargs["approved_for_client_delivery"] = False' in src
 
-    def test_always_blocked_domains_include_alza_amazon_linear(self):
-        for domain in ("alza.sk", "amazon.com", "linear.app"):
-            assert any(domain in d for d in _ALWAYS_BLOCKED_DOMAINS)
+    def test_always_blocked_domains_include_linear(self):
+        # Phase 5H: Amazon/Alza moved to readonly profiles with path gates.
+        # Linear remains always blocked (task source only, never a browser target).
+        assert any("linear" in d for d in _ALWAYS_BLOCKED_DOMAINS)
+
+    def test_amazon_alza_moved_to_readonly_profiles_not_always_blocked(self):
+        from core.browser_execution_runner import _READONLY_PROFILES
+        assert "amazon_public_readonly" in _READONLY_PROFILES
+        assert "alza_public_readonly" in _READONLY_PROFILES
+        assert not any("amazon" in d for d in _ALWAYS_BLOCKED_DOMAINS)
+        assert not any("alza" in d for d in _ALWAYS_BLOCKED_DOMAINS)
 
 
 # ===========================================================================

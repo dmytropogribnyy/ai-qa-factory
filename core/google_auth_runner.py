@@ -472,6 +472,339 @@ class GoogleAuthRunner:
             return False
         return any(lurl.startswith(p) for p in _ALLOWED_GOOGLE_TARGET_PREFIXES)
 
+    # ------------------------------------------------------------------
+    # Phase 5H: cdp_attach mode
+    # ------------------------------------------------------------------
+
+    def run_cdp_attach_smoke(
+        self,
+        project_id: str,
+        target_url: str,
+        cdp_port: int = 9222,
+        approve_google_test_account: bool = False,
+        google_test_account_confirmed: bool = False,
+        dedicated_test_account_confirmed: bool = False,
+        personal_account_confirmed: bool = False,
+        production_account_confirmed: bool = False,
+        account_email_label: str = "",
+        target_kind: str = "google_account_ui",
+        timeout_seconds: int = 60,
+    ) -> GoogleAuthEvidenceReport:
+        """
+        Attach to an already-running Chrome/Chromium via CDP and run a smoke check.
+
+        User must launch Chrome with --remote-debugging-port=<cdp_port> and log in manually.
+        Playwright attaches to that browser context — no password automation, no CAPTCHA bypass.
+        CDP port must be in 9000-9999 range. Content is never read or serialized.
+        """
+        decision = self.planner.decide_execution(
+            project_id=project_id,
+            target_url=target_url,
+            target_kind=target_kind,
+            auth_mode="cdp_attach",
+            account_email_label=account_email_label,
+            approve_google_test_account=approve_google_test_account,
+            google_test_account_confirmed=google_test_account_confirmed,
+            dedicated_test_account_confirmed=dedicated_test_account_confirmed,
+            personal_account_confirmed=personal_account_confirmed,
+            production_account_confirmed=production_account_confirmed,
+            cdp_port=cdp_port,
+        )
+
+        if not decision.allowed_now:
+            return self._blocked_report(
+                project_id=project_id,
+                auth_mode="cdp_attach",
+                target_url=target_url,
+                account_email_label=account_email_label,
+                decision=decision,
+                notes=["CDP attach not started — decision is BLOCKED.", *decision.blockers],
+            )
+
+        scaffold_root, node_exe = self._locate_scaffold_and_node(project_id)
+        if not scaffold_root:
+            return self._blocked_report(
+                project_id=project_id,
+                auth_mode="cdp_attach",
+                target_url=target_url,
+                account_email_label=account_email_label,
+                decision=decision,
+                notes=["Playwright scaffold not found at 03_framework/playwright."],
+            )
+
+        script_path = scaffold_root / "cdp_attach_smoke.cjs"
+        script_content = self._build_cdp_attach_script(
+            target_url=target_url,
+            cdp_port=cdp_port,
+            timeout_ms=timeout_seconds * 1000,
+        )
+        script_path.write_text(script_content, encoding="utf-8")
+
+        start = time.time()
+        try:
+            result = subprocess.run(
+                [node_exe, str(script_path)],
+                cwd=str(scaffold_root),
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds + 10,
+            )
+            duration = time.time() - start
+            stdout = result.stdout[:1000]
+            stderr = result.stderr[:500]
+            success = result.returncode == 0
+        except Exception as exc:
+            duration = time.time() - start
+            stdout = ""
+            stderr = str(exc)[:500]
+            success = False
+        finally:
+            if script_path.exists():
+                script_path.unlink()
+
+        return GoogleAuthEvidenceReport(
+            project_id=project_id,
+            auth_mode="cdp_attach",
+            target_url=target_url,
+            target_kind=target_kind,
+            account_email_label=account_email_label,
+            execution_performed=True,
+            storage_state_captured=False,
+            smoke_commands=[f"node cdp_attach_smoke.cjs (cdp_port={cdp_port})"],
+            smoke_results=[stdout],
+            duration_seconds=round(duration, 3),
+            notes=[
+                f"CDP attach smoke: {'PASSED' if success else 'FAILED'}.",
+                f"CDP port: {cdp_port}. Target: {target_url}.",
+                "No password automation. No CAPTCHA bypass. No content read.",
+                f"stderr: {stderr}" if stderr else "No stderr.",
+            ],
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 5H: dedicated_profile_context mode
+    # ------------------------------------------------------------------
+
+    def run_dedicated_profile_smoke(
+        self,
+        project_id: str,
+        target_url: str,
+        user_data_dir: str,
+        approve_google_test_account: bool = False,
+        google_test_account_confirmed: bool = False,
+        dedicated_test_account_confirmed: bool = False,
+        personal_account_confirmed: bool = False,
+        production_account_confirmed: bool = False,
+        account_email_label: str = "",
+        target_kind: str = "google_account_ui",
+        timeout_seconds: int = 90,
+    ) -> GoogleAuthEvidenceReport:
+        """
+        Launch Chromium with a persistent user-data-dir that already has a saved session.
+        No password automation. No CAPTCHA bypass. No storageState content read.
+        user_data_dir must be inside outputs/<project_id>/15_google_auth/user-data-dir.
+        """
+        decision = self.planner.decide_execution(
+            project_id=project_id,
+            target_url=target_url,
+            target_kind=target_kind,
+            auth_mode="dedicated_profile_context",
+            account_email_label=account_email_label,
+            approve_google_test_account=approve_google_test_account,
+            google_test_account_confirmed=google_test_account_confirmed,
+            dedicated_test_account_confirmed=dedicated_test_account_confirmed,
+            personal_account_confirmed=personal_account_confirmed,
+            production_account_confirmed=production_account_confirmed,
+            user_data_dir=user_data_dir,
+        )
+
+        if not decision.allowed_now:
+            return self._blocked_report(
+                project_id=project_id,
+                auth_mode="dedicated_profile_context",
+                target_url=target_url,
+                account_email_label=account_email_label,
+                decision=decision,
+                notes=["Profile context smoke not started — BLOCKED.", *decision.blockers],
+            )
+
+        scaffold_root, node_exe = self._locate_scaffold_and_node(project_id)
+        if not scaffold_root:
+            return self._blocked_report(
+                project_id=project_id,
+                auth_mode="dedicated_profile_context",
+                target_url=target_url,
+                account_email_label=account_email_label,
+                decision=decision,
+                notes=["Playwright scaffold not found at 03_framework/playwright."],
+            )
+
+        script_path = scaffold_root / "profile_context_smoke.cjs"
+        script_content = self._build_profile_context_script(
+            target_url=target_url,
+            user_data_dir=user_data_dir,
+            timeout_ms=timeout_seconds * 1000,
+        )
+        script_path.write_text(script_content, encoding="utf-8")
+
+        start = time.time()
+        try:
+            result = subprocess.run(
+                [node_exe, str(script_path)],
+                cwd=str(scaffold_root),
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds + 10,
+            )
+            duration = time.time() - start
+            stdout = result.stdout[:1000]
+            stderr = result.stderr[:500]
+            success = result.returncode == 0
+        except Exception as exc:
+            duration = time.time() - start
+            stdout = ""
+            stderr = str(exc)[:500]
+            success = False
+        finally:
+            if script_path.exists():
+                script_path.unlink()
+
+        return GoogleAuthEvidenceReport(
+            project_id=project_id,
+            auth_mode="dedicated_profile_context",
+            target_url=target_url,
+            target_kind=target_kind,
+            account_email_label=account_email_label,
+            execution_performed=True,
+            storage_state_captured=False,
+            smoke_commands=["node profile_context_smoke.cjs"],
+            smoke_results=[stdout],
+            duration_seconds=round(duration, 3),
+            notes=[
+                f"Profile context smoke: {'PASSED' if success else 'FAILED'}.",
+                f"user_data_dir: {user_data_dir}. Target: {target_url}.",
+                "No password automation. No CAPTCHA bypass. Profile content not read by Python.",
+                f"stderr: {stderr}" if stderr else "No stderr.",
+            ],
+        )
+
+    def _locate_scaffold_and_node(
+        self, project_id: str
+    ) -> tuple[Optional[Path], str]:
+        """Return (scaffold_root, node_exe) or (None, '') if not found."""
+        scaffold_root = self.outputs_root / project_id / "03_framework" / "playwright"
+        if not scaffold_root.exists():
+            return None, ""
+        node_exe = shutil.which("node") or shutil.which("node.exe") or "node"
+        return scaffold_root, node_exe
+
+    def _build_cdp_attach_script(
+        self,
+        target_url: str,
+        cdp_port: int,
+        timeout_ms: int,
+    ) -> str:
+        return f"""// Phase 5H — CDP Attach Smoke
+// AUTO-GENERATED. No password automation. No CAPTCHA bypass. No content read.
+// Requires Chrome running with --remote-debugging-port={cdp_port}
+
+const {{ chromium }} = require('@playwright/test');
+
+const TARGET_URL = {json.dumps(target_url)};
+const CDP_PORT = {cdp_port};
+const TIMEOUT_MS = {timeout_ms};
+
+(async () => {{
+  console.log('[5H] Connecting to Chrome via CDP port', CDP_PORT);
+  let browser;
+  try {{
+    browser = await chromium.connectOverCDP(`http://localhost:${{CDP_PORT}}`);
+    const contexts = browser.contexts();
+    if (!contexts.length) {{
+      console.error('[5H] No browser contexts found. Ensure Chrome is running and logged in.');
+      process.exit(1);
+    }}
+    const context = contexts[0];
+    const page = await context.newPage();
+    page.setDefaultTimeout(TIMEOUT_MS);
+
+    console.log('[5H] Navigating to:', TARGET_URL);
+    const response = await page.goto(TARGET_URL, {{ waitUntil: 'domcontentloaded' }});
+    const status = response ? response.status() : 0;
+    console.log('[5H] HTTP status:', status);
+
+    if (status >= 400) {{
+      console.error('[5H] Page load returned error status:', status);
+      process.exit(1);
+    }}
+
+    const title = await page.title();
+    console.log('[5H] Page title:', title.slice(0, 80));
+    console.log('[5H] CDP attach smoke PASSED.');
+    await browser.close();
+    process.exit(0);
+  }} catch (err) {{
+    console.error('[5H] CDP attach error:', err.message);
+    if (browser) await browser.close().catch(() => {{}});
+    process.exit(1);
+  }}
+}})();
+"""
+
+    def _build_profile_context_script(
+        self,
+        target_url: str,
+        user_data_dir: str,
+        timeout_ms: int,
+    ) -> str:
+        return f"""// Phase 5H — Dedicated Profile Context Smoke
+// AUTO-GENERATED. No password automation. No CAPTCHA bypass. No profile content read by Python.
+// Launches Chromium with persistent user-data-dir. Session must already be saved there.
+
+const {{ chromium }} = require('@playwright/test');
+const path = require('path');
+
+const TARGET_URL = {json.dumps(target_url)};
+const USER_DATA_DIR = {json.dumps(user_data_dir)};
+const TIMEOUT_MS = {timeout_ms};
+
+(async () => {{
+  console.log('[5H] Launching Chromium with profile:', USER_DATA_DIR);
+  let context;
+  try {{
+    context = await chromium.launchPersistentContext(USER_DATA_DIR, {{
+      headless: true,
+      viewport: {{ width: 1280, height: 800 }},
+      timeout: TIMEOUT_MS,
+    }});
+
+    const page = await context.newPage();
+    page.setDefaultTimeout(TIMEOUT_MS);
+
+    console.log('[5H] Navigating to:', TARGET_URL);
+    const response = await page.goto(TARGET_URL, {{ waitUntil: 'domcontentloaded' }});
+    const status = response ? response.status() : 0;
+    console.log('[5H] HTTP status:', status);
+
+    if (status >= 400) {{
+      console.error('[5H] Page returned error status:', status);
+      await context.close();
+      process.exit(1);
+    }}
+
+    const title = await page.title();
+    console.log('[5H] Page title:', title.slice(0, 80));
+    console.log('[5H] Profile context smoke PASSED.');
+    await context.close();
+    process.exit(0);
+  }} catch (err) {{
+    console.error('[5H] Profile context error:', err.message);
+    if (context) await context.close().catch(() => {{}});
+    process.exit(1);
+  }}
+}})();
+"""
+
     def _blocked_report(
         self,
         project_id: str,

@@ -181,6 +181,17 @@ from core.schemas.google_auth import (
     GoogleAuthExecutionDecision,
     GoogleAuthEvidenceReport,
 )
+# Phase 5H — Task Source Integration
+from core.schemas.task_source import (
+    TASK_SOURCE_PROVIDERS,
+    TASK_SOURCE_PROVIDERS_EXECUTABLE_5H,
+    TASK_SOURCE_PROVIDERS_PLANNING_ONLY_5H,
+    TaskSourceToken,
+    TaskSourceIssue,
+    TaskSourceFetchPolicy,
+    TaskSourceScenario,
+    TaskSourceFetchReport,
+)
 
 __all__ = [
     # Base
@@ -391,4 +402,13 @@ __all__ = [
     "GoogleAuthCapability",
     "GoogleAuthExecutionDecision",
     "GoogleAuthEvidenceReport",
+    # Phase 5H — Task Source Integration
+    "TASK_SOURCE_PROVIDERS",
+    "TASK_SOURCE_PROVIDERS_EXECUTABLE_5H",
+    "TASK_SOURCE_PROVIDERS_PLANNING_ONLY_5H",
+    "TaskSourceToken",
+    "TaskSourceIssue",
+    "TaskSourceFetchPolicy",
+    "TaskSourceScenario",
+    "TaskSourceFetchReport",
 ]

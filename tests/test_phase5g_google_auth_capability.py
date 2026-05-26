@@ -162,10 +162,12 @@ class TestCapabilityPlanner:
         allowed_modes = {mp.auth_mode for mp in cap.mode_policies if mp.allowed_now}
         assert "manual_storage_state_capture" in allowed_modes
         assert "storage_state_reuse" in allowed_modes
-        # Planning-only modes never allowed_now in 5G
+        # Phase 5H: cdp_attach and dedicated_profile_context are now executable
+        for mode in ("cdp_attach", "dedicated_profile_context"):
+            mp = next(m for m in cap.mode_policies if m.auth_mode == mode)
+            assert mp.allowed_now is True
+        # Remaining modes are still planning-only
         for mode in (
-            "cdp_attach",
-            "dedicated_profile_context",
             "google_api_oauth_token_future",
             "google_service_account_future",
             "totp_test_account_future",
@@ -257,9 +259,9 @@ class TestDecideExecution:
 
     def test_planning_only_modes_blocked(self, tmp_path):
         planner = GoogleAuthCapabilityPlanner(outputs_root=tmp_path)
+        # Phase 5H: cdp_attach and dedicated_profile_context are now executable (not planning-only)
+        # Only the future-only modes remain planning-only
         for mode in (
-            "cdp_attach",
-            "dedicated_profile_context",
             "google_api_oauth_token_future",
             "google_service_account_future",
             "totp_test_account_future",

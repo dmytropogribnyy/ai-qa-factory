@@ -313,6 +313,16 @@ All Phase 5F artifacts: `execution_performed=False`, `safe_to_deliver=False`, `h
 
 All Phase 5G artifacts: `safe_to_deliver=False`, `human_review_required=True`, `cookies_logged=False`, `tokens_logged=False`, `storage_state_content_read=False`, `captcha_bypass_attempted=False`, `anti_bot_bypass_attempted=False`, `personal_account_used=False`, `production_account_used=False` always.
 
+### `16_task_source/` (Phase 5H — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `task_source_report.json` | JSON | system | `TaskSourceFetchReport` schema — issues fetched, scenarios, blockers |
+| `derived_scenarios.json` | JSON | system | List of `TaskSourceScenario` objects derived from issues |
+| `task_source_summary.md` | MD | system | Human-readable fetch summary with derived scenarios |
+
+All Phase 5H task source artifacts: `writeback_performed=False`, `raw_token_in_output=False`, `client_delivery_allowed=False` always.
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

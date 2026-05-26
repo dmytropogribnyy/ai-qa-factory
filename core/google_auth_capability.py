@@ -317,9 +317,9 @@ class GoogleAuthCapabilityPlanner:
         # Mode allowlist
         if auth_mode not in GOOGLE_AUTH_MODES:
             blockers.append(f"Unknown auth_mode '{auth_mode}'.")
-        elif auth_mode not in GOOGLE_AUTH_MODES_EXECUTABLE_5G:
+        elif auth_mode in GOOGLE_AUTH_MODES_PLANNING_ONLY_5G:
             blockers.append(
-                f"auth_mode '{auth_mode}' is planning-only in Phase 5G — execution deferred."
+                f"auth_mode '{auth_mode}' is planning-only — execution deferred to future phase."
             )
 
         # Target kind allowlist
@@ -379,11 +379,17 @@ class GoogleAuthCapabilityPlanner:
             )
 
         if auth_mode == "cdp_attach":
+            # Phase 5H: cdp_attach is now executable
             if cdp_port is not None and (cdp_port < 1024 or cdp_port > 65535):
                 blockers.append("cdp_port must be in 1024..65535.")
-            blockers.append("cdp_attach is planning-only in Phase 5G — execution deferred.")
+            elif cdp_port is None:
+                blockers.append("cdp_attach requires cdp_port (e.g. 9222).")
+            notes.append(
+                f"cdp_attach: Chrome must be running with --remote-debugging-port={cdp_port}."
+            )
 
         if auth_mode == "dedicated_profile_context":
+            # Phase 5H: dedicated_profile_context is now executable
             if not user_data_dir:
                 blockers.append("dedicated_profile_context requires --user-data-dir.")
             else:
@@ -399,15 +405,8 @@ class GoogleAuthCapabilityPlanner:
                         )
                 except Exception as exc:
                     blockers.append(f"user_data_dir invalid: {exc}")
-            blockers.append("dedicated_profile_context is planning-only in Phase 5G — execution deferred.")
 
-        # Future-only modes always blocked from execution in Phase 5G
-        if auth_mode in GOOGLE_AUTH_MODES_PLANNING_ONLY_5G and not any(
-            b.endswith("execution deferred.") for b in blockers
-        ):
-            blockers.append(
-                f"auth_mode '{auth_mode}' is planning-only in Phase 5G — execution deferred."
-            )
+        # (planning-only mode check already applied above in mode allowlist)
 
         # Env-var name format checks (names only, never values)
         for env_name, label in (

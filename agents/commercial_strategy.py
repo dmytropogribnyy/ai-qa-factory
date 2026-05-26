@@ -29,7 +29,6 @@ class CommercialStrategyAgent:
     def _strategy(cls, state: QAFactoryState) -> dict:
         text = state.raw_input.lower()
         money = cls._money_signals(state.raw_input)
-        action = state.recommended_action
         commercial_fit = "medium"
         rate_pressure = "unknown"
         safe_price_range = state.suggested_price or "$50/hr or discovery milestone"
