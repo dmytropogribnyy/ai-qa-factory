@@ -1348,6 +1348,152 @@ CREDENTIAL_PROVISIONING_ROUTES.md
 
 ---
 
+## Phase 5AB — Runtime Secret Routing + Dedicated Test-Account Auth `[implemented]`
+
+> No raw secrets in CLI args. No .env reading. No storageState reading.
+> No personal accounts. No production accounts. No Google OAuth.
+> No Alza/Amazon/LinkedIn/Upwork. Approval-gated.
+
+### `python tools/plan_runtime_secrets.py`
+
+Validate a dedicated test-account intake request and produce routing plan artifacts.
+No execution. No env var value reading. No external calls.
+
+```bash
+# Preview only (no args required beyond project-id):
+python tools/plan_runtime_secrets.py --project-id demo-5ab
+
+# Validate OrangeHRM dedicated auth intake:
+python tools/plan_runtime_secrets.py --project-id demo-5ab \
+    --scenario-lane dedicated_test_account_auth_future \
+    --target-category orangehrm_demo_auth \
+    --target-url https://opensource-demo.orangehrmlive.com \
+    --username-env-var QA_TEST_USERNAME \
+    --password-env-var QA_TEST_PASSWORD \
+    --dedicated-test-account-confirmed \
+    --staging-environment-confirmed
+
+# JSON output only (no artifacts written):
+python tools/plan_runtime_secrets.py --project-id demo-5ab --json --no-write
+```
+
+**Outputs** (written to `outputs/<id>/11_runtime_secrets/` unless `--no-write`):
+- `TEST_ACCOUNT_INTAKE_VALIDATION.json` — `TestAccountValidationResult` schema
+- `RUNTIME_SECRET_ROUTING_PLAN.md` — routing plan with blocked routes
+
+**Safety invariants:**
+- No env var values read (env var **names** only)
+- No execution performed, no subprocess, no external calls
+- `approved_for_execution_now=False` always
+- `personal_account_confirmed` / `production_account_confirmed` always blocked
+- Google OAuth (`accounts.google.com`) always blocked
+
+---
+
+### `python tools/run_dedicated_auth.py`
+
+Approval-gated dedicated test-account auth execution. Reads env vars at runtime.
+Requires explicit `--approve-dedicated-auth-execution` flag.
+
+```bash
+# Preview (no execution, no env var reading):
+python tools/run_dedicated_auth.py --project-id demo-5ab
+
+# Approved OrangeHRM dedicated auth smoke:
+python tools/run_dedicated_auth.py --project-id demo-5ab \
+    --approve-dedicated-auth-execution \
+    --scenario-lane dedicated_test_account_auth_future \
+    --target-category orangehrm_demo_auth \
+    --target-url https://opensource-demo.orangehrmlive.com \
+    --username-env-var QA_TEST_USERNAME \
+    --password-env-var QA_TEST_PASSWORD \
+    --dedicated-test-account-confirmed \
+    --staging-environment-confirmed \
+    --command-mode auth_smoke
+
+# Approved Restful Booker dedicated auth smoke:
+python tools/run_dedicated_auth.py --project-id demo-5ab \
+    --approve-dedicated-auth-execution \
+    --scenario-lane dedicated_test_account_auth_future \
+    --target-category restful_booker_demo_auth \
+    --target-url https://restful-booker.herokuapp.com \
+    --username-env-var QA_TEST_USERNAME \
+    --password-env-var QA_TEST_PASSWORD \
+    --dedicated-test-account-confirmed \
+    --staging-environment-confirmed \
+    --command-mode auth_smoke
+
+# Approved staging client env:
+python tools/run_dedicated_auth.py --project-id demo-5ab \
+    --approve-dedicated-auth-execution \
+    --scenario-lane staging_client_app_future \
+    --target-category staging \
+    --target-url https://staging.example.com \
+    --username-env-var QA_TEST_USERNAME \
+    --password-env-var QA_TEST_PASSWORD \
+    --dedicated-test-account-confirmed \
+    --client-scope-confirmed \
+    --command-mode auth_smoke
+
+# JSON output:
+python tools/run_dedicated_auth.py --project-id demo-5ab --json
+```
+
+| Flag | Description |
+|---|---|
+| `--project-id` | Project ID (required) |
+| `--approve-dedicated-auth-execution` | **Required** explicit approval for execution |
+| `--scenario-lane` | `dedicated_test_account_auth_future` or `staging_client_app_future` |
+| `--target-category` | `orangehrm_demo_auth`, `restful_booker_demo_auth`, `staging`, `client_test_environment`, etc. |
+| `--target-url` | Target URL (must not match blocked patterns) |
+| `--username-env-var` | Env var **name** for username (not the value) |
+| `--password-env-var` | Env var **name** for password (not the value) |
+| `--token-env-var` | Env var **name** for token (optional) |
+| `--dedicated-test-account-confirmed` | Confirms this is a dedicated test account |
+| `--staging-environment-confirmed` | Confirms staging environment |
+| `--client-scope-confirmed` | Confirms client-scope authorization |
+| `--command-mode` | `auth_smoke` (run tests) or `auth_setup` (generate storageState) |
+| `--json` | Print JSON report to stdout |
+| `--no-write` | Skip artifact writing |
+| `--timeout` | Subprocess timeout in seconds (default: 120) |
+
+**9 security gates** (all must pass before any subprocess):
+1. `--approve-dedicated-auth-execution` flag required
+2. Personal/production account flags blocked
+3. `--scenario-lane` must be in allowed set
+4. `--target-category` must be in allowed set
+5. `--target-url` must not match blocked URL patterns
+6. `--dedicated-test-account-confirmed` + scope flag required
+7. Env var names validated (format: `^[A-Z][A-Z0-9_]{0,79}$`)
+8. Env var values must exist in `os.environ`
+9. Scaffold / node_modules / tests/auth must exist
+
+**Always-blocked targets:**
+`accounts.google.com`, `google.com/o/oauth2`, `amazon.com`, `pay.amazon.com`,
+`alza.sk/cz/hu/at/de`, `linkedin.com`, `upwork.com`
+
+**Raw secrets are never accepted via CLI flags.** Use `--username-env-var NAME` (env var name only), then set the value in your shell:
+```bash
+export QA_TEST_USERNAME=yourusername
+export QA_TEST_PASSWORD=yourpassword
+```
+
+**Safety invariants (always False):**
+- `raw_credentials_logged`, `raw_credentials_serialized`
+- `personal_account_used`, `production_account_used`
+- `safe_to_deliver`, `approved_for_client_delivery`
+
+**Generated artifacts** (`outputs/<project_id>/12_dedicated_auth/`):
+```
+DEDICATED_AUTH_EXECUTION_REPORT.json/md
+DEDICATED_AUTH_COMMAND_LOG.md
+DEDICATED_AUTH_SESSION_ARTIFACTS.json/md
+DEDICATED_AUTH_SAFETY_BOUNDARY.md
+12_dedicated_auth/.auth/storageState.json  ← optional, gitignored, internal-only
+```
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

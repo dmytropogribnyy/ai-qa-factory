@@ -335,6 +335,9 @@ outputs/<project_id>/
     09_auth/             ← Demo auth execution artifacts (Phase 4F — implemented)
         .auth/           ← storageState (gitignored, internal-only, never committed)
     10_execution_matrix/ ← Scenario execution matrix and test account plan (Phase 4G — implemented)
+    11_runtime_secrets/  ← Runtime secret routing plan and intake validation (Phase 5AB — implemented)
+    12_dedicated_auth/   ← Dedicated test-account auth execution artifacts (Phase 5AB — implemented)
+        .auth/           ← storageState (gitignored, internal-only, never committed)
     99_internal/         ← Internal notes, quality gate reports, debug logs
         scenario_evaluation/  ← Scenario batch evaluation (Phase 4ABC — implemented)
 ```
@@ -355,6 +358,9 @@ outputs/<project_id>/
 | `09_auth/` | No | Never — internal only | Auth execution approval, report, command log, session artifacts, redaction checklist |
 | `09_auth/.auth/` | **Never committed** | Never | storageState (gitignored always) |
 | `10_execution_matrix/` | No | Never — internal only | Scenario execution matrix, permission rules, target profiles, routing decisions, test account plan |
+| `11_runtime_secrets/` | No | Never — internal only | Runtime secret routing plan, intake validation |
+| `12_dedicated_auth/` | No | Never — internal only | Dedicated auth execution report, command log, session artifacts, safety boundary |
+| `12_dedicated_auth/.auth/` | **Never committed** | Never | storageState (gitignored always) |
 | `99_internal/` | No | Never | Internal quality gates, debug, scenario evaluation |
 
 **`06_client_draft/` is never sent without completing `DELIVERY_SAFETY_CHECKLIST.md`.**
@@ -362,6 +368,8 @@ outputs/<project_id>/
 **`08_credentials/` is always internal-only. All credential safety artifacts remain `client_visible=False`. Human redaction review required before any client-facing use.**
 **`09_auth/` is always internal-only. Auth execution artifacts remain `client_visible=False`. storageState `approved_for_commit=False` always — must not be committed.**
 **`10_execution_matrix/` is always internal-only. All planning artifacts remain `client_visible=False`. `safe_for_execution_now=False` always — this is planning only.**
+**`11_runtime_secrets/` is always internal-only. Intake validation and routing plan only — no env var values, no execution.**
+**`12_dedicated_auth/` is always internal-only. `raw_credentials_logged=False`, `raw_credentials_serialized=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False` always. storageState `approved_for_commit=False` always.**
 **`99_internal/` must never be included in client delivery packages.**
 
 ---

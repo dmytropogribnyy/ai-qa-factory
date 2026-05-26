@@ -385,6 +385,54 @@ Agents must follow these rules when proposing or evaluating test execution:
 
 ---
 
+## 11. Phase 5AB — Runtime Secret Routing + Dedicated Test-Account Auth Rules
+
+### Secret reference rules (never bypass)
+
+- Never accept raw secret values via CLI flags (`--username`, `--password`, `--token`, `--secret`)
+- Only env var **names** are accepted (`--username-env-var NAME`, `--password-env-var NAME`)
+- Never read `.env`, `.env.local`, `.auth/*.json`, or existing storageState files
+- Never log, print, or serialize env var values
+- Never suggest storing credentials in chat messages, tickets, or repository files
+- If credentials appear in a chat message, flag them immediately as a security incident — do not use them
+
+### Execution gate rules
+
+- All 9 security gates must pass before any subprocess runs (see SAFETY_RULES.md 5AB-8)
+- Without `--approve-dedicated-auth-execution`: no subprocess, no env var values read, no execution
+- Planning-only mode (`plan_runtime_secrets.py`) is always safe — no gates required
+- `validate_intake()` never reads env values and never runs subprocess
+
+### Allowed targets for Phase 5AB (agents must not propose others)
+
+| Target category | Allowed now | Notes |
+|---|---|---|
+| `orangehrm_demo_auth` | Yes (with approval) | `https://opensource-demo.orangehrmlive.com` |
+| `restful_booker_demo_auth` | Yes (with approval) | `https://restful-booker.herokuapp.com` |
+| `staging` | Yes (with approval) | Requires `--client-scope-confirmed` |
+| `client_test_environment` | Yes (with approval) | Requires `--client-scope-confirmed` |
+| `dedicated_test_environment` | Yes (with approval) | Requires `--dedicated-test-account-confirmed` |
+| `dedicated_test_account_custom_target` | Yes (with approval) | Custom approved target |
+
+### Always-blocked in Phase 5AB
+
+- `accounts.google.com`, `google.com/o/oauth2` — Google OAuth always blocked
+- `amazon.com`, `pay.amazon.com`, `payments.amazon.com` — always blocked
+- `alza.sk/cz/hu/at/de` — always blocked
+- `linkedin.com`, `upwork.com` — always blocked
+- Personal accounts — always blocked (`personal_account_confirmed` is a blocker)
+- Production accounts — always blocked (`production_account_confirmed` is a blocker)
+
+### Session artifact and delivery rules
+
+- All `12_dedicated_auth/` artifacts: `internal_only=True`, `client_visible=False`
+- StorageState: `approved_for_commit=False` always — never stage or commit `.auth/` contents
+- `safe_to_deliver=False`, `approved_for_client_delivery=False` always
+- `raw_credentials_logged=False`, `raw_credentials_serialized=False` always
+- Do not include `11_runtime_secrets/` or `12_dedicated_auth/` in client delivery packages
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

@@ -698,17 +698,63 @@ No browser execution. No Playwright test execution. No target URL access. No cre
 
 ---
 
-## Phase 5A — Approval-Gated External/Auth/Mobile/Integration Adapters `[planned]`
+## Phase 5AB — Runtime Secret Routing + Dedicated Test-Account Auth Execution `[implemented]`
 
-**Purpose:** Add execution adapters for auth flows, mobile platforms, and optional
-integrations. Each adapter is gated by an explicit per-run approval.
+**Goal:** Add approval-gated auth execution for dedicated test accounts using env var references.
+No raw secrets in CLI args, no .env reading, no personal/production accounts, no Google OAuth.
 
-This phase does not exist yet. When it is designed, it must:
-- Define per-adapter approval gates
-- Document risk levels for each adapter
-- Add explicit test accounts confirmation
-- Add mobile platform confirmation and device/emulator setup
-- Keep `IntegrationPolicy.allow_outbound_events=False` as default
+**Inputs:**
+- `--approve-dedicated-auth-execution` flag (required for execution)
+- `--username-env-var` / `--password-env-var` (env var **names** only — not values)
+- `--scenario-lane` + `--target-category` + `--target-url`
+- `--dedicated-test-account-confirmed` + scope confirmation flag
+
+**Outputs:**
+- `outputs/<project_id>/11_runtime_secrets/` — intake validation, routing plan
+- `outputs/<project_id>/12_dedicated_auth/` — execution report, command log, session artifacts, safety boundary
+
+**CLI tools:**
+- `python tools/plan_runtime_secrets.py --project-id <id>` — validate intake, no execution
+- `python tools/run_dedicated_auth.py --project-id <id> --approve-dedicated-auth-execution ...` — run
+
+**Allowed lanes:** `dedicated_test_account_auth_future`, `staging_client_app_future`
+
+**Allowed target categories:** `staging`, `client_test_environment`, `dedicated_test_environment`,
+`orangehrm_demo_auth`, `restful_booker_demo_auth`, `dedicated_test_account_custom_target`
+
+**9 security gates (all must pass before any subprocess):**
+1. `--approve-dedicated-auth-execution` flag required
+2. Personal/production account flags blocked
+3. `--scenario-lane` in allowed set
+4. `--target-category` in allowed set
+5. `--target-url` not matching blocked URL patterns
+6. `--dedicated-test-account-confirmed` + scope confirmation
+7. Env var name format validation (`^[A-Z][A-Z0-9_]{0,79}$`)
+8. Env var values exist in `os.environ`
+9. Scaffold / node_modules / tests/auth exist
+
+**Always-blocked targets (regardless of approval):**
+`accounts.google.com`, `google.com/o/oauth2`, `amazon.com`, `pay.amazon.com`,
+`alza.sk/cz/hu/at/de`, `linkedin.com`, `upwork.com`
+
+**Safety invariants (always False — hardcoded in `__post_init__` and `from_dict`):**
+- `raw_credentials_logged=False`
+- `raw_credentials_serialized=False`
+- `personal_account_used=False`
+- `production_account_used=False`
+- `safe_to_deliver=False`
+- `approved_for_client_delivery=False`
+- `DedicatedAuthSessionArtifact.approved_for_commit=False`
+- `DedicatedAuthSessionArtifact.client_visible=False`
+- `TestAccountValidationResult.approved_for_execution_now=False`
+
+**What Phase 5AB is NOT:**
+- Not approval for Amazon Pay Sandbox (→ Phase 5C)
+- Not approval for task source integration (Linear/Jira) (→ Phase 5D)
+- Not approval for production read-only auth (→ separate explicit phase)
+- Not approval for Google OAuth (always blocked)
+- Not approval for Alza/Amazon/LinkedIn/Upwork auth (always blocked)
+- Not final client delivery (`safe_to_deliver=False` always)
 
 ---
 

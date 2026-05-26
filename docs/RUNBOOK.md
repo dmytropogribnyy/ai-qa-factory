@@ -1066,3 +1066,132 @@ DEDICATED_TEST_ACCOUNT_PLAN.json/md
 ```
 
 All Phase 4G artifacts: `internal_only=True`, `client_visible=False`. Planning documents only.
+
+---
+
+## 25. Phase 5AB — Runtime Secret Routing + Dedicated Test-Account Auth Execution
+
+**Purpose:** Validate and execute approval-gated auth against dedicated test accounts using env var references.
+No raw secrets in CLI args. No `.env` reading. No personal/production accounts. No Google OAuth.  
+**Requires:** Phase 4G execution matrix in place. Env vars set in shell before execution.
+
+### Pre-flight checklist
+
+- [ ] `core/schemas/runtime_secret_routing.py` imports without error
+- [ ] `core/dedicated_auth_runner.py` imports without error
+- [ ] `tools/plan_runtime_secrets.py` present and executable
+- [ ] `tools/run_dedicated_auth.py` present and executable
+- [ ] Target URL verified: not `accounts.google.com`, not `amazon.com`, not Alza/LinkedIn/Upwork
+- [ ] Env vars set in shell: `export QA_TEST_USERNAME=...` / `export QA_TEST_PASSWORD=...`
+- [ ] `--dedicated-test-account-confirmed` confirmed (separate dedicated test account, not personal)
+- [ ] Scaffold present at project path with `node_modules/` and `tests/auth/`
+- [ ] No `.env`, no `.auth` files read — env vars set only in terminal
+- [ ] Ready to pass `--approve-dedicated-auth-execution` with full awareness of what it unlocks
+
+### Planning workflow (no execution)
+
+```bash
+# Validate intake request — no env var reading, no subprocess:
+python tools/plan_runtime_secrets.py --project-id demo-5ab \
+    --scenario-lane dedicated_test_account_auth_future \
+    --target-category orangehrm_demo_auth \
+    --target-url https://opensource-demo.orangehrmlive.com \
+    --username-env-var QA_TEST_USERNAME \
+    --password-env-var QA_TEST_PASSWORD \
+    --dedicated-test-account-confirmed \
+    --staging-environment-confirmed
+
+# Preview only (no write):
+python tools/plan_runtime_secrets.py --project-id demo-5ab --json --no-write
+```
+
+### Execution workflow (approval required)
+
+```bash
+# Step 1 — set env vars in your terminal (never in .env or chat):
+export QA_TEST_USERNAME=your_test_username
+export QA_TEST_PASSWORD=your_test_password
+
+# Step 2 — preview (no execution, no env var reading):
+python tools/run_dedicated_auth.py --project-id demo-5ab
+
+# Step 3 — approved OrangeHRM auth smoke:
+python tools/run_dedicated_auth.py --project-id demo-5ab \
+    --approve-dedicated-auth-execution \
+    --scenario-lane dedicated_test_account_auth_future \
+    --target-category orangehrm_demo_auth \
+    --target-url https://opensource-demo.orangehrmlive.com \
+    --username-env-var QA_TEST_USERNAME \
+    --password-env-var QA_TEST_PASSWORD \
+    --dedicated-test-account-confirmed \
+    --staging-environment-confirmed \
+    --command-mode auth_smoke
+
+# Step 4 — approved Restful Booker auth smoke:
+python tools/run_dedicated_auth.py --project-id demo-5ab \
+    --approve-dedicated-auth-execution \
+    --scenario-lane dedicated_test_account_auth_future \
+    --target-category restful_booker_demo_auth \
+    --target-url https://restful-booker.herokuapp.com \
+    --username-env-var QA_TEST_USERNAME \
+    --password-env-var QA_TEST_PASSWORD \
+    --dedicated-test-account-confirmed \
+    --staging-environment-confirmed \
+    --command-mode auth_smoke
+```
+
+### Blocked examples (always rejected by 9 security gates)
+
+```bash
+# No approval flag — blocked at gate 1:
+python tools/run_dedicated_auth.py --project-id demo-5ab
+# → execution_status=blocked
+
+# Personal account flag — blocked at gate 2:
+python tools/run_dedicated_auth.py ... --personal-account-confirmed
+# → BLOCKED: personal_account_confirmed is not allowed
+
+# Google OAuth target — blocked at gate 5:
+python tools/run_dedicated_auth.py ... --target-url https://accounts.google.com
+# → BLOCKED: target URL matches blocked pattern
+
+# Raw secret flag (would be rejected by argparse):
+python tools/run_dedicated_auth.py ... --password secret123
+# → ERROR: Unknown argument / BLOCKED: raw secret flag
+
+# Missing env var — blocked at gate 8:
+python tools/run_dedicated_auth.py ... --username-env-var QA_MISSING_VAR
+# → BLOCKED: env var QA_MISSING_VAR not set in environment
+```
+
+### Key safety invariants
+
+- `DedicatedAuthExecutionReport.raw_credentials_logged=False` — forced in `__post_init__` + `from_dict`
+- `DedicatedAuthExecutionReport.raw_credentials_serialized=False` — forced always
+- `DedicatedAuthExecutionReport.personal_account_used=False` — forced always
+- `DedicatedAuthExecutionReport.production_account_used=False` — forced always
+- `DedicatedAuthExecutionReport.safe_to_deliver=False` — forced always
+- `DedicatedAuthExecutionReport.approved_for_client_delivery=False` — forced always
+- `DedicatedAuthSessionArtifact.approved_for_commit=False` — forced always
+- `DedicatedAuthSessionArtifact.client_visible=False` — forced always
+- `TestAccountValidationResult.approved_for_execution_now=False` — forced always (planning never grants execution)
+- Secret masking: `_mask()` applied to all subprocess stdout/stderr before storage
+
+### Artifacts written
+
+**`outputs/<project_id>/11_runtime_secrets/`** (planning):
+```
+TEST_ACCOUNT_INTAKE_VALIDATION.json
+RUNTIME_SECRET_ROUTING_PLAN.md
+```
+
+**`outputs/<project_id>/12_dedicated_auth/`** (execution):
+```
+DEDICATED_AUTH_EXECUTION_REPORT.json/md
+DEDICATED_AUTH_COMMAND_LOG.md
+DEDICATED_AUTH_SESSION_ARTIFACTS.json/md
+DEDICATED_AUTH_SAFETY_BOUNDARY.md
+.auth/storageState.json  ← optional, gitignored, never committed
+```
+
+All Phase 5AB artifacts: `internal_only=True`, `client_visible=False`, `approved_for_commit=False`, `safe_to_deliver=False` always.

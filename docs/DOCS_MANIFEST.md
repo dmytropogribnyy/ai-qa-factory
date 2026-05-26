@@ -249,6 +249,29 @@ All Phase 4F artifacts: `internal_only=True`, `client_visible=False`. storageSta
 
 All Phase 4G artifacts: `internal_only=True`, `client_visible=False`. Planning documents only — `safe_for_execution_now=False` always.
 
+### Phase 5AB — Runtime Secret Routing + Dedicated Auth artifacts
+
+**`outputs/<id>/11_runtime_secrets/`** — intake validation and routing plan:
+
+| Artifact | Type | Owner | Description |
+|---|---|---|---|
+| `TEST_ACCOUNT_INTAKE_VALIDATION.json` | JSON | system | `TestAccountValidationResult` schema |
+| `RUNTIME_SECRET_ROUTING_PLAN.md` | MD | system | Routing plan with accepted/rejected secret references |
+
+**`outputs/<id>/12_dedicated_auth/`** — execution artifacts:
+
+| Artifact | Type | Owner | Description |
+|---|---|---|---|
+| `DEDICATED_AUTH_EXECUTION_REPORT.json` | JSON | system | `DedicatedAuthExecutionReport` schema |
+| `DEDICATED_AUTH_EXECUTION_REPORT.md` | MD | system | Human-readable execution report |
+| `DEDICATED_AUTH_COMMAND_LOG.md` | MD | system | Per-command stdout/stderr excerpts (secrets masked) |
+| `DEDICATED_AUTH_SESSION_ARTIFACTS.json` | JSON | system | `DedicatedAuthSessionArtifact` list |
+| `DEDICATED_AUTH_SESSION_ARTIFACTS.md` | MD | system | Human-readable session artifact registry |
+| `DEDICATED_AUTH_SAFETY_BOUNDARY.md` | MD | system | Safety invariants and what was/was not done |
+| `.auth/storageState.json` | JSON | system | Optional storageState (gitignored, internal-only, never committed) |
+
+All Phase 5AB artifacts: `internal_only=True`, `client_visible=False`, `approved_for_commit=False`, `safe_to_deliver=False` always.
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

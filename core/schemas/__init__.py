@@ -148,6 +148,14 @@ from core.schemas.scenario_execution_matrix import (
     CredentialProvisioningRoute,
     DedicatedTestAccountPlan,
 )
+from core.schemas.runtime_secret_routing import (
+    RuntimeSecretReference,
+    TestAccountIntakeRequest,
+    TestAccountValidationResult,
+    DedicatedAuthExecutionCommand,
+    DedicatedAuthSessionArtifact,
+    DedicatedAuthExecutionReport,
+)
 
 __all__ = [
     # Base
@@ -329,4 +337,11 @@ __all__ = [
     "DedicatedTestAccountRequirement",
     "CredentialProvisioningRoute",
     "DedicatedTestAccountPlan",
+    # Runtime Secret Routing + Dedicated Auth (Phase 5AB)
+    "RuntimeSecretReference",
+    "TestAccountIntakeRequest",
+    "TestAccountValidationResult",
+    "DedicatedAuthExecutionCommand",
+    "DedicatedAuthSessionArtifact",
+    "DedicatedAuthExecutionReport",
 ]

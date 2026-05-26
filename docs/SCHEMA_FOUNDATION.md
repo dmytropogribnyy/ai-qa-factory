@@ -602,6 +602,44 @@ NOT forced (reflect real routing state):
 
 ---
 
+## Phase 5AB — Runtime Secret Routing + Dedicated Test-Account Auth schemas
+
+**Module:** `core/schemas/runtime_secret_routing.py`
+
+| Class | Exported as | Purpose |
+|---|---|---|
+| `RuntimeSecretReference` | `RuntimeSecretReference` | Env var name reference for a runtime secret — never stores the value |
+| `TestAccountIntakeRequest` | `TestAccountIntakeRequest` | Dedicated test-account intake request with env var names only |
+| `TestAccountValidationResult` | `TestAccountValidationResult` | Result of validating an intake request |
+| `DedicatedAuthExecutionCommand` | `DedicatedAuthExecutionCommand` | Record of a single Playwright command run during auth execution |
+| `DedicatedAuthSessionArtifact` | `DedicatedAuthSessionArtifact` | Reference to a session artifact (storageState etc.) — always internal-only |
+| `DedicatedAuthExecutionReport` | `DedicatedAuthExecutionReport` | Full report for a dedicated test-account auth execution run |
+
+### Safety defaults (hardcoded — cannot be bypassed via constructor or from_dict)
+
+| Field | Value | Enforced by |
+|---|---|---|
+| `RuntimeSecretReference.raw_value_present` | `False` | `__post_init__` + `from_dict` |
+| `RuntimeSecretReference.value_materialized` | `False` | `__post_init__` + `from_dict` |
+| `RuntimeSecretReference.safe_to_persist` | `False` | `__post_init__` + `from_dict` |
+| `RuntimeSecretReference.safe_to_log` | `False` | `__post_init__` + `from_dict` |
+| `RuntimeSecretReference.safe_for_client_visibility` | `False` | `__post_init__` + `from_dict` |
+| `RuntimeSecretReference.requires_redaction` | `True` | `__post_init__` + `from_dict` |
+| `TestAccountValidationResult.approved_for_execution_now` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedAuthSessionArtifact.internal_only` | `True` | `__post_init__` + `from_dict` |
+| `DedicatedAuthSessionArtifact.client_visible` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedAuthSessionArtifact.requires_redaction` | `True` | `__post_init__` + `from_dict` |
+| `DedicatedAuthSessionArtifact.approved_for_commit` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedAuthSessionArtifact.approved_for_client_view` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedAuthExecutionReport.raw_credentials_logged` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedAuthExecutionReport.raw_credentials_serialized` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedAuthExecutionReport.personal_account_used` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedAuthExecutionReport.production_account_used` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedAuthExecutionReport.safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedAuthExecutionReport.approved_for_client_delivery` | `False` | `__post_init__` + `from_dict` |
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic

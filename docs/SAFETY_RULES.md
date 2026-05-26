@@ -625,6 +625,73 @@ No execution of dedicated test-account lanes without a future explicitly approve
 
 ---
 
+## Phase 5AB — Runtime Secret Routing + Dedicated Test-Account Auth Execution Rules
+
+**5AB-1. No raw secret values in CLI args, ever.**
+`--username`, `--password`, `--token`, `--secret`, `--api-key`, `--key` flags are not accepted.
+Only env var **names** (`--username-env-var`, `--password-env-var`) are accepted.
+Raw secret values must never appear in command history, shell history, process arguments, logs, or artifacts.
+
+**5AB-2. No .env file reading in Phase 5AB.**
+Env var values are read from `os.environ` only — never from `.env`, `.env.local`, or any file.
+Agents must never suggest setting credentials in `.env` files for this phase.
+
+**5AB-3. No existing storageState reading.**
+`DedicatedAuthRunner` never reads pre-existing `.auth/*.json` or `storageState` files.
+Previously captured auth state is out of scope for this phase.
+
+**5AB-4. No personal accounts.**
+`personal_account_confirmed=True` is a blocker, not an approval.
+`personal_account_used=False` is hardcoded — cannot be changed via constructor or from_dict.
+
+**5AB-5. No production accounts.**
+`production_account_confirmed=True` is a blocker, not an approval.
+`production_account_used=False` is hardcoded — cannot be changed via constructor or from_dict.
+
+**5AB-6. Google OAuth strictly blocked.**
+`accounts.google.com` and `google.com/o/oauth2` are always blocked regardless of approval flags, credentials provided, or target category. This applies to all OAuth flows, not just login.
+
+**5AB-7. Alza/Amazon/LinkedIn/Upwork always blocked.**
+`alza.sk`, `alza.cz`, `alza.hu`, `alza.at`, `alza.de`, `amazon.com`, `pay.amazon.com`,
+`payments.amazon.com`, `linkedin.com`, `upwork.com` are always blocked.
+
+**5AB-8. `--approve-dedicated-auth-execution` is required for all subprocess execution.**
+Without the flag: no subprocess, no env var value reading, no Playwright invocation, no storageState creation. Planning and validation-only mode is safe by default.
+
+**5AB-9. Env var names must match `^[A-Z][A-Z0-9_]{0,79}$`.**
+Email addresses, lowercase names, spaces, JWT prefixes, and shell variable syntax are rejected.
+This prevents injection attacks and ensures the env var reference is unambiguous.
+
+**5AB-10. Env var values are read only after all safety gates pass.**
+Gates 1–7 are checked without reading any env var values. Gate 8 reads values only to verify they exist (truthy check). Values are only materialized inside the approved subprocess call.
+
+**5AB-11. Secret masking is applied to all subprocess stdout/stderr.**
+`_mask()` replaces any env var value found in output with `[REDACTED]`.
+Masking is applied before any excerpt is stored in the execution report or artifacts.
+
+**5AB-12. `raw_credentials_logged=False` and `raw_credentials_serialized=False` always.**
+These fields are hardcoded in `DedicatedAuthExecutionReport.__post_init__` and `from_dict`.
+No code path can set them to True.
+
+**5AB-13. StorageState stays internal — never committed, never delivered.**
+`DedicatedAuthSessionArtifact.approved_for_commit=False` and `client_visible=False` always.
+StorageState is written only under `outputs/<project_id>/12_dedicated_auth/.auth/` (gitignored).
+
+**5AB-14. `safe_to_deliver=False` and `approved_for_client_delivery=False` always.**
+Dedicated auth evidence is internal-only. Client delivery requires separate explicit approval.
+
+**5AB-15. No payment/checkout/order creation, no destructive/admin writes.**
+Phase 5AB is auth smoke and auth setup only. Ecommerce/admin/regression/security paths are blocked.
+
+**5AB-16. No scraping, crawling, load testing, or security testing.**
+Phase 5AB is limited to login/session verification on approved targets.
+
+**5AB-17. Agents must not share credentials in chat, tickets, or messages.**
+If credentials were accidentally shared in a message, assume they are compromised.
+Instruct immediate password rotation. Do not use shared credentials.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

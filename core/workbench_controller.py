@@ -779,6 +779,98 @@ class WorkbenchController:
         return builder.render_matrix_artifacts(report, project_id)
 
     # ------------------------------------------------------------------
+    # Phase 5AB — Runtime Secret Routing + Dedicated Auth API
+    # ------------------------------------------------------------------
+
+    def validate_test_account_intake(
+        self,
+        project_id: str,
+        target_url: Optional[str] = None,
+        target_category: str = "",
+        scenario_lane: str = "",
+        account_provider: str = "",
+        account_type: str = "",
+        username_env_var: Optional[str] = None,
+        password_env_var: Optional[str] = None,
+        token_env_var: Optional[str] = None,
+        dedicated_test_account_confirmed: bool = False,
+        personal_account_confirmed: bool = False,
+        production_account_confirmed: bool = False,
+        staging_environment_confirmed: bool = False,
+        client_scope_confirmed: bool = False,
+    ):
+        """Validate a dedicated test-account intake request. No execution, no env value reading."""
+        from core.dedicated_auth_runner import DedicatedAuthRunner
+        runner = DedicatedAuthRunner(outputs_root=self._outputs_root)
+        return runner.validate_intake(
+            project_id=project_id,
+            target_url=target_url,
+            target_category=target_category,
+            scenario_lane=scenario_lane,
+            account_provider=account_provider,
+            account_type=account_type,
+            username_env_var=username_env_var,
+            password_env_var=password_env_var,
+            token_env_var=token_env_var,
+            dedicated_test_account_confirmed=dedicated_test_account_confirmed,
+            personal_account_confirmed=personal_account_confirmed,
+            production_account_confirmed=production_account_confirmed,
+            staging_environment_confirmed=staging_environment_confirmed,
+            client_scope_confirmed=client_scope_confirmed,
+        )
+
+    def run_dedicated_auth_execution(
+        self,
+        project_id: str,
+        approve_dedicated_auth_execution: bool = False,
+        scenario_lane: str = "",
+        target_category: str = "",
+        target_url: Optional[str] = None,
+        username_env_var: Optional[str] = None,
+        password_env_var: Optional[str] = None,
+        token_env_var: Optional[str] = None,
+        dedicated_test_account_confirmed: bool = False,
+        staging_environment_confirmed: bool = False,
+        client_scope_confirmed: bool = False,
+        personal_account_confirmed: bool = False,
+        production_account_confirmed: bool = False,
+        command_mode: str = "auth_smoke",
+        scaffold_root=None,
+        timeout: int = 120,
+    ):
+        """Run approval-gated dedicated test-account auth execution. Returns DedicatedAuthExecutionReport.
+
+        No personal/production accounts. No Google OAuth. No raw secrets in arguments.
+        Requires approve_dedicated_auth_execution=True and all safety gates to pass.
+        """
+        from core.dedicated_auth_runner import DedicatedAuthRunner
+        runner = DedicatedAuthRunner(outputs_root=self._outputs_root)
+        return runner.run_dedicated_auth(
+            project_id=project_id,
+            approve_dedicated_auth_execution=approve_dedicated_auth_execution,
+            scenario_lane=scenario_lane,
+            target_category=target_category,
+            target_url=target_url,
+            username_env_var=username_env_var,
+            password_env_var=password_env_var,
+            token_env_var=token_env_var,
+            dedicated_test_account_confirmed=dedicated_test_account_confirmed,
+            staging_environment_confirmed=staging_environment_confirmed,
+            client_scope_confirmed=client_scope_confirmed,
+            personal_account_confirmed=personal_account_confirmed,
+            production_account_confirmed=production_account_confirmed,
+            command_mode=command_mode,
+            scaffold_root=scaffold_root,
+            timeout=timeout,
+        )
+
+    def render_dedicated_auth_artifacts(self, report, project_id: str) -> dict:
+        """Write dedicated auth artifacts to outputs/<project_id>/12_dedicated_auth/."""
+        from core.dedicated_auth_runner import DedicatedAuthRunner
+        runner = DedicatedAuthRunner(outputs_root=self._outputs_root)
+        return runner.render_dedicated_auth_artifacts(report, project_id)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
