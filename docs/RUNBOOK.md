@@ -1,7 +1,7 @@
 # Operational Runbook — Guided QA Automation Workbench
 
-**Version:** 5.6.0  
-**Updated:** 2026-05-25
+**Version:** 5.7.0  
+**Updated:** 2026-05-26
 
 > **AI drafts. Senior QA decides.**
 
@@ -1464,3 +1464,132 @@ manually. No password automation. No CAPTCHA bypass.
 3. Run the auth runner with `--auth-mode cdp_attach --cdp-port 9222`
 
 **Safety:** CDP port must be 1024–65535. The system attaches only — never automates login.
+
+---
+
+### 30. Mobile Viewport Smoke (Phase 5I)
+
+**Purpose:** Run Playwright tests with mobile device viewport emulation. No credentials.
+
+**Checklist:**
+- [ ] Test files in scaffold use only no-auth public page selectors
+- [ ] No `addToCart`, `checkout`, `buy`, `password` selectors in test files (if ecommerce readonly)
+- [ ] `--approve-mobile-execution` flag included
+
+**Command (basic smoke):**
+```bash
+python tools/run_mobile_viewport_smoke.py \
+    --project-id my-project \
+    --device "iPhone 14" \
+    --approve-mobile-execution
+```
+
+**Command (Amazon mobile readonly):**
+```bash
+python tools/run_mobile_viewport_smoke.py \
+    --project-id amazon-mobile-test \
+    --device "Pixel 7" \
+    --readonly-profile amazon_mobile_readonly \
+    --target-url https://www.amazon.com/dp/B08N5WRWNW \
+    --approve-mobile-execution
+```
+
+**Output artifacts (`outputs/<project_id>/17_mobile_viewport/`):**
+```
+MOBILE_VIEWPORT_EXECUTION_REPORT.json
+MOBILE_VIEWPORT_EXECUTION_REPORT.md
+MOBILE_VIEWPORT_SAFETY_CHECKLIST.md
+```
+
+All artifacts: `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`,
+`human_review_required=True` always.
+
+---
+
+### 31. Visual Regression (Phase 5I)
+
+**Purpose:** Playwright `toHaveScreenshot()` visual regression — capture baselines and compare.
+
+**Checklist:**
+- [ ] Target URL is in the allowed URL prefix list (localhost, saucedemo, amazon, alza, etc.)
+- [ ] No credentials passed
+- [ ] `--approve-visual-regression` flag included
+- [ ] Baselines captured before comparison (`--mode capture` first)
+
+**Command (capture baselines):**
+```bash
+python tools/run_visual_regression.py \
+    --project-id my-project \
+    --target-url https://www.saucedemo.com \
+    --mode capture \
+    --approve-visual-regression
+```
+
+**Command (compare):**
+```bash
+python tools/run_visual_regression.py \
+    --project-id my-project \
+    --target-url https://www.saucedemo.com \
+    --mode compare \
+    --approve-visual-regression
+```
+
+**Output artifacts (`outputs/<project_id>/18_visual_regression/`):**
+```
+VISUAL_REGRESSION_REPORT.json
+VISUAL_REGRESSION_REPORT.md
+VISUAL_REGRESSION_REVIEW_CHECKLIST.md
+baselines/   ← gitignored
+```
+
+All artifacts: `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`,
+`baselines_committed=False`, `human_review_required=True` always.
+
+---
+
+### 32. GitHub OAuth Smoke (Phase 5I)
+
+**Purpose:** Plan GitHub test-account OAuth capability or run storage-state-reuse smoke.
+Mirrors Phase 5G Google auth runner. Personal and production accounts always blocked.
+
+**Checklist:**
+- [ ] Account is a dedicated test account (not personal `dpogribnyy@...` or production org)
+- [ ] `--dedicated-test-account-confirmed` flag included
+- [ ] `--personal-account-confirmed` NOT included (blocks execution)
+- [ ] `--production-account-confirmed` NOT included (blocks execution)
+- [ ] storageState file is gitignored (not committed)
+
+**Command (capability plan):**
+```bash
+python tools/run_github_auth_smoke.py \
+    --project-id my-project \
+    --account-email-label qa_bot_github \
+    --approve-github-test-account \
+    --dedicated-test-account-confirmed
+```
+
+**Command (storage-state-reuse smoke):**
+```bash
+python tools/run_github_auth_smoke.py \
+    --project-id my-project \
+    --decide \
+    --run-smoke \
+    --auth-mode storage_state_reuse \
+    --target-url https://github.com \
+    --storage-state-path outputs/my-project/19_github_auth/.auth/github-storageState.json \
+    --approve-github-test-account \
+    --dedicated-test-account-confirmed
+```
+
+**Output artifacts (`outputs/<project_id>/19_github_auth/`):**
+```
+GITHUB_AUTH_CAPABILITY_PLAN.json/md
+GITHUB_AUTH_EXECUTION_DECISION.json/md
+GITHUB_AUTH_EVIDENCE_REPORT.json/md
+GITHUB_AUTH_REDACTION_CHECKLIST.md
+.auth/github-storageState.json   ← NEVER COMMITTED
+github_smoke.cjs                 ← runtime only, NEVER COMMITTED
+```
+
+All artifacts: `personal_account_used=False`, `production_account_used=False`,
+`captcha_bypass_attempted=False`, `safe_to_deliver=False`, `human_review_required=True` always.

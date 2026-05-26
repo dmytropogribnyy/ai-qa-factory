@@ -1,8 +1,8 @@
 # Schema Foundation — Guided QA Automation Workbench
 
-**Version:** 5.7.0  
-**Updated:** 2026-05-25  
-**Phase:** 4ABC — Schema foundations + Phase 3A/3B/3C schemas + Phase 4ABC Readiness/Evidence/Reporting/Delivery/Scenario schemas
+**Version:** 5.8.0  
+**Updated:** 2026-05-26  
+**Phase:** 5I — Schema foundations + all phases through Phase 5I
 
 ---
 
@@ -775,6 +775,101 @@ NOT forced (reflect real routing state):
 | `writeback_performed` | `False` | Confirmed no writeback occurred |
 | `raw_token_in_output` | `False` | Confirmed no token in artifacts |
 | `client_delivery_allowed` | `False` | Requires human review before delivery |
+
+---
+
+---
+
+### Phase 5I — Mobile Viewport (`core/schemas/mobile_viewport.py`)
+
+| Class | Export | Description |
+|---|---|---|
+| `MobileViewportProfile` | `MobileViewportProfile` | Device profile with viewport dimensions and User-Agent |
+| `MobileViewportExecutionCommand` | `MobileViewportExecutionCommand` | Command issued to the mobile viewport runner |
+| `MobileViewportExecutionReport` | `MobileViewportExecutionReport` | Execution result — device, status, blockers, notes |
+
+**Constants:**
+- `MOBILE_VIEWPORT_DEVICES` — `iPhone 14`, `iPhone 14 Pro`, `iPhone 13`, `Pixel 7`, `Pixel 5`, `Galaxy S22`, `Galaxy S9+`, `iPad Pro`, `iPad Mini`, `Nexus 10`
+- `MOBILE_VIEWPORT_MODES` — `list`, `viewport_smoke`
+- `MOBILE_ECOMMERCE_READONLY_PROFILES` — `amazon_mobile_readonly`, `alza_mobile_readonly`
+
+**Hardcoded safety defaults in `MobileViewportExecutionReport` (set in `__post_init__` AND `from_dict`):**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `credentials_used` | `False` | `__post_init__` + `from_dict` |
+| `auth_performed` | `False` | `__post_init__` + `from_dict` |
+| `safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `approved_for_client_delivery` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
+
+---
+
+### Phase 5I — Visual Regression (`core/schemas/visual_regression.py`)
+
+| Class | Export | Description |
+|---|---|---|
+| `VisualBaselineRecord` | `VisualBaselineRecord` | Metadata for a captured baseline screenshot |
+| `VisualDiffResult` | `VisualDiffResult` | Result of comparing a screenshot against its baseline |
+| `VisualRegressionReport` | `VisualRegressionReport` | Full visual regression run report — mode, stats, diffs, blockers |
+
+**Constants:**
+- `VISUAL_REGRESSION_MODES` — `capture`, `compare`, `update`
+- `VISUAL_DIFF_VERDICTS` — `pass`, `fail`, `new`, `error`
+
+**Hardcoded safety defaults in `VisualRegressionReport` (set in `__post_init__` AND `from_dict`):**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `credentials_used` | `False` | `__post_init__` + `from_dict` |
+| `auth_performed` | `False` | `__post_init__` + `from_dict` |
+| `safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `approved_for_client_delivery` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
+| `baselines_committed` | `False` | `__post_init__` + `from_dict` |
+
+---
+
+### Phase 5I — GitHub OAuth (`core/schemas/github_auth.py`)
+
+| Class | Export | Description |
+|---|---|---|
+| `GitHubTestAccountProfile` | `GitHubTestAccountProfile` | Dedicated test account profile — label, target kind, not personal/production |
+| `GitHubAuthModePolicy` | `GitHubAuthModePolicy` | Per-mode allow/block decision with blockers and notes |
+| `GitHubStorageStatePolicy` | `GitHubStorageStatePolicy` | StorageState path + metadata policy (content never read) |
+| `GitHubAuthCapability` | `GitHubAuthCapability` | Full capability plan — modes, account profile, blockers |
+| `GitHubAuthExecutionDecision` | `GitHubAuthExecutionDecision` | Per-request allow/block decision |
+| `GitHubAuthEvidenceReport` | `GitHubAuthEvidenceReport` | Execution evidence report — status, screenshot, blockers |
+
+**Constants:**
+- `GITHUB_AUTH_MODES` — all recognized modes
+- `GITHUB_AUTH_MODES_EXECUTABLE_5I` — `manual_storage_state_capture`, `storage_state_reuse`
+- `GITHUB_AUTH_MODES_PLANNING_ONLY_5I` — `cdp_attach`, `dedicated_profile_context`, `github_api_token_future`, `github_app_future`
+- `GITHUB_TARGET_KINDS` — `github_login_ui`, `github_protected_resource`, `github_api_endpoint`
+
+**Hardcoded safety defaults in `GitHubAuthCapability` (set in `__post_init__` AND `from_dict`):**
+
+| Field | Hardcoded value | Description |
+|---|---|---|
+| `personal_account_always_blocked` | `True` | Personal GitHub accounts: always blocked |
+| `production_account_always_blocked` | `True` | Production org accounts: always blocked |
+| `captcha_bypass_allowed` | `False` | CAPTCHA bypass: always blocked |
+| `raw_secrets_allowed` | `False` | Raw secrets in CLI/artifacts: always blocked |
+| `storage_state_content_read` | `False` | storageState content: never read by Python |
+| `client_delivery_allowed` | `False` | Requires human review before delivery |
+
+**Hardcoded safety defaults in `GitHubAuthEvidenceReport`:**
+
+| Field | Hardcoded value | Description |
+|---|---|---|
+| `cookies_logged` | `False` | Cookies never logged |
+| `tokens_logged` | `False` | Tokens never logged |
+| `storage_state_content_read` | `False` | storageState content never read |
+| `captcha_bypass_attempted` | `False` | CAPTCHA bypass never attempted |
+| `personal_account_used` | `False` | Personal accounts never used |
+| `production_account_used` | `False` | Production accounts never used |
+| `safe_to_deliver` | `False` | Always requires human review |
+| `human_review_required` | `True` | Always requires human review |
 
 ---
 

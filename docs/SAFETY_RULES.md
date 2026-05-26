@@ -1,7 +1,7 @@
 # Safety Rules — Guided QA Automation Workbench
 
-**Version:** 5.2.0  
-**Updated:** 2026-05-25
+**Version:** 5.3.0  
+**Updated:** 2026-05-26
 
 These rules are non-negotiable. No flag, no argument, and no configuration overrides them without an explicit human decision documented outside the system.
 
@@ -869,6 +869,62 @@ internal output directory. Arbitrary filesystem paths are rejected.
 **5H-8. `client_delivery_allowed=False` in all Phase 5H artifacts.**
 `TaskSourceFetchReport.client_delivery_allowed=False` hardcoded. Task source artifacts
 are for internal use only and require human review.
+
+---
+
+---
+
+## Phase 5I — Mobile Viewport + Visual Regression + GitHub OAuth Safety Rules
+
+**5I-1. Mobile viewport runner accepts no credentials.**
+`MobileViewportRunner` never passes auth state, cookies, usernames, or passwords to the
+Playwright subprocess. `credentials_used=False` and `auth_performed=False` are hardcoded
+in `MobileViewportExecutionReport.__post_init__` and `from_dict`.
+
+**5I-2. Amazon/Alza mobile readonly paths are gated identically to desktop (Phase 5H).**
+`amazon_mobile_readonly` and `alza_mobile_readonly` profiles apply the same blocked paths
+(`/signin`, `/cart`, `/checkout`, `/account`, `/order`, etc.) and the same dangerous
+selector scan as the Phase 5H desktop profiles. No relaxation for mobile.
+
+**5I-3. Visual regression baselines are never committed.**
+`baselines_committed=False` is hardcoded. Baselines are stored in
+`outputs/<project_id>/18_visual_regression/baselines/` which is gitignored.
+Visual regression specs and config files generated at runtime are also gitignored.
+
+**5I-4. Visual regression never performs auth.**
+`VisualRegressionRunner` does not accept any credential flags. `credentials_used=False`
+and `auth_performed=False` are hardcoded. Target URLs must match an allowed prefix list.
+
+**5I-5. GitHub personal accounts are always blocked.**
+`GitHubAuthCapability.personal_account_always_blocked=True` hardcoded. Providing
+`--personal-account-confirmed` blocks execution immediately — there is no override.
+
+**5I-6. GitHub production org accounts are always blocked.**
+`GitHubAuthCapability.production_account_always_blocked=True` hardcoded. Providing
+`--production-account-confirmed` blocks execution immediately — there is no override.
+
+**5I-7. GitHub CAPTCHA bypass is always blocked.**
+`captcha_bypass_allowed=False` hardcoded. The runner may detect a CAPTCHA challenge
+and must block — it never attempts to bypass.
+
+**5I-8. GitHub storageState content is never read by Python code.**
+`storage_state_content_read=False` hardcoded. The runner passes the `storageState` path
+to the Playwright script but never calls `.read_text()` on it. Only path existence and
+file size (metadata) are checked.
+
+**5I-9. Raw GitHub secrets never appear in CLI args, logs, or artifacts.**
+Flags `--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--pat`,
+`--access-token`, `--bearer` are blocked at CLI entry. Token values must never appear
+in JSON artifacts, Markdown reports, or log output.
+
+**5I-10. GitHub smoke runtime scripts are never committed.**
+`github_smoke.cjs` is a runtime-only generated script (gitignored). It is deleted or
+left in `outputs/` after execution. It must never be committed to the repository.
+
+**5I-11. `safe_to_deliver=False` in all Phase 5I artifacts.**
+`MobileViewportExecutionReport`, `VisualRegressionReport`, `GitHubAuthEvidenceReport` —
+all set `safe_to_deliver=False` and `human_review_required=True` unconditionally.
+No Phase 5I artifact is approved for client delivery without human review.
 
 ---
 

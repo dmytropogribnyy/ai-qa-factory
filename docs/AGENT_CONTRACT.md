@@ -1,8 +1,8 @@
 # Agent Operating Contract — Guided QA Automation Workbench
 
-**Version:** 5.4.0
-**Updated:** 2026-05-25
-**Phase:** 4ABC
+**Version:** 5.5.0
+**Updated:** 2026-05-26
+**Phase:** 5I
 
 This document defines the operating contract for any agent — Claude Code, ChatGPT/GPT,
 future local automation, or any AI assistant — that edits, reviews, or runs code in this
@@ -506,6 +506,41 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
   `totp_test_account_future`, `mock_oauth_provider_future`) are planning-only.
 - **Artifacts:** `outputs/<project_id>/15_google_auth/` only.
 - **Do not include `15_google_auth/` in client delivery packages.**
+
+---
+
+## Section 14 — Phase 5I — Mobile Viewport + Visual Regression + GitHub OAuth Rules
+
+### Rules
+
+- **Mobile viewport runner accepts no credentials.**
+  `MobileViewportRunner` never passes auth state, cookies, or secrets to Playwright.
+  `credentials_used=False` and `auth_performed=False` are hardcoded.
+- **Amazon/Alza mobile readonly uses the same gates as Phase 5H desktop.**
+  Same blocked paths and dangerous selector scan apply to `amazon_mobile_readonly`
+  and `alza_mobile_readonly` profiles.
+- **Visual regression baselines are never committed.**
+  `baselines_committed=False` hardcoded. Baselines are stored in `outputs/` (gitignored).
+- **Visual regression never performs auth.**
+  No credential flags accepted. Target URLs must match the allowed prefix list.
+- **GitHub personal accounts are always blocked.**
+  `personal_account_always_blocked=True` hardcoded. `--personal-account-confirmed` flag
+  triggers an immediate block with no override.
+- **GitHub production org accounts are always blocked.**
+  `production_account_always_blocked=True` hardcoded. `--production-account-confirmed` flag
+  triggers an immediate block with no override.
+- **GitHub CAPTCHA bypass is always blocked.** `captcha_bypass_allowed=False` hardcoded.
+- **GitHub storageState content is never read by Python code.**
+  Only path existence and file size (metadata) are checked. `storage_state_content_read=False` hardcoded.
+- **Raw GitHub secrets never in CLI args, logs, or artifacts.**
+  Flags `--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--pat`,
+  `--access-token`, `--bearer` are blocked at CLI entry.
+- **Runtime scripts (`mobile.config.cjs`, `visual_regression.spec.ts`, `github_smoke.cjs`) are never committed.**
+  These are gitignored and deleted or left in `outputs/` after execution.
+- **`safe_to_deliver=False` in all Phase 5I artifacts.**
+  No Phase 5I artifact is approved for client delivery without human review.
+- **Artifacts:** `outputs/<project_id>/17_mobile_viewport/`, `18_visual_regression/`, `19_github_auth/` only.
+- **Do not include any Phase 5I artifacts in client delivery packages.**
 
 ---
 

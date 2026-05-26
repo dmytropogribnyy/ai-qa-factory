@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.7.0
-**Updated:** 2026-05-25
-**Phase:** 4ABC
+**Version:** 5.8.0
+**Updated:** 2026-05-26
+**Phase:** 5I
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1041,6 +1041,64 @@ consolidated QA Evidence Report with multi-source aggregation and secret scan.
 - Amazon/Alza blocked paths: `/signin`, `/cart`, `/checkout`, `/account`, `/order`, `/gp/buy`, `/ap/`, `/orders`
 - CDP Attach port must be 1024–65535; no password automation
 - `captcha_bypass_allowed=False` — hardcoded, unchanged
+
+---
+
+---
+
+## Phase 5I — Mobile Viewport + Visual Regression + GitHub OAuth [implemented]
+
+**Scope:**
+1. Mobile viewport emulation — Playwright device emulation (iPhone, Pixel, iPad) for mobile web testing
+2. Visual regression runner — `toHaveScreenshot()` baseline capture + pixel diff comparison
+3. GitHub OAuth runner — dedicated test account auth capability planner and smoke runner
+
+**What Phase 5I IS:**
+- Testing mobile web layouts with Playwright's built-in device emulation (not Appium — that is planned for Phase 5K)
+- Capturing visual baseline screenshots and comparing against them to detect regressions
+- GitHub test-account storageState capture + reuse smoke (dedicated test accounts only)
+- Amazon/Alza mobile readonly profiles (same path-gate + selector-scan as Phase 5H)
+- GitHub OAuth: `manual_storage_state_capture` + `storage_state_reuse` executable in Phase 5I
+
+**What Phase 5I is NOT:**
+- Not native mobile app testing (Appium/Maestro are planned for Phase 5K — not implemented here)
+- Not Amazon/Alza mobile auth or checkout flows (always blocked)
+- Not personal or production GitHub account auth (always blocked)
+- Not GitHub API token flows or GitHub Apps (planning-only in Phase 5I)
+- Not Microsoft OAuth (planning-only in Phase 5I — deferred to next phase)
+- Not CAPTCHA or anti-bot bypass (always blocked)
+- Not generating client delivery packages
+
+**Allowed Actions:**
+- Run `tools/run_mobile_viewport_smoke.py` with `--approve-mobile-execution`
+- Run `tools/run_visual_regression.py` with `--approve-visual-regression`
+- Run `tools/run_github_auth_smoke.py` with `--approve-github-test-account --dedicated-test-account-confirmed`
+- Read baseline screenshots to verify visual comparison is working
+- Plan Microsoft OAuth runner (deferred — not yet implemented)
+
+**Blocked Actions:**
+- Mobile auth, checkout, cart, account flows on any ecommerce site
+- Personal GitHub accounts (hardcoded block, cannot be overridden)
+- Production GitHub org accounts (hardcoded block)
+- CAPTCHA or anti-bot bypass (hardcoded block)
+- Raw secrets via CLI flags or in any artifact
+- Committing storageState, baselines, or runtime-generated scripts
+- Client delivery without human review
+
+**Acceptance Criteria:**
+- `tools/run_mobile_viewport_smoke.py` generates artifacts in `17_mobile_viewport/`
+- `tools/run_visual_regression.py` generates artifacts in `18_visual_regression/`
+- `tools/run_github_auth_smoke.py` generates artifacts in `19_github_auth/`
+- All new schemas: `safe_to_deliver=False`, `human_review_required=True` hardcoded in `__post_init__` AND `from_dict`
+- Amazon/Alza mobile readonly: same blocked paths as desktop profiles
+- GitHub: `personal_account_always_blocked=True`, `production_account_always_blocked=True` hardcoded
+- ruff: clean; pytest: 1665 passed
+
+**Safety invariants (all hardcoded, cannot be bypassed):**
+- `MobileViewportExecutionReport`: `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False`, `human_review_required=True`
+- `VisualRegressionReport`: `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`, `approved_for_client_delivery=False`, `human_review_required=True`, `baselines_committed=False`
+- `GitHubAuthCapability`: `personal_account_always_blocked=True`, `production_account_always_blocked=True`, `captcha_bypass_allowed=False`, `raw_secrets_allowed=False`, `storage_state_content_read=False`, `client_delivery_allowed=False`
+- `GitHubAuthEvidenceReport`: `cookies_logged=False`, `tokens_logged=False`, `storage_state_content_read=False`, `safe_to_deliver=False`, `human_review_required=True`
 
 ---
 

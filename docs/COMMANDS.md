@@ -1,7 +1,7 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 5.2.0  
-**Updated:** 2026-05-25
+**Version:** 5.3.0  
+**Updated:** 2026-05-26
 
 Status labels:
 - `[implemented]` — works now
@@ -1800,6 +1800,233 @@ task_source_summary.md
 
 - **Dedicated Profile Context mode** — `dedicated_profile_context` promoted to executable.
   Chromium launched with persistent `user-data-dir` containing a saved session.
+
+---
+
+---
+
+## Phase 5I — Mobile Viewport + Visual Regression + GitHub OAuth
+
+### 30. Mobile Viewport Smoke (`tools/run_mobile_viewport_smoke.py`)
+
+**Purpose:** Run Playwright tests with mobile device viewport emulation (iPhone, Pixel, iPad).
+No credentials. No auth. Same ecommerce path-gate and selector-scan as Phase 5H.
+
+```bash
+# Basic device smoke:
+python tools/run_mobile_viewport_smoke.py \
+    --project-id my-project \
+    --device "iPhone 14" \
+    --approve-mobile-execution
+
+# Amazon mobile web readonly:
+python tools/run_mobile_viewport_smoke.py \
+    --project-id amazon-mobile-test \
+    --device "Pixel 7" \
+    --readonly-profile amazon_mobile_readonly \
+    --target-url https://www.amazon.com/dp/B08N5WRWNW \
+    --approve-mobile-execution
+
+# Alza mobile web readonly:
+python tools/run_mobile_viewport_smoke.py \
+    --project-id alza-mobile-test \
+    --device "Galaxy S22" \
+    --readonly-profile alza_mobile_readonly \
+    --target-url https://www.alza.sk/notebooks \
+    --approve-mobile-execution
+
+# Preview only (no artifacts written):
+python tools/run_mobile_viewport_smoke.py \
+    --project-id my-project \
+    --device "iPad Pro" \
+    --approve-mobile-execution \
+    --no-write
+```
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--project-id` | Required — output project identifier |
+| `--device` | Required — device name: `iPhone 14`, `iPhone 14 Pro`, `iPhone 13`, `Pixel 7`, `Pixel 5`, `Galaxy S22`, `Galaxy S9+`, `iPad Pro`, `iPad Mini`, `Nexus 10` |
+| `--command-mode` | `viewport_smoke` (default) or `list` |
+| `--target-url` | Override target URL for the smoke run |
+| `--readonly-profile` | Ecommerce readonly profile: `amazon_mobile_readonly`, `alza_mobile_readonly` |
+| `--approve-mobile-execution` | Confirm approval for mobile viewport execution |
+| `--no-write` | Skip writing artifacts |
+| `--timeout` | Subprocess timeout in seconds (default 120) |
+
+**Blocked flags (never accepted):** `--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--username`
+
+**Safety invariants (always False/True):**
+- `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`
+- `approved_for_client_delivery=False`, `human_review_required=True`
+- Ecommerce readonly: same path-gate + dangerous selector scan as Phase 5H
+
+**Generated artifacts** (`outputs/<project_id>/17_mobile_viewport/`):
+```
+MOBILE_VIEWPORT_EXECUTION_REPORT.json
+MOBILE_VIEWPORT_EXECUTION_REPORT.md
+MOBILE_VIEWPORT_SAFETY_CHECKLIST.md
+```
+
+**Exit codes:** `0` = success, `1` = blocked/failed, `2` = bad flags
+
+---
+
+### 31. Visual Regression (`tools/run_visual_regression.py`)
+
+**Purpose:** Playwright `toHaveScreenshot()` visual regression — capture baselines, compare
+against them, or update baselines after an approved intentional change.
+
+```bash
+# Capture baselines (first run):
+python tools/run_visual_regression.py \
+    --project-id my-project \
+    --target-url https://www.saucedemo.com \
+    --mode capture \
+    --approve-visual-regression
+
+# Compare against baselines:
+python tools/run_visual_regression.py \
+    --project-id my-project \
+    --target-url https://www.saucedemo.com \
+    --mode compare \
+    --approve-visual-regression
+
+# Mobile device visual regression:
+python tools/run_visual_regression.py \
+    --project-id my-project \
+    --target-url https://www.amazon.com/dp/B08N5WRWNW \
+    --mode capture \
+    --device "iPhone 14" \
+    --approve-visual-regression
+
+# Update baselines after approved change:
+python tools/run_visual_regression.py \
+    --project-id my-project \
+    --target-url https://www.saucedemo.com \
+    --mode update \
+    --approve-visual-regression
+```
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--project-id` | Required — output project identifier |
+| `--target-url` | Required — URL to test visually |
+| `--mode` | `capture` (create baselines), `compare` (diff), `update` (overwrite baselines) |
+| `--device` | Optional device name for mobile viewport (e.g. `iPhone 14`) |
+| `--threshold` | Max diff ratio (default 0.01 = 1%) |
+| `--approve-visual-regression` | Confirm approval for visual regression execution |
+| `--no-write` | Skip writing artifacts |
+| `--timeout` | Subprocess timeout in seconds (default 120) |
+
+**Blocked flags (never accepted):** `--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--username`
+
+**Approved URL prefixes:** `localhost`, `saucedemo.com`, `the-internet.herokuapp.com`,
+`practicesoftwaretesting.com`, `demoqa.com`, `orangehrm`, `restful-booker`, `playwright.dev`,
+`amazon.com`, `alza.sk`
+
+**Safety invariants:** `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`,
+`approved_for_client_delivery=False`, `human_review_required=True`, `baselines_committed=False`
+
+**Generated artifacts** (`outputs/<project_id>/18_visual_regression/`):
+```
+VISUAL_REGRESSION_REPORT.json
+VISUAL_REGRESSION_REPORT.md
+VISUAL_REGRESSION_REVIEW_CHECKLIST.md
+baselines/                ← gitignored
+```
+
+**Exit codes:** `0` = complete + no failures, `1` = failures or blocked, `2` = bad flags
+
+---
+
+### 32. GitHub OAuth Smoke (`tools/run_github_auth_smoke.py`)
+
+**Purpose:** Plan GitHub OAuth test-account capability or run a storage-state-reuse smoke.
+Mirrors Phase 5G Google Auth runner. Personal and production accounts are always blocked.
+
+```bash
+# Capability plan:
+python tools/run_github_auth_smoke.py \
+    --project-id my-project \
+    --account-email-label qa_bot_github \
+    --approve-github-test-account \
+    --dedicated-test-account-confirmed \
+    --target-url https://github.com \
+    --target-kind github_login_ui
+
+# Per-request decision:
+python tools/run_github_auth_smoke.py \
+    --project-id my-project \
+    --decide \
+    --auth-mode storage_state_reuse \
+    --target-url https://github.com \
+    --target-kind github_login_ui \
+    --storage-state-path outputs/my-project/19_github_auth/.auth/github-storageState.json \
+    --approve-github-test-account \
+    --dedicated-test-account-confirmed
+
+# Decision + run smoke:
+python tools/run_github_auth_smoke.py \
+    --project-id my-project \
+    --decide \
+    --run-smoke \
+    --auth-mode storage_state_reuse \
+    --target-url https://github.com \
+    --target-kind github_login_ui \
+    --storage-state-path outputs/my-project/19_github_auth/.auth/github-storageState.json \
+    --approve-github-test-account \
+    --dedicated-test-account-confirmed
+```
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--project-id` | Required — output project identifier |
+| `--account-email-label` | Label of the dedicated GitHub test account (not the actual email) |
+| `--target-url` | GitHub target URL (default `https://github.com`) |
+| `--target-kind` | `github_login_ui`, `github_protected_resource`, `github_api_endpoint` |
+| `--auth-mode` | Auth mode for `--decide` (default `storage_state_reuse`) |
+| `--storage-state-path` | Path to captured GitHub storageState JSON |
+| `--approve-github-test-account` | Confirm dedicated GitHub test account is approved |
+| `--dedicated-test-account-confirmed` | Confirm account is a dedicated test account (not personal or production) |
+| `--personal-account-confirmed` | Always blocked — triggers an immediate block |
+| `--production-account-confirmed` | Always blocked — triggers an immediate block |
+| `--decide` | Output per-request execution decision |
+| `--run-smoke` | Run `storage_state_reuse` smoke after decision |
+| `--no-write` | Skip writing artifacts |
+| `--timeout` | Subprocess timeout in seconds (default 60) |
+
+**Blocked flags (never accepted):** `--password`, `--token`, `--secret`, `--api-key`,
+`--cookie`, `--pat`, `--access-token`, `--bearer`
+
+**Executable modes (Phase 5I):** `manual_storage_state_capture`, `storage_state_reuse`
+
+**Planning-only modes (deferred):** `cdp_attach`, `dedicated_profile_context`,
+`github_api_token_future`, `github_app_future`
+
+**Safety invariants (always False/True):**
+- `personal_account_always_blocked=True`, `production_account_always_blocked=True`
+- `captcha_bypass_allowed=False`, `raw_secrets_allowed=False`
+- `storage_state_content_read=False`, `client_delivery_allowed=False`
+- `safe_to_deliver=False`, `human_review_required=True`
+
+**Generated artifacts** (`outputs/<project_id>/19_github_auth/`):
+```
+GITHUB_AUTH_CAPABILITY_PLAN.json/md
+GITHUB_AUTH_EXECUTION_DECISION.json/md
+GITHUB_AUTH_EVIDENCE_REPORT.json/md
+GITHUB_AUTH_REDACTION_CHECKLIST.md
+.auth/github-storageState.json   ← NEVER COMMITTED, gitignored
+github_smoke.cjs                 ← runtime only, gitignored
+```
+
+**Exit codes:** `0` = success, `1` = blocked/failed, `2` = bad flags
 
 ---
 

@@ -1,8 +1,8 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 5.7.0  
-**Updated:** 2026-05-25  
-**Phase:** 4ABC
+**Version:** 5.8.0  
+**Updated:** 2026-05-26  
+**Phase:** 5I
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.
@@ -322,6 +322,45 @@ All Phase 5G artifacts: `safe_to_deliver=False`, `human_review_required=True`, `
 | `task_source_summary.md` | MD | system | Human-readable fetch summary with derived scenarios |
 
 All Phase 5H task source artifacts: `writeback_performed=False`, `raw_token_in_output=False`, `client_delivery_allowed=False` always.
+
+### `17_mobile_viewport/` (Phase 5I — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `MOBILE_VIEWPORT_EXECUTION_REPORT.json` | JSON | system | `MobileViewportExecutionReport` schema — device, status, commands, blockers |
+| `MOBILE_VIEWPORT_EXECUTION_REPORT.md` | MD | system | Human-readable execution report |
+| `MOBILE_VIEWPORT_SAFETY_CHECKLIST.md` | MD | system | Pre-review safety checklist |
+| `mobile.config.cjs` | JS | system | Runtime Playwright config — **NEVER COMMITTED**, gitignored |
+
+All Phase 5I mobile viewport artifacts: `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+### `18_visual_regression/` (Phase 5I — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `VISUAL_REGRESSION_REPORT.json` | JSON | system | `VisualRegressionReport` schema — mode, diffs, stats, blockers |
+| `VISUAL_REGRESSION_REPORT.md` | MD | system | Human-readable regression report |
+| `VISUAL_REGRESSION_REVIEW_CHECKLIST.md` | MD | system | Pre-review checklist |
+| `baselines/` | PNG | system | Captured baseline screenshots — **NEVER COMMITTED**, gitignored |
+| `visual_regression.spec.ts` | TS | system | Runtime spec — **NEVER COMMITTED**, gitignored |
+
+All Phase 5I visual regression artifacts: `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`, `baselines_committed=False`, `human_review_required=True` always.
+
+### `19_github_auth/` (Phase 5I — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `GITHUB_AUTH_CAPABILITY_PLAN.json` | JSON | system | `GitHubAuthCapability` schema — mode policies and account profile |
+| `GITHUB_AUTH_CAPABILITY_PLAN.md` | MD | system | Human-readable capability plan |
+| `GITHUB_AUTH_EXECUTION_DECISION.json` | JSON | system | `GitHubAuthExecutionDecision` schema — per-request allow/block |
+| `GITHUB_AUTH_EXECUTION_DECISION.md` | MD | system | Human-readable execution decision |
+| `GITHUB_AUTH_EVIDENCE_REPORT.json` | JSON | system | `GitHubAuthEvidenceReport` schema — execution evidence |
+| `GITHUB_AUTH_EVIDENCE_REPORT.md` | MD | system | Human-readable evidence report |
+| `GITHUB_AUTH_REDACTION_CHECKLIST.md` | MD | system | Pre-review redaction checklist |
+| `.auth/github-storageState.json` | JSON | system | Captured session — **NEVER COMMITTED**, gitignored |
+| `github_smoke.cjs` | JS | system | Runtime Playwright script — **NEVER COMMITTED**, gitignored |
+
+All Phase 5I GitHub auth artifacts: `safe_to_deliver=False`, `human_review_required=True`, `cookies_logged=False`, `tokens_logged=False`, `storage_state_content_read=False`, `captcha_bypass_attempted=False`, `personal_account_used=False`, `production_account_used=False` always.
 
 Run `python tools/docs_audit.py` to check for missing required docs.
 

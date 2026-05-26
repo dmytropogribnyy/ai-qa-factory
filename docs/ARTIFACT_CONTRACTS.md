@@ -1,8 +1,8 @@
 # Artifact Contracts — Guided QA Automation Workbench
 
-**Version:** 5.7.0
-**Updated:** 2026-05-25
-**Phase:** 4ABC
+**Version:** 5.8.0
+**Updated:** 2026-05-26
+**Phase:** 5I
 
 This document defines the stable artifact paths, formats, and ownership rules for all
 workbench-generated files. Agents and scripts should use these paths and respect the
@@ -482,6 +482,49 @@ Agents reading JSON artifacts should:
 2. Check `phase` field to understand what was generated
 3. Check `BLOCKED_ACTIONS.md` before planning any execution
 4. Check `SAFE_NEXT_STEPS.md` for approved planning actions
+
+---
+
+### `outputs/<project_id>/17_mobile_viewport/` (Phase 5I)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `MOBILE_VIEWPORT_EXECUTION_REPORT.json` | `MobileViewportExecutionReport` | system | Execution result — device, status, blockers |
+| `MOBILE_VIEWPORT_EXECUTION_REPORT.md` | — | system | Human-readable report |
+| `MOBILE_VIEWPORT_SAFETY_CHECKLIST.md` | — | system | Pre-delivery review checklist |
+| `mobile.config.cjs` | — | system | **Runtime-generated, gitignored — never committed** |
+
+Safety guarantees: `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
+
+### `outputs/<project_id>/18_visual_regression/` (Phase 5I)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `VISUAL_REGRESSION_REPORT.json` | `VisualRegressionReport` | system | Mode, diffs, stats, blockers |
+| `VISUAL_REGRESSION_REPORT.md` | — | system | Human-readable report |
+| `VISUAL_REGRESSION_REVIEW_CHECKLIST.md` | — | system | Pre-delivery review checklist |
+| `baselines/` | — | system | **Baseline screenshots — gitignored, never committed** |
+| `visual_regression.spec.ts` | — | system | **Runtime-generated spec — gitignored, never committed** |
+
+Safety guarantees: `credentials_used=False`, `auth_performed=False`, `safe_to_deliver=False`, `baselines_committed=False`, `human_review_required=True` always.
+
+### `outputs/<project_id>/19_github_auth/` (Phase 5I)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `GITHUB_AUTH_CAPABILITY_PLAN.json` | `GitHubAuthCapability` | system | Mode policies, account profile |
+| `GITHUB_AUTH_CAPABILITY_PLAN.md` | — | system | Human-readable capability plan |
+| `GITHUB_AUTH_EXECUTION_DECISION.json` | `GitHubAuthExecutionDecision` | system | Per-request allow/block decision |
+| `GITHUB_AUTH_EXECUTION_DECISION.md` | — | system | Human-readable decision |
+| `GITHUB_AUTH_EVIDENCE_REPORT.json` | `GitHubAuthEvidenceReport` | system | Execution evidence |
+| `GITHUB_AUTH_EVIDENCE_REPORT.md` | — | system | Human-readable evidence |
+| `GITHUB_AUTH_REDACTION_CHECKLIST.md` | — | system | Pre-delivery redaction checklist |
+| `.auth/github-storageState.json` | — | system | **Captured session — NEVER COMMITTED, gitignored** |
+| `github_smoke.cjs` | — | system | **Runtime-generated script — NEVER COMMITTED, gitignored** |
+
+Safety guarantees: `safe_to_deliver=False`, `human_review_required=True`, `cookies_logged=False`,
+`tokens_logged=False`, `storage_state_content_read=False`, `personal_account_used=False`,
+`production_account_used=False`, `captcha_bypass_attempted=False` always.
 
 ---
 

@@ -192,6 +192,36 @@ from core.schemas.task_source import (
     TaskSourceScenario,
     TaskSourceFetchReport,
 )
+# Phase 5I — Mobile Viewport Emulation
+from core.schemas.mobile_viewport import (
+    MOBILE_VIEWPORT_DEVICES,
+    MOBILE_VIEWPORT_MODES,
+    MOBILE_ECOMMERCE_READONLY_PROFILES,
+    MobileViewportProfile,
+    MobileViewportExecutionCommand,
+    MobileViewportExecutionReport,
+)
+# Phase 5I — Visual Regression
+from core.schemas.visual_regression import (
+    VISUAL_REGRESSION_MODES,
+    VISUAL_DIFF_VERDICTS,
+    VisualBaselineRecord,
+    VisualDiffResult,
+    VisualRegressionReport,
+)
+# Phase 5I — GitHub OAuth
+from core.schemas.github_auth import (
+    GITHUB_AUTH_MODES,
+    GITHUB_AUTH_MODES_EXECUTABLE_5I,
+    GITHUB_AUTH_MODES_PLANNING_ONLY_5I,
+    GITHUB_TARGET_KINDS,
+    GitHubTestAccountProfile,
+    GitHubAuthModePolicy,
+    GitHubStorageStatePolicy,
+    GitHubAuthCapability,
+    GitHubAuthExecutionDecision,
+    GitHubAuthEvidenceReport,
+)
 
 __all__ = [
     # Base
@@ -411,4 +441,28 @@ __all__ = [
     "TaskSourceFetchPolicy",
     "TaskSourceScenario",
     "TaskSourceFetchReport",
+    # Phase 5I — Mobile Viewport
+    "MOBILE_VIEWPORT_DEVICES",
+    "MOBILE_VIEWPORT_MODES",
+    "MOBILE_ECOMMERCE_READONLY_PROFILES",
+    "MobileViewportProfile",
+    "MobileViewportExecutionCommand",
+    "MobileViewportExecutionReport",
+    # Phase 5I — Visual Regression
+    "VISUAL_REGRESSION_MODES",
+    "VISUAL_DIFF_VERDICTS",
+    "VisualBaselineRecord",
+    "VisualDiffResult",
+    "VisualRegressionReport",
+    # Phase 5I — GitHub OAuth
+    "GITHUB_AUTH_MODES",
+    "GITHUB_AUTH_MODES_EXECUTABLE_5I",
+    "GITHUB_AUTH_MODES_PLANNING_ONLY_5I",
+    "GITHUB_TARGET_KINDS",
+    "GitHubTestAccountProfile",
+    "GitHubAuthModePolicy",
+    "GitHubStorageStatePolicy",
+    "GitHubAuthCapability",
+    "GitHubAuthExecutionDecision",
+    "GitHubAuthEvidenceReport",
 ]
