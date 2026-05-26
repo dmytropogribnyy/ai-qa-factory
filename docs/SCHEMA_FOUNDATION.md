@@ -638,6 +638,30 @@ NOT forced (reflect real routing state):
 | `DedicatedAuthExecutionReport.safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
 | `DedicatedAuthExecutionReport.approved_for_client_delivery` | `False` | `__post_init__` + `from_dict` |
 
+### Phase 5E — API Auth Smoke (`core/schemas/api_auth.py`)
+
+| Class | Exported as | Purpose |
+|---|---|---|
+| `APIAuthTarget` | `APIAuthTarget` | Profile for a safe API auth target (URL, endpoints, category) |
+| `APIAuthCommand` | `APIAuthCommand` | Record of a single API call — URL + method only, no credential body |
+| `APIAuthSessionArtifact` | `APIAuthSessionArtifact` | Reference to a session artifact — always internal-only |
+| `APIAuthExecutionReport` | `APIAuthExecutionReport` | Full report for a Phase 5E API auth execution run |
+
+**Safety defaults (hardcoded):**
+
+| Field | Value | Enforced by |
+|---|---|---|
+| `APIAuthSessionArtifact.internal_only` | `True` | `__post_init__` + `from_dict` |
+| `APIAuthSessionArtifact.approved_for_commit` | `False` | `__post_init__` + `from_dict` |
+| `APIAuthExecutionReport.raw_credentials_logged` | `False` | `__post_init__` + `from_dict` |
+| `APIAuthExecutionReport.raw_credentials_serialized` | `False` | `__post_init__` + `from_dict` |
+| `APIAuthExecutionReport.token_logged` | `False` | `__post_init__` + `from_dict` |
+| `APIAuthExecutionReport.token_serialized` | `False` | `__post_init__` + `from_dict` |
+| `APIAuthExecutionReport.safe_to_deliver` | `False` | `__post_init__` + `from_dict` |
+| `APIAuthExecutionReport.approved_for_client_delivery` | `False` | `__post_init__` + `from_dict` |
+| `APIAuthExecutionReport.personal_account_used` | `False` | `__post_init__` + `from_dict` |
+| `APIAuthExecutionReport.production_account_used` | `False` | `__post_init__` + `from_dict` |
+
 ---
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`

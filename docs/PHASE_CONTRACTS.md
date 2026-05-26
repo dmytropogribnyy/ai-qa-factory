@@ -830,6 +830,50 @@ test-account planning. Policy/schema/routing only — no execution, no credentia
 - Not approval for staging client app execution (Phase 5A)
 - Not approval for Amazon Pay Sandbox (Phase 5C)
 - Not approval for task source integration (Phase 5D)
+- Not approval for API auth smoke (Phase 5E)
+- Not approval for client delivery
+
+---
+
+## Phase 5E — API Auth Smoke [implemented]
+
+**Scope:** Approval-gated HTTP API auth smoke for token-based public/demo/staging API targets.
+
+**Runner:** `APIAuthRunner` (`core/api_auth_runner.py`)  
+**CLI:** `tools/run_api_auth_smoke.py`  
+**Artifacts:** `outputs/<project_id>/13_api_auth/`
+
+**Allowed target profiles:**
+
+| Profile | Base URL | Auth endpoint | Safe read |
+|---|---|---|---|
+| `restful_booker_public_api` | `https://restful-booker.herokuapp.com` | `POST /auth` | `GET /booking` |
+
+**Security gates (7 sequential):**
+
+1. `--approve-api-auth-execution` required
+2. No `personal_account_confirmed=True`
+3. No `production_account_confirmed=True`
+4. Target profile must be in allowlist
+5. URL not in strictly-blocked list
+6. Env var name format: `^[A-Z][A-Z0-9_]*$`, max 64 chars
+7. Env var must exist in process environment (truthy)
+
+**Safety invariants (hardcoded in `__post_init__` + `from_dict`):**
+- `raw_credentials_logged=False` always
+- `raw_credentials_serialized=False` always
+- `token_logged=False` always
+- `token_serialized=False` always
+- `safe_to_deliver=False` always
+- `approved_for_client_delivery=False` always
+- `personal_account_used=False` always
+- `production_account_used=False` always
+
+**What Phase 5E is NOT:**
+- Not approval for browser UI auth (→ Phase 5AB `run_dedicated_auth.py`)
+- Not approval for Amazon Pay Sandbox (→ Phase 5C)
+- Not approval for task source integration (→ Phase 5D)
+- Not approval for DELETE / PUT / destructive API calls
 - Not approval for client delivery
 
 ---

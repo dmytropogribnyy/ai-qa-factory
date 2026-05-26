@@ -871,6 +871,38 @@ class WorkbenchController:
         return runner.render_dedicated_auth_artifacts(report, project_id)
 
     # ------------------------------------------------------------------
+    # Phase 5D — API Auth Smoke
+    # ------------------------------------------------------------------
+
+    def run_api_auth_smoke(
+        self,
+        project_id: str,
+        approve_api_auth_execution: bool = False,
+        target_profile: str = "",
+        base_url: str = None,
+        username_env_var: str = None,
+        password_env_var: str = None,
+        personal_account_confirmed: bool = False,
+        production_account_confirmed: bool = False,
+        run_safe_read_check: bool = True,
+        timeout: int = 30,
+    ):
+        from core.api_auth_runner import APIAuthRunner
+        runner = APIAuthRunner(outputs_root=self._outputs_root)
+        return runner.run_api_auth(
+            project_id=project_id,
+            approve_api_auth_execution=approve_api_auth_execution,
+            target_profile=target_profile,
+            base_url=base_url,
+            username_env_var=username_env_var,
+            password_env_var=password_env_var,
+            personal_account_confirmed=personal_account_confirmed,
+            production_account_confirmed=production_account_confirmed,
+            run_safe_read_check=run_safe_read_check,
+            timeout=timeout,
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

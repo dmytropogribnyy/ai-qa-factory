@@ -433,6 +433,31 @@ Agents must follow these rules when proposing or evaluating test execution:
 
 ---
 
+## Section 12 — Phase 5E — API Auth Smoke Rules
+
+### Allowed target profiles
+
+| Profile | Base URL | Auth endpoint | Safe read |
+|---|---|---|---|
+| `restful_booker_public_api` | `https://restful-booker.herokuapp.com` | `POST /auth` | `GET /booking` |
+
+### Rules
+
+- **Only env var names accepted** — `--username-env-var NAME`, `--password-env-var NAME`.
+  Raw credential values may never be passed as CLI args, stored in code, or logged.
+- **Token masking required** — token returned by `/auth` is masked in all artifacts.
+  Only `token_present` boolean is recorded. `token_logged=False` always.
+- **No destructive API calls** — only `POST /auth` + optional `GET /booking` (read-only).
+  No DELETE, no PUT booking update in Phase 5E.
+- **Approval gate required** — `--approve-api-auth-execution` must be explicitly present.
+  Without it: no env lookup, no network call.
+- **Always-blocked URLs** — `accounts.google.com`, `amazon.com`, `alza.*`, `linkedin.com`, `upwork.com`.
+- **Artifacts** — `outputs/<project_id>/13_api_auth/` only.
+  `safe_to_deliver=False`, `approved_for_client_delivery=False` always.
+- **Do not include `13_api_auth/` in client delivery packages.**
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

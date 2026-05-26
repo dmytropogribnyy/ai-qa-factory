@@ -1082,7 +1082,7 @@ No raw secrets in CLI args. No `.env` reading. No personal/production accounts. 
 - [ ] `tools/plan_runtime_secrets.py` present and executable
 - [ ] `tools/run_dedicated_auth.py` present and executable
 - [ ] Target URL verified: not `accounts.google.com`, not `amazon.com`, not Alza/LinkedIn/Upwork
-- [ ] Env vars set in shell: `export QA_TEST_USERNAME=...` / `export QA_TEST_PASSWORD=...`
+- [ ] Env vars set in shell using target-specific names (e.g. `export ORANGEHRM_USERNAME=...` / `export ORANGEHRM_PASSWORD=...`)
 - [ ] `--dedicated-test-account-confirmed` confirmed (separate dedicated test account, not personal)
 - [ ] Scaffold present at project path with `node_modules/` and `tests/auth/`
 - [ ] No `.env`, no `.auth` files read — env vars set only in terminal
@@ -1096,8 +1096,8 @@ python tools/plan_runtime_secrets.py --project-id demo-5ab \
     --scenario-lane dedicated_test_account_auth_future \
     --target-category orangehrm_demo_auth \
     --target-url https://opensource-demo.orangehrmlive.com \
-    --username-env-var QA_TEST_USERNAME \
-    --password-env-var QA_TEST_PASSWORD \
+    --username-env-var ORANGEHRM_USERNAME \
+    --password-env-var ORANGEHRM_PASSWORD \
     --dedicated-test-account-confirmed \
     --staging-environment-confirmed
 
@@ -1108,36 +1108,32 @@ python tools/plan_runtime_secrets.py --project-id demo-5ab --json --no-write
 ### Execution workflow (approval required)
 
 ```bash
-# Step 1 — set env vars in your terminal (never in .env or chat):
-export QA_TEST_USERNAME=your_test_username
-export QA_TEST_PASSWORD=your_test_password
+# Step 1 — set env vars using target-specific names (never in .env or chat):
+export ORANGEHRM_USERNAME=your_test_username
+export ORANGEHRM_PASSWORD=your_test_password
 
 # Step 2 — preview (no execution, no env var reading):
 python tools/run_dedicated_auth.py --project-id demo-5ab
 
-# Step 3 — approved OrangeHRM auth smoke:
+# Step 3 — approved OrangeHRM auth smoke (browser):
 python tools/run_dedicated_auth.py --project-id demo-5ab \
     --approve-dedicated-auth-execution \
     --scenario-lane dedicated_test_account_auth_future \
     --target-category orangehrm_demo_auth \
     --target-url https://opensource-demo.orangehrmlive.com \
-    --username-env-var QA_TEST_USERNAME \
-    --password-env-var QA_TEST_PASSWORD \
+    --username-env-var ORANGEHRM_USERNAME \
+    --password-env-var ORANGEHRM_PASSWORD \
     --dedicated-test-account-confirmed \
     --staging-environment-confirmed \
     --command-mode auth_smoke
 
-# Step 4 — approved Restful Booker auth smoke:
-python tools/run_dedicated_auth.py --project-id demo-5ab \
-    --approve-dedicated-auth-execution \
-    --scenario-lane dedicated_test_account_auth_future \
-    --target-category restful_booker_demo_auth \
-    --target-url https://restful-booker.herokuapp.com \
-    --username-env-var QA_TEST_USERNAME \
-    --password-env-var QA_TEST_PASSWORD \
-    --dedicated-test-account-confirmed \
-    --staging-environment-confirmed \
-    --command-mode auth_smoke
+# Restful Booker uses API token auth (not browser form) — use Phase 5D runner:
+# python tools/run_api_auth_smoke.py --project-id demo-5d \
+#     --approve-api-auth-execution \
+#     --target-profile restful_booker_public_api \
+#     --username-env-var RESTFUL_BOOKER_USERNAME \
+#     --password-env-var RESTFUL_BOOKER_PASSWORD
+# (See Section 26 — Phase 5D)
 ```
 
 ### Blocked examples (always rejected by 9 security gates)
@@ -1195,3 +1191,56 @@ DEDICATED_AUTH_SAFETY_BOUNDARY.md
 ```
 
 All Phase 5AB artifacts: `internal_only=True`, `client_visible=False`, `approved_for_commit=False`, `safe_to_deliver=False` always.
+
+---
+
+## Section 26 — Phase 5E — API Auth Smoke
+
+### What it does
+
+Approval-gated HTTP API auth smoke for token-based API targets (Restful Booker, staging, dedicated test).
+No Playwright/browser. Pure HTTP via `urllib`. Env var names only — raw values never in CLI args.
+
+### Pre-flight checklist
+
+- [ ] `core/api_auth_runner.py` imports without error
+- [ ] `tools/run_api_auth_smoke.py` present and executable
+- [ ] Target URL not in blocked list (`accounts.google.com`, `amazon.com`, Alza, etc.)
+- [ ] Env vars set in shell: `export RESTFUL_BOOKER_USERNAME=...` / `export RESTFUL_BOOKER_PASSWORD=...`
+- [ ] Ready to pass `--approve-api-auth-execution` with full awareness of what it unlocks
+
+### Execution workflow
+
+```bash
+# Step 1 — set env vars (session-only, never in .env):
+export RESTFUL_BOOKER_USERNAME=admin
+export RESTFUL_BOOKER_PASSWORD=password123
+
+# Step 2 — preview (no execution, no env var reading):
+python tools/run_api_auth_smoke.py --project-id demo-5e
+
+# Step 3 — approved Restful Booker API auth smoke:
+python tools/run_api_auth_smoke.py \
+    --project-id restful-booker-api-smoke \
+    --approve-api-auth-execution \
+    --target-profile restful_booker_public_api \
+    --username-env-var RESTFUL_BOOKER_USERNAME \
+    --password-env-var RESTFUL_BOOKER_PASSWORD
+```
+
+### Key safety invariants
+
+- `raw_credentials_logged=False` always
+- `token_logged=False` always (token presence verified, value masked)
+- `safe_to_deliver=False` always
+- No DELETE / destructive API calls in Phase 5E
+- No browser, no subprocess, no Playwright
+
+### Artifacts
+
+**`outputs/<project_id>/13_api_auth/`** (execution):
+```
+API_AUTH_EXECUTION_REPORT.json/md
+```
+
+All Phase 5E artifacts: `internal_only=True`, `client_visible=False`, `token_logged=False`, `safe_to_deliver=False` always.

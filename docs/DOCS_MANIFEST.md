@@ -272,6 +272,15 @@ All Phase 4G artifacts: `internal_only=True`, `client_visible=False`. Planning d
 
 All Phase 5AB artifacts: `internal_only=True`, `client_visible=False`, `approved_for_commit=False`, `safe_to_deliver=False` always.
 
+### `13_api_auth/` (Phase 5E — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `API_AUTH_EXECUTION_REPORT.json` | JSON | system | `APIAuthExecutionReport` schema |
+| `API_AUTH_EXECUTION_REPORT.md` | MD | system | Human-readable execution report |
+
+All Phase 5E artifacts: `internal_only=True`, `client_visible=False`, `token_logged=False`, `safe_to_deliver=False` always.
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

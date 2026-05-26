@@ -156,6 +156,12 @@ from core.schemas.runtime_secret_routing import (
     DedicatedAuthSessionArtifact,
     DedicatedAuthExecutionReport,
 )
+from core.schemas.api_auth import (
+    APIAuthTarget,
+    APIAuthCommand,
+    APIAuthSessionArtifact,
+    APIAuthExecutionReport,
+)
 
 __all__ = [
     # Base
@@ -344,4 +350,9 @@ __all__ = [
     "DedicatedAuthExecutionCommand",
     "DedicatedAuthSessionArtifact",
     "DedicatedAuthExecutionReport",
+    # Phase 5D — API Auth Smoke
+    "APIAuthTarget",
+    "APIAuthCommand",
+    "APIAuthSessionArtifact",
+    "APIAuthExecutionReport",
 ]

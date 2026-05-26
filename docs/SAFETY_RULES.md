@@ -677,6 +677,42 @@ No code path can set them to True.
 `DedicatedAuthSessionArtifact.approved_for_commit=False` and `client_visible=False` always.
 StorageState is written only under `outputs/<project_id>/12_dedicated_auth/.auth/` (gitignored).
 
+---
+
+## Phase 5E — API Auth Smoke Safety Rules
+
+**5E-1. No raw secrets accepted via CLI flags.**
+`run_api_auth_smoke.py` accepts only `--username-env-var NAME` and `--password-env-var NAME`.
+Flags `--password`, `--username`, `--token`, `--secret`, `--api-key` are detected and rejected immediately.
+
+**5E-2. Credentials used as HTTP request body only — not in URL, headers, logs, or artifacts.**
+The POST body `{"username": val, "password": val}` is constructed in memory.
+The request body is never logged, serialized, or stored in any artifact.
+
+**5E-3. Token masking is applied to all response content before any excerpt is stored.**
+`_mask()` replaces token value with `[REDACTED]` before any string enters the execution report.
+`token_logged=False` and `token_serialized=False` are hardcoded in `APIAuthExecutionReport`.
+
+**5E-4. Approval gate required — no env lookup, no network call without explicit flag.**
+`--approve-api-auth-execution` must be present. Without it: gate 1 blocks immediately, no env vars read.
+
+**5E-5. Personal and production accounts are always blocked.**
+`personal_account_confirmed=True` → gate 2 blocks.
+`production_account_confirmed=True` → gate 3 blocks.
+
+**5E-6. Only allowlisted target profiles are permitted.**
+Unknown `--target-profile` → gate 4 blocks. Current allowed: `restful_booker_public_api`.
+
+**5E-7. Strictly blocked URL patterns.**
+Same list as Phase 5AB: `accounts.google.com`, `google.com/o/oauth2`, `amazon.com`, `pay.amazon.com`,
+`alza.sk/cz/hu/at/de`, `linkedin.com`, `upwork.com`.
+
+**5E-8. No destructive API calls in Phase 5E.**
+Only `POST /auth` and optional `GET /booking` are executed. No DELETE, no PUT booking update.
+
+**5E-9. `safe_to_deliver=False` and `approved_for_client_delivery=False` always.**
+Hardcoded in `APIAuthExecutionReport.__post_init__` and `from_dict`.
+
 **5AB-14. `safe_to_deliver=False` and `approved_for_client_delivery=False` always.**
 Dedicated auth evidence is internal-only. Client delivery requires separate explicit approval.
 
