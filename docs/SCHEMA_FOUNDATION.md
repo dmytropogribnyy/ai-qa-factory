@@ -566,6 +566,42 @@ NOT forced (reflect real execution state when approved demo auth runs):
 
 ---
 
+## Phase 4G — Scenario Execution Matrix schemas
+
+**Module:** `core/schemas/scenario_execution_matrix.py`
+
+| Class | Exported as | Purpose |
+|---|---|---|
+| `ScenarioExecutionLane` | `ScenarioExecutionLane` | Single execution lane definition (name, status, allowed_now) |
+| `ScenarioPermissionRule` | `ScenarioPermissionRule` | Permission rule for an execution lane |
+| `ScenarioTargetProfile` | `ScenarioTargetProfile` | Target URL/scenario profile with routing metadata |
+| `ScenarioExecutionDecision` | `ScenarioExecutionDecision` | Routing decision for a given URL + scenario type |
+| `ScenarioExecutionMatrixReport` | `ScenarioExecutionMatrixReport` | Full matrix report (lanes, rules, profiles, decisions, counts) |
+
+### Dedicated test account planning schemas
+
+| Class | Exported as | Purpose |
+|---|---|---|
+| `DedicatedTestAccountRequirement` | `DedicatedTestAccountRequirement` | Requirement item for a dedicated test account |
+| `CredentialProvisioningRoute` | `CredentialProvisioningRoute` | Provisioning route option for test credentials |
+| `DedicatedTestAccountPlan` | `DedicatedTestAccountPlan` | Full planning-only test account plan |
+
+### Safety defaults (hardcoded — cannot be bypassed via constructor or from_dict)
+
+| Field | Value | Enforced by |
+|---|---|---|
+| `DedicatedTestAccountRequirement.production_account_allowed` | `False` | `__post_init__` + `from_dict` |
+| `DedicatedTestAccountRequirement.personal_account_allowed` | `False` | `__post_init__` + `from_dict` |
+| `CredentialProvisioningRoute.repo_storage_allowed` | `False` | `__post_init__` |
+| `CredentialProvisioningRoute.logging_allowed` | `False` | `__post_init__` |
+| `CredentialProvisioningRoute.client_visible_allowed` | `False` | `__post_init__` |
+| `DedicatedTestAccountPlan.safe_for_execution_now` | `False` | `__post_init__` + `from_dict` |
+
+NOT forced (reflect real routing state):
+`ScenarioExecutionLane.allowed_now`, `ScenarioExecutionDecision.allowed_now` — set by routing logic, not hardcoded
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic

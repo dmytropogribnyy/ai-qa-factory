@@ -972,3 +972,97 @@ AUTH_SESSION_ARTIFACTS.json/md
 AUTH_REDACTION_CHECKLIST.md
 09_auth/.auth/storageState.json  ← optional, gitignored, internal-only
 ```
+
+---
+
+## 24. Phase 4G — Scenario Execution Matrix and Dedicated Test Account Planning
+
+**Purpose:** Build a routing/planning matrix that classifies every scenario URL into an execution lane,
+defines permission rules, and produces a dedicated test account plan. Policy and planning only —
+no browser, no credentials, no execution.  
+**Requires:** Phase 4E credential safety schemas in place.
+
+### Pre-flight checklist
+
+- [ ] `core/schemas/scenario_execution_matrix.py` imports without error
+- [ ] `core/scenario_execution_matrix.py` imports without error
+- [ ] `tools/build_execution_matrix.py` present and executable
+- [ ] No `.env`, no `.auth`, no `storageState` files in scope
+
+### Safe examples
+
+```bash
+# Build full matrix (all 9 lanes + artifacts):
+python tools/build_execution_matrix.py --project-id demo-4g
+
+# JSON output only (no file write):
+python tools/build_execution_matrix.py --project-id demo-4g --json --no-write
+
+# Include dedicated test account plan:
+python tools/build_execution_matrix.py --project-id demo-4g --include-test-account-plan
+
+# Routing decision for a URL:
+python tools/build_execution_matrix.py --project-id demo-4g \
+  --decide-url https://www.saucedemo.com --scenario-type no_auth_smoke
+
+# Routing decision — strictly blocked URL:
+python tools/build_execution_matrix.py --project-id demo-4g \
+  --decide-url https://www.amazon.com --scenario-type no_auth_smoke
+```
+
+### Blocked examples (always rejected by routing)
+
+```bash
+# Personal Amazon account — always blocked:
+--decide-url https://www.amazon.com → lane=strictly_blocked, allowed_now=False
+
+# Google OAuth — always blocked:
+--decide-url https://accounts.google.com → lane=strictly_blocked, allowed_now=False
+
+# Linear — always blocked:
+--decide-url https://linear.app → lane=strictly_blocked, allowed_now=False
+
+# Alza — always blocked (real e-commerce auth required):
+--decide-url https://www.alza.sk → lane=strictly_blocked, allowed_now=False
+```
+
+### Canonical execution lanes
+
+| Lane ID | Status | Allowed Now | Approval Flag |
+|---|---|---|---|
+| `no_auth_demo_smoke` | implemented | Yes | `--approve-demo-execution` |
+| `no_auth_public_readonly_smoke` | implemented | Yes | `--approve-public-readonly-execution` |
+| `demo_auth_smoke` | implemented | Yes | `--approve-demo-auth-execution` |
+| `dedicated_test_account_auth_future` | planned | No | Phase 5A |
+| `staging_client_app_future` | planned | No | Phase 5A |
+| `production_readonly_future` | planned | No | Phase 5B |
+| `sandbox_payment_future` | planned | No | Phase 5C |
+| `task_source_integration_future` | planned | No | Phase 5D |
+| `strictly_blocked` | blocked | No | Never |
+
+### Key safety invariants
+
+- `DedicatedTestAccountRequirement.personal_account_allowed=False` — forced in `__post_init__` + `from_dict`
+- `DedicatedTestAccountRequirement.production_account_allowed=False` — forced in `__post_init__` + `from_dict`
+- `CredentialProvisioningRoute.repo_storage_allowed=False` — forced always
+- `CredentialProvisioningRoute.logging_allowed=False` — forced always
+- `CredentialProvisioningRoute.client_visible_allowed=False` — forced always
+- `DedicatedTestAccountPlan.safe_for_execution_now=False` — forced always (planning doc only)
+- No subprocess calls in builder — pure routing logic
+- No credentials read or used in builder
+- No external API calls in builder
+
+### Artifacts written to `outputs/<project_id>/10_execution_matrix/`
+
+```
+SCENARIO_EXECUTION_MATRIX.json/md
+EXECUTION_LANES.md
+PERMISSION_ROUTING_TABLE.md
+TARGET_PROFILE_RULES.md
+BLOCKED_SCENARIOS.md
+FUTURE_SCENARIOS.md
+CREDENTIAL_PROVISIONING_ROUTES.md
+DEDICATED_TEST_ACCOUNT_PLAN.json/md
+```
+
+All Phase 4G artifacts: `internal_only=True`, `client_visible=False`. Planning documents only.

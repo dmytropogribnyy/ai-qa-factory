@@ -591,6 +591,40 @@ Agents must not expose storageState content. Agents must not create client deliv
 
 ---
 
+## Phase 4G — Scenario Execution Matrix and Dedicated Test Account Planning Rules
+
+**4G-1. All execution must route through the Scenario Execution Matrix.**
+Agents must consult the matrix before proposing execution. No execution bypasses lane classification.
+
+**4G-2. Blocked scenarios remain blocked even if the user provides credentials.**
+The `strictly_blocked` lane is a policy block, not an authorization check. Credentials do not change routing.
+
+**4G-3. No personal credentials regardless of scenario or user input.**
+`personal_account_allowed=False` always. No exceptions.
+
+**4G-4. No production credentials regardless of scenario or user input.**
+`production_account_allowed=False` always. No exceptions.
+
+**4G-5. No repo-stored secrets regardless of phase or scenario.**
+`repo_storage_allowed=False` always. Vault reference or runtime input only for future lanes.
+
+**4G-6. Alza/Amazon production auth remains blocked.**
+Alza.sk production, Amazon.com retail, Google personal OAuth, LinkedIn, Upwork are in `strictly_blocked`.
+
+**4G-7. Amazon Pay Sandbox is future Phase 5C — not allowed now.**
+Amazon Pay Sandbox routes to `sandbox_payment_future`. No execution until Phase 5C explicit approval.
+
+**4G-8. Linear/Jira/ClickUp are task sources, not app-under-test.**
+Task source URLs route to `task_source_integration_future`. Not allowed now. Phase 5D.
+
+**4G-9. Dedicated test accounts require future explicit approval.**
+`dedicated_test_account_auth_future` and `staging_client_app_future` are not allowed now. Phase 5A.
+
+**4G-10. `safe_for_execution_now=False` in dedicated test-account plan always.**
+No execution of dedicated test-account lanes without a future explicitly approved phase.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

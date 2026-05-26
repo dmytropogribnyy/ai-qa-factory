@@ -1254,6 +1254,100 @@ AUTH_REDACTION_CHECKLIST.md
 
 ---
 
+## Phase 4G — Scenario Execution Matrix `[implemented]`
+
+### `tools/build_execution_matrix.py`
+
+**Builds the canonical scenario execution matrix, permission routing table, and dedicated
+test-account plan. No execution, no credentials, no external calls.**
+
+```bash
+# Build full matrix
+python tools/build_execution_matrix.py --project-id demo
+
+# Output JSON to stdout
+python tools/build_execution_matrix.py --project-id demo --json
+
+# Build without writing artifacts
+python tools/build_execution_matrix.py --project-id demo --no-write
+
+# Include dedicated test-account plan explicitly (included by default)
+python tools/build_execution_matrix.py --project-id demo --include-test-account-plan
+
+# Decision examples
+python tools/build_execution_matrix.py --project-id demo \
+    --decide-url https://www.saucedemo.com --scenario-type no_auth_smoke
+python tools/build_execution_matrix.py --project-id demo \
+    --decide-url https://playwright.dev --scenario-type readonly_smoke
+python tools/build_execution_matrix.py --project-id demo \
+    --decide-url https://www.saucedemo.com --scenario-type demo_auth
+python tools/build_execution_matrix.py --project-id demo \
+    --decide-url https://www.alza.sk --scenario-type production_auth
+python tools/build_execution_matrix.py --project-id demo \
+    --decide-url https://www.amazon.com --scenario-type marketplace_checkout
+python tools/build_execution_matrix.py --project-id demo \
+    --decide-url https://linear.app/acme/issue/QA-123/example --scenario-type task_source
+python tools/build_execution_matrix.py --project-id demo \
+    --decide-url https://staging.example.com --scenario-type dedicated_test_account_auth
+python tools/build_execution_matrix.py --project-id demo \
+    --decide-url https://pay.amazon.com --scenario-type amazon_pay_sandbox
+```
+
+| Flag | Description |
+|------|-------------|
+| `--project-id` | Project ID (required) |
+| `--json` | Print matrix JSON to stdout |
+| `--no-write` | Skip writing artifacts to outputs/ |
+| `--include-test-account-plan` | Include dedicated test-account plan (default: included) |
+| `--decide-url` | Classify this URL into an execution lane |
+| `--scenario-type` | Scenario type hint for decision |
+| `--target-category` | Target category override for decision |
+| `--profile` | Profile hint for decision |
+| `--outputs-root` | Override outputs root directory |
+
+### Canonical execution lanes (9 total)
+
+| Lane | Status | Allowed Now | Approval Flag |
+|------|--------|-------------|---------------|
+| `no_auth_demo_smoke` | implemented | ✓ | `--approve-demo-execution` |
+| `no_auth_public_readonly_smoke` | implemented | ✓ | `--approve-public-readonly-execution` |
+| `demo_auth_smoke` | implemented | ✓ | `--approve-demo-auth-execution` |
+| `dedicated_test_account_auth_future` | planned | ✗ | future Phase 5A |
+| `staging_client_app_future` | planned | ✗ | future Phase 5A |
+| `production_readonly_future` | planned | ✗ | future Phase 5B |
+| `sandbox_payment_future` | planned | ✗ | future Phase 5C |
+| `task_source_integration_future` | planned | ✗ | future Phase 5D |
+| `strictly_blocked` | blocked | ✗ | never |
+
+### Safety invariants
+
+- No execution performed. No credentials used. No external calls made.
+- Personal/production credentials remain forbidden.
+- Repo-stored secrets remain forbidden.
+- Alza/Amazon production auth remains blocked.
+- Amazon Pay Sandbox is future Phase 5C — not allowed now.
+- Linear/Jira/ClickUp are task sources — not app-under-test.
+- Dedicated test accounts require future explicit approval.
+- `safe_for_execution_now=False` always in dedicated test-account plan.
+- `personal_account_allowed=False` always.
+- `production_account_allowed=False` always.
+- `repo_storage_allowed=False` always.
+
+### Generated artifacts (`outputs/<project_id>/10_execution_matrix/`)
+
+```
+SCENARIO_EXECUTION_MATRIX.json/md
+EXECUTION_LANES.md
+TARGET_PROFILE_RULES.md
+PERMISSION_ROUTING_TABLE.md
+BLOCKED_SCENARIOS.md
+FUTURE_SCENARIOS.md
+DEDICATED_TEST_ACCOUNT_PLAN.json/md
+CREDENTIAL_PROVISIONING_ROUTES.md
+```
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

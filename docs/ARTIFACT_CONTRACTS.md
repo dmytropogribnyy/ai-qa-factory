@@ -334,6 +334,7 @@ outputs/<project_id>/
     08_credentials/      ← Credential safety artifacts (Phase 4E — implemented)
     09_auth/             ← Demo auth execution artifacts (Phase 4F — implemented)
         .auth/           ← storageState (gitignored, internal-only, never committed)
+    10_execution_matrix/ ← Scenario execution matrix and test account plan (Phase 4G — implemented)
     99_internal/         ← Internal notes, quality gate reports, debug logs
         scenario_evaluation/  ← Scenario batch evaluation (Phase 4ABC — implemented)
 ```
@@ -353,12 +354,14 @@ outputs/<project_id>/
 | `08_credentials/` | No | Never — internal only | Credential policy, safety report, storageState policy, auth approval draft, sandbox classification, redaction checklist |
 | `09_auth/` | No | Never — internal only | Auth execution approval, report, command log, session artifacts, redaction checklist |
 | `09_auth/.auth/` | **Never committed** | Never | storageState (gitignored always) |
+| `10_execution_matrix/` | No | Never — internal only | Scenario execution matrix, permission rules, target profiles, routing decisions, test account plan |
 | `99_internal/` | No | Never | Internal quality gates, debug, scenario evaluation |
 
 **`06_client_draft/` is never sent without completing `DELIVERY_SAFETY_CHECKLIST.md`.**
 **`07_execution/` is always internal-only. Evidence remains `client_visible=False` until explicit future approval.**
 **`08_credentials/` is always internal-only. All credential safety artifacts remain `client_visible=False`. Human redaction review required before any client-facing use.**
 **`09_auth/` is always internal-only. Auth execution artifacts remain `client_visible=False`. storageState `approved_for_commit=False` always — must not be committed.**
+**`10_execution_matrix/` is always internal-only. All planning artifacts remain `client_visible=False`. `safe_for_execution_now=False` always — this is planning only.**
 **`99_internal/` must never be included in client delivery packages.**
 
 ---

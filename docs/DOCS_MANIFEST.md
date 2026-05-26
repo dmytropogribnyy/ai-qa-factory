@@ -232,6 +232,23 @@ All Phase 4E artifacts: `internal_only=True`, `client_visible=False`. Human reda
 
 All Phase 4F artifacts: `internal_only=True`, `client_visible=False`. storageState `approved_for_commit=False` always.
 
+### Phase 4G — Scenario Execution Matrix artifacts (`outputs/<id>/10_execution_matrix/`)
+
+| Artifact | Type | Owner | Description |
+|---|---|---|---|
+| `SCENARIO_EXECUTION_MATRIX.json` | JSON | system | Full matrix report (lanes, rules, profiles) |
+| `SCENARIO_EXECUTION_MATRIX.md` | MD | system | Human-readable matrix report |
+| `EXECUTION_LANES.md` | MD | system | All 9 canonical execution lanes |
+| `PERMISSION_ROUTING_TABLE.md` | MD | system | Permission routing rules |
+| `TARGET_PROFILE_RULES.md` | MD | system | Target profiles and routing rules |
+| `BLOCKED_SCENARIOS.md` | MD | system | All strictly-blocked scenario patterns |
+| `FUTURE_SCENARIOS.md` | MD | system | Planned future execution lanes |
+| `CREDENTIAL_PROVISIONING_ROUTES.md` | MD | system | Credential provisioning route options |
+| `DEDICATED_TEST_ACCOUNT_PLAN.json` | JSON | system | Test account plan |
+| `DEDICATED_TEST_ACCOUNT_PLAN.md` | MD | system | Human-readable test account plan |
+
+All Phase 4G artifacts: `internal_only=True`, `client_visible=False`. Planning documents only — `safe_for_execution_now=False` always.
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

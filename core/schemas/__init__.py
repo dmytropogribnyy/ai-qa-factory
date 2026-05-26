@@ -138,6 +138,16 @@ from core.schemas.auth_execution import (
     AuthExecutionReport,
     AuthSessionArtifact,
 )
+from core.schemas.scenario_execution_matrix import (
+    ScenarioExecutionLane,
+    ScenarioPermissionRule,
+    ScenarioTargetProfile,
+    ScenarioExecutionDecision,
+    ScenarioExecutionMatrixReport,
+    DedicatedTestAccountRequirement,
+    CredentialProvisioningRoute,
+    DedicatedTestAccountPlan,
+)
 
 __all__ = [
     # Base
@@ -310,4 +320,13 @@ __all__ = [
     "AuthExecutionCommand",
     "AuthExecutionReport",
     "AuthSessionArtifact",
+    # Scenario Execution Matrix (Phase 4G)
+    "ScenarioExecutionLane",
+    "ScenarioPermissionRule",
+    "ScenarioTargetProfile",
+    "ScenarioExecutionDecision",
+    "ScenarioExecutionMatrixReport",
+    "DedicatedTestAccountRequirement",
+    "CredentialProvisioningRoute",
+    "DedicatedTestAccountPlan",
 ]

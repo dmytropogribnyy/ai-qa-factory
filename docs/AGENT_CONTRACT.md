@@ -336,6 +336,55 @@ Types: `feat`, `fix`, `docs`, `test`, `refactor`
 
 ---
 
+## 10. Phase 4G — Scenario Execution Matrix Rules
+
+Agents must follow these rules when proposing or evaluating test execution:
+
+### Consult the matrix before proposing execution
+
+- Before proposing any execution task, check `outputs/<project_id>/10_execution_matrix/EXECUTION_MATRIX_REPORT.json` (if present) to determine which lane applies.
+- If no matrix artifact exists yet, run `python tools/build_execution_matrix.py --project-id <id>` first.
+- Do not propose execution that falls outside an implemented, `allowed_now=True` lane.
+
+### Routing rules (enforced by builder — agents must not bypass)
+
+| Target type | Correct lane | Allowed now |
+|---|---|---|
+| SauceDemo (no auth) | `no_auth_demo_smoke` | Yes |
+| Public read-only docs | `no_auth_public_readonly_smoke` | Yes |
+| SauceDemo (with auth) | `demo_auth_smoke` | Yes |
+| Dedicated test account | `dedicated_test_account_auth_future` | No — Phase 5A |
+| Staging/client app | `staging_client_app_future` | No — Phase 5A |
+| Production (read-only) | `production_readonly_future` | No — Phase 5B |
+| Sandbox payment | `sandbox_payment_future` | No — Phase 5C |
+| Task source integration (Linear, Jira, etc.) | `task_source_integration_future` | No — Phase 5D |
+| Real e-commerce / OAuth (Amazon, Alza, Google OAuth, LinkedIn, Upwork) | `strictly_blocked` | Never |
+
+### Credential and account rules (never bypass)
+
+- Never propose using personal accounts — `personal_account_allowed=False` always
+- Never propose using production accounts — `production_account_allowed=False` always
+- Never propose storing credentials in repo — `repo_storage_allowed=False` always
+- Never propose logging credential values — `logging_allowed=False` always
+- Never propose making credentials client-visible — `client_visible_allowed=False` always
+- The dedicated test account plan is `safe_for_execution_now=False` — never treat it as execution authorization
+
+### Scenario classification rules
+
+- Classify task-source integration URLs (Linear, Jira, etc.) separately from test targets — they are **never** test execution targets
+- Amazon Pay / payment sandbox URLs route to `sandbox_payment_future` — not `no_auth_demo_smoke`
+- Alza, Amazon, Google OAuth, LinkedIn, Upwork — always `strictly_blocked`
+- `localhost`/`127.0.0.1` URLs route to `no_auth_demo_smoke` with local-only note
+- When unsure, route to `strictly_blocked` and surface it for human review
+
+### Matrix artifact rules
+
+- All `10_execution_matrix/` artifacts: `internal_only=True`, `client_visible=False`
+- Matrix report is a planning document — `safe_for_execution_now=False` always
+- Do not include matrix artifacts in client delivery packages
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

@@ -765,6 +765,29 @@ These rules apply in every phase, without exception:
 
 ---
 
+## Phase 4G — Scenario Execution Matrix and Dedicated Test Account Planning `[implemented]`
+
+**Goal:** Canonical execution lane routing, permission table, target profiles, dedicated
+test-account planning. Policy/schema/routing only — no execution, no credentials.
+
+**Allowed-now lanes (3):** `no_auth_demo_smoke`, `no_auth_public_readonly_smoke`, `demo_auth_smoke`  
+**Future lanes (5):** `dedicated_test_account_auth_future`, `staging_client_app_future`,
+`production_readonly_future`, `sandbox_payment_future`, `task_source_integration_future`  
+**Blocked lane (1):** `strictly_blocked`
+
+**Safety invariants:** `safe_for_execution_now=False`, `personal_account_allowed=False`,
+`production_account_allowed=False`, `repo_storage_allowed=False`, `logging_allowed=False`,
+`client_visible_allowed=False` — all hardcoded.
+
+**What Phase 4G is NOT:**
+- Not approval for dedicated test-account execution (Phase 5A)
+- Not approval for staging client app execution (Phase 5A)
+- Not approval for Amazon Pay Sandbox (Phase 5C)
+- Not approval for task source integration (Phase 5D)
+- Not approval for client delivery
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

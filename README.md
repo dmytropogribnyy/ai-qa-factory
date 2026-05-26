@@ -82,7 +82,7 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 577 tests, mock mode, no API keys needed
+python -m pytest -q             # 1335 tests, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
@@ -120,6 +120,22 @@ python main.py full --input brief.txt --only proposal_writer
 python main.py full --input brief.txt --from-step proposal_writer
 python main.py run-tests --project-path outputs/<id>/framework --kind playwright
 python main.py ask --project-id <id> --question "Why apply_selectively?"
+
+# Workbench tools (Phase 3A+)
+python tools/build_strategy.py --project-id <id>          # Phase 2C: QA strategy
+python tools/docs_audit.py                                 # docs freshness check
+python tools/agent_readiness_audit.py                      # agent readiness check
+
+# Controlled execution tools (Phase 4D+)
+python tools/run_browser_demo.py --project-id <id> --approve-demo-execution
+python tools/inspect_credentials.py --project-id <id>     # Phase 4E: credential safety
+python tools/run_demo_auth.py --project-id <id> \
+    --approve-demo-auth-execution --auth-profile saucedemo_demo_auth
+
+# Scenario execution matrix (Phase 4G)
+python tools/build_execution_matrix.py --project-id <id>
+python tools/build_execution_matrix.py --project-id <id> \
+    --decide-url https://www.saucedemo.com --scenario-type no_auth_smoke
 ```
 
 Full command reference with planned future commands: [`docs/COMMANDS.md`](docs/COMMANDS.md)
@@ -167,7 +183,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **577 passed** (69 original + 81 schema foundations + 62 auth/credential/mobile + 20 integration + 26 documentation governance + 73 Phase 2A classification + 82 Phase 2B blueprint + 58 Phase 2B-AGENT readiness + 106 Phase 2C strategy)
+Expected: **1335 passed** (all phases through 4G — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, approved demo auth execution, scenario execution matrix)
 
 ---
 
@@ -181,16 +197,36 @@ Expected: **577 passed** (69 original + 81 schema foundations + 62 auth/credenti
 | [`docs/APPROVAL_MODEL.md`](docs/APPROVAL_MODEL.md) | Risk levels, approval gates, what runs automatically |
 | [`docs/SAFETY_RULES.md`](docs/SAFETY_RULES.md) | Hard rules — what never runs automatically |
 | [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) | Orchestrator, LangGraph, Playwright, Allure, LangSmith decisions |
-| [`docs/SCHEMA_FOUNDATION.md`](docs/SCHEMA_FOUNDATION.md) | `core/schemas/` layer — 35 domain models |
+| [`docs/SCHEMA_FOUNDATION.md`](docs/SCHEMA_FOUNDATION.md) | `core/schemas/` layer — 50+ domain models |
 | [`docs/PROJECT_TYPES.md`](docs/PROJECT_TYPES.md) | Supported project types with risks and test focus |
 | [`docs/DOCUMENTATION_GOVERNANCE.md`](docs/DOCUMENTATION_GOVERNANCE.md) | How to keep docs accurate as the project evolves |
 | [`docs/DOCS_MANIFEST.md`](docs/DOCS_MANIFEST.md) | Registry of all documentation files and their status |
+| [`docs/PHASE_CONTRACTS.md`](docs/PHASE_CONTRACTS.md) | Phase boundaries — what is implemented vs planned |
+| [`docs/ARTIFACT_CONTRACTS.md`](docs/ARTIFACT_CONTRACTS.md) | Artifact paths, ownership, and delivery rules |
+| [`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md) | Agent operating rules and safety obligations |
+| [`docs/AGENT_HANDOFF_TEMPLATE.md`](docs/AGENT_HANDOFF_TEMPLATE.md) | Final phase report template |
 
 ---
 
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
+### v5.2.0 — Controlled Execution + Scenario Matrix (current)
+
+- Phase 3A: `core/framework_scaffold_builder.py` — Playwright TypeScript scaffold generator
+- Phase 3B: `core/scaffold_validator.py`, client scenario fixtures (`fixtures/client_scenarios/`) — scaffold validation and scenario library
+- Phase 3C: `core/toolchain_validator.py` — local toolchain validation (tsc, eslint, npx playwright)
+- Phase 4A: `core/schemas/execution_approval.py` — execution readiness checklist (approval-gated)
+- Phase 4B: `core/schemas/evidence.py` — evidence foundation with redaction and quality gates
+- Phase 4C: `core/schemas/reporting.py`, `core/schemas/delivery_preview.py` — report drafts, delivery preview, safety checklists
+- Phase 4ABC: `core/schemas/scenario_evaluation.py` — scenario batch evaluation, 4 synthetic + 8 real-world scenarios
+- Phase 4D: `core/browser_demo_runner.py`, `tools/run_browser_demo.py` — approval-gated browser demo execution (SauceDemo only)
+- Phase 4E: `core/credential_safety_inspector.py`, `tools/inspect_credentials.py` — credential safety inspection with hardcoded guards
+- Phase 4F: `core/demo_auth_runner.py`, `tools/run_demo_auth.py` — approval-gated demo auth execution (SauceDemo only, public credentials)
+- Phase 4G: `core/scenario_execution_matrix.py`, `tools/build_execution_matrix.py` — scenario execution matrix, 9 canonical lanes, dedicated test account planning
+- All safety invariants double-enforced in `__post_init__` + `from_dict` — bypass-proof
+- 1335 tests passing
+
 ### v5.1.0 — Guided QA Automation Workbench
 
 - Product direction: evolving from opportunity router to full QA automation workbench
@@ -203,14 +239,12 @@ Expected: **577 passed** (69 original + 81 schema foundations + 62 auth/credenti
 - Phase 2B-AGENT: `docs/AGENT_CONTRACT.md`, `docs/PHASE_CONTRACTS.md`, `docs/ARTIFACT_CONTRACTS.md`, `docs/AGENT_HANDOFF_TEMPLATE.md`, `tools/agent_readiness_audit.py`
 - Phase 2C: `core/qa_strategy_planner.py`, `core/schemas/qa_strategy.py`, `tools/build_strategy.py` — QA strategy planner, 8 artifact types in `02_strategy/`
 - Pre-screen first: opportunity evaluation workflows fully supported and preserved
-- 577 tests passing
 
 ### v5.0.9 — Validation hardened
 
-Patches: api_testing routing (P1), mobile risk flag (P2), SaaS billing check (P3), test-design mode (P4).  
-Tests: 69/69.
+Patches: api_testing routing (P1), mobile risk flag (P2), SaaS billing check (P3), test-design mode (P4).
 
-### v5.0.8 model routing additions
+### v5.0.8 — Model routing additions
 
 Role-based model routing profiles: architect / coding / review / fast / vision / fallback.  
 `system-health`, `--project-id`, `--source-platform` added.

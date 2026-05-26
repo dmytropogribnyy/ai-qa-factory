@@ -724,6 +724,60 @@ class WorkbenchController:
         runner = DemoAuthRunner(outputs_root=self._outputs_root)
         return runner.render_auth_artifacts(report, project_id)
 
+    # Phase 4G — Scenario Execution Matrix API
+
+    def build_scenario_execution_matrix(
+        self,
+        project_id: str,
+        include_test_account_plan: bool = True,
+        decision_url: Optional[str] = None,
+        scenario_type: Optional[str] = None,
+        target_category: Optional[str] = None,
+        profile: Optional[str] = None,
+    ):
+        """Build the canonical scenario execution matrix. No execution, no credentials."""
+        from core.scenario_execution_matrix import ScenarioExecutionMatrixBuilder
+        builder = ScenarioExecutionMatrixBuilder(outputs_root=self._outputs_root)
+        return builder.build_matrix(
+            project_id=project_id,
+            include_test_account_plan=include_test_account_plan,
+            decision_url=decision_url,
+            scenario_type=scenario_type,
+            target_category=target_category,
+            profile=profile,
+        )
+
+    def decide_scenario_execution(
+        self,
+        project_id: str,
+        target_url: Optional[str],
+        scenario_type: str,
+        target_category: Optional[str] = None,
+        profile: Optional[str] = None,
+    ):
+        """Classify a URL/scenario into an execution lane. No execution, no credentials."""
+        from core.scenario_execution_matrix import ScenarioExecutionMatrixBuilder
+        builder = ScenarioExecutionMatrixBuilder(outputs_root=self._outputs_root)
+        return builder.decide_execution(
+            project_id=project_id,
+            target_url=target_url,
+            scenario_type=scenario_type,
+            target_category=target_category,
+            profile=profile,
+        )
+
+    def build_dedicated_test_account_plan(self, project_id: str):
+        """Build dedicated test-account planning document. No execution, no credentials."""
+        from core.scenario_execution_matrix import ScenarioExecutionMatrixBuilder
+        builder = ScenarioExecutionMatrixBuilder(outputs_root=self._outputs_root)
+        return builder.build_dedicated_test_account_plan(project_id)
+
+    def render_scenario_execution_matrix_artifacts(self, report, project_id: str) -> dict:
+        """Write matrix artifacts to outputs/<project_id>/10_execution_matrix/."""
+        from core.scenario_execution_matrix import ScenarioExecutionMatrixBuilder
+        builder = ScenarioExecutionMatrixBuilder(outputs_root=self._outputs_root)
+        return builder.render_matrix_artifacts(report, project_id)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
