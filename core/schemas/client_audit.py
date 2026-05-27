@@ -1,8 +1,10 @@
-"""Phase 6.1 -- Client audit workflow schemas."""
+"""Phase 6.1/6.2 -- Client audit workflow schemas."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+
+from core.schemas.finding import Finding
 
 
 class ClientAuditMode(str, Enum):
@@ -95,6 +97,7 @@ class ModuleResult:
     status: str
     artifacts: list[str] = field(default_factory=list)
     note: str = ""
+    findings: list[Finding] = field(default_factory=list)
 
 
 @dataclass
@@ -113,10 +116,17 @@ class ClientAuditResult:
     modules_executed: int = 0
     modules_planning_only: int = 0
     blocked_risky_actions: int = 0
-    findings: int = 0
+    findings: int = 0  # total count (backward compat int)
     artifacts_root: str = ""
     delivery_dir: str = ""
     module_results: list[ModuleResult] = field(default_factory=list)
+    # Phase 6.2: structured findings and risk matrix
+    structured_findings: list[Finding] = field(default_factory=list)
+    total_findings: int = 0
+    findings_by_severity: dict = field(default_factory=dict)
+    findings_by_category: dict = field(default_factory=dict)
+    top_risks: list = field(default_factory=list)
+    risk_summary: dict = field(default_factory=dict)
     # Safety invariants -- always reset by __post_init__
     human_review_required: bool = True
     approved_for_client_delivery: bool = False

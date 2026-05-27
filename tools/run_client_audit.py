@@ -133,6 +133,24 @@ def _print_summary(result_dict: dict) -> None:
     print("  Human review required:        yes")
     print("  Approved for client delivery: no (human sign-off required)")
     print("")
+    # Risk matrix summary
+    total = result_dict.get("total_findings", result_dict.get("findings", 0))
+    print(f"  Risk Matrix: {total} finding(s)")
+    by_sev = result_dict.get("findings_by_severity", {})
+    sev_parts = [f"{s}={c}" for s, c in by_sev.items() if c]
+    if sev_parts:
+        print(f"    by severity: {', '.join(sev_parts)}")
+    top_risks = result_dict.get("top_risks", [])
+    if top_risks:
+        print("    top risks:")
+        for risk in top_risks[:3]:
+            sev = risk.get("severity", "").upper()
+            title = risk.get("title", "")
+            print(f"      [{sev}] {title}")
+    rs = result_dict.get("risk_summary", {})
+    for action in rs.get("recommended_next_actions", []):
+        print(f"    => {action}")
+    print("")
     print("  Safety invariants:")
     print(f"    raw_secrets_allowed:          {result_dict['raw_secrets_allowed']}")
     print(f"    destructive_actions_allowed:  {result_dict['destructive_actions_allowed']}")

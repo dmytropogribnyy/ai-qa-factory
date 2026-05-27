@@ -1291,6 +1291,24 @@ After step 7 is blocked, original spec files must have no `// HEAL-` comments in
 
 ---
 
+## Phase 6.2 — Finding Schema + Risk Matrix Safety Rules
+
+**6.2-1. No fake findings are generated for planning_only modules.**
+Finding adapters must only emit `Finding` objects when real evidence exists (blocked_count > 0, scan failed, etc.).
+An empty input must always return `[]`.
+
+**6.2-2. Finding IDs are deterministic and project-scoped.**
+IDs follow the pattern `CATEGORY-TYPE-PROJECTID-NNN`. No randomness in IDs.
+
+**6.2-3. Risk score is deterministic; no randomness in sort keys.**
+`RiskMatrix.sorted_by_risk()` uses `-risk_score, id` as the sort key — no timestamps, no random tiebreakers.
+
+**6.2-4. Structured findings are read-only in `ClientAuditResult`.**
+Safety invariants from Phase 6.1 (`__post_init__` resets) remain unchanged.
+`structured_findings` and `risk_summary` are informational; they do not grant any approvals.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

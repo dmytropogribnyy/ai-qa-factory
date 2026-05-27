@@ -1176,6 +1176,40 @@ No new schemas. Demo workflow calls existing `dispatch()` and returns `dict[str,
 
 ---
 
+## Phase 6.2 — Structured Finding Schema + Risk Matrix
+
+**`core/schemas/finding.py`** — typed audit finding schema:
+
+| Class | Description |
+|---|---|
+| `Finding` | Typed, machine-readable audit result dataclass |
+| `Severity` | 5-level enum: CRITICAL, HIGH, MEDIUM, LOW, INFO |
+| `FindingCategory` | 11-category enum: api, security, performance, accessibility, ... |
+| `FindingStatus` | 5-state enum: open, needs_review, accepted_risk, fixed, false_positive |
+| `Confidence` | 3-level enum: HIGH, MEDIUM, LOW |
+
+**`Finding` fields:**
+- Required: `id`, `title`, `description`, `severity`, `category`, `source_module`
+- Optional: `affected_area`, `evidence`, `recommendation`, `client_impact`, `created_at`, `tags`
+- Default confidence: `MEDIUM`; default status: `OPEN`
+- Supports `to_dict()` / `from_dict()` lossless roundtrip
+
+**`core/risk/risk_matrix.py`** — `RiskMatrix` + `risk_score()`:
+- `risk_score(f)` = `severity_weight x confidence_weight`; range 0.5-5.0
+- `sorted_by_risk()` — deterministic: `-risk_score, id`
+- `by_severity()` — always returns all 5 severity keys
+- `summary()` — JSON-serializable dict with `total`, `by_severity`, `by_category`, `top_risks`, `has_critical`, `has_high`, `recommended_next_actions`
+
+**`core/risk/finding_adapters.py`** — convert module evidence to `Finding` objects:
+- `findings_from_api_contract()` — blocked_count > 0 -> HIGH; requires_approval > 0 -> MEDIUM; parse_errors -> LOW
+- `findings_from_secret_scan()` — scan_passed=True -> []; scan_passed=False -> CRITICAL
+
+**Schema integration:**
+- `ModuleResult.findings: list[Finding]` — per-module structured findings
+- `ClientAuditResult.structured_findings` + `total_findings` + `risk_summary` — aggregated at workflow level
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic

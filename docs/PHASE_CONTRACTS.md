@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 6.5.0
+**Version:** 6.6.0
 **Updated:** 2026-05-27
-**Phase:** 6.1
+**Phase:** 6.2
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1673,6 +1673,45 @@ Client Delivery Pack.
 - All CLI tests pass on Windows (ASCII-only output, no Unicode encoding errors)
 
 **Quality gates:** ruff clean; pytest 2787 passed (49 new Phase 6-R tests)
+
+---
+
+## Phase 6.2 — Structured Finding Schema + Risk Matrix `[implemented]`
+
+**Purpose:** Introduce a typed `Finding` dataclass with severity/category/confidence/status enums and a deterministic `RiskMatrix` for scoring, sorting, and aggregating findings. Module adapters convert real evidence to `Finding` objects. `ClientAuditResult` now carries structured findings alongside the backward-compat `findings: int` counter.
+
+**New artifacts:**
+- `core/schemas/finding.py` — `Finding`, `Severity`, `FindingCategory`, `FindingStatus`, `Confidence`
+- `core/risk/__init__.py` — risk package
+- `core/risk/risk_matrix.py` — `RiskMatrix`, `risk_score()`
+- `core/risk/finding_adapters.py` — `findings_from_api_contract()`, `findings_from_secret_scan()`
+- `tests/test_phase6_2_finding_schema.py` — 98 tests
+
+**Modified artifacts:**
+- `core/schemas/client_audit.py` — `ModuleResult.findings: list[Finding]`; `ClientAuditResult` + `structured_findings`, `total_findings`, `findings_by_severity`, `findings_by_category`, `top_risks`, `risk_summary`
+- `core/client_audit_workflow.py` — `run()` aggregates findings; `_result_to_dict()` serializes structured fields; `_write_summary_md()` adds Risk Matrix section
+- `tools/run_client_audit.py` — `_print_summary()` shows risk matrix counts and top risks
+
+**Risk score formula:** `severity_weight × confidence_weight`
+- Severity weights: CRITICAL=5, HIGH=4, MEDIUM=3, LOW=2, INFO=1
+- Confidence weights: HIGH=1.0, MEDIUM=0.75, LOW=0.5
+- Range: 0.5 (INFO + LOW) to 5.0 (CRITICAL + HIGH)
+
+**Adapter contract:**
+- Only real evidence produces findings; empty input always returns `[]`
+- `findings_from_api_contract`: blocked_count>0 → HIGH/API; requires_approval_count>0 → MEDIUM/API; parse_errors → LOW/DOCUMENTATION
+- `findings_from_secret_scan`: scan_passed=True → []; scan_passed=False → CRITICAL/SECURITY
+
+**Acceptance criteria:**
+- `Finding.to_dict()` / `from_dict()` roundtrip losslessly
+- `RiskMatrix.sorted_by_risk()` is deterministic: `-risk_score, id` sort key
+- `RiskMatrix.by_severity()` always returns all 5 severity keys (even if count=0)
+- No fake findings generated for planning_only mode or empty data
+- `run_report.json` includes `structured_findings`, `total_findings`, `risk_summary`
+- `summary.md` includes `## Risk Matrix` section with top risks
+- All safety invariants from Phase 6.1 still enforced
+
+**Quality gates:** ruff clean; pytest 2991 passed (98 new Phase 6.2 tests)
 
 ---
 

@@ -225,7 +225,17 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v6.5.0 — One-Command Client Audit Workflow (current)
+### v6.6.0 — Structured Finding Schema + Risk Matrix (current)
+
+- Phase 6.2: `core/schemas/finding.py` — typed `Finding` dataclass with `Severity`, `FindingCategory`, `FindingStatus`, `Confidence` enums
+- Phase 6.2: `core/risk/risk_matrix.py` — `RiskMatrix` + `risk_score()` (deterministic scoring and sorting)
+- Phase 6.2: `core/risk/finding_adapters.py` — adapters: `findings_from_api_contract()`, `findings_from_secret_scan()`
+- Phase 6.2: `ClientAuditResult` extended with `structured_findings`, `total_findings`, `risk_summary` (backward-compat `findings: int` preserved)
+- Phase 6.2: `run_report.json` includes full structured findings + risk matrix summary
+- Phase 6.2: `summary.md` includes `## Risk Matrix` section with top risks and recommended actions
+- Phase 6.2: 98 new tests; 2991 total
+
+### v6.5.0 — One-Command Client Audit Workflow
 
 - Phase 6.1: `tools/run_client_audit.py` — single entrypoint for a full client QA audit
 - Phase 6.1: `core/client_audit_workflow.py` — thin orchestrator over existing modules

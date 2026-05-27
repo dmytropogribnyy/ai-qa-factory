@@ -1,8 +1,8 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 6.5.0  
+**Version:** 6.6.0  
 **Updated:** 2026-05-27  
-**Phase:** 6.1
+**Phase:** 6.2
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.
@@ -504,6 +504,42 @@ for any module with `status == "planning_only"`.
 | `tools/run_mcp_server.py` | CLI: `--list-tools`, `--version`, `--demo-health`, start server |
 
 **No output artifact directories** — Phase 6 is an adapter layer only. Artifacts are written by core modules (28–32 dirs).
+
+---
+
+## Phase 6.1 — One-Command Client Audit Workflow
+
+| File | Purpose |
+|---|---|
+| `core/schemas/client_audit.py` | `ClientAuditMode`, `ClientAuditInputs`, `ClientAuditPlan`, `ClientAuditResult`, `ModuleResult`, `SkippedModule` |
+| `core/client_audit_workflow.py` | `ClientAuditWorkflow` orchestrator |
+| `tools/run_client_audit.py` | One-command CLI entry point |
+| `tests/test_phase6_1_client_audit_workflow.py` | 106 tests |
+
+**Output directory:** `outputs/<project_id>/33_client_audit/`
+
+---
+
+## Phase 6-R — MCP Demo Workflow
+
+| File | Purpose |
+|---|---|
+| `tools/run_mcp_demo_workflow.py` | 7-step demo runner |
+| `tests/test_phase6r_mcp_demo_workflow.py` | 49 end-to-end tests |
+
+---
+
+## Phase 6.2 — Structured Finding Schema + Risk Matrix
+
+| File | Purpose |
+|---|---|
+| `core/schemas/finding.py` | `Finding`, `Severity`, `FindingCategory`, `FindingStatus`, `Confidence` |
+| `core/risk/__init__.py` | Risk package init |
+| `core/risk/risk_matrix.py` | `RiskMatrix`, `risk_score()` |
+| `core/risk/finding_adapters.py` | `findings_from_api_contract()`, `findings_from_secret_scan()` |
+| `tests/test_phase6_2_finding_schema.py` | 98 tests |
+
+**Modified:** `core/schemas/client_audit.py`, `core/client_audit_workflow.py`, `tools/run_client_audit.py`
 
 ---
 

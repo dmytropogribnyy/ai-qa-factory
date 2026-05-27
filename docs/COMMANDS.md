@@ -2912,6 +2912,30 @@ python tools/run_mcp_demo_workflow.py --no-write --json-output
 
 ---
 
+## Phase 6.2 — Structured Finding Schema + Risk Matrix
+
+No new CLI commands. Phase 6.2 adds the finding schema, risk matrix, and adapters as library code that is
+automatically used by `run_client_audit.py`. The `run_report.json` and `summary.md` output artifacts
+now contain structured findings and a risk matrix section.
+
+**New output fields in `run_report.json`:**
+
+| Field | Description |
+|---|---|
+| `structured_findings` | List of serialized `Finding` objects |
+| `total_findings` | Total finding count |
+| `findings_by_severity` | Count per severity level |
+| `findings_by_category` | Count per category |
+| `top_risks` | Top 5 findings by risk score |
+| `risk_summary` | Full risk matrix summary dict |
+
+**New `summary.md` section:** `## Risk Matrix` with counts, top risks, and recommended next actions.
+
+**Risk score formula:** `severity_weight × confidence_weight`
+Range: 0.5 (INFO + LOW confidence) to 5.0 (CRITICAL + HIGH confidence)
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

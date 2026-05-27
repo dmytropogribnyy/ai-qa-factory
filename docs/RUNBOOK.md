@@ -2303,3 +2303,42 @@ python -m pytest tests/test_phase6r_mcp_demo_workflow.py -q
 - [ ] `human_review_required=True` in all 7 tool results
 - [ ] No credentials in any JSON output
 - [ ] Spec fixtures not modified after blocked apply
+
+---
+
+## Section 49 — Phase 6.2: Structured Finding Schema + Risk Matrix
+
+**Purpose:** Verify that `Finding` schema, `RiskMatrix`, and adapters work correctly.
+No new CLI commands — Phase 6.2 enriches `run_client_audit.py` output.
+
+### Validate 98 Phase 6.2 tests
+
+```bash
+python -m pytest tests/test_phase6_2_finding_schema.py -q
+```
+
+### Inspect structured findings in audit output
+
+```bash
+python tools/run_client_audit.py \
+  --project-id demo \
+  --spec-file fixtures/demo_specs/petstore_openapi.json \
+  --no-write \
+  --json-output
+```
+
+Look for `structured_findings`, `total_findings`, `risk_summary` in JSON output.
+
+### Inspect Risk Matrix section in summary.md
+
+After a write run, check `outputs/<project-id>/33_client_audit/client_audit_summary.md`
+for `## Risk Matrix` section.
+
+### Safety checklist
+
+- [ ] Empty input to adapters returns `[]` (no fake findings)
+- [ ] `RiskMatrix.sorted_by_risk()` is deterministic (same input = same order)
+- [ ] `by_severity()` always returns all 5 severity keys
+- [ ] `structured_findings` in JSON is list of dicts (serialized via `to_dict()`)
+- [ ] `findings: int` backward-compat field still present alongside new fields
+- [ ] No credentials in any Finding field

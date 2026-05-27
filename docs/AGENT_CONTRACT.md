@@ -822,6 +822,29 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Section 24 — Phase 6.2 — Structured Finding Schema + Risk Matrix Rules
+
+- **No fake findings for planning_only modules.**
+  Finding adapters must only emit `Finding` objects when real evidence exists.
+  `blocked_count=0, requires_approval_count=0, parse_errors=[]` must return `[]`.
+  `secret_scan_passed=True` must return `[]`.
+
+- **Risk scoring is deterministic.**
+  `risk_score(f) = severity_weight * confidence_weight`. No randomness, no timestamps in sort keys.
+  `RiskMatrix.sorted_by_risk()` uses `(-risk_score, id)` — stable across identical inputs.
+
+- **Structured findings are informational only.**
+  `structured_findings` and `risk_summary` in `ClientAuditResult` do not grant approvals.
+  All Phase 6.1 safety invariants from `__post_init__` remain enforced.
+
+- **Finding IDs are project-scoped and deterministic.**
+  Format: `CATEGORY-TYPE-PROJECTID-NNN`. No UUID or random suffix.
+
+- **`findings: int` backward-compat field is preserved.**
+  New structured fields are added alongside; the existing `findings` count is unchanged.
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

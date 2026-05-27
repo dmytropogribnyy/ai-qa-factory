@@ -1,4 +1,4 @@
-"""Phase 6.1 -- One-command client audit workflow orchestrator.
+"""Phase 6.1/6.2 -- One-command client audit workflow orchestrator.
 
 Thin orchestration layer over existing QA Factory core modules.
 No new business logic -- delegates entirely to existing runners.
@@ -8,12 +8,18 @@ Modes:
   api_only          -- API contract import + delivery pack
   frontend_readonly -- a11y/perf/sec planning + delivery pack (no API)
   delivery_only     -- delivery pack only (collects existing outputs)
+
+Phase 6.2 additions:
+  Structured Finding objects are generated from module results and aggregated
+  via RiskMatrix. run_report.json and summary.md include a risk matrix section.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+from core.risk.finding_adapters import findings_from_api_contract, findings_from_secret_scan
+from core.risk.risk_matrix import RiskMatrix
 from core.schemas.client_audit import (
     ClientAuditInputs,
     ClientAuditMode,
@@ -22,6 +28,7 @@ from core.schemas.client_audit import (
     ModuleResult,
     SkippedModule,
 )
+from core.schemas.finding import Finding
 
 _AUDIT_DIR_NAME = "33_client_audit"
 
@@ -114,7 +121,6 @@ class ClientAuditWorkflow:
         inputs = self._inputs
         plan = self.build_plan()
         module_results: list[ModuleResult] = []
-        findings_count = 0
 
         if inputs.write_files:
             self._audit_dir.mkdir(parents=True, exist_ok=True)
@@ -124,11 +130,15 @@ class ClientAuditWorkflow:
         for module_name in plan.enabled_modules:
             mr = self._run_module(module_name)
             module_results.append(mr)
-            if module_name == "api_contract_importer" and "blocked=" in mr.note:
-                try:
-                    findings_count += int(mr.note.split("blocked=")[1].split(",")[0])
-                except (IndexError, ValueError):
-                    pass
+
+        # Aggregate structured findings from all module results
+        all_findings: list[Finding] = []
+        for mr in module_results:
+            all_findings.extend(mr.findings)
+
+        # Build risk matrix summary
+        risk_matrix = RiskMatrix(all_findings)
+        risk_summary = risk_matrix.summary()
 
         executed = sum(1 for mr in module_results if mr.status in _EXECUTED_STATUSES)
         planning = sum(1 for mr in module_results if mr.status in _PLANNING_STATUSES)
@@ -150,10 +160,16 @@ class ClientAuditWorkflow:
             modules_executed=executed,
             modules_planning_only=planning,
             blocked_risky_actions=len(plan.blocked_risky_actions),
-            findings=findings_count,
+            findings=len(all_findings),
             artifacts_root=str(self._project_root),
             delivery_dir=str(self._project_root / "28_client_delivery"),
             module_results=module_results,
+            structured_findings=all_findings,
+            total_findings=len(all_findings),
+            findings_by_severity=risk_summary.get("by_severity", {}),
+            findings_by_category=risk_summary.get("by_category", {}),
+            top_risks=risk_summary.get("top_risks", []),
+            risk_summary=risk_summary,
         )
 
         if inputs.write_files:
@@ -207,6 +223,13 @@ class ClientAuditWorkflow:
                     "notes": report.notes,
                 },
             )
+        api_findings = findings_from_api_contract(
+            project_id=inputs.project_id,
+            source_file=report.source_file,
+            blocked_count=report.blocked_count,
+            requires_approval_count=report.requires_approval_count,
+            parse_errors=report.parse_errors,
+        )
         return ModuleResult(
             name="api_contract_importer",
             status="analysis_only",
@@ -220,6 +243,7 @@ class ClientAuditWorkflow:
                 f"blocked={report.blocked_count}, "
                 f"approval={report.requires_approval_count}"
             ),
+            findings=api_findings,
         )
 
     def _run_accessibility(self) -> ModuleResult:
@@ -298,6 +322,13 @@ class ClientAuditWorkflow:
         inputs = self._inputs
         pack = ClientDeliveryPack(outputs_root=inputs.outputs_root)
         manifest = pack.build(project_id=inputs.project_id, write=inputs.write_files)
+        scan_passed = manifest.secret_scan.scan_passed
+        blocked_files = list(manifest.secret_scan.blocked_files) if manifest.secret_scan.blocked_files else []
+        delivery_findings = findings_from_secret_scan(
+            project_id=inputs.project_id,
+            secret_scan_passed=scan_passed,
+            blocked_files=blocked_files,
+        )
         return ModuleResult(
             name="client_delivery_pack",
             status="draft",
@@ -306,8 +337,9 @@ class ClientAuditWorkflow:
             ],
             note=(
                 f"total_artifacts={manifest.total_artifacts}, "
-                f"secret_scan_passed={manifest.secret_scan.scan_passed}"
+                f"secret_scan_passed={scan_passed}"
             ),
+            findings=delivery_findings,
         )
 
 
@@ -466,6 +498,12 @@ def _result_to_dict(result: ClientAuditResult) -> dict:
         "modules_planning_only": result.modules_planning_only,
         "blocked_risky_actions": result.blocked_risky_actions,
         "findings": result.findings,
+        "total_findings": result.total_findings,
+        "findings_by_severity": result.findings_by_severity,
+        "findings_by_category": result.findings_by_category,
+        "top_risks": result.top_risks,
+        "risk_summary": result.risk_summary,
+        "structured_findings": [f.to_dict() for f in result.structured_findings],
         "artifacts_root": result.artifacts_root,
         "delivery_dir": result.delivery_dir,
         "human_review_required": result.human_review_required,
@@ -548,4 +586,29 @@ def _write_summary_md(
         lines += ["", "## Skipped Modules", ""]
         for s in plan.skipped_modules:
             lines.append(f"- {s.name}: {s.reason}")
+    # Risk Matrix section
+    lines += ["", "## Risk Matrix", ""]
+    lines.append(f"Total findings: {result.total_findings}")
+    if result.findings_by_severity:
+        lines += ["", "### By Severity", ""]
+        for sev, count in result.findings_by_severity.items():
+            if count:
+                lines.append(f"- {sev}: {count}")
+    if result.findings_by_category:
+        lines += ["", "### By Category", ""]
+        for cat, count in result.findings_by_category.items():
+            if count:
+                lines.append(f"- {cat}: {count}")
+    if result.top_risks:
+        lines += ["", "### Top Risks", ""]
+        for risk in result.top_risks:
+            sev = risk.get("severity", "")
+            title = risk.get("title", "")
+            fid = risk.get("id", "")
+            lines.append(f"- [{sev.upper()}] {title} ({fid})")
+    rs = result.risk_summary
+    if rs.get("recommended_next_actions"):
+        lines += ["", "### Recommended Next Actions", ""]
+        for action in rs["recommended_next_actions"]:
+            lines.append(f"- {action}")
     path.write_text("\n".join(lines), encoding="utf-8")

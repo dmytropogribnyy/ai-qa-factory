@@ -733,6 +733,42 @@ No new `outputs/` directories beyond what Phase 5N/5O/5P already define.
 
 ---
 
+## Phase 6.2 — Structured Finding Schema + Risk Matrix
+
+No new artifact directories. Phase 6.2 enriches the existing `33_client_audit/` artifacts.
+
+**Modified artifact: `client_audit_run_report.json`**
+
+New fields added to existing JSON:
+
+| Field | Type | Description |
+|---|---|---|
+| `structured_findings` | `list[dict]` | Serialized `Finding` objects (`to_dict()` output) |
+| `total_findings` | `int` | Total count of findings across all modules |
+| `findings_by_severity` | `dict[str, int]` | Count per severity level (all 5 levels always present) |
+| `findings_by_category` | `dict[str, int]` | Count per category (only non-empty categories) |
+| `top_risks` | `list[dict]` | Top 5 findings by risk score (serialized Finding dicts) |
+| `risk_summary` | `dict` | Full `RiskMatrix.summary()` output |
+
+**Modified artifact: `client_audit_summary.md`**
+
+New `## Risk Matrix` section appended showing:
+- Total findings count
+- By-severity breakdown (non-zero only)
+- By-category breakdown (non-zero only)
+- Top risks with severity label
+- Recommended next actions
+
+**Backward compatibility:** `findings: int` field preserved unchanged. New fields added alongside.
+
+**New library artifacts (not output files):**
+- `core/schemas/finding.py` — `Finding` dataclass + enums
+- `core/risk/__init__.py` — risk package
+- `core/risk/risk_matrix.py` — `RiskMatrix`, `risk_score()`
+- `core/risk/finding_adapters.py` — module-to-Finding adapters
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules
