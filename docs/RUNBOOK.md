@@ -2552,3 +2552,59 @@ Browser opens visibly, stays open for 5 seconds so you can confirm the logged-in
 - [ ] `human_review_required` is `True` in all output JSON
 - [ ] storageState file is not committed to git
 - [ ] Only dedicated test account credentials used (never personal/production)
+
+---
+
+## 7D. Running Email/Password Auth Smoke (OrangeHRM demo)
+
+**Purpose:** Verify email/password login flow using dedicated test credentials stored in env vars.
+
+### Prerequisites
+
+1. Set credentials at OS level (never via CLI):
+   ```powershell
+   $env:ORANGEHRM_USERNAME = "your_test_username"
+   $env:ORANGEHRM_PASSWORD = "your_test_password"
+   ```
+2. Confirm you are using a **dedicated test account** (never personal, never production).
+3. Playwright scaffold with `node_modules/` must exist (run Phase 3A setup if not).
+
+### Step-by-step
+
+**Step 1 — check readiness (plan only):**
+```bash
+python tools/run_email_password_smoke.py --project-id my_project
+```
+Look for `mode_readiness: executable` and no blockers.
+
+**Step 2 — run the smoke:**
+```bash
+python tools/run_email_password_smoke.py \
+  --project-id my_project \
+  --dedicated-test-account-confirmed \
+  --approve-execution
+```
+
+**Step 3 — check artifacts:**
+- `outputs/my_project/37_email_password_auth/email_password_plan.json`
+- `outputs/my_project/37_email_password_auth/email_password_report.json`
+- `outputs/my_project/37_email_password_auth/email_password_summary.md`
+
+### Interpreting results
+
+- `status: passed` → Login succeeded, URL reached dashboard suffix
+- `status: planning_only` → Env vars not set or prerequisites missing
+- `status: blocked` → `--approve-execution` not set
+- `status: failed` → Login failed — check `smoke_results` in report JSON; verify credentials in env and that OrangeHRM demo is accessible
+
+### Safety checklist (7D)
+
+- [ ] `raw_secrets_allowed` is `False` in all output JSON
+- [ ] `credential_logging_allowed` is `False` in all output JSON
+- [ ] `captcha_bypass_allowed` is `False` in all output JSON
+- [ ] `personal_account_allowed` is `False` in all output JSON
+- [ ] `production_account_allowed` is `False` in all output JSON
+- [ ] `human_review_required` is `True` in all output JSON
+- [ ] `approved_for_client_delivery` is `False` in report JSON
+- [ ] No credential values appear in artifacts, logs, or stdout
+- [ ] Only dedicated test account used (never personal/production)

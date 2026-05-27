@@ -1,6 +1,6 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 6.5.0  
+**Version:** 6.6.0  
 **Updated:** 2026-05-27
 
 Status labels:
@@ -3148,3 +3148,87 @@ python tools/run_google_oauth_smoke.py \
 - `google_oauth_summary.md` — human-readable summary with safety boundary table
 
 **Safety invariants always enforced (9 flags via `__post_init__`):** `raw_secrets_allowed=False`, `storage_state_content_read=False`, `captcha_bypass_allowed=False`, `anti_bot_bypass_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `client_delivery_allowed=False`, `browser_automation_allowed=False`, `human_review_required=True`
+
+---
+
+## Phase 7D — Email/Password Auth Smoke
+
+**CLI:** `python tools/run_email_password_smoke.py`
+
+**Step 1 — set credentials at OS level (never via CLI):**
+```powershell
+$env:ORANGEHRM_USERNAME = "your_test_username"
+$env:ORANGEHRM_PASSWORD = "your_test_password"
+```
+
+**Usage (planning only — check env var presence):**
+```bash
+python tools/run_email_password_smoke.py --project-id my_project
+```
+
+**Usage (execute smoke — OrangeHRM demo):**
+```bash
+python tools/run_email_password_smoke.py \
+  --project-id my_project \
+  --dedicated-test-account-confirmed \
+  --approve-execution
+```
+
+**Usage (plan-only JSON output):**
+```bash
+python tools/run_email_password_smoke.py --project-id my_project --plan-only
+```
+
+**Usage (JSON result output):**
+```bash
+python tools/run_email_password_smoke.py \
+  --project-id my_project \
+  --dedicated-test-account-confirmed \
+  --approve-execution \
+  --json
+```
+
+**Flags:**
+
+| Flag | Type | Description |
+|---|---|---|
+| `--project-id` | str | Project identifier (required) |
+| `--target-name` | str | Target site name (default: `orangehrm_demo`) |
+| `--login-url` | str | Login page URL (must be https:// or http://localhost) |
+| `--success-url` | str | URL suffix expected after login |
+| `--username-env-var NAME` | str | Env var NAME holding username (default: `ORANGEHRM_USERNAME`) |
+| `--password-env-var NAME` | str | Env var NAME holding password (default: `ORANGEHRM_PASSWORD`) |
+| `--account-label` | str | Human-readable label for the test account |
+| `--dedicated-test-account-confirmed` | flag | Confirm credentials are a dedicated test account |
+| `--approve-execution` | flag | Approve actual browser smoke execution |
+| `--outputs-root` | str | Root for artifacts (default: `outputs`) |
+| `--plan-only` | flag | Print plan JSON and exit without running smoke |
+| `--json` | flag | Print result as JSON |
+
+**Blocked flags (exit 1 before argparse):**
+- `--username` / `--password` / `--secret` / `--token` / `--cookie`
+- `--access-token` / `--bearer` / `--client-secret`
+
+Raw secrets are never accepted via CLI flags. Set credentials as OS-level env vars only.
+
+**Scaffold resolution:** Runner searches for a Playwright scaffold with `node_modules/` in `outputs/<project_id>/03_framework/playwright/` first, then any scaffold under `outputs/`. Login script is written to the found scaffold dir.
+
+**Supported targets (1):** `orangehrm_demo` — OrangeHRM open-source demo at `opensource-demo.orangehrmlive.com`
+
+**OrangeHRM selectors used:**
+- Username field: `input[name="username"]`
+- Password field: `input[name="password"]`
+- Submit button: `button[type="submit"]`
+- Success: `waitForURL` matching `dashboard` suffix
+
+**Credential flow (Python never reads values):**
+1. Python checks `bool(os.environ.get(var_name))` — presence only
+2. Python passes `EP_USERNAME_ENV_VAR` and `EP_PASSWORD_ENV_VAR` (var NAMES) to subprocess env
+3. Node.js reads `process.env[process.env.EP_USERNAME_ENV_VAR]` — values never touch Python
+
+**Output artifacts (`outputs/<project>/37_email_password_auth/`):**
+- `email_password_plan.json` — env var presence, readiness, blockers
+- `email_password_report.json` — execution result, safety invariants
+- `email_password_summary.md` — human-readable summary with safety boundary table
+
+**Safety invariants always enforced (7 flags via `__post_init__`):** `raw_secrets_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `captcha_bypass_allowed=False`, `credential_logging_allowed=False`, `client_delivery_allowed=False`, `human_review_required=True`

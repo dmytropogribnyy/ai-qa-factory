@@ -863,3 +863,26 @@ New artifact added to `outputs/<project_id>/33_client_audit/`:
 **Library artifacts:**
 - `core/schemas/google_oauth.py` — schema dataclasses
 - `core/google_oauth_runner.py` — runner logic
+
+---
+
+## Phase 7D — Email/Password Auth Artifacts
+
+**Output directory:** `outputs/<project_id>/37_email_password_auth/`
+
+| Artifact | Written by | Description |
+|---|---|---|
+| `email_password_plan.json` | `EmailPasswordRunner.render_artifacts()` | Env var presence, mode_readiness, blockers, recommended_next_steps, safety invariants |
+| `email_password_report.json` | `EmailPasswordRunner.render_artifacts()` | Execution result: status, smoke_results, duration_seconds, auth_coverage_summary, approved_for_client_delivery=False |
+| `email_password_summary.md` | `EmailPasswordRunner.render_artifacts()` | Human-readable summary: target, status, env var status table, safety boundary table |
+
+**Safety contract for artifacts:**
+- No credential values appear in any artifact (plan, report, or summary)
+- `approved_for_client_delivery` is always `False` in report JSON
+- `human_review_required` is always `True` in all artifacts
+- No storageState or raw secret is written or referenced
+
+**Library artifacts:**
+- `core/schemas/email_password.py` — schema dataclasses
+- `core/email_password_runner.py` — runner logic
+- `tools/run_email_password_smoke.py` — CLI entry point

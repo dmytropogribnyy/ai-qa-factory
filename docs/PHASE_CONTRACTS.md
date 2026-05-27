@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 6.7.0
+**Version:** 6.8.0
 **Updated:** 2026-05-27
-**Phase:** 6.3
+**Phase:** 7.4
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1856,3 +1856,33 @@ Client Delivery Pack.
 **Safety invariants always enforced (9):** `raw_secrets_allowed=False`, `storage_state_content_read=False`, `captcha_bypass_allowed=False`, `anti_bot_bypass_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `client_delivery_allowed=False`, `browser_automation_allowed=False`, `human_review_required=True`
 
 **Quality gates:** ruff clean; pytest 3351 passed (106 new Phase 7C tests); smoke verified headed+headless with real dedicated test account (danrobinson.artist@gmail.com), HTTP 200, screenshot saved.
+
+---
+
+## Phase 7D — Email/Password Auth Runner `[implemented]`
+
+**Objective:** Implement Email/Password auth smoke runner for OrangeHRM demo. Thin vertical slice — no multi-site framework. Credentials read from env vars only; Python never reads credential values.
+
+**New files:**
+- `core/schemas/email_password.py` — `EmailPasswordRunStatus` (5 values), `EmailPasswordModeReadiness` (3 states), `EmailPasswordInputs`, `EmailPasswordPlan`, `EmailPasswordRunResult`
+- `core/email_password_runner.py` — `EmailPasswordRunner` with `check_env_vars()`, `build_plan()`, `run()`, `render_artifacts()`, `format_auth_coverage_section()`
+- `tools/run_email_password_smoke.py` — CLI entry point with blocked-flag guard
+- `tests/test_phase7d_email_password_runner.py` — 84 tests
+
+**Behavioral contracts:**
+- All 3 schema dataclasses enforce 7 safety invariants via `__post_init__` that always reset regardless of caller input; `from_dict()` also cannot override them
+- `check_env_vars()` returns `(bool, bool)` — presence only; credential values never returned
+- `build_plan()` classifies as `EXECUTABLE` only when: target in `SUPPORTED_TARGETS`, `--dedicated-test-account-confirmed` set, both env vars set, `login_url` passes allowlist; otherwise `PLANNING_ONLY`
+- `run()` returns `PLANNING_ONLY` when blockers exist; `BLOCKED` when executable but `--approve-execution` not set; `PASSED`/`FAILED` after Node.js smoke
+- Credential flow: Python passes `EP_USERNAME_ENV_VAR` and `EP_PASSWORD_ENV_VAR` (var NAMES) to subprocess env; Node reads `process.env[process.env.EP_USERNAME_ENV_VAR]` — Python never touches values
+- URL allowlist: `https://` and `http://localhost` and `http://127.0.0.1`; URLs with `captcha`, `recaptcha`, `anti-bot` always blocked
+- Blocked CLI flags exit 1 before argparse: `--username`, `--password`, `--secret`, `--token`, `--cookie`, `--access-token`, `--bearer`, `--client-secret`
+- OrangeHRM selectors: `input[name="username"]`, `input[name="password"]`, `button[type="submit"]`, success via `waitForURL` on `dashboard` suffix
+- `_find_playwright_scaffold(project_id)`: same resolution strategy as Phase 7C — project-specific first, then any scaffold with `node_modules/`; all paths use `.resolve()` for absolute subprocess paths
+- Output artifacts go to `outputs/<project>/37_email_password_auth/`
+- `approved_for_client_delivery` always `False` (hardcoded in `__post_init__`)
+- Supported targets: `{"orangehrm_demo"}` only
+
+**Safety invariants always enforced (7):** `raw_secrets_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `captcha_bypass_allowed=False`, `credential_logging_allowed=False`, `client_delivery_allowed=False`, `human_review_required=True`
+
+**Quality gates:** ruff clean; pytest 3435 passed (84 new Phase 7D tests).

@@ -1324,3 +1324,26 @@ No new schema types. The report generator (`core/reporting/client_delivery_repor
 |---|---|
 | `EXECUTABLE_OAUTH_MODES` | `{storage_state_reuse}` |
 | `PLANNING_ONLY_OAUTH_MODES` | all 5 remaining modes |
+
+---
+
+## Phase 7D — Email/Password Schemas (`core/schemas/email_password.py`)
+
+**`EmailPasswordRunStatus(str, Enum)`** — `passed` | `failed` | `blocked` | `planning_only` | `skipped`
+
+**`EmailPasswordModeReadiness(str, Enum)`** — `executable` | `planning_only` | `blocked`
+
+**`EmailPasswordInputs`** — inputs dataclass with 7 safety invariants via `__post_init__`:
+- User fields: `project_id`, `target_name`, `login_url`, `success_url`, `username_env_var`, `password_env_var`, `account_label`, `dedicated_test_account_confirmed`, `approve_execution`
+- Safety invariants (always reset): `raw_secrets_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `captcha_bypass_allowed=False`, `credential_logging_allowed=False`, `client_delivery_allowed=False`, `human_review_required=True`
+- `to_dict()`, `from_dict()` — both respect safety invariants; `from_dict()` cannot override them
+
+**`EmailPasswordPlan`** — planning artifact with mode readiness, env var presence flags, blockers, recommended next steps
+
+**`EmailPasswordRunResult`** — execution result with status, auth_coverage_summary, smoke_results, duration_seconds; `approved_for_client_delivery` always `False`
+
+| Constant | Value |
+|---|---|
+| `ORANGEHRM_DEFAULT_LOGIN_URL` | `https://opensource-demo.orangehrmlive.com/web/index.php/auth/login` |
+| `ORANGEHRM_DEFAULT_SUCCESS_URL` | `https://opensource-demo.orangehrmlive.com/web/index.php/dashboard/index` |
+| `SUPPORTED_TARGETS` | `{"orangehrm_demo"}` |

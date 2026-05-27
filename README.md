@@ -225,7 +225,17 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v7.2.0 — Google OAuth StorageState Runner (current)
+### v7.3.0 — Email/Password Auth Runner (current)
+
+- Phase 7D: `core/schemas/email_password.py` — `EmailPasswordRunStatus` (5 states), `EmailPasswordModeReadiness` (3 states), `EmailPasswordInputs`, `EmailPasswordPlan`, `EmailPasswordRunResult` — all with 7 safety invariants via `__post_init__`
+- Phase 7D: `core/email_password_runner.py` — `EmailPasswordRunner`: check_env_vars (presence only), build_plan, run (Node.js smoke), render_artifacts, format_auth_coverage_section
+- Phase 7D: `tools/run_email_password_smoke.py` — CLI with blocked-flag guard; `--approve-execution` required for actual smoke; raw secrets never accepted via CLI
+- Phase 7D: Credential flow: Python passes env var NAMES via `EP_USERNAME_ENV_VAR`/`EP_PASSWORD_ENV_VAR`; Node reads values — Python never touches credential values
+- Phase 7D: Supported target: `orangehrm_demo` (OrangeHRM open-source demo)
+- Phase 7D: Output artifacts: `outputs/<project>/37_email_password_auth/` — `email_password_plan.json`, `email_password_report.json`, `email_password_summary.md`
+- Phase 7D: 84 new tests; 3435 total
+
+### v7.2.0 — Google OAuth StorageState Runner
 
 - Phase 7C: `core/schemas/google_oauth.py` — `GoogleOAuthMode` (6 values), `GoogleOAuthModeReadiness` (3 states), `GoogleOAuthRunStatus` (5 states), `GoogleOAuthInputs`, `GoogleOAuthPlan`, `GoogleOAuthRunResult` — all with 8–9 safety invariants via `__post_init__`
 - Phase 7C: `core/google_oauth_runner.py` — `GoogleOAuthRunner`: classify_mode, build_plan, run (storageState reuse), render_artifacts, format_auth_coverage_section

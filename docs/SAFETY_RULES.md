@@ -1418,3 +1418,31 @@ Without this flag, the runner returns `planning_only` status and writes planning
 
 **7C-8. Human review required.**
 `human_review_required=True` is a hardcoded invariant. All 3 schema dataclasses enforce it via `__post_init__`.
+
+---
+
+## Phase 7D — Email/Password Auth Safety Rules
+
+**7D-1. Credentials are never accepted via CLI flags.**
+`--username`, `--password`, `--secret`, `--token`, `--cookie`, `--access-token`, `--bearer`, `--client-secret` all exit 1 before argparse. Only env var NAMES are accepted via `--username-env-var` and `--password-env-var`.
+
+**7D-2. Credential values are never read by Python.**
+`check_env_vars()` returns `(bool, bool)` — presence only. Python passes `EP_USERNAME_ENV_VAR` and `EP_PASSWORD_ENV_VAR` (var NAMES) to the subprocess env. Node.js reads `process.env[process.env.EP_USERNAME_ENV_VAR]`. The Python layer never touches credential values.
+
+**7D-3. Credential values are never logged, serialised, or written to artifacts.**
+No credential value appears in `smoke_results`, `notes`, `blockers`, `auth_coverage_summary`, or any output artifact. All 3 schema dataclasses enforce this via safety invariants and `__post_init__`.
+
+**7D-4. Personal and production accounts are always blocked.**
+`personal_account_allowed=False` and `production_account_allowed=False` are hardcoded in all dataclasses. Only dedicated test accounts are permitted (confirmed via `--dedicated-test-account-confirmed`).
+
+**7D-5. CAPTCHA bypass is always blocked.**
+`captcha_bypass_allowed=False` is a hardcoded invariant. URLs containing `captcha`, `recaptcha`, or `anti-bot` are always blocked by `_is_allowed_url()`.
+
+**7D-6. `approved_for_client_delivery` is always False.**
+Hardcoded in `EmailPasswordRunResult.__post_init__()`. The result is always tagged as requiring human review before any client delivery.
+
+**7D-7. `--approve-execution` required for any Playwright smoke.**
+Without this flag, the runner returns `blocked` status and writes no smoke results. No browser is opened without explicit approval.
+
+**7D-8. Human review required.**
+`human_review_required=True` is a hardcoded invariant in all 3 Phase 7D dataclasses.
