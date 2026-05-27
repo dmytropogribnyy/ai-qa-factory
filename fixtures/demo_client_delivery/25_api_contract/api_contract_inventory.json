@@ -1,0 +1,22 @@
+{
+  "project_id": "demo-client-delivery",
+  "spec_title": "Demo Client API",
+  "spec_version": "1.2.0",
+  "source_format": "openapi_json",
+  "source_file": "fixtures/demo_client_delivery/demo_api_openapi.json",
+  "base_url": "https://api.demo-client.example.com/v1",
+  "total_endpoints": 12,
+  "safe_readonly_count": 7,
+  "requires_approval_count": 3,
+  "blocked_count": 2,
+  "raw_secrets_allowed": false,
+  "destructive_api_calls_allowed": false,
+  "production_write_allowed": false,
+  "human_review_required": true,
+  "client_delivery_allowed": false,
+  "parse_errors": [],
+  "notes": [
+    "Parsed 12 endpoints from openapi_json",
+    "Safe: 7, Requires approval: 3, Blocked: 2"
+  ]
+}

@@ -160,6 +160,10 @@ def _collect_source_data(project_id: str, outputs_root: Path) -> dict:
         "has_cicd": False,
         "api_endpoints": 0,
         "safe_endpoints": 0,
+        "approval_endpoints": 0,
+        "blocked_endpoints": 0,
+        "api_spec_title": "",
+        "api_base_url": "",
         "cicd_platform": "",
         "generated_test_files": [],
         "qa_summary_excerpt": "",
@@ -186,6 +190,10 @@ def _collect_source_data(project_id: str, outputs_root: Path) -> dict:
                 d = json.loads(f.read_text(encoding="utf-8"))
                 data["api_endpoints"] = d.get("total_endpoints", 0)
                 data["safe_endpoints"] = d.get("safe_readonly_count", 0)
+                data["approval_endpoints"] = d.get("requires_approval_count", 0)
+                data["blocked_endpoints"] = d.get("blocked_count", 0)
+                data["api_spec_title"] = d.get("spec_title", "")
+                data["api_base_url"] = d.get("base_url", "")
                 break
             except (OSError, json.JSONDecodeError):
                 pass
@@ -234,6 +242,51 @@ def _generate_qa_report(project_id: str, data: dict, generated_at: str) -> str:
         "\n".join(f"- `{f}`" for f in data["generated_test_files"])
         if data["generated_test_files"]
         else "- No generated test files found"
+    )
+
+    # Dynamic results table
+    ep = data["api_endpoints"]
+    safe = data["safe_endpoints"]
+    approval = data["approval_endpoints"]
+    blocked = data["blocked_endpoints"]
+    if ep > 0:
+        api_row = f"| API contract | {ep} endpoints | {safe} safe, {approval} approval-required, {blocked} blocked |"
+    else:
+        api_row = "| API contract | Planning artifact | Endpoints classified |"
+
+    # QA evidence excerpt
+    excerpt = data["qa_summary_excerpt"]
+    if excerpt:
+        qa_excerpt_block = (
+            "\n**From QA evidence report:**\n\n"
+            + "\n".join(f"> {ln}" for ln in excerpt.splitlines()[:20])
+            + "\n"
+        )
+    else:
+        qa_excerpt_block = (
+            "\nNo automated test execution evidence found. "
+            "Run tests and generate QA report before delivery.\n"
+        )
+
+    # Evidence paths
+    evidence_lines = []
+    if data["has_qa_report"]:
+        evidence_lines.append(f"- QA evidence report: `outputs/{project_id}/14_qa_report/`")
+    if data["has_api_contract"]:
+        title = data["api_spec_title"]
+        label = f" ({title})" if title else ""
+        evidence_lines.append(
+            f"- API contract{label}: `outputs/{project_id}/25_api_contract/api_contract_inventory.json`"
+        )
+    if data["has_generated_tests"]:
+        for tf in data["generated_test_files"]:
+            evidence_lines.append(f"- Generated test: `outputs/{project_id}/26_generated_tests/{tf}`")
+    if data["has_cicd"]:
+        platform = data["cicd_platform"] or "CI/CD"
+        evidence_lines.append(f"- {platform} config: `outputs/{project_id}/27_cicd/`")
+    evidence_str = (
+        "\n".join(evidence_lines) if evidence_lines
+        else "- No evidence artifacts from previous phases"
     )
 
     return f"""\
@@ -302,7 +355,7 @@ All outputs are planning artifacts and require senior QA review before client de
 
 | Category | Status | Notes |
 |----------|--------|-------|
-| API contract import | Planning artifact | Endpoints classified |
+{api_row}
 | Browser smoke tests | Stubs generated | Requires review before execution |
 | Mobile viewport | Stubs available | Review required |
 | Auth flows | Not included | Requires test account setup |
@@ -310,6 +363,7 @@ All outputs are planning artifacts and require senior QA review before client de
 
 **Generated test files:**
 {test_files_str}
+{qa_excerpt_block}
 
 ---
 
@@ -338,10 +392,8 @@ See `Risk_Matrix.md` for the full risk breakdown.
 
 See `Evidence_Index.md` for all available evidence artifacts.
 
-**Artifact directories:**
-- API contract: `outputs/{project_id}/25_api_contract/`
-- Generated tests: `outputs/{project_id}/26_generated_tests/`
-- CI/CD config: `outputs/{project_id}/27_cicd/`
+**Available artifacts:**
+{evidence_str}
 
 ---
 
