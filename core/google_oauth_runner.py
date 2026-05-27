@@ -233,8 +233,12 @@ class GoogleOAuthRunner:
         self, inputs: GoogleOAuthInputs
     ) -> GoogleOAuthRunResult:
         ssp = Path(inputs.storage_state_path).resolve()
-        script_path = ssp.parent / "google_oauth_smoke_7c.cjs"
-        screenshot_path = ssp.parent / "google_oauth_smoke_screenshot.png"
+        run_dir = self._find_playwright_scaffold(inputs.project_id).resolve()
+
+        # Write the script into the scaffold dir so require('@playwright/test') resolves.
+        # Use absolute paths throughout — relative paths break when subprocess CWD differs.
+        script_path = (run_dir / "google_oauth_smoke_7c.cjs").resolve()
+        screenshot_path = (ssp.parent / "google_oauth_smoke_screenshot.png").resolve()
 
         script_content = self._build_smoke_script(
             target_url=inputs.target_url,
@@ -242,11 +246,6 @@ class GoogleOAuthRunner:
             screenshot_path=str(screenshot_path).replace("\\", "\\\\"),
         )
         script_path.write_text(script_content, encoding="utf-8")
-
-        scaffold_root = (
-            self.outputs_root / inputs.project_id / "03_framework" / "playwright"
-        )
-        run_dir = scaffold_root if scaffold_root.exists() else ssp.parent
 
         node_exe = shutil.which("node") or shutil.which("node.exe") or "node"
         if sys.platform == "win32":
@@ -313,6 +312,21 @@ class GoogleOAuthRunner:
                 f"Google OAuth storageState reuse: {'PASSED' if success else 'FAILED'}"
             ),
         )
+
+    def _find_playwright_scaffold(self, project_id: str) -> Path:
+        """
+        Find a Playwright scaffold directory that has node_modules installed.
+        Checks project-specific scaffold first, then any scaffold under outputs/.
+        Falls back to outputs/ root (will fail at runtime if no node_modules there).
+        """
+        candidates = [
+            self.outputs_root / project_id / "03_framework" / "playwright",
+            *sorted(self.outputs_root.glob("*/03_framework/playwright")),
+        ]
+        for candidate in candidates:
+            if (candidate / "node_modules").exists():
+                return candidate
+        return self.outputs_root
 
     def _is_allowed_url(self, url: str) -> bool:
         if not url:
