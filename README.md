@@ -82,7 +82,7 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 3162 tests, mock mode, no API keys needed
+python -m pytest -q             # 3245 tests, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
@@ -225,7 +225,17 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v7.0.0 — Auth Capability Planner (current)
+### v7.1.0 — Auth Strategy Selector (current)
+
+- Phase 7B: `core/schemas/auth_strategy.py` — `DecisionStatus` (5 states), `AuthStrategyDecision` with 8 safety invariants via `__post_init__`
+- Phase 7B: `core/auth_strategy_selector.py` — `AuthStrategySelector`: picks best method from 7A plan using 15-method priority order
+- Phase 7B: `tools/select_auth_strategy.py` — CLI with two modes: `--plan-file` (load 7A JSON) or inline (run planner + select)
+- Phase 7B: Output artifacts: `outputs/<project>/35_auth_strategy/auth_strategy_decision.json` + `auth_strategy_summary.md`
+- Phase 7B: `safe_to_execute=True` only when `decision_status == ready_for_execution`; `next_runner` names the runner for Phase 7C+
+- Phase 7B: `AuthCapabilityPlan.from_dict()` added for JSON deserialization
+- Phase 7B: 83 new tests; 3245 total
+
+### v7.0.0 — Auth Capability Planner
 
 - Phase 7A: `core/schemas/auth_capability.py` — `AuthMethodType` (15 methods), `AuthReadiness` (7 states), `AuthMethodCapability`, `AuthCapabilityInputs`, `AuthCapabilityPlan`
 - Phase 7A: `core/auth_capability_planner.py` — `AuthCapabilityPlanner`: classifies all 15 auth methods, writes planning artifacts

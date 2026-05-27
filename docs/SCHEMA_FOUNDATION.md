@@ -1259,6 +1259,34 @@ No new schema types. The report generator (`core/reporting/client_delivery_repor
 - `blocked_methods`, `allowed_now_methods`, `planning_only_methods`, `requires_action_methods: list[str]`
 - `recommended_next_steps: list[str]`
 - Safety invariants always reset by `__post_init__`
+- `from_dict(data) -> AuthCapabilityPlan` (added Phase 7B for JSON deserialization)
+
+---
+
+## Phase 7B — Auth Strategy Schema (`core/schemas/auth_strategy.py`)
+
+### Enums
+
+**`DecisionStatus`** (5 values): `ready_for_execution`, `missing_required_input`,
+`planning_only`, `blocked`, `no_methods_available`
+
+### Dataclasses
+
+**`AuthStrategyDecision`** — Strategy selector output:
+- `project_id: str`
+- `selected_method: str`, `selected_provider: str`, `selected_mode: str`
+- `decision_status: DecisionStatus`
+- `reason: str`
+- `required_inputs: list[str]`, `missing_inputs: list[str]`, `blocked_reasons: list[str]`
+- `safe_to_execute: bool` — `True` only when `decision_status == ready_for_execution`
+- `next_runner: str | None` — runner name (e.g. `"google_oauth_runner"`) or `None`
+- `requires_human_approval: bool`, `requires_dedicated_test_account: bool`
+- Safety invariants always reset by `__post_init__`: `raw_secrets_allowed=False`,
+  `browser_execution_allowed=False`, `credential_usage_allowed=False`,
+  `storage_state_content_read=False`, `personal_account_allowed=False`,
+  `production_account_allowed=False`, `captcha_bypass_allowed=False`,
+  `human_review_required=True`
+- `to_dict() -> dict` / `from_dict(data) -> AuthStrategyDecision`
 
 ---
 

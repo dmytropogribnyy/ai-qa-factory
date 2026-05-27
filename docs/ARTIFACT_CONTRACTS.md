@@ -818,6 +818,23 @@ New artifact added to `outputs/<project_id>/33_client_audit/`:
 
 ---
 
+## Phase 7B — Auth Strategy Selector Artifacts
+
+**Output directory:** `outputs/<project_id>/35_auth_strategy/`
+
+| Artifact | Written by | Description |
+|---|---|---|
+| `auth_strategy_decision.json` | `AuthStrategySelector.run()` | Full decision: method, provider, mode, next_runner, missing_inputs, safety invariants |
+| `auth_strategy_summary.md` | `AuthStrategySelector.run()` | Human-readable decision summary |
+
+**Suppressed by `--no-write`:** both artifacts are skipped in dry-run mode.
+
+**Library artifacts:**
+- `core/schemas/auth_strategy.py` — `DecisionStatus`, `AuthStrategyDecision`
+- `core/auth_strategy_selector.py` — selector logic, priority order, metadata
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

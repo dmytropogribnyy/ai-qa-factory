@@ -3023,6 +3023,56 @@ Raw secrets are never accepted via CLI flags. Use `--*-env-var NAME` to pass the
 
 ---
 
+## Phase 7B — Auth Strategy Selector
+
+```
+python tools/select_auth_strategy.py --project-id demo --plan-file outputs/demo/34_auth_capability/auth_capability_plan.json
+python tools/select_auth_strategy.py --project-id demo --has-dedicated-test-account --password-env-var QA_PASSWORD
+python tools/select_auth_strategy.py --project-id demo --has-google-account --has-storage-state --no-write
+python tools/select_auth_strategy.py --project-id demo --no-write --json-output
+```
+
+**Two input modes:**
+- `--plan-file PATH` — load a pre-existing `auth_capability_plan.json` from Phase 7A
+- No `--plan-file` — run the capability planner inline using provided flags (same flags as `plan_auth_capability.py`)
+
+**Blocked flags (always exit 1):** same as Phase 7A — `--password`, `--secret`, `--token`, `--cookie`, `--totp-seed`, `--access-token`, `--bearer`, `--client-secret`, `--api-key`
+
+**Decision status markers:**
+
+| Marker | Meaning |
+|---|---|
+| `[ready]` | `ready_for_execution` — method selected, all inputs present |
+| `[need-input]` | `missing_required_input` — best candidate identified but inputs missing |
+| `[plan]` | `planning_only` — no executable method available |
+| `[blocked]` | `blocked` — all methods blocked by safety rules |
+| `[no-methods]` | `no_methods_available` — empty plan |
+
+**Priority order (1 = highest):**
+1. `storage_state_reuse`
+2. `google_oauth`
+3. `github_oauth`
+4. `microsoft_oauth`
+5. `api_token`
+6. `bearer_token`
+7. `dedicated_profile_context`
+8. `email_password`
+9. `basic_auth`
+10. `totp_mfa`
+11. `cdp_attach`
+12. `session_cookie_reuse`
+13. `magic_link`
+14. `email_otp`
+15. `sso_saml_oidc`
+
+**Output artifacts (`outputs/<project>/35_auth_strategy/`):**
+- `auth_strategy_decision.json` — full decision with selected method, provider, mode, next_runner, missing_inputs
+- `auth_strategy_summary.md` — human-readable summary with safety invariants
+
+**Safety invariants always enforced (via `__post_init__`):** `raw_secrets_allowed=False`, `browser_execution_allowed=False`, `credential_usage_allowed=False`, `storage_state_content_read=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `captcha_bypass_allowed=False`, `human_review_required=True`
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

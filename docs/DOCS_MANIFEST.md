@@ -571,6 +571,23 @@ for any module with `status == "planning_only"`.
 
 ---
 
+## Phase 7B — Auth Strategy Selector
+
+| File | Purpose |
+|---|---|
+| `core/schemas/auth_strategy.py` | `DecisionStatus`, `AuthStrategyDecision` |
+| `core/auth_strategy_selector.py` | `AuthStrategySelector`, `_decision_to_dict()`, priority order |
+| `tools/select_auth_strategy.py` | CLI entry point (two modes: `--plan-file` or inline) |
+| `tests/test_phase7b_auth_strategy_selector.py` | 83 tests |
+
+**Modified:** `core/schemas/auth_capability.py` — added `AuthCapabilityPlan.from_dict()`
+
+**New output artifacts (`outputs/<project_id>/35_auth_strategy/`):**
+- `auth_strategy_decision.json` — full decision with method, provider, mode, runner, missing_inputs
+- `auth_strategy_summary.md` — human-readable summary with safety invariants
+
+---
+
 ## Related documents
 
 - [`DOCUMENTATION_GOVERNANCE.md`](DOCUMENTATION_GOVERNANCE.md) — full governance rules

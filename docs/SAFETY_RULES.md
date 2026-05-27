@@ -1357,6 +1357,34 @@ read credential files, or execute any auth flows.
 
 ---
 
+## Phase 7B — Auth Strategy Selector Safety Rules
+
+**7B-1. Raw secrets are never accepted via CLI flags.**
+Same blocked-flag set as Phase 7A: `--password`, `--secret`, `--token`, `--cookie`, `--totp-seed`,
+`--access-token`, `--bearer`, `--client-secret`, `--api-key` all exit 1 before argparse.
+
+**7B-2. Safety invariants are always enforced by `AuthStrategyDecision.__post_init__`.**
+`raw_secrets_allowed`, `browser_execution_allowed`, `credential_usage_allowed`,
+`storage_state_content_read`, `personal_account_allowed`, `production_account_allowed`,
+and `captcha_bypass_allowed` are always `False`. `human_review_required` is always `True`.
+These cannot be overridden by caller code or deserialized JSON.
+
+**7B-3. `safe_to_execute=True` only when the method is fully ready.**
+The selector sets `safe_to_execute=True` only when the selected method appears in
+`allowed_now_methods` in the capability plan. `missing_required_input`, `planning_only`,
+`blocked`, and `no_methods_available` statuses always produce `safe_to_execute=False`.
+
+**7B-4. No auth execution in Phase 7B.**
+`AuthStrategySelector` is decision-only. It does not open browsers, make network requests,
+read credential files, or execute any auth flows.
+
+**7B-5. Plan file content is read, but only auth method lists are used.**
+When `--plan-file` is provided, the file is parsed as JSON. Only the method readiness lists
+(`allowed_now_methods`, `requires_action_methods`, etc.) and capabilities are read.
+No storageState files, credential files, or `.env` files are read.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

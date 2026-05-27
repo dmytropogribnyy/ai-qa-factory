@@ -892,6 +892,28 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Phase 7B — Auth Strategy Selector Agent Rules
+
+- **Strategy selection is decision-only — no execution.**
+  `AuthStrategySelector` selects the best method from a capability plan.
+  It does not open browsers, make network requests, read credential files, or execute auth flows.
+
+- **`safe_to_execute=True` is informational, not a launch signal.**
+  An agent must not automatically launch a runner when `safe_to_execute=True`.
+  Human review is always required before proceeding to Phase 7C/7D runners.
+
+- **Safety invariants survive deserialization.**
+  `AuthStrategyDecision.__post_init__` always resets all safety flags regardless of what
+  `from_dict()` or caller code passes. An agent must not attempt to set `safe_to_execute=True`
+  manually or override any safety invariant after construction.
+
+- **`next_runner` is a planning label, not a runnable command.**
+  The value of `next_runner` (e.g. `"google_oauth_runner"`) names the runner that *should*
+  be used in a future phase. It is not a currently executable module unless explicitly
+  implemented and approved.
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

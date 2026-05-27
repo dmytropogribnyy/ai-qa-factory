@@ -161,3 +161,16 @@ class AuthCapabilityPlan:
         self.production_account_allowed = False
         self.captcha_bypass_allowed = False
         self.auth_bypass_allowed = False
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AuthCapabilityPlan":
+        return cls(
+            project_id=data.get("project_id", ""),
+            target_url=data.get("target_url", ""),
+            capabilities=[AuthMethodCapability.from_dict(c) for c in data.get("capabilities", [])],
+            blocked_methods=data.get("blocked_methods", []),
+            allowed_now_methods=data.get("allowed_now_methods", []),
+            planning_only_methods=data.get("planning_only_methods", []),
+            requires_action_methods=data.get("requires_action_methods", []),
+            recommended_next_steps=data.get("recommended_next_steps", []),
+        )

@@ -2434,3 +2434,50 @@ Readiness markers in the summary:
 - [ ] `captcha_bypass_allowed` is always `False` in output JSON
 - [ ] `auth_bypass_allowed` is always `False` in output JSON
 - [ ] `human_review_required` is always `True` in output JSON
+
+---
+
+## Phase 7B — Auth Strategy Selector Runbook
+
+### Select strategy from existing 7A plan
+
+```bash
+python tools/select_auth_strategy.py \
+  --project-id myproject \
+  --plan-file outputs/myproject/34_auth_capability/auth_capability_plan.json \
+  --no-write
+```
+
+### Select strategy inline (runs planner internally)
+
+```bash
+# With API token -- should produce ready_for_execution + api_token_runner
+python tools/select_auth_strategy.py \
+  --project-id myproject \
+  --api-token-env-var QA_API_TOKEN \
+  --no-write
+
+# With Google test account + storageState -- should produce ready_for_execution + google_oauth_runner
+python tools/select_auth_strategy.py \
+  --project-id myproject \
+  --has-google-account \
+  --has-storage-state \
+  --no-write --json-output
+```
+
+### Reading the decision output
+
+- `decision_status: ready_for_execution` + `safe_to_execute: true` → run `next_runner`
+- `decision_status: missing_required_input` → check `missing_inputs` list, provide them, re-run
+- `decision_status: planning_only` → no runner available for these methods yet
+- `decision_status: blocked` → safety invariants block all methods
+
+### Safety checklist
+
+- [ ] `raw_secrets_allowed` is always `False` in output JSON
+- [ ] `browser_execution_allowed` is always `False` in output JSON
+- [ ] `credential_usage_allowed` is always `False` in output JSON
+- [ ] `personal_account_allowed` is always `False` in output JSON
+- [ ] `captcha_bypass_allowed` is always `False` in output JSON
+- [ ] `human_review_required` is always `True` in output JSON
+- [ ] `safe_to_execute` is `True` only when `decision_status == ready_for_execution`

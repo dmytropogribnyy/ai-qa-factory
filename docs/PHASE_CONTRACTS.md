@@ -1789,6 +1789,36 @@ Client Delivery Pack.
 
 ---
 
+## Phase 7B — Auth Strategy Selector
+
+**Scope:** Strategy selection from an existing Phase 7A capability plan. Pure decision logic — no auth flows executed, no credentials accessed, no browser launched.
+
+**New files:**
+- `core/schemas/auth_strategy.py` — `DecisionStatus` (5 states), `AuthStrategyDecision`
+- `core/auth_strategy_selector.py` — `AuthStrategySelector` class + `_decision_to_dict()`
+- `tools/select_auth_strategy.py` — CLI entry point (two modes: `--plan-file` or inline)
+- `tests/test_phase7b_auth_strategy_selector.py` — 83 tests
+
+**Modified files:**
+- `core/schemas/auth_capability.py` — added `AuthCapabilityPlan.from_dict()` for JSON deserialization
+
+**Behavioral contracts:**
+- `AuthStrategyDecision.__post_init__` always resets all safety invariants regardless of caller input
+- Priority order applied to `allowed_now_methods` first, then `requires_action_methods`; 15 methods in fixed priority
+- `ready_for_execution` + `safe_to_execute=True` only when method appears in `allowed_now_methods`
+- `missing_required_input` selected when no `allowed_now` method exists but `requires_action` methods exist
+- `planning_only` when only planning_only methods; `blocked` when only blocked; `no_methods_available` when empty plan
+- `--plan-file PATH` mode loads existing 7A JSON; inline mode runs capability planner on-the-fly
+- Blocked CLI flags exit 1 before argparse (same set as Phase 7A)
+- Output artifacts go to `outputs/<project>/35_auth_strategy/`
+- All output is ASCII-safe
+
+**Safety invariants always enforced:** `raw_secrets_allowed=False`, `browser_execution_allowed=False`, `credential_usage_allowed=False`, `storage_state_content_read=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `captcha_bypass_allowed=False`, `human_review_required=True`
+
+**Quality gates:** ruff clean; pytest 3245 passed (83 new Phase 7B tests)
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules
