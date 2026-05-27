@@ -68,6 +68,11 @@ def main() -> None:
         help="Approve actual Playwright smoke execution (default: planning-only)",
     )
     parser.add_argument(
+        "--headed",
+        action="store_true",
+        help="Run browser in headed (visible) mode instead of headless",
+    )
+    parser.add_argument(
         "--outputs-root",
         default="outputs",
         help="Root directory for output artifacts",
@@ -82,6 +87,7 @@ def main() -> None:
         dedicated_test_account_confirmed=args.dedicated_test_account_confirmed,
         google_test_account_confirmed=args.google_test_account_confirmed,
         approve_execution=args.approve_execution,
+        headed=args.headed,
     )
 
     runner = GoogleOAuthRunner(outputs_root=Path(args.outputs_root))

@@ -177,7 +177,7 @@ class GoogleOAuthRunner:
                 auth_coverage_summary="Google OAuth: blocked — URL not allowlisted.",
             )
 
-        return self._execute_storage_state_smoke(inputs)
+        return self._execute_storage_state_smoke(inputs, headed=getattr(inputs, "headed", False))
 
     def render_artifacts(
         self,
@@ -230,7 +230,7 @@ class GoogleOAuthRunner:
     # ------------------------------------------------------------------
 
     def _execute_storage_state_smoke(
-        self, inputs: GoogleOAuthInputs
+        self, inputs: GoogleOAuthInputs, headed: bool = False
     ) -> GoogleOAuthRunResult:
         ssp = Path(inputs.storage_state_path).resolve()
         run_dir = self._find_playwright_scaffold(inputs.project_id).resolve()
@@ -244,6 +244,7 @@ class GoogleOAuthRunner:
             target_url=inputs.target_url,
             storage_state_path=str(ssp).replace("\\", "\\\\"),
             screenshot_path=str(screenshot_path).replace("\\", "\\\\"),
+            headed=headed,
         )
         script_path.write_text(script_content, encoding="utf-8")
 
@@ -411,7 +412,9 @@ class GoogleOAuthRunner:
         target_url: str,
         storage_state_path: str,
         screenshot_path: str,
+        headed: bool = False,
     ) -> str:
+        headless_js = "false" if headed else "true"
         return f"""// Phase 7C -- Google OAuth StorageState Reuse Smoke
 // AUTO-GENERATED. Read-only. No content extraction. No admin actions.
 // storageState content is never read by Python -- only path passed here.
@@ -423,7 +426,7 @@ const STORAGE_STATE_PATH = {json.dumps(storage_state_path)};
 const SCREENSHOT_PATH = {json.dumps(screenshot_path)};
 
 (async () => {{
-  const browser = await chromium.launch({{ headless: true }});
+  const browser = await chromium.launch({{ headless: {headless_js} }});
   const context = await browser.newContext({{
     storageState: STORAGE_STATE_PATH,
     viewport: {{ width: 1280, height: 800 }},
@@ -443,6 +446,10 @@ const SCREENSHOT_PATH = {json.dumps(screenshot_path)};
     console.error('[7C] navigation_error=' + e.message);
     await browser.close();
     process.exit(2);
+  }}
+
+  if ({str(headed).lower()}) {{
+    await page.waitForTimeout(5000);
   }}
 
   try {{

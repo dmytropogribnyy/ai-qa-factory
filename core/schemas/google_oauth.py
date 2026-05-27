@@ -50,6 +50,7 @@ class GoogleOAuthInputs:
     dedicated_test_account_confirmed: bool = False
     google_test_account_confirmed: bool = False
     approve_execution: bool = False
+    headed: bool = False
 
     # Safety invariants — always reset by __post_init__ regardless of caller
     raw_secrets_allowed: bool = False
@@ -107,6 +108,7 @@ class GoogleOAuthInputs:
             ),
             google_test_account_confirmed=data.get("google_test_account_confirmed", False),
             approve_execution=data.get("approve_execution", False),
+            headed=data.get("headed", False),
         )  # __post_init__ always resets safety invariants
 
 
