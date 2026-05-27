@@ -1,6 +1,6 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 5.8.0  
+**Version:** 5.9.0  
 **Updated:** 2026-05-27
 
 Status labels:
@@ -2549,6 +2549,59 @@ cicd_manifest.json
 **Exit codes:** `0` = generated OK, `1` = blocked, `2` = bad flags
 
 ---
+
+---
+
+## Phase 5P — Client Delivery Pack `[implemented]`
+
+### `create_client_delivery_pack.py` `[implemented]`
+
+Aggregate phase outputs and generate a client-ready delivery package.
+
+```bash
+python tools/create_client_delivery_pack.py \
+    --project-id my-project \
+    --include-generated-tests \
+    --include-cicd \
+    --require-human-review
+```
+
+**Options:**
+- `--project-id NAME` *(required)*
+- `--include-screenshots` — include screenshot references in report
+- `--include-generated-tests` — include generated test file references (default: True)
+- `--include-cicd` — include CI/CD config references (default: True)
+- `--require-human-review` — informational flag; always enforced
+- `--no-write` — dry run, skip writing artifacts
+- `--outputs-root PATH` — override outputs root (default: `outputs/`)
+
+**Blocked flags (exit code 1):**
+- `--approve` — `approved_for_client_delivery` is always `False`
+- `--auto-send` — `auto_send_to_client` is always `False`
+- `--skip-secret-scan` — secret scan always runs
+
+**Safety invariants (hardcoded):**
+- `approved_for_client_delivery=False` — manual sign-off always required
+- `human_review_required=True` — delivery checklist must be completed
+- `auto_send_to_client=False` — never sends automatically
+- `secret_scan_before_delivery=True` — scans before ZIP creation
+- `raw_secrets_included=False` — storageState, .env, tokens excluded
+
+**Generated artifacts** (`outputs/<project_id>/28_client_delivery/`):
+```
+QA_Report.md              Full QA report (11 sections)
+QA_Report.html            HTML version
+Bug_Report.md             Defect report template
+Test_Cases.csv            Structured test cases
+Risk_Matrix.md            Risk and mitigation matrix
+Recommendations.md        Automation/CI recommendations
+Evidence_Index.md         Evidence artifact index
+Delivery_Checklist.md     Pre-delivery checklist (all items unchecked)
+client_delivery_manifest.json  Manifest with safety flags + scan result
+client_delivery.zip       ZIP of all above (blocked files excluded)
+```
+
+**Exit codes:** `0` = generated OK, `1` = blocked flag or secret scan failed, `2` = bad args
 
 ---
 

@@ -613,6 +613,27 @@ Safety guarantees: `auto_pr_creation_allowed=False`, `client_repo_writeback_allo
 
 ---
 
+### `outputs/<project_id>/28_client_delivery/` (Phase 5P)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `QA_Report.md` | — | system | Full client QA report (11 sections) |
+| `QA_Report.html` | — | system | HTML version of QA report |
+| `Bug_Report.md` | — | system | Bug/defect report template (populate after test execution) |
+| `Test_Cases.csv` | — | system | Structured test case list (ID, Title, Type, Status, Priority) |
+| `Risk_Matrix.md` | — | system | Risk matrix with severity and mitigation |
+| `Recommendations.md` | — | system | Automation and CI/CD recommendations |
+| `Evidence_Index.md` | — | system | Index of all evidence artifacts |
+| `Delivery_Checklist.md` | — | system | Pre-delivery checklist (all items unchecked by default) |
+| `client_delivery_manifest.json` | `ClientDeliveryManifest` | system | Manifest with safety flags and secret scan result |
+| `client_delivery.zip` | — | system | ZIP of all delivery artifacts (blocked files excluded) |
+
+Safety guarantees: `approved_for_client_delivery=False`, `human_review_required=True`,
+`auto_send_to_client=False`, `secret_scan_before_delivery=True`, `raw_secrets_included=False` always.
+Secret scan runs before ZIP creation. storageState, .env, credentials, cookies, tokens excluded from ZIP.
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

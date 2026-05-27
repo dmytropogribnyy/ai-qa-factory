@@ -1100,6 +1100,36 @@ in any generated test file as an executable test case.
 
 ---
 
+## Phase 5P safety rules
+
+**5P-1. `approved_for_client_delivery=False` is hardcoded and cannot be bypassed.**
+`ClientDeliveryManifest.__post_init__` sets this unconditionally. No CLI flag can override it.
+The `--approve` flag is blocked with exit code 1.
+
+**5P-2. `auto_send_to_client=False` is hardcoded.**
+The delivery pack generator never sends artifacts to clients automatically.
+The `--auto-send` flag is blocked with exit code 1.
+
+**5P-3. Secret scan always runs before ZIP creation.**
+`SecretScanner.scan()` runs on the delivery directory before `zipfile.ZipFile` is opened.
+The `--skip-secret-scan` flag is blocked with exit code 1.
+Files matching blocked patterns (storagestate, .env, credential, cookie, token, password, etc.)
+are excluded from the ZIP even if somehow present in the delivery directory.
+
+**5P-4. `Delivery_Checklist.md` has all items unchecked by default.**
+All checklist items use `- [ ]` syntax. No item is pre-checked. Human sign-off is required.
+
+**5P-5. Report content must never contain raw credentials.**
+Generated report content (QA_Report.md, Bug_Report.md, etc.) must not contain:
+`password:`, `api_key:`, `token=`, or any credential-like value patterns.
+Validated programmatically in `TestArtifactContent`.
+
+**5P-6. `SecretScanResult.scan_passed` is computed, not injected.**
+`__post_init__` recomputes `scan_passed = len(blocked_files) == 0`.
+Passing `scan_passed=True` with non-empty `blocked_files` is overridden.
+
+---
+
 ## Phase 5M-R safety rules
 
 **5MR-1. DELETE method is always `blocked_by_default`.**

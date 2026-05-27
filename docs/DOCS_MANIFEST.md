@@ -435,6 +435,21 @@ All Phase 5K evidence intelligence artifacts: `network_calls_made=False`, `execu
 | `cicd_summary.md` | MD | system | Usage instructions and safety review checklist |
 | `cicd_manifest.json` | JSON | system | `CICDManifest` — artifact list, safety flags |
 
+### `28_client_delivery/` (Phase 5P — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `QA_Report.md` | MD | system | Full client QA report (11 sections) |
+| `QA_Report.html` | HTML | system | HTML version of QA report |
+| `Bug_Report.md` | MD | system | Defect report template |
+| `Test_Cases.csv` | CSV | system | Structured test cases |
+| `Risk_Matrix.md` | MD | system | Risk matrix with severity and mitigation |
+| `Recommendations.md` | MD | system | Automation/CI recommendations |
+| `Evidence_Index.md` | MD | system | Evidence artifact index |
+| `Delivery_Checklist.md` | MD | system | Pre-delivery checklist (all unchecked) |
+| `client_delivery_manifest.json` | JSON | system | `ClientDeliveryManifest` — safety flags + scan |
+| `client_delivery.zip` | ZIP | system | Archive of all delivery artifacts |
+
 ---
 
 ## Phase 5M-R fixture specs

@@ -1903,6 +1903,54 @@ outputs/<project_id>/27_cicd/cicd_manifest.json
 
 ---
 
+## Section 43 — Phase 5P: Client Delivery Pack
+
+**Purpose:** Generate a client-ready delivery package from previous phase outputs.
+
+**Generate a delivery pack:**
+```bash
+python tools/create_client_delivery_pack.py \
+    --project-id my-project \
+    --include-generated-tests \
+    --include-cicd
+```
+
+**Dry run (no files written):**
+```bash
+python tools/create_client_delivery_pack.py --project-id my-project --no-write
+```
+
+**Output directory:** `outputs/<project_id>/28_client_delivery/`
+
+**Delivery artifacts generated:**
+
+| File | Description |
+|------|-------------|
+| `QA_Report.md` | Full 11-section QA report |
+| `QA_Report.html` | HTML version for browser viewing |
+| `Bug_Report.md` | Defect report template |
+| `Test_Cases.csv` | Structured test cases with status |
+| `Risk_Matrix.md` | Risk matrix with severity/mitigation |
+| `Recommendations.md` | Automation and CI/CD recommendations |
+| `Evidence_Index.md` | Evidence artifact index with checklist |
+| `Delivery_Checklist.md` | Pre-delivery checklist (all unchecked) |
+| `client_delivery_manifest.json` | Manifest with safety flags and scan result |
+| `client_delivery.zip` | ZIP of all artifacts |
+
+**Before sending to client:**
+1. Complete all items in `Delivery_Checklist.md`
+2. Verify `client_delivery_manifest.json`: `secret_scan.scan_passed=true`
+3. Customize all placeholder sections in `QA_Report.md`
+4. Obtain QA Lead sign-off
+5. Verify no sensitive data in evidence files
+
+**Safety invariants:**
+- `approved_for_client_delivery=False` — requires manual sign-off
+- `auto_send_to_client=False` — never sends automatically
+- Secret scan excludes storageState, .env, credentials, cookies, tokens from ZIP
+
+---
+
 ## Section 42 — Phase 5M-R: Demo Workflow Validation
 
 **Purpose:** Validate the full Phase 5M pipeline against realistic fixture specs.

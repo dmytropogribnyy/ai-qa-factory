@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.12.0
+**Version:** 5.13.0
 **Updated:** 2026-05-27
-**Phase:** 5M-R
+**Phase:** 5P
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1327,6 +1327,53 @@ consolidated QA Evidence Report with multi-source aggregation and secret scan.
 - `APIContractReport`: `raw_secrets_allowed=False`, `destructive_api_calls_allowed=False`, `production_write_allowed=False`, `human_review_required=True`, `client_delivery_allowed=False`
 - `GeneratedTestsReport`: `executable_without_approval=False`, `raw_secrets_allowed=False`, `human_review_required=True`, `client_delivery_allowed=False`
 - `CICDConfig/CICDManifest`: `auto_pr_creation_allowed=False`, `client_repo_writeback_allowed=False`, `production_deploy_allowed=False`, `human_review_required=True`
+
+---
+
+## Phase 5P — Client Delivery Pack `[implemented]`
+
+**Purpose:** Aggregate outputs from all previous phases into a clean, client-ready
+delivery package. Generate structured reports, run a secret scan, create a ZIP archive.
+
+**Input artifacts:** `outputs/<project_id>/14_qa_report/`, `25_api_contract/`,
+`26_generated_tests/`, `27_cicd/` (all optional — graceful degradation if missing)
+
+**Output artifacts** (`outputs/<project_id>/28_client_delivery/`):
+- `QA_Report.md` / `QA_Report.html` — 11-section client QA report
+- `Bug_Report.md` — defect report template
+- `Test_Cases.csv` — structured test case list
+- `Risk_Matrix.md` — risk matrix with severity and mitigation
+- `Recommendations.md` — automation and CI/CD recommendations
+- `Evidence_Index.md` — evidence artifact index
+- `Delivery_Checklist.md` — pre-delivery checklist (all items unchecked by default)
+- `client_delivery_manifest.json` — manifest with safety flags and secret scan result
+- `client_delivery.zip` — ZIP of all artifacts (blocked files excluded)
+
+**Allowed Actions:**
+- Reading outputs from `outputs/<project_id>/` subdirectories
+- Generating report content from available data (placeholder when data missing)
+- Running secret filename scan on delivery directory
+- Creating ZIP archive (excluding blocked filenames)
+
+**Blocked Actions:**
+- Auto-approving delivery (`approved_for_client_delivery` always `False`)
+- Sending to client automatically (`auto_send_to_client` always `False`)
+- Skipping secret scan (`secret_scan_before_delivery` always `True`)
+- Including storageState, .env, credentials, cookies, tokens in ZIP
+
+**Acceptance Criteria:**
+- All 9 artifact files generated + manifest + ZIP = 10 total artifacts
+- `client_delivery_manifest.json` contains `approved_for_client_delivery=False`,
+  `human_review_required=True`, `secret_scan_before_delivery=True`
+- Secret scan result in manifest with `scan_passed=True` for clean output
+- ZIP contains all main artifacts, excludes ZIP itself and blocked filenames
+- Blocked CLI flags (`--approve`, `--auto-send`, `--skip-secret-scan`) exit with code 1
+- ruff: clean; pytest: 2226 passed (108 new Phase 5P tests)
+
+**Safety invariants (all hardcoded in `__post_init__`):**
+- `ClientDeliveryManifest`: `approved_for_client_delivery=False`, `human_review_required=True`,
+  `auto_send_to_client=False`, `secret_scan_before_delivery=True`, `raw_secrets_included=False`
+- `SecretScanResult`: `scan_passed` recomputed from `blocked_files` — cannot be injected
 
 ---
 

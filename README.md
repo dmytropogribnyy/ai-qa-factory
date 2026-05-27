@@ -225,7 +225,17 @@ Expected: **2067 passed** (all phases through 5M — schema foundations, classif
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v5.8.0 — Demo Workflow Hardening (current)
+### v5.9.0 — Client Delivery Pack (current)
+
+- Phase 5P: `ClientDeliveryPack` — aggregate all phase outputs into a client-ready delivery package
+- Phase 5P: `SecretScanner` — pre-delivery scan blocks storageState, .env, credentials, cookies, tokens
+- Phase 5P: 9 delivery artifacts: QA_Report.md/html, Bug_Report, Test_Cases.csv, Risk_Matrix, Recommendations, Evidence_Index, Delivery_Checklist, manifest + ZIP
+- Phase 5P: `approved_for_client_delivery=False` hardcoded — manual sign-off always required
+- Phase 5P: CLI `create_client_delivery_pack.py` with blocked `--approve`, `--auto-send`, `--skip-secret-scan` flags
+- Phase 5P: 108 new tests; 2226 total
+- All safety invariants double-enforced in `__post_init__` + injection-proof via `from_dict`
+
+### v5.8.0 — Demo Workflow Hardening
 
 - Phase 5M-R: 4 realistic fixture specs (`petstore_openapi.json`, `sample_openapi.yaml`, `risky_api_openapi.json`, `postman_sample.json`)
 - Phase 5M-R: 51 end-to-end demo workflow tests (`tests/test_phase5mr_demo_workflow.py`)
