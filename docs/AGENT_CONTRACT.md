@@ -845,6 +845,29 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Section 25 — Phase 6.3 — Client Delivery Report Rules
+
+- **`client_report.md` is always a draft.**
+  `generate_client_delivery_report()` always includes a DRAFT notice and states
+  `approved_for_client_delivery = False`. No caller argument suppresses this.
+
+- **Report generation is read-only.**
+  `generate_client_delivery_report()` and `write_client_delivery_report()` must not
+  modify any field of `ClientAuditResult` or `ClientAuditPlan`.
+
+- **No fake findings in the report.**
+  The report renders only what is in `result.structured_findings`. Empty list → explains
+  what was not tested. Never invents risks or placeholder findings.
+
+- **`write_client_delivery_report()` is called only when `write_files=True`.**
+  `--no-write` runs must not produce a `client_report.md` file.
+
+- **Report language is client-oriented, not system log.**
+  Finding descriptions use natural language. Module names are translated to human labels.
+  Technical internal status values are translated before display.
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

@@ -2931,8 +2931,40 @@ now contain structured findings and a risk matrix section.
 
 **New `summary.md` section:** `## Risk Matrix` with counts, top risks, and recommended next actions.
 
-**Risk score formula:** `severity_weight × confidence_weight`
+**Risk score formula:** `severity_weight x confidence_weight`
 Range: 0.5 (INFO + LOW confidence) to 5.0 (CRITICAL + HIGH confidence)
+
+---
+
+## Phase 6.3 — Client Delivery Report v1
+
+No new CLI flags. Phase 6.3 adds `client_report.md` generation to the existing `run_client_audit.py` write run.
+
+After a successful write run, `run_client_audit.py` prints the path to the report:
+
+```
+[OK] Client audit complete -- project: demo
+     Artifacts in:  outputs/demo/
+     Audit dir:     outputs/demo/33_client_audit/
+     Client report: outputs/demo/33_client_audit/client_report.md
+```
+
+**`client_report.md` sections:**
+1. Executive Summary
+2. Audit Scope
+3. Inputs Provided
+4. Modules Executed
+5. Modules Not Executed
+6. Risk Matrix
+7. Key Findings (client-oriented language)
+8. Evidence Summary
+9. Recommended Actions
+10. What Was Not Tested
+11. Assumptions and Limitations
+12. Next Steps
+- Review and Approval checklist
+
+**Safety:** Report always contains DRAFT notice and `approved_for_client_delivery = False` statement.
 
 ---
 

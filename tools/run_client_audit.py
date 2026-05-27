@@ -256,6 +256,10 @@ def main(argv: list[str] | None = None) -> None:
         "production_write_allowed": result.production_write_allowed,
         "auto_send_allowed": result.auto_send_allowed,
         "client_delivery_auto_approved": result.client_delivery_auto_approved,
+        "total_findings": result.total_findings,
+        "findings_by_severity": result.findings_by_severity,
+        "top_risks": result.top_risks,
+        "risk_summary": result.risk_summary,
         "module_results": [
             {"name": mr.name, "status": mr.status, "note": mr.note}
             for mr in result.module_results
@@ -270,8 +274,9 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"\n[OK] Client audit complete -- project: {args.project_id}")
     if not args.no_write:
-        print(f"     Artifacts in: {args.outputs_root}/{args.project_id}/")
-        print(f"     Audit plan:   {args.outputs_root}/{args.project_id}/33_client_audit/")
+        print(f"     Artifacts in:  {args.outputs_root}/{args.project_id}/")
+        print(f"     Audit dir:     {args.outputs_root}/{args.project_id}/33_client_audit/")
+        print(f"     Client report: {args.outputs_root}/{args.project_id}/33_client_audit/client_report.md")
 
 
 if __name__ == "__main__":

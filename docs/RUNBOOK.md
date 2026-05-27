@@ -2342,3 +2342,44 @@ for `## Risk Matrix` section.
 - [ ] `structured_findings` in JSON is list of dicts (serialized via `to_dict()`)
 - [ ] `findings: int` backward-compat field still present alongside new fields
 - [ ] No credentials in any Finding field
+
+---
+
+## Section 50 — Phase 6.3: Client Delivery Report v1
+
+**Purpose:** Verify that `client_report.md` is generated correctly and is client-ready.
+
+### Validate 83 Phase 6.3 tests
+
+```bash
+python -m pytest tests/test_phase6_3_client_delivery_report.py -q
+```
+
+### Generate report in dry-run mode (no files written)
+
+```bash
+python tools/run_client_audit.py \
+  --project-id demo \
+  --spec-file fixtures/demo_specs/petstore_openapi.json \
+  --no-write
+```
+
+### Generate and inspect client_report.md
+
+```bash
+python tools/run_client_audit.py \
+  --project-id report-demo \
+  --spec-file fixtures/demo_specs/petstore_openapi.json
+
+# Report path is printed at the end of the run:
+# Client report: outputs/report-demo/33_client_audit/client_report.md
+```
+
+### Safety checklist
+
+- [ ] `client_report.md` contains DRAFT notice
+- [ ] `client_report.md` contains `approved_for_client_delivery = False`
+- [ ] All 12 sections present in the report
+- [ ] `--no-write` run produces no `client_report.md`
+- [ ] No fake findings in report when modules ran in planning_only mode
+- [ ] `approved_for_client_delivery` remains False after report generation

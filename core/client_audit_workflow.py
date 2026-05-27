@@ -1,4 +1,4 @@
-"""Phase 6.1/6.2 -- One-command client audit workflow orchestrator.
+"""Phase 6.1/6.2/6.3 -- One-command client audit workflow orchestrator.
 
 Thin orchestration layer over existing QA Factory core modules.
 No new business logic -- delegates entirely to existing runners.
@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from core.reporting.client_delivery_report import write_client_delivery_report
 from core.risk.finding_adapters import findings_from_api_contract, findings_from_secret_scan
 from core.risk.risk_matrix import RiskMatrix
 from core.schemas.client_audit import (
@@ -101,6 +102,7 @@ class ClientAuditWorkflow:
             "client_audit_preflight.md",
             "client_audit_run_report.json",
             "client_audit_summary.md",
+            "client_report.md",
         ):
             artifacts.append(f"{root}/{_AUDIT_DIR_NAME}/{fname}")
 
@@ -178,6 +180,11 @@ class ClientAuditWorkflow:
                 _result_to_dict(result),
             )
             _write_summary_md(self._audit_dir / "client_audit_summary.md", result, plan)
+            write_client_delivery_report(
+                self._audit_dir / "client_report.md",
+                result,
+                plan,
+            )
 
         return result
 
@@ -517,6 +524,7 @@ def _result_to_dict(result: ClientAuditResult) -> dict:
             {"name": mr.name, "status": mr.status, "note": mr.note}
             for mr in result.module_results
         ],
+        "client_report_path": result.artifacts_root + f"/{_AUDIT_DIR_NAME}/client_report.md",
     }
 
 

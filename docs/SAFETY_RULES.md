@@ -1309,6 +1309,25 @@ Safety invariants from Phase 6.1 (`__post_init__` resets) remain unchanged.
 
 ---
 
+## Phase 6.3 — Client Delivery Report Safety Rules
+
+**6.3-1. `client_report.md` is always a draft — it does not grant delivery approval.**
+`generate_client_delivery_report()` and `write_client_delivery_report()` never set
+`approved_for_client_delivery=True`. The report states `approved_for_client_delivery = False` explicitly.
+
+**6.3-2. The report always contains a DRAFT / PENDING HUMAN REVIEW notice.**
+No configuration or caller argument can suppress this notice. The notice is generated unconditionally.
+
+**6.3-3. No fake findings in the report.**
+`generate_client_delivery_report()` renders only the findings present in `ClientAuditResult.structured_findings`.
+If the list is empty, the report says so and explains what was not tested. It does not invent risks.
+
+**6.3-4. Report generation is read-only — does not modify `ClientAuditResult`.**
+Calling `generate_client_delivery_report()` or `write_client_delivery_report()` must not alter any
+field of the result or plan objects passed to it.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

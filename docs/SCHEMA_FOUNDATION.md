@@ -1210,6 +1210,20 @@ No new schemas. Demo workflow calls existing `dispatch()` and returns `dict[str,
 
 ---
 
+## Phase 6.3 — Client Delivery Report
+
+No new schema types. The report generator (`core/reporting/client_delivery_report.py`) consumes
+`ClientAuditResult` and `ClientAuditPlan` and produces a Markdown string — no new dataclasses.
+
+**New reporting package:** `core/reporting/`
+- `generate_client_delivery_report(result, plan) -> str` — pure function, no I/O
+- `write_client_delivery_report(path, result, plan) -> None` — writes to `client_report.md`
+
+**Input types:** `ClientAuditResult` (Phase 6.1/6.2), `ClientAuditPlan` (Phase 6.1)
+**Output:** UTF-8 Markdown string / file — no new schema types
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic

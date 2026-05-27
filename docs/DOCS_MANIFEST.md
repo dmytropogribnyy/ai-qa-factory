@@ -1,8 +1,8 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 6.6.0  
+**Version:** 6.7.0  
 **Updated:** 2026-05-27  
-**Phase:** 6.2
+**Phase:** 6.3
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.
@@ -540,6 +540,19 @@ for any module with `status == "planning_only"`.
 | `tests/test_phase6_2_finding_schema.py` | 98 tests |
 
 **Modified:** `core/schemas/client_audit.py`, `core/client_audit_workflow.py`, `tools/run_client_audit.py`
+
+---
+
+## Phase 6.3 — Client Delivery Report v1
+
+| File | Purpose |
+|---|---|
+| `core/reporting/__init__.py` | Reporting package init |
+| `core/reporting/client_delivery_report.py` | `generate_client_delivery_report()`, `write_client_delivery_report()` |
+| `tests/test_phase6_3_client_delivery_report.py` | 83 tests |
+
+**Modified:** `core/client_audit_workflow.py`, `tools/run_client_audit.py`
+**New output artifact:** `outputs/<project_id>/33_client_audit/client_report.md`
 
 ---
 

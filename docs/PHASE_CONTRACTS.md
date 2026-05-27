@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 6.6.0
+**Version:** 6.7.0
 **Updated:** 2026-05-27
-**Phase:** 6.2
+**Phase:** 6.3
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1712,6 +1712,54 @@ Client Delivery Pack.
 - All safety invariants from Phase 6.1 still enforced
 
 **Quality gates:** ruff clean; pytest 2991 passed (98 new Phase 6.2 tests)
+
+---
+
+## Phase 6.3 — Client Delivery Report v1 `[implemented]`
+
+**Purpose:** Generate a professional, human-readable Client QA Audit Report (`client_report.md`) from a `ClientAuditResult` and `ClientAuditPlan`. Language is client-oriented — explains what was checked, risks found, and recommended next steps. Report is always a draft pending human review.
+
+**New artifacts:**
+- `core/reporting/__init__.py` — reporting package
+- `core/reporting/client_delivery_report.py` — `generate_client_delivery_report()`, `write_client_delivery_report()`
+- `tests/test_phase6_3_client_delivery_report.py` — 83 tests
+
+**Modified artifacts:**
+- `core/client_audit_workflow.py` — `run()` calls `write_client_delivery_report()`; `client_report.md` added to expected artifacts; `_result_to_dict()` includes `client_report_path`
+- `tools/run_client_audit.py` — `main()` prints `client_report.md` path on write run
+
+**Report sections (12 + footer):**
+1. Executive Summary
+2. Audit Scope
+3. Inputs Provided
+4. Modules Executed
+5. Modules Not Executed (with reasons)
+6. Risk Matrix
+7. Key Findings (with client-oriented language per severity)
+8. Evidence Summary
+9. Recommended Actions
+10. What Was Not Tested
+11. Assumptions and Limitations
+12. Next Steps
+- Review and Approval (checklist, always draft notice)
+
+**Safety constraints:**
+- Report always contains DRAFT notice
+- `approved_for_client_delivery = False` always stated
+- Generating/writing the report does NOT grant delivery approval
+- All Phase 6.1 safety invariants preserved
+
+**Acceptance criteria:**
+- `outputs/<project>/33_client_audit/client_report.md` generated on write run
+- `--no-write` produces no `client_report.md`
+- Report is human-readable (no raw system log language)
+- All 12 sections always present
+- No findings case explains what was not tested + suggests how to expand coverage
+- Skipped modules listed in Section 5 and Section 10
+- Critical findings generate "immediate action" language
+- All safety invariants unchanged
+
+**Quality gates:** ruff clean; pytest 3074 passed (83 new Phase 6.3 tests)
 
 ---
 

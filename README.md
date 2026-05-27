@@ -225,7 +225,16 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v6.6.0 — Structured Finding Schema + Risk Matrix (current)
+### v6.7.0 — Client Delivery Report v1 (current)
+
+- Phase 6.3: `core/reporting/client_delivery_report.py` — professional client-facing QA audit report generator
+- Phase 6.3: `client_report.md` — 12-section report with Executive Summary, Risk Matrix, Key Findings, Recommended Actions
+- Phase 6.3: Human-readable language (not system log); severity-based action language; skipped modules explained
+- Phase 6.3: Always DRAFT + `approved_for_client_delivery = False` — report is never auto-approved
+- Phase 6.3: Path to `client_report.md` printed at end of `run_client_audit.py` write run
+- Phase 6.3: 83 new tests; 3074 total
+
+### v6.6.0 — Structured Finding Schema + Risk Matrix
 
 - Phase 6.2: `core/schemas/finding.py` — typed `Finding` dataclass with `Severity`, `FindingCategory`, `FindingStatus`, `Confidence` enums
 - Phase 6.2: `core/risk/risk_matrix.py` — `RiskMatrix` + `risk_score()` (deterministic scoring and sorting)
