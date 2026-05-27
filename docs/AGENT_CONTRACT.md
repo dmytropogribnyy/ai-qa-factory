@@ -733,6 +733,31 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Section 20 — Phase 5O — Flaky Test Analyzer + Self-Healing Rules
+
+- **Static analysis only by default — no code modifications.**
+  `analyze()` and `analyze_selectors()` are read-only. `code_modification_allowed=False` hardcoded.
+
+- **Auto-fix is always blocked.**
+  `--auto-fix` exits 1. No mechanism exists to auto-replace selectors.
+
+- **Applying proposals requires explicit dual approval.**
+  `--apply-proposals` alone exits 1.
+  Requires both `--apply-proposals` AND `--approve-code-modification`.
+  `apply_proposals()` raises `ValueError` without the flag.
+
+- **Applied proposals are TODO comments only — not code replacements.**
+  Even in approved mode, proposals insert `// HEAL-xxx:` comments at affected lines.
+  The developer reads and implements the suggested change manually.
+
+- **Safety flags are injection-proof.**
+  `read_only`, `auto_apply_changes`, `code_modification_allowed`, `production_write_allowed`,
+  `human_review_required` hardcoded in `__post_init__` + `from_dict`.
+
+- **Artifact dir: `32_flaky_test_analyzer/` only.**
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

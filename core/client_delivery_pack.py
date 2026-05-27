@@ -178,6 +178,12 @@ def _collect_source_data(project_id: str, outputs_root: Path) -> dict:
         "sec_status": "planning_only",
         "sec_total_checked": 0,
         "sec_missing_headers": 0,
+        # Phase 5O
+        "has_flaky_analysis": False,
+        "flaky_total_risks": 0,
+        "flaky_weak_selectors": 0,
+        "flaky_proposals": 0,
+        "flaky_stability_score": 0.0,
     }
 
     if not project_dir.exists():
@@ -263,6 +269,33 @@ def _collect_source_data(project_id: str, outputs_root: Path) -> dict:
             except (OSError, json.JSONDecodeError):
                 pass
 
+    # Phase 5O — Flaky Test Analyzer
+    flaky_dir = project_dir / "32_flaky_test_analyzer"
+    if flaky_dir.exists():
+        data["has_flaky_analysis"] = True
+        for f in flaky_dir.glob("flaky_test_analysis.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+                data["flaky_total_risks"] = d.get("total_risks", 0)
+                break
+            except (OSError, json.JSONDecodeError):
+                pass
+        for f in flaky_dir.glob("selector_stability.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+                data["flaky_weak_selectors"] = d.get("weak_count", 0)
+                data["flaky_stability_score"] = d.get("stability_score", 0.0)
+                break
+            except (OSError, json.JSONDecodeError):
+                pass
+        for f in flaky_dir.glob("self_healing_proposals.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+                data["flaky_proposals"] = d.get("total_proposals", 0)
+                break
+            except (OSError, json.JSONDecodeError):
+                pass
+
     return data
 
 
@@ -334,7 +367,17 @@ def _generate_qa_report(project_id: str, data: dict, generated_at: str) -> str:
     else:
         sec_row = ""
 
-    phase5n_rows = "\n".join(r for r in [a11y_row, perf_row, sec_row] if r)
+    if data["has_flaky_analysis"]:
+        flaky_row = (
+            f"| Flaky test analysis | Static analysis | "
+            f"{data['flaky_total_risks']} risks, "
+            f"stability {data['flaky_stability_score']}/100, "
+            f"{data['flaky_proposals']} proposals |"
+        )
+    else:
+        flaky_row = ""
+
+    phase5n_rows = "\n".join(r for r in [a11y_row, perf_row, sec_row, flaky_row] if r)
 
     # QA evidence excerpt
     excerpt = data["qa_summary_excerpt"]
@@ -720,6 +763,15 @@ def _generate_evidence_index(project_id: str, data: dict, generated_at: str) -> 
         )
         entries.append(
             f"- **Passive Security Report** {sec_note}: `outputs/{project_id}/31_passive_security/`"
+        )
+    if data["has_flaky_analysis"]:
+        flaky_note = (
+            f"({data['flaky_total_risks']} risks, "
+            f"selector stability {data['flaky_stability_score']}/100, "
+            f"{data['flaky_proposals']} proposals)"
+        )
+        entries.append(
+            f"- **Flaky Test Analysis** {flaky_note}: `outputs/{project_id}/32_flaky_test_analyzer/`"
         )
     if not entries:
         entries.append("- No evidence artifacts from previous phases found")

@@ -1495,6 +1495,49 @@ Client Delivery Pack.
 
 ---
 
+## Phase 5O — Self-Healing + Flaky Test Analyzer `[implemented]`
+
+**Purpose:** Static analysis of Playwright spec files to detect flakiness patterns, classify selector stability, and generate self-healing proposals. No browser, no network, no auto-apply.
+
+**Allowed actions:**
+- Read Playwright spec files (`*.spec.ts`) from configured paths or auto-discovered in `outputs_root`
+- Regex-based pattern matching for flakiness risks (hard waits, fragile selectors, race-prone patterns)
+- Generate selector stability scores (0–100)
+- Write JSON + Markdown reports to `outputs/<id>/32_flaky_test_analyzer/`
+- Insert TODO comment proposals when `--apply-proposals --approve-code-modification` both provided
+
+**Blocked actions:**
+- `--auto-fix` — always blocked
+- `--skip-human-review` — always blocked
+- `--approve-delivery` — always blocked
+- `--force-apply` — always blocked
+- Applying proposals without `--approve-code-modification` flag
+
+**Safety invariants (hardcoded in `__post_init__` + `from_dict`):**
+- `read_only=True`
+- `auto_apply_changes=False`
+- `code_modification_allowed=False`
+- `production_write_allowed=False`
+- `human_review_required=True`
+
+**Artifacts produced:** `outputs/<id>/32_flaky_test_analyzer/`
+- `flaky_test_analysis.json` + `Flaky_Test_Analysis_Report.md`
+- `selector_stability.json` + `Selector_Stability_Report.md`
+- `self_healing_proposals.json` + `Self_Healing_Proposals.md`
+
+**Acceptance criteria:**
+- `analyze()` detects hard waits, fragile selectors, non-web-first assertions in flaky spec fixture
+- `analyze_selectors()` returns `stability_score >= 70` for stable spec, `< 70` for flaky spec
+- `generate_healing_proposals()` produces proposals with `applied=False`, status=`proposal_generated`
+- `apply_proposals()` raises `ValueError` without `approve_code_modification=True`
+- All safety invariant injection blocked via `from_dict()`
+- CLI blocked flags exit 1 with `[BLOCKED]` in stderr
+- `--no-write` produces no files on disk
+
+**Quality gates:** ruff clean; pytest 2643 passed (75 new Phase 5O tests)
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

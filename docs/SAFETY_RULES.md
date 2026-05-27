@@ -1189,6 +1189,35 @@ Client Delivery Pack always shows execution status — never marks planning arti
 
 ---
 
+## Phase 5O — Flaky Test Analyzer Safety Rules
+
+**5O-1. Static analysis only by default — no code modifications.**
+`analyze()` and `analyze_selectors()` are read-only operations.
+`code_modification_allowed=False` hardcoded in all Phase 5O schemas.
+
+**5O-2. Auto-fix is always blocked.**
+`--auto-fix` flag causes immediate exit 1 with `[BLOCKED]` message.
+There is no mechanism to auto-replace selectors.
+
+**5O-3. Applying proposals requires explicit dual-flag approval.**
+`--apply-proposals` alone exits 1.
+Both `--apply-proposals` AND `--approve-code-modification` are required.
+`apply_proposals()` raises `ValueError` without `approve_code_modification=True`.
+
+**5O-4. Applied proposals are TODO comments only — not code replacements.**
+Even in approved apply mode, proposals insert `// HEAL-xxx: // TODO:` comments.
+The developer must read and implement the suggested change manually.
+
+**5O-5. Human review is always required.**
+`human_review_required=True` hardcoded in `FlakyTestAnalysisReport`, `SelectorStabilityReport`, and `SelfHealingReport`.
+Cannot be overridden via `from_dict()`.
+
+**5O-6. Production write is always blocked.**
+`production_write_allowed=False` hardcoded in `SelfHealingReport`.
+The analyzer never writes to production systems.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

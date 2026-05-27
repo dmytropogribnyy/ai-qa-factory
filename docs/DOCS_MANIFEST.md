@@ -483,6 +483,18 @@ for any module with `status == "planning_only"`.
 
 ---
 
+## Phase 5O output artifact directory
+
+| Directory | Contents | Status tracking |
+|---|---|---|
+| `outputs/<id>/32_flaky_test_analyzer/` | Flaky analysis JSON+MD, selector stability JSON+MD, self-healing proposals JSON+MD | `status` field in each JSON |
+
+**Status values:** `analysis_only` | `proposal_generated` | `patch_applied` | `partial`
+
+**Safety invariants in all 5O JSON files:** `code_modification_allowed=False`, `auto_apply_changes=False`, `production_write_allowed=False`, `human_review_required=True`
+
+---
+
 ## Related documents
 
 - [`DOCUMENTATION_GOVERNANCE.md`](DOCUMENTATION_GOVERNANCE.md) — full governance rules

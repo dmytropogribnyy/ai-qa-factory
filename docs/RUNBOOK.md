@@ -2089,3 +2089,58 @@ python tools/run_passive_security_smoke.py \
 - [ ] Status field shows `planning_only` for skeleton-only runs
 - [ ] Delivery report shows "Generated checks only; execution requires approval" for planning_only
 - [ ] No credentials in any generated spec or report file
+
+---
+
+## Section 45 — Phase 5O: Flaky Test Analyzer + Self-Healing Proposals
+
+**Purpose:** Static analysis of Playwright spec files to detect flakiness, classify selector stability, and generate self-healing proposals. No browser, no network, no auto-apply.
+
+### Analyze flakiness risks
+
+```bash
+python tools/run_flaky_test_analyzer.py \
+  --project-id my-project \
+  --spec-files tests/smoke/login.spec.ts tests/smoke/checkout.spec.ts
+```
+
+**Outputs:** `flaky_test_analysis.json` | `Flaky_Test_Analysis_Report.md` | `selector_stability.json` | `Selector_Stability_Report.md` | `self_healing_proposals.json` | `Self_Healing_Proposals.md`
+
+### Auto-discover specs (outputs_root scan)
+
+```bash
+python tools/run_flaky_test_analyzer.py \
+  --project-id my-project \
+  --outputs-root outputs/
+```
+
+### Dry run (no file output)
+
+```bash
+python tools/run_flaky_test_analyzer.py \
+  --project-id my-project \
+  --spec-files tests/smoke/login.spec.ts \
+  --no-write
+```
+
+### Apply healing proposals (TODO comments, review first)
+
+```bash
+# Step 1: review Self_Healing_Proposals.md
+# Step 2: apply with explicit approval
+python tools/run_flaky_test_analyzer.py \
+  --project-id my-project \
+  --spec-files tests/smoke/login.spec.ts \
+  --apply-proposals \
+  --approve-code-modification
+```
+
+**Apply mode inserts TODO comments at affected lines only — does not auto-replace code.**
+
+### Safety checklist
+
+- [ ] No `--auto-fix`, `--skip-human-review`, `--approve-delivery`, `--force-apply` flags used
+- [ ] `human_review_required=True` in all output JSON files
+- [ ] `code_modification_allowed=False` in all reports before applying
+- [ ] Reviewed `Self_Healing_Proposals.md` before running `--apply-proposals`
+- [ ] No production spec files modified without code review

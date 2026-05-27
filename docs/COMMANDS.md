@@ -2712,6 +2712,51 @@ python tools/run_passive_security_smoke.py \
 
 ---
 
+## Phase 5O — Flaky Test Analyzer + Self-Healing Proposals
+
+Static analyzer for Playwright spec files. No network, no browser, no auto-apply.
+
+### `tools/run_flaky_test_analyzer.py`
+
+```bash
+# Analyze spec files — static analysis only (no code changes)
+python tools/run_flaky_test_analyzer.py \
+  --project-id my-project \
+  --spec-files tests/smoke/login.spec.ts tests/smoke/checkout.spec.ts
+
+# Auto-discover *.spec.ts in outputs_root (default: outputs/)
+python tools/run_flaky_test_analyzer.py \
+  --project-id my-project
+
+# Dry run — no file output
+python tools/run_flaky_test_analyzer.py \
+  --project-id my-project \
+  --spec-files tests/smoke/login.spec.ts \
+  --no-write
+
+# Review proposals then apply (inserts TODO comments at affected lines)
+python tools/run_flaky_test_analyzer.py \
+  --project-id my-project \
+  --spec-files tests/smoke/login.spec.ts \
+  --apply-proposals \
+  --approve-code-modification
+```
+
+**Blocked flags (exit 1):** `--auto-fix`, `--skip-human-review`, `--approve-delivery`, `--force-apply`
+
+**Artifacts:** `outputs/<id>/32_flaky_test_analyzer/`
+- `flaky_test_analysis.json` + `Flaky_Test_Analysis_Report.md`
+- `selector_stability.json` + `Selector_Stability_Report.md`
+- `self_healing_proposals.json` + `Self_Healing_Proposals.md`
+
+**Flakiness patterns detected:** `hard_wait` | `fragile_selector` | `non_web_first_assertion` | `dynamic_selector` | `network_dependent`
+
+**Selector stability levels:** `strong` (getByRole/getByLabel/getByTestId) | `medium` | `weak` (nth/xpath/generated-class)
+
+**Status values:** `analysis_only` | `proposal_generated` | `patch_applied` | `partial`
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

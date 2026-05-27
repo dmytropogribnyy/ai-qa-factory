@@ -197,7 +197,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **2568 passed** (all phases through 5N-R — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow)
+Expected: **2643 passed** (all phases through 5O — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow, flaky test analyzer)
 
 ---
 
@@ -225,7 +225,20 @@ Expected: **2568 passed** (all phases through 5N-R — schema foundations, class
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v6.1.0 — Quality Audit Delivery Workflow (current)
+### v6.2.0 — Flaky Test Analyzer + Self-Healing Proposals (current)
+
+- Phase 5O: `FlakyTestAnalyzer` — static analysis of Playwright spec files (no network, no browser)
+- Phase 5O: `analyze()` — detects hard waits, fragile selectors, non-web-first assertions, dynamic classes
+- Phase 5O: `analyze_selectors()` — stability score 0–100 (strong=getByRole/Label/TestId, weak=nth/xpath/generated-class)
+- Phase 5O: `generate_healing_proposals()` — proposals only, `applied=False` by default
+- Phase 5O: `apply_proposals()` — TODO comment insertion, requires `--approve-code-modification`
+- Phase 5O: 3 new schemas (`FlakyTestAnalysisReport`, `SelectorStabilityReport`, `SelfHealingReport`) + 3 sub-schemas
+- Phase 5O: Client Delivery Pack reads dir 32, flaky analysis row in QA report table
+- Phase 5O: Demo fixtures (`stable_test.spec.ts`, `flaky_test.spec.ts`) in `fixtures/demo_quality_audit/playwright_specs/`
+- Phase 5O: 75 new tests; 2643 total
+- Blocked: `--auto-fix`, `--skip-human-review`, `--approve-delivery`, `--force-apply`
+
+### v6.1.0 — Quality Audit Delivery Workflow
 
 - Phase 5N-R: `demo_quality_audit` fixture set (29_accessibility + 30_performance + 31_passive_security)
 - Phase 5N-R: `planning_only` fixtures (accessibility + performance) + `executed` fixture (passive security: 3/5 OWASP headers)

@@ -668,6 +668,23 @@ Secret scan runs before ZIP creation. storageState, .env, credentials, cookies, 
 
 ---
 
+### `outputs/<project-id>/32_flaky_test_analyzer/`
+
+| Filename | Schema | Owner | Notes |
+|---|---|---|---|
+| `flaky_test_analysis.json` | `FlakyTestAnalysisReport` | `FlakyTestAnalyzer` | Flakiness risks + severity breakdown |
+| `Flaky_Test_Analysis_Report.md` | — | `FlakyTestAnalyzer` | Human-readable risk table |
+| `selector_stability.json` | `SelectorStabilityReport` | `FlakyTestAnalyzer` | Stability score + findings per selector |
+| `Selector_Stability_Report.md` | — | `FlakyTestAnalyzer` | Stability score table |
+| `self_healing_proposals.json` | `SelfHealingReport` | `FlakyTestAnalyzer` | Proposals with `applied=False` by default |
+| `Self_Healing_Proposals.md` | — | `FlakyTestAnalyzer` | Human-readable proposals |
+
+**Safety invariants:** `code_modification_allowed=False`, `auto_apply_changes=False`, `production_write_allowed=False`, `human_review_required=True` — all hardcoded, injection-proof.
+
+**Apply mode:** `--apply-proposals --approve-code-modification` inserts TODO comments at weak selector lines. No auto-replace. Developer implements the suggested change.
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

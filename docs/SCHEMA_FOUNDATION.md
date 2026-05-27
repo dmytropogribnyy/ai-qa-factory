@@ -1098,6 +1098,32 @@ NOT forced (reflect real routing state):
 
 ---
 
+## Phase 5O — Flaky Test Analyzer + Self-Healing schemas
+
+### `core/schemas/flaky_test_analysis.py`
+
+| Class | Purpose |
+|---|---|
+| `FlakinessRisk` | Single detected flakiness risk (category, severity, file, line, recommendation) |
+| `FlakyTestAnalysisReport` | Static flakiness analysis report — read-only, no code changes |
+| `SelectorFinding` | Stability classification for a single selector (strong/medium/weak) |
+| `SelectorStabilityReport` | Selector stability analysis report — stability score 0–100 |
+| `SelfHealingProposal` | Single proposed selector replacement — not yet applied |
+| `SelfHealingReport` | Self-healing proposal report — proposals only by default |
+
+**Safety flags (all hardcoded in `__post_init__` + injection-proof via `from_dict`):**
+- `FlakyTestAnalysisReport`: `read_only=True`, `auto_apply_changes=False`, `code_modification_allowed=False`, `human_review_required=True`
+- `SelectorStabilityReport`: `read_only=True`, `auto_fix_selectors=False`, `human_review_required=True`
+- `SelfHealingReport`: `read_only=True`, `auto_apply_changes=False`, `code_modification_allowed=False`, `production_write_allowed=False`, `human_review_required=True`
+
+**Risk categories:** `hard_wait` | `fragile_selector` | `race_prone` | `non_web_first_assertion` | `network_dependent` | `dynamic_selector` | `missing_evidence_hook`
+
+**Selector stability levels:** `strong` | `medium` | `weak` | `unknown`
+
+**Healing status values:** `analysis_only` | `proposal_generated` | `patch_applied` | `partial`
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic
