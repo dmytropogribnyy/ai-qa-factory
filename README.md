@@ -82,7 +82,7 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 3245 tests, mock mode, no API keys needed
+python -m pytest -q             # 3351 tests, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
@@ -225,7 +225,17 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v7.1.0 — Auth Strategy Selector (current)
+### v7.2.0 — Google OAuth StorageState Runner (current)
+
+- Phase 7C: `core/schemas/google_oauth.py` — `GoogleOAuthMode` (6 values), `GoogleOAuthModeReadiness` (3 states), `GoogleOAuthRunStatus` (5 states), `GoogleOAuthInputs`, `GoogleOAuthPlan`, `GoogleOAuthRunResult` — all with 8–9 safety invariants via `__post_init__`
+- Phase 7C: `core/google_oauth_runner.py` — `GoogleOAuthRunner`: classify_mode, build_plan, run (storageState reuse), render_artifacts, format_auth_coverage_section
+- Phase 7C: `tools/run_google_oauth_smoke.py` — CLI with blocked-flag guard; 1 executable mode + 5 planning-only; `--approve-execution` required for actual smoke
+- Phase 7C: Output artifacts: `outputs/<project>/16_google_oauth/` — `google_oauth_plan.json`, `google_oauth_report.json`, `google_oauth_summary.md`
+- Phase 7C: URL allowlist — 6 Google HTTPS prefixes; captcha/recaptcha/challenge/anti-bot URLs always blocked
+- Phase 7C: `next_runner: "google_oauth_runner"` from Phase 7B is now implemented
+- Phase 7C: 106 new tests; 3351 total
+
+### v7.1.0 — Auth Strategy Selector
 
 - Phase 7B: `core/schemas/auth_strategy.py` — `DecisionStatus` (5 states), `AuthStrategyDecision` with 8 safety invariants via `__post_init__`
 - Phase 7B: `core/auth_strategy_selector.py` — `AuthStrategySelector`: picks best method from 7A plan using 15-method priority order

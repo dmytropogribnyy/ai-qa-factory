@@ -922,3 +922,22 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — non-negotiable rules
 - [`DOCS_MANIFEST.md`](DOCS_MANIFEST.md) — all docs registry
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates
+
+---
+
+## Phase 7C — Google OAuth Agent Rules
+
+**7C-1. Never read storageState content.**
+`GoogleOAuthRunner` passes only the file path to the Node.js subprocess. Python code must never open, parse, log, or embed storageState file content.
+
+**7C-2. Never accept personal or production Google account confirmations.**
+`personal_account_allowed=False` and `production_account_allowed=False` are `__post_init__` invariants. No agent can set these True, even via deserialization.
+
+**7C-3. `next_runner: "google_oauth_runner"` from Phase 7B is now implemented.**
+`AuthStrategySelector` maps `google_oauth` → `next_runner: "google_oauth_runner"`. Phase 7C implements this runner. Future agents must invoke `GoogleOAuthRunner` (not any old `GoogleAuthRunner`) for the `storage_state_reuse` execution path.
+
+**7C-4. storageState is a one-time manual capture.**
+Do not instruct users to re-capture unless the session has expired. Captured storageState files should be reused for multiple smoke runs until they expire.
+
+**7C-5. `format_auth_coverage_section()` for client reports.**
+When building client delivery reports that need an Authentication Coverage section, call `GoogleOAuthRunner.format_auth_coverage_section(result)` to get the formatted markdown block. Do not compose this section manually.

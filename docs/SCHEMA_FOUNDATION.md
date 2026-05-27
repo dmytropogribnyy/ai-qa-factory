@@ -1294,3 +1294,33 @@ No new schema types. The report generator (`core/reporting/client_delivery_repor
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic
 - [`COMMANDS.md`](COMMANDS.md) — planned commands that will produce schema objects
+
+---
+
+## Phase 7C — Google OAuth Schemas (`core/schemas/google_oauth.py`)
+
+**`GoogleOAuthMode(str, Enum)`** — 6 values:
+- `storage_state_reuse` — executable; load saved storageState, run headless smoke
+- `manual_storage_state_capture` — planning-only in Phase 7C
+- `google_api_oauth_token` — planning-only
+- `google_service_account` — planning-only
+- `totp_test_account` — planning-only
+- `mock_oauth_provider` — planning-only
+
+**`GoogleOAuthModeReadiness(str, Enum)`** — `executable` | `planning_only` | `blocked`
+
+**`GoogleOAuthRunStatus(str, Enum)`** — `passed` | `failed` | `blocked` | `planning_only` | `skipped`
+
+**`GoogleOAuthInputs`** — inputs dataclass with 9 safety invariants via `__post_init__`:
+- User fields: `project_id`, `target_url`, `storage_state_path`, `account_email_label`, `dedicated_test_account_confirmed`, `google_test_account_confirmed`, `approve_execution`
+- Safety invariants (always reset): `raw_secrets_allowed=False`, `storage_state_content_read=False`, `captcha_bypass_allowed=False`, `anti_bot_bypass_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `client_delivery_allowed=False`, `browser_automation_allowed=False`, `human_review_required=True`
+- `to_dict()`, `from_dict()` — both respect safety invariants
+
+**`GoogleOAuthPlan`** — planning artifact with mode readiness, blockers, recommended next steps
+
+**`GoogleOAuthRunResult`** — execution result with status, auth_coverage_summary, smoke_results, artifacts list
+
+| Set | Contents |
+|---|---|
+| `EXECUTABLE_OAUTH_MODES` | `{storage_state_reuse}` |
+| `PLANNING_ONLY_OAUTH_MODES` | all 5 remaining modes |

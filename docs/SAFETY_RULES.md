@@ -1390,3 +1390,31 @@ No storageState files, credential files, or `.env` files are read.
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates
 - [`RUNBOOK.md`](RUNBOOK.md) — approval checklist (section 4), safe local vs. external execution (section 5)
 - [`REAL_TESTING_PREPARATION.md`](REAL_TESTING_PREPARATION.md) — full staging pre-execution checklist
+
+---
+
+## Phase 7C — Google OAuth Safety Rules
+
+**7C-1. storageState content is never read by Python.**
+Only the file path is passed to the Node.js Playwright script. Python never opens, reads, parses, logs, or serialises the content of any storageState file.
+
+**7C-2. Personal and production Google accounts are always blocked.**
+`personal_account_allowed=False` and `production_account_allowed=False` are hardcoded safety invariants in `__post_init__`. No caller can override them.
+
+**7C-3. CAPTCHA bypass is always blocked.**
+`captcha_bypass_allowed=False` hardcoded. URLs containing `captcha`, `recaptcha`, `challenge`, or `anti-bot` are rejected before execution.
+
+**7C-4. Password-based automation is always blocked.**
+The `--password` and `--username` flags in the CLI exit 1 before argparse. The runner never accepts, stores, or passes Google credentials to any subprocess.
+
+**7C-5. StorageState is never committed to git.**
+`storage_state_google.json` must remain in `.gitignore`. Phase 7C tests verify that no credential content is serialised into output artifacts.
+
+**7C-6. URL allowlist is strict HTTPS only.**
+Only these prefixes: `https://accounts.google.com`, `https://mail.google.com`, `https://drive.google.com`, `https://docs.google.com`, `https://myaccount.google.com`, `https://workspace.google.com`. HTTP is blocked. Non-Google domains are blocked.
+
+**7C-7. `--approve-execution` required for any Playwright smoke.**
+Without this flag, the runner returns `planning_only` status and writes planning artifacts only. No browser is opened without explicit approval.
+
+**7C-8. Human review required.**
+`human_review_required=True` is a hardcoded invariant. All 3 schema dataclasses enforce it via `__post_init__`.

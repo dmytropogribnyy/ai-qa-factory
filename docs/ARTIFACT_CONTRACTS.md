@@ -841,3 +841,25 @@ New artifact added to `outputs/<project_id>/33_client_audit/`:
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries
 - [`AGENT_HANDOFF_TEMPLATE.md`](AGENT_HANDOFF_TEMPLATE.md) — final report template
 - [`DOCS_MANIFEST.md`](DOCS_MANIFEST.md) — all docs registry
+
+---
+
+## Phase 7C — Google OAuth Artifacts
+
+**Output directory:** `outputs/<project_id>/16_google_oauth/`
+
+| Artifact | Written by | Description |
+|---|---|---|
+| `google_oauth_plan.json` | `GoogleOAuthRunner.render_artifacts()` | Mode classification: selected_mode, mode_readiness, storage_state_available, blockers, recommended_next_steps |
+| `google_oauth_report.json` | `GoogleOAuthRunner.render_artifacts()` | Execution result: status, smoke_results, duration_seconds, auth_coverage_summary, safety invariants block |
+| `google_oauth_summary.md` | `GoogleOAuthRunner.render_artifacts()` | Human-readable summary: mode, status, auth coverage, safety boundary table |
+
+**StorageState file (`storage_state_google.json`):**
+- Written by `outputs/amazon-alza-viewport/03_framework/playwright/capture_google.cjs` (one-time manual capture)
+- Never committed to git (gitignored)
+- Content never read by Python — only path passed to Playwright Node.js script
+- Path never embedded in any output artifact
+
+**Library artifacts:**
+- `core/schemas/google_oauth.py` — schema dataclasses
+- `core/google_oauth_runner.py` — runner logic

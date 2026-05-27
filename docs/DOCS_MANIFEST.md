@@ -593,3 +593,19 @@ for any module with `status == "planning_only"`.
 - [`DOCUMENTATION_GOVERNANCE.md`](DOCUMENTATION_GOVERNANCE.md) — full governance rules
 - [`SCHEMA_FOUNDATION.md`](SCHEMA_FOUNDATION.md) — schema layer including `documentation.py`
 - [`COMMANDS.md`](COMMANDS.md) — CLI commands including planned docs commands
+
+---
+
+## Phase 7C — Google OAuth StorageState Runner
+
+| File | Purpose |
+|---|---|
+| `core/schemas/google_oauth.py` | `GoogleOAuthMode`, `GoogleOAuthModeReadiness`, `GoogleOAuthRunStatus`, `GoogleOAuthInputs`, `GoogleOAuthPlan`, `GoogleOAuthRunResult` |
+| `core/google_oauth_runner.py` | `GoogleOAuthRunner` — classify_mode, build_plan, run, render_artifacts, format_auth_coverage_section |
+| `tools/run_google_oauth_smoke.py` | CLI entry point (blocked-flag guard, argparse, JSON output) |
+| `tests/test_phase7c_google_oauth_runner.py` | 106 tests |
+
+**New output artifacts (`outputs/<project_id>/16_google_oauth/`):**
+- `google_oauth_plan.json` — mode classification, readiness, blockers
+- `google_oauth_report.json` — execution result, smoke results, safety invariants
+- `google_oauth_summary.md` — human-readable summary with safety boundary table

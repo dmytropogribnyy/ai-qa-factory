@@ -3079,3 +3079,48 @@ python tools/select_auth_strategy.py --project-id demo --no-write --json-output
 - [`SCHEMA_FOUNDATION.md`](SCHEMA_FOUNDATION.md) — domain schema layer (`core/schemas/`)
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why each tool was or was not added
 - [`RUNBOOK.md`](RUNBOOK.md) — step-by-step operational playbooks
+
+---
+
+## Phase 7C — Google OAuth StorageState Reuse Smoke
+
+**CLI:** `python tools/run_google_oauth_smoke.py`
+
+**Usage (planning only — no storageState):**
+```bash
+python tools/run_google_oauth_smoke.py \
+  --project-id my_project
+```
+
+**Usage (execution — storageState present):**
+```bash
+python tools/run_google_oauth_smoke.py \
+  --project-id my_project \
+  --storage-state-path storage_state_google.json \
+  --target-url https://accounts.google.com \
+  --dedicated-test-account-confirmed \
+  --google-test-account-confirmed \
+  --approve-execution
+```
+
+**Blocked flags (exit 1 before argparse):**
+- `--personal-account` — personal Google accounts always blocked
+- `--production-account` — production Google accounts always blocked
+- `--captcha-bypass` — CAPTCHA bypass always blocked
+- `--read-storage-state` — reading storageState content always blocked
+- `--password` / `--username` — password-based automation always blocked
+
+**Modes (6 total — 1 executable, 5 planning-only):**
+1. `storage_state_reuse` — **executable**: load saved storageState, headless smoke
+2. `manual_storage_state_capture` — planning-only in 7C
+3. `google_api_oauth_token` — planning-only
+4. `google_service_account` — planning-only
+5. `totp_test_account` — planning-only
+6. `mock_oauth_provider` — planning-only
+
+**Output artifacts (`outputs/<project>/16_google_oauth/`):**
+- `google_oauth_plan.json` — mode classification, readiness, blockers
+- `google_oauth_report.json` — execution result, smoke results, safety invariants
+- `google_oauth_summary.md` — human-readable summary with safety boundary table
+
+**Safety invariants always enforced (9 flags via `__post_init__`):** `raw_secrets_allowed=False`, `storage_state_content_read=False`, `captcha_bypass_allowed=False`, `anti_bot_bypass_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `client_delivery_allowed=False`, `browser_automation_allowed=False`, `human_review_required=True`

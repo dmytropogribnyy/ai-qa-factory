@@ -18,6 +18,12 @@ storageState*.json
 **/google-storageState*.json
 **/smoke_redacted*.png
 
+# ── Phase 7C — Google OAuth storageState capture (snake_case variant, never committed) ─
+storage_state_*.json
+**/storage_state_*.json
+**/google_oauth_smoke_screenshot.png
+**/google_oauth_smoke_7c.cjs
+
 # ── Python runtime ────────────────────────────────────────────────────────────
 .venv/
 __pycache__/

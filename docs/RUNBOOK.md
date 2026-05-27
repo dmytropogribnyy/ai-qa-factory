@@ -2481,3 +2481,54 @@ python tools/select_auth_strategy.py \
 - [ ] `captcha_bypass_allowed` is always `False` in output JSON
 - [ ] `human_review_required` is always `True` in output JSON
 - [ ] `safe_to_execute` is `True` only when `decision_status == ready_for_execution`
+
+---
+
+## 7C. Running Google OAuth StorageState Smoke
+
+### Prerequisites
+
+1. Capture storageState manually (one time):
+   ```
+   cd outputs/amazon-alza-viewport/03_framework/playwright
+   node capture_google.cjs
+   ```
+   Log in with the dedicated Google test account. Press Enter when done. File saved to `storage_state_google.json` in project root.
+
+2. `storage_state_google.json` must NOT be committed to git (gitignored).
+
+### Planning-only run (no storageState required)
+
+```bash
+python tools/run_google_oauth_smoke.py --project-id my_project
+```
+
+### Execution run (storageState required)
+
+```bash
+python tools/run_google_oauth_smoke.py \
+  --project-id my_project \
+  --storage-state-path storage_state_google.json \
+  --target-url https://accounts.google.com \
+  --dedicated-test-account-confirmed \
+  --google-test-account-confirmed \
+  --approve-execution
+```
+
+### Reading the result
+
+- `status: passed` → OAuth session valid, page loaded, screenshot saved
+- `status: planning_only` → storageState not present; capture it first
+- `status: blocked` → `--approve-execution` missing or URL not allowlisted
+- `status: failed` → Playwright smoke failed (check `smoke_results` in report JSON)
+
+### Safety checklist (7C)
+
+- [ ] `raw_secrets_allowed` is `False` in all output JSON
+- [ ] `storage_state_content_read` is `False` in all output JSON
+- [ ] `captcha_bypass_allowed` is `False` in all output JSON
+- [ ] `personal_account_allowed` is `False` in all output JSON
+- [ ] `production_account_allowed` is `False` in all output JSON
+- [ ] `human_review_required` is `True` in all output JSON
+- [ ] storageState file is not committed to git
+- [ ] Only dedicated test account credentials used (never personal/production)

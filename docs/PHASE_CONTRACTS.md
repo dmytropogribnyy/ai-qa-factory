@@ -1826,3 +1826,30 @@ Client Delivery Pack.
 - [`AGENT_HANDOFF_TEMPLATE.md`](AGENT_HANDOFF_TEMPLATE.md) — final report template
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — non-negotiable safety rules
 - [`COMMANDS.md`](COMMANDS.md) — CLI reference
+
+---
+
+## Phase 7C — Google OAuth StorageState Runner
+
+**Objective:** Implement Google OAuth storageState reuse smoke runner. One executable mode (`storage_state_reuse`) and 5 planning-only modes. Pure storageState reuse — no password-based login, ever.
+
+**New files:**
+- `core/schemas/google_oauth.py` — `GoogleOAuthMode` (6 values), `GoogleOAuthModeReadiness` (3 states), `GoogleOAuthRunStatus` (5 states), `GoogleOAuthInputs`, `GoogleOAuthPlan`, `GoogleOAuthRunResult`
+- `core/google_oauth_runner.py` — `GoogleOAuthRunner` with `classify_mode()`, `build_plan()`, `run()`, `render_artifacts()`, `format_auth_coverage_section()`
+- `tools/run_google_oauth_smoke.py` — CLI entry point with blocked-flag guard
+- `tests/test_phase7c_google_oauth_runner.py` — 106 tests
+
+**Behavioral contracts:**
+- All 3 schema dataclasses (`GoogleOAuthInputs`, `GoogleOAuthPlan`, `GoogleOAuthRunResult`) enforce 8–9 safety invariants via `__post_init__` that always reset regardless of caller input
+- `classify_mode()` returns `STORAGE_STATE_REUSE` only when: storage_state_path set, file exists, both confirmation flags True; otherwise falls back to `MANUAL_CAPTURE` (planning-only)
+- `run()` returns `PLANNING_ONLY` when storageState absent; `BLOCKED` when present but `--approve-execution` not set or URL not allowlisted; `PASSED`/`FAILED` after actual Playwright smoke
+- storageState content is never read by Python — only path is passed to Node.js script
+- URL allowlist: `accounts.google.com`, `mail.google.com`, `drive.google.com`, `docs.google.com`, `myaccount.google.com`, `workspace.google.com` — all HTTPS only
+- URLs containing `captcha`, `recaptcha`, `challenge`, `anti-bot` are always blocked
+- Blocked CLI flags exit 1 before argparse
+- Output artifacts go to `outputs/<project>/16_google_oauth/`
+- `format_auth_coverage_section()` returns a markdown block for use in client delivery reports
+
+**Safety invariants always enforced (9):** `raw_secrets_allowed=False`, `storage_state_content_read=False`, `captcha_bypass_allowed=False`, `anti_bot_bypass_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `client_delivery_allowed=False`, `browser_automation_allowed=False`, `human_review_required=True`
+
+**Quality gates:** ruff clean; pytest 3351 passed (106 new Phase 7C tests)
