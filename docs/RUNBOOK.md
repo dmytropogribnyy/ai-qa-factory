@@ -2488,14 +2488,20 @@ python tools/select_auth_strategy.py \
 
 ### Prerequisites
 
-1. Capture storageState manually (one time):
-   ```
+1. Capture storageState manually (one time, or when session expires):
+   ```bash
    cd outputs/amazon-alza-viewport/03_framework/playwright
    node capture_google.cjs
    ```
-   Log in with the dedicated Google test account. Press Enter when done. File saved to `storage_state_google.json` in project root.
+   - Edge opens with automation detection disabled
+   - Log in with the dedicated test account (email → password → any 2FA/verification)
+   - **CRITICAL: Wait until you see the Google Account page (name + avatar fully loaded)**
+   - **Only then** come back to the terminal and press Enter
+   - File saved to `storage_state_google.json` in project root
 
-2. `storage_state_google.json` must NOT be committed to git (gitignored).
+   > If you press Enter while still on the Sign In form, the storageState will be unauthenticated. The smoke will show the Sign In page and report `status: failed`. Re-capture if this happens.
+
+2. `storage_state_google.json` is gitignored via `storage_state_*.json` pattern — never commit it.
 
 ### Planning-only run (no storageState required)
 
@@ -2503,7 +2509,7 @@ python tools/select_auth_strategy.py \
 python tools/run_google_oauth_smoke.py --project-id my_project
 ```
 
-### Execution run (storageState required)
+### Execution run — headless (CI/default)
 
 ```bash
 python tools/run_google_oauth_smoke.py \
@@ -2515,12 +2521,26 @@ python tools/run_google_oauth_smoke.py \
   --approve-execution
 ```
 
+### Execution run — headed (visual verification)
+
+```bash
+python tools/run_google_oauth_smoke.py \
+  --project-id my_project \
+  --storage-state-path storage_state_google.json \
+  --target-url https://accounts.google.com \
+  --dedicated-test-account-confirmed \
+  --google-test-account-confirmed \
+  --approve-execution \
+  --headed
+```
+Browser opens visibly, stays open for 5 seconds so you can confirm the logged-in account page (not the Sign In form), saves screenshot, closes.
+
 ### Reading the result
 
-- `status: passed` → OAuth session valid, page loaded, screenshot saved
-- `status: planning_only` → storageState not present; capture it first
-- `status: blocked` → `--approve-execution` missing or URL not allowlisted
-- `status: failed` → Playwright smoke failed (check `smoke_results` in report JSON)
+- `status: passed` → OAuth session valid, HTTP 200, screenshot saved — session is live
+- `status: planning_only` → storageState not present; run capture first
+- `status: blocked` → `--approve-execution` missing, or URL not allowlisted
+- `status: failed` → smoke failed — check `smoke_results` stderr in report JSON; likely session expired, re-capture
 
 ### Safety checklist (7C)
 

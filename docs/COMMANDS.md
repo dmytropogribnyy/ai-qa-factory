@@ -3092,7 +3092,17 @@ python tools/run_google_oauth_smoke.py \
   --project-id my_project
 ```
 
-**Usage (execution — storageState present):**
+**Step 0 — capture storageState (one time, or when session expires):**
+```bash
+cd outputs/amazon-alza-viewport/03_framework/playwright
+node capture_google.cjs
+# Edge opens → log in with dedicated test account
+# Wait until you see the account page (name + avatar visible) → THEN press Enter
+# Saved to: storage_state_google.json in project root (gitignored, never commit)
+```
+> **CRITICAL:** Press Enter ONLY after the Google Account page is fully loaded. Pressing Enter on the login form saves an unauthenticated session and the smoke will show the Sign In page.
+
+**Usage (headless — CI / default):**
 ```bash
 python tools/run_google_oauth_smoke.py \
   --project-id my_project \
@@ -3103,12 +3113,26 @@ python tools/run_google_oauth_smoke.py \
   --approve-execution
 ```
 
+**Usage (headed — visual verification, browser stays open 5s):**
+```bash
+python tools/run_google_oauth_smoke.py \
+  --project-id my_project \
+  --storage-state-path storage_state_google.json \
+  --target-url https://accounts.google.com \
+  --dedicated-test-account-confirmed \
+  --google-test-account-confirmed \
+  --approve-execution \
+  --headed
+```
+
 **Blocked flags (exit 1 before argparse):**
 - `--personal-account` — personal Google accounts always blocked
 - `--production-account` — production Google accounts always blocked
 - `--captcha-bypass` — CAPTCHA bypass always blocked
 - `--read-storage-state` — reading storageState content always blocked
 - `--password` / `--username` — password-based automation always blocked
+
+**Scaffold resolution:** runner searches for a Playwright scaffold with `node_modules/` in this order: `outputs/<project_id>/03_framework/playwright/` first, then any other scaffold under `outputs/`. Smoke script is written to the found scaffold dir so `require('@playwright/test')` resolves correctly.
 
 **Modes (6 total — 1 executable, 5 planning-only):**
 1. `storage_state_reuse` — **executable**: load saved storageState, headless smoke

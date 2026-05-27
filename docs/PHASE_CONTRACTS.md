@@ -1849,7 +1849,10 @@ Client Delivery Pack.
 - Blocked CLI flags exit 1 before argparse
 - Output artifacts go to `outputs/<project>/16_google_oauth/`
 - `format_auth_coverage_section()` returns a markdown block for use in client delivery reports
+- `--headed` flag: browser opens visibly, 5-second pause for visual verification, then closes. Default is headless.
+- `_find_playwright_scaffold(project_id)`: checks `outputs/<project_id>/03_framework/playwright/node_modules` first; falls back to any scaffold under `outputs/` that has `node_modules/`. Smoke script is written to the found scaffold dir so `require('@playwright/test')` resolves correctly. All paths passed to Node subprocess use `.resolve()` (absolute) to avoid CWD mismatch.
+- StorageState capture: `outputs/amazon-alza-viewport/03_framework/playwright/capture_google.cjs` (real Edge, anti-detection). Must press Enter ONLY after the Google Account page is fully loaded — pressing Enter on the Sign In form saves an unauthenticated session.
 
 **Safety invariants always enforced (9):** `raw_secrets_allowed=False`, `storage_state_content_read=False`, `captcha_bypass_allowed=False`, `anti_bot_bypass_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `client_delivery_allowed=False`, `browser_automation_allowed=False`, `human_review_required=True`
 
-**Quality gates:** ruff clean; pytest 3351 passed (106 new Phase 7C tests)
+**Quality gates:** ruff clean; pytest 3351 passed (106 new Phase 7C tests); smoke verified headed+headless with real dedicated test account (danrobinson.artist@gmail.com), HTTP 200, screenshot saved.
