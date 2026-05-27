@@ -868,6 +868,30 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Phase 7A — Auth Capability Planner Agent Rules
+
+- **Auth capability planning is classification only.**
+  `AuthCapabilityPlanner` classifies methods and writes planning artifacts.
+  It does not open browsers, make network requests, read credential files, or execute auth flows.
+
+- **Raw secrets are never accepted via CLI.**
+  Blocked flags (`--password`, `--secret`, `--token`, `--cookie`, `--totp-seed`,
+  `--access-token`, `--bearer`, `--client-secret`, `--api-key`) exit 1 immediately.
+  Use `--*-env-var NAME` to pass env var names only.
+
+- **Safety invariants survive deserialization.**
+  `AuthCapabilityInputs.__post_init__` and `AuthCapabilityPlan.__post_init__` always reset
+  all safety flags regardless of what `from_dict()` or caller code passes.
+  An agent must not attempt to override `personal_account_allowed`, `captcha_bypass_allowed`,
+  or any other safety invariant after construction.
+
+- **Account flags confirm dedicated test accounts, not personal accounts.**
+  `--has-google-account`, `--has-github-account`, `--has-microsoft-account`,
+  `--has-dedicated-test-account` confirm that a dedicated test account exists.
+  An agent must never pass these flags when the only available account is personal or production.
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

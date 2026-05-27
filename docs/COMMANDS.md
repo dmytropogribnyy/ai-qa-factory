@@ -2968,6 +2968,61 @@ After a successful write run, `run_client_audit.py` prints the path to the repor
 
 ---
 
+## Phase 7A — Auth Capability Planner
+
+```
+python tools/plan_auth_capability.py --project-id <id>
+python tools/plan_auth_capability.py --project-id <id> --has-google-account --has-storage-state
+python tools/plan_auth_capability.py --project-id <id> --has-dedicated-test-account --password-env-var QA_PASSWORD
+python tools/plan_auth_capability.py --project-id <id> --api-token-env-var QA_API_TOKEN --no-write
+python tools/plan_auth_capability.py --project-id <id> --no-write --json-output
+```
+
+**Flags:**
+
+| Flag | Type | Description |
+|---|---|---|
+| `--project-id` | str | Project identifier (default: `auth-plan-demo`) |
+| `--target-url` | str | Target URL for browser-based auth methods |
+| `--has-dedicated-test-account` | bool | Confirm a dedicated test account exists |
+| `--password-env-var NAME` | str | Env var NAME holding the password (not the value) |
+| `--api-token-env-var NAME` | str | Env var NAME holding the API token |
+| `--bearer-token-env-var NAME` | str | Env var NAME holding the bearer token |
+| `--totp-seed-env-var NAME` | str | Env var NAME holding the TOTP seed |
+| `--storage-state-file PATH` | str | Path to existing storageState file (existence checked, content never read) |
+| `--has-storage-state` | bool | Confirm a storageState file is available |
+| `--has-google-account` | bool | Confirm a Google dedicated test account is available |
+| `--has-github-account` | bool | Confirm a GitHub dedicated test account is available |
+| `--has-microsoft-account` | bool | Confirm a Microsoft test tenant account is available |
+| `--no-write` | bool | Dry run — no files written |
+| `--json-output` | bool | Print full JSON plan to stdout |
+
+**Blocked flags (always exit 1):** `--password`, `--secret`, `--token`, `--cookie`, `--totp-seed`, `--access-token`, `--bearer`, `--client-secret`, `--api-key`
+
+Raw secrets are never accepted via CLI flags. Use `--*-env-var NAME` to pass the name of the environment variable, not its value.
+
+**Output artifacts (`outputs/<project>/34_auth_capability/`):**
+- `auth_capability_plan.json` — full plan with readiness per method
+- `auth_capability_summary.md` — human-readable summary with safety invariants
+
+**Readiness markers:**
+
+| Marker | Meaning |
+|---|---|
+| `[ok]` | Allowed now — all required inputs present |
+| `[plan]` | Planning only — no execution path available |
+| `[blocked]` | Blocked by safety rules |
+| `[manual]` | Requires a manual step before automation |
+| `[need-account]` | Requires a dedicated test account |
+| `[need-env]` | Requires env var secret to be configured |
+| `[need-confirm]` | Requires client confirmation |
+
+**Auth methods classified (15):** `email_password`, `google_oauth`, `github_oauth`, `microsoft_oauth`, `sso_saml_oidc`, `magic_link`, `email_otp`, `totp_mfa`, `storage_state_reuse`, `cdp_attach`, `dedicated_profile_context`, `api_token`, `bearer_token`, `basic_auth`, `session_cookie_reuse`
+
+**Safety invariants always enforced:** `personal_account_allowed=False`, `production_account_allowed=False`, `captcha_bypass_allowed=False`, `auth_bypass_allowed=False`, `human_review_required=True`
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

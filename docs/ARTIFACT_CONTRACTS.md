@@ -801,6 +801,23 @@ New artifact added to `outputs/<project_id>/33_client_audit/`:
 
 ---
 
+## Phase 7A — Auth Capability Planner Artifacts
+
+**Output directory:** `outputs/<project_id>/34_auth_capability/`
+
+| Artifact | Written by | Description |
+|---|---|---|
+| `auth_capability_plan.json` | `AuthCapabilityPlanner.run()` | Full plan with readiness per method, safety invariants, recommended steps |
+| `auth_capability_summary.md` | `AuthCapabilityPlanner.run()` | Human-readable Markdown summary |
+
+**Suppressed by `--no-write`:** both artifacts are skipped in dry-run mode.
+
+**Library artifacts:**
+- `core/schemas/auth_capability.py` — schema definitions
+- `core/auth_capability_planner.py` — planner logic
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

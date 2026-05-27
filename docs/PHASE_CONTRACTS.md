@@ -1763,6 +1763,32 @@ Client Delivery Pack.
 
 ---
 
+## Phase 7A — Auth Capability Planner
+
+**Scope:** Classification of authentication methods for a project. Pure planning only — no auth flows executed, no credentials accessed, no browser launched.
+
+**New files:**
+- `core/schemas/auth_capability.py` — `AuthMethodType` (15 values), `AuthReadiness` (7 states), `AuthMethodCapability`, `AuthCapabilityInputs`, `AuthCapabilityPlan`
+- `core/auth_capability_planner.py` — `AuthCapabilityPlanner` class + `_plan_to_dict()`
+- `tools/plan_auth_capability.py` — CLI entry point
+- `tests/test_phase7_auth_capability.py` — 88 tests
+
+**Behavioral contracts:**
+- `AuthCapabilityInputs.__post_init__` always resets all safety invariants regardless of caller input
+- `AuthCapabilityPlan.__post_init__` always resets all safety invariants regardless of caller input
+- CLI blocked flags (`--password`, `--secret`, `--token`, `--cookie`, `--totp-seed`, `--access-token`, `--bearer`, `--client-secret`, `--api-key`) exit 1 before argparse parses anything
+- Env-var-name-only pattern: only the name of an env var is accepted, never its value
+- `--no-write` produces no output files
+- `--json-output` appends full JSON plan to stdout
+- Output artifacts go to `outputs/<project>/34_auth_capability/`
+- All output is ASCII-safe
+
+**Safety invariants always enforced:** `personal_account_allowed=False`, `production_account_allowed=False`, `captcha_bypass_allowed=False`, `storage_state_content_read=False`, `auth_bypass_allowed=False`, `client_delivery_auto_approved=False`, `human_review_required=True`
+
+**Quality gates:** ruff clean; pytest 3162 passed (88 new Phase 7A tests)
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

@@ -1328,6 +1328,35 @@ field of the result or plan objects passed to it.
 
 ---
 
+## Phase 7A — Auth Capability Planner Safety Rules
+
+**7A-1. Raw secrets are never accepted via CLI flags.**
+The flags `--password`, `--secret`, `--token`, `--cookie`, `--totp-seed`, `--access-token`, `--bearer`,
+`--client-secret`, `--api-key` are blocked. The CLI exits 1 with an explicit error message before argparse
+parses any arguments. Use `--*-env-var NAME` to pass the name of an environment variable, not its value.
+
+**7A-2. Safety invariants are always enforced by `__post_init__`.**
+`AuthCapabilityInputs` and `AuthCapabilityPlan` reset all safety flags in `__post_init__` regardless of
+what the caller passes. `personal_account_allowed`, `production_account_allowed`, `captcha_bypass_allowed`,
+`storage_state_content_read`, `auth_bypass_allowed`, and `client_delivery_auto_approved` are always `False`.
+`human_review_required` is always `True`. These cannot be overridden by caller code or deserialized JSON.
+
+**7A-3. Personal and production accounts are always blocked.**
+The planner never classifies `personal_account_allowed=True` or `production_account_allowed=True`.
+The account flags (`--has-google-account`, `--has-github-account`, `--has-microsoft-account`,
+`--has-dedicated-test-account`) confirm a *dedicated test account* exists — never a personal or
+production account.
+
+**7A-4. CAPTCHA bypass is always blocked.**
+`captcha_bypass_allowed` is always `False`. No auth method is classified as `allowed_now` when it
+requires CAPTCHA bypass.
+
+**7A-5. No auth execution in Phase 7A.**
+`AuthCapabilityPlanner` is classification-only. It does not open browsers, make network requests,
+read credential files, or execute any auth flows.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

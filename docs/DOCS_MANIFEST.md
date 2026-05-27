@@ -556,6 +556,21 @@ for any module with `status == "planning_only"`.
 
 ---
 
+## Phase 7A — Auth Capability Planner
+
+| File | Purpose |
+|---|---|
+| `core/schemas/auth_capability.py` | `AuthMethodType`, `AuthReadiness`, `AuthMethodCapability`, `AuthCapabilityInputs`, `AuthCapabilityPlan` |
+| `core/auth_capability_planner.py` | `AuthCapabilityPlanner`, `_plan_to_dict()` |
+| `tools/plan_auth_capability.py` | CLI entry point |
+| `tests/test_phase7_auth_capability.py` | 88 tests |
+
+**New output artifacts (`outputs/<project_id>/34_auth_capability/`):**
+- `auth_capability_plan.json` — full plan with readiness per method
+- `auth_capability_summary.md` — human-readable summary with safety invariants
+
+---
+
 ## Related documents
 
 - [`DOCUMENTATION_GOVERNANCE.md`](DOCUMENTATION_GOVERNANCE.md) — full governance rules

@@ -1224,6 +1224,44 @@ No new schema types. The report generator (`core/reporting/client_delivery_repor
 
 ---
 
+## Phase 7A — Auth Capability Schema (`core/schemas/auth_capability.py`)
+
+### Enums
+
+**`AuthMethodType`** (15 values): `email_password`, `google_oauth`, `github_oauth`, `microsoft_oauth`,
+`sso_saml_oidc`, `magic_link`, `email_otp`, `totp_mfa`, `storage_state_reuse`, `cdp_attach`,
+`dedicated_profile_context`, `api_token`, `bearer_token`, `basic_auth`, `session_cookie_reuse`
+
+**`AuthReadiness`** (7 states): `allowed_now`, `planning_only`, `blocked`, `requires_manual_step`,
+`requires_test_account`, `requires_env_var_secret`, `requires_client_confirmation`
+
+### Dataclasses
+
+**`AuthMethodCapability`** — Classification result for a single auth method:
+- `method: AuthMethodType`
+- `readiness: AuthReadiness`
+- `reason: str`
+- `required_inputs: list[str]`
+- `blocked_reasons: list[str]`
+- `notes: str`
+- `to_dict() -> dict` / `from_dict(data) -> AuthMethodCapability`
+
+**`AuthCapabilityInputs`** — Planner inputs with safety invariants:
+- Project and URL fields, account/env-var availability flags
+- Safety invariants always reset by `__post_init__`: `personal_account_allowed=False`,
+  `production_account_allowed=False`, `captcha_bypass_allowed=False`,
+  `storage_state_content_read=False`, `auth_bypass_allowed=False`,
+  `client_delivery_auto_approved=False`, `human_review_required=True`
+- `from_dict(data) -> AuthCapabilityInputs`
+
+**`AuthCapabilityPlan`** — Complete plan with aggregated readiness lists:
+- `capabilities: list[AuthMethodCapability]`
+- `blocked_methods`, `allowed_now_methods`, `planning_only_methods`, `requires_action_methods: list[str]`
+- `recommended_next_steps: list[str]`
+- Safety invariants always reset by `__post_init__`
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic

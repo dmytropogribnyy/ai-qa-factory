@@ -82,7 +82,7 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 2067 tests, mock mode, no API keys needed
+python -m pytest -q             # 3162 tests, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
@@ -225,7 +225,17 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v6.7.0 — Client Delivery Report v1 (current)
+### v7.0.0 — Auth Capability Planner (current)
+
+- Phase 7A: `core/schemas/auth_capability.py` — `AuthMethodType` (15 methods), `AuthReadiness` (7 states), `AuthMethodCapability`, `AuthCapabilityInputs`, `AuthCapabilityPlan`
+- Phase 7A: `core/auth_capability_planner.py` — `AuthCapabilityPlanner`: classifies all 15 auth methods, writes planning artifacts
+- Phase 7A: `tools/plan_auth_capability.py` — CLI with blocked-flag guard, env-var-name-only pattern, ASCII readiness markers
+- Phase 7A: Output artifacts: `outputs/<project>/34_auth_capability/auth_capability_plan.json` + `auth_capability_summary.md`
+- Phase 7A: Safety invariants enforced by `__post_init__` — `personal_account_allowed`, `captcha_bypass_allowed`, `auth_bypass_allowed` always `False`; `human_review_required` always `True`
+- Phase 7A: Blocked CLI flags exit 1 before argparse: `--password`, `--secret`, `--token`, `--cookie`, `--totp-seed`, `--access-token`, `--bearer`, `--client-secret`, `--api-key`
+- Phase 7A: 88 new tests; 3162 total
+
+### v6.7.0 — Client Delivery Report v1
 
 - Phase 6.3: `core/reporting/client_delivery_report.py` — professional client-facing QA audit report generator
 - Phase 6.3: `client_report.md` — 12-section report with Executive Summary, Risk Matrix, Key Findings, Recommended Actions

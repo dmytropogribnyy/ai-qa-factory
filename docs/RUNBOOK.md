@@ -2383,3 +2383,54 @@ python tools/run_client_audit.py \
 - [ ] `--no-write` run produces no `client_report.md`
 - [ ] No fake findings in report when modules ran in planning_only mode
 - [ ] `approved_for_client_delivery` remains False after report generation
+
+---
+
+## Phase 7A — Auth Capability Planner Runbook
+
+### Run auth capability planning (no execution)
+
+```bash
+# Basic plan (all methods classified, no inputs)
+python tools/plan_auth_capability.py --project-id demo --no-write
+
+# With dedicated test account + password env var
+python tools/plan_auth_capability.py \
+  --project-id myproject \
+  --has-dedicated-test-account \
+  --password-env-var QA_PASSWORD
+
+# With Google test account + existing storageState
+python tools/plan_auth_capability.py \
+  --project-id myproject \
+  --has-google-account \
+  --has-storage-state
+
+# With API token env var + full JSON output
+python tools/plan_auth_capability.py \
+  --project-id myproject \
+  --api-token-env-var QA_API_TOKEN \
+  --no-write \
+  --json-output
+```
+
+### Reading the output
+
+Readiness markers in the summary:
+- `[ok]` — allowed now, all required inputs present
+- `[plan]` — planning only, no executable path
+- `[blocked]` — blocked by safety rules
+- `[manual]` — requires a manual step before automation
+- `[need-account]` — dedicated test account required
+- `[need-env]` — env var secret must be configured
+- `[need-confirm]` — client must confirm before proceeding
+
+### Safety checklist
+
+- [ ] No raw secrets in any CLI flag (only `--*-env-var NAME` accepted)
+- [ ] Blocked flags (`--password`, `--secret`, `--token`, etc.) exit 1 before argparse
+- [ ] `personal_account_allowed` is always `False` in output JSON
+- [ ] `production_account_allowed` is always `False` in output JSON
+- [ ] `captcha_bypass_allowed` is always `False` in output JSON
+- [ ] `auth_bypass_allowed` is always `False` in output JSON
+- [ ] `human_review_required` is always `True` in output JSON
