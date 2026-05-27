@@ -2144,3 +2144,77 @@ python tools/run_flaky_test_analyzer.py \
 - [ ] `code_modification_allowed=False` in all reports before applying
 - [ ] Reviewed `Self_Healing_Proposals.md` before running `--apply-proposals`
 - [ ] No production spec files modified without code review
+
+---
+
+## Section 46 — Phase 6: QA Factory MCP Server
+
+**Purpose:** Expose QA Factory as an MCP server for Claude Desktop / VS Code / Claude Code.
+All tools default to safe mode. Execution requires explicit approval flags per tool call.
+
+### Setup
+
+```bash
+pip install mcp
+```
+
+### Verify tools available (no mcp needed)
+
+```bash
+python tools/run_mcp_server.py --list-tools
+python tools/run_mcp_server.py --demo-health
+```
+
+### Start MCP server
+
+```bash
+python tools/run_mcp_server.py
+```
+
+### Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "qa-factory": {
+      "command": "python",
+      "args": ["D:/path/to/ai-qa-factory/tools/run_mcp_server.py"]
+    }
+  }
+}
+```
+
+### Tool call examples (via Claude interface)
+
+**Health check:**
+```json
+{ "tool": "qa_factory_health", "arguments": {} }
+```
+
+**Flaky test analysis:**
+```json
+{
+  "tool": "run_flaky_test_analysis",
+  "arguments": {
+    "project_id": "demo_quality_audit",
+    "spec_files": ["fixtures/demo_quality_audit/playwright_specs/flaky_test.spec.ts"],
+    "write_files": false
+  }
+}
+```
+
+**Delivery pack (write to outputs):**
+```json
+{
+  "tool": "generate_delivery_pack",
+  "arguments": { "project_id": "demo_quality_audit", "write_files": true }
+}
+```
+
+### Safety checklist
+
+- [ ] No `--approve-delivery`, `--skip-review`, `--auto-start-browser`, `--credentials` flags used
+- [ ] No credentials passed as tool arguments
+- [ ] `human_review_required=True` in all tool responses
+- [ ] `approved_for_client_delivery=False` in delivery pack response
+- [ ] `apply_self_healing_fixes` reviewed in dry_run mode before setting `dry_run=false`

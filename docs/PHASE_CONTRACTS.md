@@ -1538,6 +1538,60 @@ Client Delivery Pack.
 
 ---
 
+## Phase 6 — QA Factory as MCP Server `[implemented]`
+
+**Purpose:** Expose QA Factory capabilities as a Model Context Protocol (MCP) server. Thin adapter layer over existing core modules — no business logic in the MCP layer.
+
+**Architecture:**
+- `integrations/mcp/tool_handlers.py` — Pure Python handler functions, testable without mcp package
+- `integrations/mcp/server.py` — MCP server wrapper (requires: `pip install mcp`)
+- `tools/run_mcp_server.py` — CLI entry point
+
+**7 MCP tools registered:**
+| Tool | Description |
+|---|---|
+| `qa_factory_health` | Health, version, safety mode — no network |
+| `analyze_project` | Classify project directory, return recommendations |
+| `run_quality_audit` | Accessibility + Performance + Passive security (planning_only default) |
+| `run_flaky_test_analysis` | Static flaky analysis on Playwright spec files |
+| `generate_delivery_pack` | Build client delivery pack with secret scan + ZIP |
+| `propose_self_healing_fixes` | Generate proposals — no code changes |
+| `apply_self_healing_fixes` | Apply TODO comments; requires `approve_code_modification=true` + `dry_run=false` |
+
+**Allowed actions:**
+- Call any tool handler with no credentials in params
+- Start MCP server over stdio with `python tools/run_mcp_server.py`
+- `--list-tools`, `--version`, `--demo-health` CLI flags
+
+**Blocked actions:**
+- `--approve-delivery` — always blocked
+- `--skip-review` — always blocked
+- `--auto-start-browser` — always blocked
+- `--credentials` — always blocked
+- Passing credential/password/token/api_key/secret as any tool parameter
+
+**Safety invariants (enforced in tool_handlers.py):**
+- All tools default to `planning_only` / `analysis_only` (no network, no browser)
+- `network_by_default=False`, `browser_by_default=False`, `auto_apply_changes=False`
+- `human_review_required=True` in every response
+- `approved_for_client_delivery=False` always in delivery tool
+- `code_modification_allowed=False` in analysis/proposal tools
+- Blocked params (`credential`, `password`, `token`, `api_key`, `secret`, `private_key`) raise `ValueError`
+
+**Acceptance criteria:**
+- All 7 tools callable without mcp package (via tool_handlers directly)
+- Default mode returns `planning_only` / `analysis_only` status
+- Network requires `approve_public_readonly_execution=True`
+- Apply fixes requires `approve_code_modification=True`
+- Dry run is default for `apply_self_healing_fixes`
+- All responses have `status` and `human_review_required` fields
+- No credentials in any response JSON
+- CLI blocked flags exit 1 with `[BLOCKED]` in stderr
+
+**Quality gates:** ruff clean; pytest 2738 passed (95 new Phase 6 tests)
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

@@ -197,7 +197,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **2643 passed** (all phases through 5O — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow, flaky test analyzer)
+Expected: **2738 passed** (all phases through 6 — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow, flaky test analyzer, MCP server adapter)
 
 ---
 
@@ -225,7 +225,18 @@ Expected: **2643 passed** (all phases through 5O — schema foundations, classif
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v6.2.0 — Flaky Test Analyzer + Self-Healing Proposals (current)
+### v6.3.0 — QA Factory as MCP Server (current)
+
+- Phase 6: `integrations/mcp/` — thin adapter layer over existing core modules
+- Phase 6: 7 MCP tools: `qa_factory_health`, `analyze_project`, `run_quality_audit`, `run_flaky_test_analysis`, `generate_delivery_pack`, `propose_self_healing_fixes`, `apply_self_healing_fixes`
+- Phase 6: `tool_handlers.py` — pure Python, testable without mcp package
+- Phase 6: `server.py` — MCP stdio server (requires: `pip install mcp`)
+- Phase 6: `tools/run_mcp_server.py` — CLI with `--list-tools`, `--demo-health`, `--version`
+- Phase 6: All tools default to planning_only/analysis_only; no credentials accepted; `human_review_required=True` in every response
+- Phase 6: 95 new tests; 2738 total
+- Blocked: `--approve-delivery`, `--skip-review`, `--auto-start-browser`, `--credentials`
+
+### v6.2.0 — Flaky Test Analyzer + Self-Healing Proposals
 
 - Phase 5O: `FlakyTestAnalyzer` — static analysis of Playwright spec files (no network, no browser)
 - Phase 5O: `analyze()` — detects hard waits, fragile selectors, non-web-first assertions, dynamic classes

@@ -2757,6 +2757,70 @@ python tools/run_flaky_test_analyzer.py \
 
 ---
 
+## Phase 6 — QA Factory as MCP Server
+
+Thin adapter layer that exposes existing QA Factory capabilities as MCP tools.
+Requires: `pip install mcp`
+
+### `tools/run_mcp_server.py`
+
+```bash
+# List all available MCP tools (no mcp package needed)
+python tools/run_mcp_server.py --list-tools
+
+# Show version
+python tools/run_mcp_server.py --version
+
+# Run health check (no mcp package needed)
+python tools/run_mcp_server.py --demo-health
+
+# Start MCP server over stdio (requires: pip install mcp)
+python tools/run_mcp_server.py
+```
+
+**Blocked flags (exit 1):** `--approve-delivery`, `--skip-review`, `--auto-start-browser`, `--credentials`
+
+**MCP tool list (7 tools):**
+
+| Tool | Default mode | Execution trigger |
+|---|---|---|
+| `qa_factory_health` | health info | — |
+| `analyze_project` | analysis_only | — |
+| `run_quality_audit` | planning_only | `approve_public_readonly_execution=true` |
+| `run_flaky_test_analysis` | analysis_only | — (static only) |
+| `generate_delivery_pack` | draft | — |
+| `propose_self_healing_fixes` | proposal_generated | — |
+| `apply_self_healing_fixes` | dry_run | `approve_code_modification=true` + `dry_run=false` |
+
+**Example MCP tool call (JSON arguments):**
+```json
+{
+  "tool": "run_flaky_test_analysis",
+  "arguments": {
+    "project_id": "demo_quality_audit",
+    "spec_files": ["fixtures/demo_quality_audit/playwright_specs/flaky_test.spec.ts"],
+    "outputs_root": "outputs",
+    "write_files": false
+  }
+}
+```
+
+**Claude Desktop / VS Code config:**
+```json
+{
+  "mcpServers": {
+    "qa-factory": {
+      "command": "python",
+      "args": ["tools/run_mcp_server.py"]
+    }
+  }
+}
+```
+
+**MCP adapter location:** `integrations/mcp/` — handlers in `tool_handlers.py`, server in `server.py`
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

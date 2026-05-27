@@ -1124,6 +1124,19 @@ NOT forced (reflect real routing state):
 
 ---
 
+## Phase 6 — MCP Server
+
+No new schemas. Phase 6 is a thin adapter layer that reuses existing core schemas.
+Tool responses are plain Python `dict` objects — no separate dataclasses needed.
+
+Safety invariants enforced in `integrations/mcp/tool_handlers.py`:
+- `human_review_required=True` hardcoded in every response
+- `network_by_default=False`, `browser_by_default=False`, `auto_apply_changes=False`
+- `approved_for_client_delivery=False` in delivery tool
+- Blocked params raise `ValueError` before any handler logic runs
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic

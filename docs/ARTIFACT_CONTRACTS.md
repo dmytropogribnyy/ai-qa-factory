@@ -685,6 +685,21 @@ Secret scan runs before ZIP creation. storageState, .env, credentials, cookies, 
 
 ---
 
+## Phase 6 — MCP adapter (no new artifact directories)
+
+Phase 6 is a thin adapter layer. No new `outputs/` directories are created.
+Artifacts are written by the underlying core modules (dirs 14–32) when tool handlers call them.
+
+| File | Purpose |
+|---|---|
+| `integrations/mcp/tool_handlers.py` | Handler functions — no artifact ownership |
+| `integrations/mcp/server.py` | MCP wiring — no artifact ownership |
+| `tools/run_mcp_server.py` | CLI entry point — no artifact ownership |
+
+**Artifact ownership stays with core modules.** MCP tools are adapters, not owners.
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

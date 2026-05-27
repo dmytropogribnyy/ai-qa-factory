@@ -495,6 +495,18 @@ for any module with `status == "planning_only"`.
 
 ---
 
+## Phase 6 — MCP Server adapter files
+
+| File | Purpose |
+|---|---|
+| `integrations/mcp/tool_handlers.py` | 7 handler functions — pure Python, testable without mcp package |
+| `integrations/mcp/server.py` | MCP server wiring (requires pip install mcp); delegates to tool_handlers |
+| `tools/run_mcp_server.py` | CLI: `--list-tools`, `--version`, `--demo-health`, start server |
+
+**No output artifact directories** — Phase 6 is an adapter layer only. Artifacts are written by core modules (28–32 dirs).
+
+---
+
 ## Related documents
 
 - [`DOCUMENTATION_GOVERNANCE.md`](DOCUMENTATION_GOVERNANCE.md) — full governance rules

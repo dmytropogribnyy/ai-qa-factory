@@ -758,6 +758,31 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Section 21 — Phase 6 — MCP Server Rules
+
+- **MCP is adapter only — core stays core.**
+  `integrations/mcp/tool_handlers.py` calls existing core modules. No business logic in the MCP layer.
+
+- **All tools default to planning_only / analysis_only.**
+  No network or browser by default. Execution requires per-request approval flags.
+
+- **No credentials accepted or returned.**
+  `_check_blocked_params()` blocks any argument with credential/password/token/api_key/secret.
+
+- **apply_self_healing_fixes defaults to dry_run=True.**
+  Files modified only when `approve_code_modification=True` AND `dry_run=False`.
+
+- **approved_for_client_delivery is always False.**
+  MCP cannot grant delivery approval — human sign-off always required.
+
+- **human_review_required=True in every response.**
+  Hardcoded — cannot be overridden by any tool argument.
+
+- **Adapter location: `integrations/mcp/` only.**
+  `tool_handlers.py` (testable without mcp package) + `server.py` (requires mcp).
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

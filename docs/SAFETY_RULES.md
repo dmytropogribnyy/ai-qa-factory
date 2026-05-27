@@ -1218,6 +1218,38 @@ The analyzer never writes to production systems.
 
 ---
 
+## Phase 6 — MCP Server Safety Rules
+
+**6-1. MCP is an adapter layer — no business logic, no shortcuts.**
+`integrations/mcp/tool_handlers.py` calls existing core modules only.
+MCP cannot bypass safety invariants in the core.
+
+**6-2. All MCP tools default to planning_only / analysis_only (no network, no browser).**
+`network_by_default=False`, `browser_by_default=False` hardcoded in `handle_qa_factory_health`.
+Network or browser execution requires explicit per-request approval flags in tool arguments.
+
+**6-3. No credentials accepted as tool parameters.**
+`_check_blocked_params()` raises `ValueError` if any argument key contains:
+`credential`, `password`, `token`, `api_key`, `secret`, `private_key`, `auth_key`, `access_key`, `bearer`.
+
+**6-4. No credentials returned in any tool response.**
+All tool response dicts must not contain raw credential values.
+`generate_delivery_pack` uses the same `SecretScanner` as the CLI.
+
+**6-5. `approved_for_client_delivery` is always False in delivery pack responses.**
+Human sign-off is required before any client delivery — the MCP layer cannot grant this.
+
+**6-6. `apply_self_healing_fixes` defaults to dry_run=True.**
+File modifications only occur when both `approve_code_modification=True` AND `dry_run=False` are explicitly set.
+
+**6-7. Blocked CLI flags exit 1 immediately.**
+`--approve-delivery`, `--skip-review`, `--auto-start-browser`, `--credentials` are always blocked.
+
+**6-8. `human_review_required=True` in every MCP tool response.**
+This cannot be overridden by any tool argument or client configuration.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates
