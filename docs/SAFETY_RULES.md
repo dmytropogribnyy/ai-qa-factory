@@ -1250,6 +1250,22 @@ This cannot be overridden by any tool argument or client configuration.
 
 ---
 
+## Phase 6-R — MCP Demo Workflow Safety Rules
+
+**6-R-1. Demo workflow blocked flags always exit 1.**
+`--approve-delivery`, `--skip-review`, `--force-apply` are checked before argparse and always exit 1.
+
+**6-R-2. Step 7 (`apply_self_healing_fixes`) always blocked in demo mode.**
+`approve_code_modification` is intentionally omitted from demo workflow call — verifies blocked path.
+
+**6-R-3. Demo output is ASCII-only.**
+`tools/run_mcp_demo_workflow.py` must not use Unicode characters in any print output (Windows cp1252 safety).
+
+**6-R-4. Spec fixtures are not modified by demo workflow.**
+After step 7 is blocked, original spec files must have no `// HEAL-` comments inserted.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

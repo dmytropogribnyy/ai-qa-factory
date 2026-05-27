@@ -197,7 +197,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **2738 passed** (all phases through 6 — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow, flaky test analyzer, MCP server adapter)
+Expected: **2787 passed** (all phases through 6-R — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow, flaky test analyzer, MCP server adapter, MCP demo workflow validation)
 
 ---
 
@@ -225,7 +225,15 @@ Expected: **2738 passed** (all phases through 6 — schema foundations, classifi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v6.3.0 — QA Factory as MCP Server (current)
+### v6.4.0 — MCP Demo Workflow Validation (current)
+
+- Phase 6-R: `tools/run_mcp_demo_workflow.py` — 7-step demo runner validates full QA Factory flow
+- Phase 6-R: Flow: health → analyze → quality_audit → flaky_analysis → proposals → delivery_pack → blocked_apply
+- Phase 6-R: `--no-write` dry run; `--json-output` full JSON results; blocked flags exit 1
+- Phase 6-R: 49 new end-to-end tests; 2787 total
+- Phase 6-R: ASCII-only output (Windows cp1252 safe)
+
+### v6.3.0 — QA Factory as MCP Server
 
 - Phase 6: `integrations/mcp/` — thin adapter layer over existing core modules
 - Phase 6: 7 MCP tools: `qa_factory_health`, `analyze_project`, `run_quality_audit`, `run_flaky_test_analysis`, `generate_delivery_pack`, `propose_self_healing_fixes`, `apply_self_healing_fixes`

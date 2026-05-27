@@ -1,6 +1,6 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 5.9.0  
+**Version:** 6.4.0  
 **Updated:** 2026-05-27
 
 Status labels:
@@ -2818,6 +2818,43 @@ python tools/run_mcp_server.py
 ```
 
 **MCP adapter location:** `integrations/mcp/` — handlers in `tool_handlers.py`, server in `server.py`
+
+---
+
+## Phase 6-R — MCP Demo Workflow Validator
+
+End-to-end demo that runs all 7 MCP tool handlers in sequence against demo Playwright spec fixtures.
+No mcp package required — calls `integrations/mcp/tool_handlers.py` directly.
+
+### `tools/run_mcp_demo_workflow.py`
+
+```bash
+# Dry run (no files written) — shows all 7 steps + summary
+python tools/run_mcp_demo_workflow.py --no-write
+
+# Full run (writes artifacts to outputs/)
+python tools/run_mcp_demo_workflow.py
+
+# Custom project and output path
+python tools/run_mcp_demo_workflow.py --project-id my-demo --outputs-root /tmp/out
+
+# Emit full JSON results after summary
+python tools/run_mcp_demo_workflow.py --no-write --json-output
+```
+
+**Demo flow (7 steps):**
+
+| Step | Tool | Expected status |
+|---|---|---|
+| 1 | `qa_factory_health` | `healthy` |
+| 2 | `analyze_project` | `analysis_only` |
+| 3 | `run_quality_audit` | `planning_only` (no network) |
+| 4 | `run_flaky_test_analysis` | `analysis_only` |
+| 5 | `propose_self_healing_fixes` | `proposal_generated` |
+| 6 | `generate_delivery_pack` | `draft` |
+| 7 | `apply_self_healing_fixes` | `blocked` (no approval) |
+
+**Blocked flags (exit 1):** `--approve-delivery`, `--skip-review`, `--force-apply`
 
 ---
 

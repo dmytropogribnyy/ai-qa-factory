@@ -25,9 +25,9 @@ from __future__ import annotations
 import json
 
 try:
-    import mcp.types as types
-    from mcp.server import Server
-    from mcp.server.stdio import stdio_server
+    import mcp.types as types  # type: ignore[import-untyped,import-not-found]
+    from mcp.server import Server  # type: ignore[import-untyped,import-not-found]
+    from mcp.server.stdio import stdio_server  # type: ignore[import-untyped,import-not-found]
 
     _MCP_AVAILABLE = True
 except ImportError:
@@ -236,7 +236,7 @@ def build_server() -> "Server":
 async def run_server() -> None:
     """Start the MCP server over stdio. Requires mcp package."""
     server = build_server()
-    from mcp.server.models import InitializationOptions
+    from mcp.server.models import InitializationOptions  # type: ignore[import-untyped,import-not-found]
 
     async with stdio_server() as (read_stream, write_stream):
         await server.run(

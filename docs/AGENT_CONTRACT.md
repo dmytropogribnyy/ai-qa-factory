@@ -783,6 +783,26 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Section 22 — Phase 6-R — MCP Demo Workflow Rules
+
+- **Demo runner is read/analysis-only by default.**
+  `tools/run_mcp_demo_workflow.py --no-write` produces no file artifacts.
+
+- **Blocked flags are checked before argparse.**
+  `--approve-delivery`, `--skip-review`, `--force-apply` exit 1 before any tool is called.
+
+- **Step 7 intentionally omits approval — blocked result is the expected outcome.**
+  `apply_self_healing_fixes` is always called without `approve_code_modification` in demo mode.
+  Test assertion: `status == "blocked"`.
+
+- **All 7 tools must return `human_review_required=True`.**
+  Demo tests assert this for all results — no exceptions.
+
+- **Demo output is platform-safe ASCII only.**
+  No Unicode characters (checkmarks, dashes, bullets) in any print output.
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

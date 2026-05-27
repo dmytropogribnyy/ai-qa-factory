@@ -1,8 +1,8 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 5.9.0  
-**Updated:** 2026-05-26  
-**Phase:** 5J
+**Version:** 6.4.0  
+**Updated:** 2026-05-27  
+**Phase:** 6-R
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.

@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.13.0
+**Version:** 6.4.0
 **Updated:** 2026-05-27
-**Phase:** 5P
+**Phase:** 6-R
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1589,6 +1589,43 @@ Client Delivery Pack.
 - CLI blocked flags exit 1 with `[BLOCKED]` in stderr
 
 **Quality gates:** ruff clean; pytest 2738 passed (95 new Phase 6 tests)
+
+---
+
+## Phase 6-R — MCP Demo Workflow Validation `[implemented]`
+
+**Purpose:** Validate all 7 MCP tool handlers end-to-end via a real demo workflow on demo_quality_audit fixtures. Proves the full QA Factory flow: health → analyze → audit → flaky → proposals → delivery pack → blocked apply.
+
+**New artifacts:**
+- `tools/run_mcp_demo_workflow.py` — 7-step demo runner CLI
+- `tests/test_phase6r_mcp_demo_workflow.py` — 49 end-to-end tests
+
+**Allowed actions:**
+- Run demo workflow in dry-run or write mode
+- Inspect all 7 tool results in JSON via `--json-output`
+- Write artifacts to `outputs/<project-id>/` when `--no-write` is not set
+
+**Blocked actions:**
+- `--approve-delivery` — always blocked (exit 1)
+- `--skip-review` — always blocked (exit 1)
+- `--force-apply` — always blocked (exit 1)
+- No credentials or live network calls in demo mode
+
+**Safety invariants validated by demo:**
+- All 7 tools return `human_review_required=True`
+- `apply_self_healing_fixes` returns `blocked` without `approve_code_modification`
+- `generate_delivery_pack` returns `approved_for_client_delivery=False`
+- Spec files are not modified during blocked apply
+- No credentials appear in any tool response JSON
+
+**Acceptance criteria:**
+- All 7 tools appear in results dict
+- All statuses honest: `healthy`, `analysis_only`, `planning_only`, `proposal_generated`, `draft`, `blocked`
+- ZIP excludes storagestate, .env, credential, token
+- QA_Report.md has no credentials
+- All CLI tests pass on Windows (ASCII-only output, no Unicode encoding errors)
+
+**Quality gates:** ruff clean; pytest 2787 passed (49 new Phase 6-R tests)
 
 ---
 

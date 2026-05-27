@@ -1,7 +1,7 @@
 # Operational Runbook — Guided QA Automation Workbench
 
-**Version:** 5.7.0  
-**Updated:** 2026-05-26
+**Version:** 6.4.0  
+**Updated:** 2026-05-27
 
 > **AI drafts. Senior QA decides.**
 
@@ -2218,3 +2218,41 @@ python tools/run_mcp_server.py
 - [ ] `human_review_required=True` in all tool responses
 - [ ] `approved_for_client_delivery=False` in delivery pack response
 - [ ] `apply_self_healing_fixes` reviewed in dry_run mode before setting `dry_run=false`
+
+---
+
+## Section 47 — Phase 6-R: MCP Demo Workflow
+
+**Purpose:** End-to-end validation of all 7 MCP tool handlers against demo fixtures.
+
+### Run demo (dry run)
+
+```bash
+python tools/run_mcp_demo_workflow.py --no-write
+```
+
+### Run demo (write artifacts)
+
+```bash
+python tools/run_mcp_demo_workflow.py --project-id mcp-demo --outputs-root outputs
+```
+
+### Inspect full JSON output
+
+```bash
+python tools/run_mcp_demo_workflow.py --no-write --json-output
+```
+
+### Validate all 49 demo tests
+
+```bash
+python -m pytest tests/test_phase6r_mcp_demo_workflow.py -q
+```
+
+### Safety checklist
+
+- [ ] Blocked flags (`--approve-delivery`, `--skip-review`, `--force-apply`) reject and exit 1
+- [ ] All 7 steps complete; step 7 (`apply_self_healing_fixes`) returns `blocked`
+- [ ] `human_review_required=True` in all 7 tool results
+- [ ] No credentials in any JSON output
+- [ ] Spec fixtures not modified after blocked apply

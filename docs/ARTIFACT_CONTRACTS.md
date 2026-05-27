@@ -700,6 +700,20 @@ Artifacts are written by the underlying core modules (dirs 14–32) when tool ha
 
 ---
 
+## Phase 6-R — MCP Demo Workflow (no new artifact directories)
+
+Demo workflow runner produces the same artifacts as the underlying core modules.
+No new `outputs/` directories beyond what Phase 5N/5O/5P already define.
+
+| File | Purpose |
+|---|---|
+| `tools/run_mcp_demo_workflow.py` | 7-step demo runner — no artifact ownership |
+| `tests/test_phase6r_mcp_demo_workflow.py` | 49 end-to-end tests |
+
+**Default project output:** `outputs/mcp-demo/` (created only when `--no-write` is not set)
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

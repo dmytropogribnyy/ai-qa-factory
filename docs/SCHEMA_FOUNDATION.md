@@ -1137,6 +1137,20 @@ Safety invariants enforced in `integrations/mcp/tool_handlers.py`:
 
 ---
 
+## Phase 6-R — MCP Demo Workflow
+
+No new schemas. Demo workflow calls existing `dispatch()` and returns `dict[str, dict]`.
+
+**Fixed status values validated in demo tests:**
+- `healthy` — qa_factory_health
+- `analysis_only` — analyze_project, run_flaky_test_analysis
+- `planning_only` — run_quality_audit (default)
+- `proposal_generated` — propose_self_healing_fixes
+- `draft` — generate_delivery_pack
+- `blocked` — apply_self_healing_fixes (no approval)
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic
