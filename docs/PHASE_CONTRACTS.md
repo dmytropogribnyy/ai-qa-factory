@@ -1470,6 +1470,31 @@ smoke exclusion of blocked endpoints, CI/CD content invariants).
 
 ---
 
+## Phase 5N-R — Quality Audit Demo + Delivery Pack Integration `[implemented]`
+
+**Purpose:** Validates Phase 5N end-to-end with a realistic demo project and proves that
+Accessibility, Performance, and Passive Security results are correctly represented in the
+Client Delivery Pack.
+
+**Demo project ID:** `demo_quality_audit`
+
+**Fixture layout (`fixtures/demo_quality_audit/`):**
+- `29_accessibility/` — 4 files, status `planning_only` (axe-core spec + report + summary + CSV)
+- `30_performance/` — 4 files, status `planning_only` (CDP timing spec + report + summary + slow_resources)
+- `31_passive_security/` — 4 files, status `executed` (3/5 OWASP headers present, CSP+Referrer-Policy missing)
+
+**Tests (`tests/test_phase5nr_quality_audit_delivery.py`, 96 tests):**
+- `TestDemoFixtureIntegrity` — all 12 fixture files exist, JSON valid, safety flags intact
+- `TestPlanningOnlyMode` — runners produce `planning_only` with no-network artifacts
+- `TestApprovedExecutionMode` — passive security with mocked HEAD returns `executed`; accessibility/performance blocked without dual-flag
+- `TestDeliveryPackIntegration5N` — QA report includes Accessibility/Performance/Passive Security rows; evidence index refs 29/30/31; `executed` shows "Executed", `planning_only` shows "Generated checks only; execution requires approval"
+- `TestZIPSafety5N` — ZIP excludes storageState/.env/token/authSession/credentials; includes QA_Report/Evidence_Index
+- `TestGoldenContent5N` — report human-readable, no credentials, draft notice, approved=false stated
+
+**Quality gates:** ruff clean; pytest 2568 passed (96 new Phase 5N-R tests)
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

@@ -1,0 +1,35 @@
+{
+  "project_id": "demo_quality_audit",
+  "generated_at": "2026-05-27T08:34:54.229600+00:00",
+  "target_url": "https://demo.example.com",
+  "wcag_level": "AA",
+  "checks_planned": [
+    "heading-order",
+    "image-alt",
+    "color-contrast",
+    "keyboard-navigation",
+    "form-labels",
+    "link-name",
+    "html-lang",
+    "skip-link",
+    "aria-roles",
+    "focus-visible"
+  ],
+  "violations": [],
+  "total_violations": 0,
+  "generated_test_file": "fixtures\\demo_quality_audit\\29_accessibility\\accessibility_smoke.generated.spec.ts",
+  "notes": [
+    "Skeleton spec generated \u2014 no execution performed.",
+    "Checks planned: 10 rules (WCAG AA).",
+    "Requires human review and explicit approval before execution.",
+    "Run with: npx playwright test --grep @accessibility"
+  ],
+  "status": "planning_only",
+  "checks_executed": [],
+  "checks_skipped": [],
+  "checks_blocked": [],
+  "read_only": true,
+  "active_scan_allowed": false,
+  "exploit_attempts_allowed": false,
+  "human_review_required": true
+}

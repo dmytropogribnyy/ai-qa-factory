@@ -1,0 +1,67 @@
+{
+  "project_id": "demo_quality_audit",
+  "generated_at": "2026-05-27T10:00:00+00:00",
+  "target_url": "https://demo.example.com",
+  "headers_checked": [
+    {
+      "header_name": "strict-transport-security",
+      "present": true,
+      "value": "max-age=31536000; includeSubDomains",
+      "guidance": "Enforce HTTPS; max-age >= 15552000 (6 months).",
+      "check_status": "present"
+    },
+    {
+      "header_name": "content-security-policy",
+      "present": false,
+      "value": "",
+      "guidance": "Define allowed sources to mitigate XSS.",
+      "check_status": "missing"
+    },
+    {
+      "header_name": "x-content-type-options",
+      "present": true,
+      "value": "nosniff",
+      "guidance": "Should be 'nosniff' to prevent MIME sniffing.",
+      "check_status": "present"
+    },
+    {
+      "header_name": "x-frame-options",
+      "present": true,
+      "value": "SAMEORIGIN",
+      "guidance": "Should be 'DENY' or 'SAMEORIGIN' to prevent clickjacking.",
+      "check_status": "present"
+    },
+    {
+      "header_name": "referrer-policy",
+      "present": false,
+      "value": "",
+      "guidance": "Should be 'strict-origin-when-cross-origin' or stricter.",
+      "check_status": "missing"
+    }
+  ],
+  "total_headers_checked": 5,
+  "missing_headers": 2,
+  "generated_test_file": "",
+  "notes": [
+    "HEAD request performed against https://demo.example.com.",
+    "Headers present: 3/5.",
+    "Headers missing: ['content-security-policy', 'referrer-policy']",
+    "Human review required before client delivery."
+  ],
+  "status": "executed",
+  "headers_found": [
+    "strict-transport-security",
+    "x-content-type-options",
+    "x-frame-options"
+  ],
+  "headers_missing": [
+    "content-security-policy",
+    "referrer-policy"
+  ],
+  "read_only": true,
+  "active_scan_allowed": false,
+  "exploit_attempts_allowed": false,
+  "auth_bypass_allowed": false,
+  "destructive_actions_allowed": false,
+  "human_review_required": true
+}

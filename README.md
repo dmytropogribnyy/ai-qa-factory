@@ -197,7 +197,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **2472 passed** (all phases through 5N — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security)
+Expected: **2568 passed** (all phases through 5N-R — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow)
 
 ---
 
@@ -225,7 +225,15 @@ Expected: **2472 passed** (all phases through 5N — schema foundations, classif
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v6.0.0 — Accessibility + Performance + Passive Security (current)
+### v6.1.0 — Quality Audit Delivery Workflow (current)
+
+- Phase 5N-R: `demo_quality_audit` fixture set (29_accessibility + 30_performance + 31_passive_security)
+- Phase 5N-R: `planning_only` fixtures (accessibility + performance) + `executed` fixture (passive security: 3/5 OWASP headers)
+- Phase 5N-R: 96 golden tests — fixture integrity, planning_only mode, approved execution, delivery pack 5N integration, ZIP safety, content quality
+- Phase 5N-R: QA report table correctly distinguishes `planning_only` vs `executed` per module
+- Phase 5N-R: Evidence Index references 29/30/31 artifact dirs with execution status
+
+### v6.0.0 — Accessibility + Performance + Passive Security
 
 - Phase 5N: `AccessibilityRunner` — axe-core Playwright skeleton + approved execution path (WCAG 2.1 AA)
 - Phase 5N: `PerformanceSmokeRunner` — Core Web Vitals CDP skeleton + approved execution (LCP/FCP/TTFB)

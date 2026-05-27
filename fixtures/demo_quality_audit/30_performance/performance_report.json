@@ -1,0 +1,53 @@
+{
+  "project_id": "demo_quality_audit",
+  "generated_at": "2026-05-27T08:34:54.246803+00:00",
+  "target_url": "https://demo.example.com",
+  "thresholds": [
+    {
+      "metric": "LCP",
+      "threshold_ms": 2500,
+      "guidance": "LCP should be under 2500ms (Core Web Vitals)."
+    },
+    {
+      "metric": "FCP",
+      "threshold_ms": 1800,
+      "guidance": "FCP should be under 1800ms (Core Web Vitals)."
+    },
+    {
+      "metric": "TTFB",
+      "threshold_ms": 800,
+      "guidance": "TTFB should be under 800ms (Core Web Vitals)."
+    },
+    {
+      "metric": "TBT",
+      "threshold_ms": 300,
+      "guidance": "TBT should be under 300ms (Core Web Vitals)."
+    },
+    {
+      "metric": "CLS",
+      "threshold_ms": 100,
+      "guidance": "CLS should be under 100ms (Core Web Vitals)."
+    }
+  ],
+  "endpoints_to_measure": [
+    "/",
+    "/login",
+    "/products"
+  ],
+  "generated_test_file": "fixtures\\demo_quality_audit\\30_performance\\performance_smoke.generated.spec.ts",
+  "notes": [
+    "Skeleton spec generated \u2014 no execution performed.",
+    "Endpoints planned: 3.",
+    "Thresholds: LCP<2500ms, FCP<1800ms, TTFB<800ms (Core Web Vitals).",
+    "Requires human review and explicit approval before execution.",
+    "Run with: npx playwright test --grep @performance"
+  ],
+  "status": "planning_only",
+  "endpoints_measured": [],
+  "endpoints_skipped": [],
+  "read_only": true,
+  "load_testing_allowed": false,
+  "active_scan_allowed": false,
+  "production_write_allowed": false,
+  "human_review_required": true
+}
