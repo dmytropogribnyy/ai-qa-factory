@@ -468,6 +468,21 @@ Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---
 
+## Phase 5N output artifact directories
+
+| Directory | Contents | Status tracking |
+|---|---|---|
+| `outputs/<id>/29_accessibility/` | Accessibility spec + report + summary + violations CSV | `status` field in report JSON |
+| `outputs/<id>/30_performance/` | Performance spec + report + summary + slow_resources.json | `status` field in report JSON |
+| `outputs/<id>/31_passive_security/` | Security spec + report + summary + security_headers.json | `status` field in report JSON |
+
+**Status values:** `planning_only` (skeleton only, no execution) | `executed` | `partial`
+
+Client Delivery Pack reads status and shows "Generated checks only; execution requires approval"
+for any module with `status == "planning_only"`.
+
+---
+
 ## Related documents
 
 - [`DOCUMENTATION_GOVERNANCE.md`](DOCUMENTATION_GOVERNANCE.md) — full governance rules

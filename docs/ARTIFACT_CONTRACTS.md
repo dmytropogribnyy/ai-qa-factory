@@ -634,6 +634,40 @@ Secret scan runs before ZIP creation. storageState, .env, credentials, cookies, 
 
 ---
 
+## Phase 5N Artifact Layout
+
+### `outputs/<project-id>/29_accessibility/`
+
+| Filename | Schema | Owner | Notes |
+|---|---|---|---|
+| `accessibility_smoke.generated.spec.ts` | — | `AccessibilityRunner` | axe-core Playwright spec |
+| `accessibility_report.json` | `AccessibilityReport` | `AccessibilityRunner` | Status + safety flags |
+| `accessibility_summary.md` | — | `AccessibilityRunner` | Human-readable summary |
+| `accessibility_violations.csv` | — | `AccessibilityRunner` | Violations template (populated after execution) |
+
+### `outputs/<project-id>/30_performance/`
+
+| Filename | Schema | Owner | Notes |
+|---|---|---|---|
+| `performance_smoke.generated.spec.ts` | — | `PerformanceSmokeRunner` | CDP timing Playwright spec |
+| `performance_report.json` | `PerformanceSmokeReport` | `PerformanceSmokeRunner` | Thresholds + safety flags |
+| `performance_summary.md` | — | `PerformanceSmokeRunner` | Threshold table |
+| `slow_resources.json` | — | `PerformanceSmokeRunner` | Slow resources (populated after execution) |
+
+### `outputs/<project-id>/31_passive_security/`
+
+| Filename | Schema | Owner | Notes |
+|---|---|---|---|
+| `passive_security.generated.spec.ts` | — | `PassiveSecurityRunner` | Playwright header check spec |
+| `passive_security_report.json` | `PassiveSecurityReport` | `PassiveSecurityRunner` | Header results + safety flags |
+| `passive_security_summary.md` | — | `PassiveSecurityRunner` | OWASP header table |
+| `security_headers.json` | — | `PassiveSecurityRunner` | Raw response headers (populated after execution) |
+
+**Status field:** All Phase 5N report JSONs include `"status": "planning_only"` by default.
+`"executed"` only after approved execution path is explicitly triggered.
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

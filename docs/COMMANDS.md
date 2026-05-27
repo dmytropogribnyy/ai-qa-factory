@@ -2631,6 +2631,87 @@ python -m pytest tests/test_phase5mr_demo_workflow.py -v
 
 ---
 
+## Phase 5N — Accessibility + Performance + Passive Security Smoke
+
+Three hybrid CLI tools: default mode generates Playwright skeleton specs (no network);
+approved execution mode runs real checks.
+
+### `tools/run_accessibility_smoke.py`
+
+```bash
+# Generate planning skeleton (no network)
+python tools/run_accessibility_smoke.py \
+  --project-id my-project \
+  --target-url https://example.com \
+  --wcag-level AA
+
+# Approved execution (generates spec + marks ready to run)
+python tools/run_accessibility_smoke.py \
+  --project-id my-project \
+  --target-url https://example.com \
+  --execute \
+  --approve-public-readonly-execution \
+  --approve-browser-execution
+```
+
+**Blocked flags (exit 1):** `--allow-active-scan`, `--bypass-auth`, `--allow-exploit`
+
+**Artifacts:** `outputs/<id>/29_accessibility/` — spec + report JSON + summary MD + violations CSV
+
+**Status:** `planning_only` (default) | `executed` | `partial`
+
+---
+
+### `tools/run_performance_smoke.py`
+
+```bash
+# Generate planning skeleton
+python tools/run_performance_smoke.py \
+  --project-id my-project \
+  --target-url https://example.com \
+  --endpoints / /about /products
+
+# Approved execution
+python tools/run_performance_smoke.py \
+  --project-id my-project \
+  --target-url https://example.com \
+  --execute \
+  --approve-public-readonly-execution \
+  --approve-browser-execution
+```
+
+**Blocked flags (exit 1):** `--load-test`, `--stress-test`, `--allow-writes`
+
+**Artifacts:** `outputs/<id>/30_performance/` — spec + report JSON + summary MD + slow_resources.json
+
+**Thresholds:** LCP < 2500ms | FCP < 1800ms | TTFB < 800ms
+
+---
+
+### `tools/run_passive_security_smoke.py`
+
+```bash
+# Generate planning skeleton (no network)
+python tools/run_passive_security_smoke.py \
+  --project-id my-project \
+  --target-url https://example.com
+
+# Approved execution — real passive HEAD request, checks OWASP headers
+python tools/run_passive_security_smoke.py \
+  --project-id my-project \
+  --target-url https://example.com \
+  --execute \
+  --approve-public-readonly-execution
+```
+
+**Blocked flags (exit 1):** `--active-scan`, `--exploit`, `--bypass-auth`, `--fuzzing`
+
+**Artifacts:** `outputs/<id>/31_passive_security/` — spec + report JSON + summary MD + security_headers.json
+
+**OWASP checks:** HSTS | CSP | X-Content-Type-Options | X-Frame-Options | Referrer-Policy
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

@@ -197,7 +197,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **2067 passed** (all phases through 5M — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder)
+Expected: **2472 passed** (all phases through 5N — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security)
 
 ---
 
@@ -225,7 +225,18 @@ Expected: **2067 passed** (all phases through 5M — schema foundations, classif
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v5.9.0 — Client Delivery Pack (current)
+### v6.0.0 — Accessibility + Performance + Passive Security (current)
+
+- Phase 5N: `AccessibilityRunner` — axe-core Playwright skeleton + approved execution path (WCAG 2.1 AA)
+- Phase 5N: `PerformanceSmokeRunner` — Core Web Vitals CDP skeleton + approved execution (LCP/FCP/TTFB)
+- Phase 5N: `PassiveSecurityRunner` — OWASP header skeleton + real passive HEAD request (approved)
+- Phase 5N: 3 new schemas (`AccessibilityReport`, `PerformanceSmokeReport`, `PassiveSecurityReport`)
+- Phase 5N: Hybrid mode — `planning_only` (default) vs `executed`; delivery pack distinguishes both
+- Phase 5N: Client Delivery Pack updated — shows "Generated checks only; execution requires approval" for planning_only
+- Phase 5N: 174 new tests (58 each); 2472 total
+- All safety invariants double-enforced in `__post_init__` + injection-proof via `from_dict`
+
+### v5.9.0 — Client Delivery Pack
 
 - Phase 5P: `ClientDeliveryPack` — aggregate all phase outputs into a client-ready delivery package
 - Phase 5P: `SecretScanner` — pre-delivery scan blocks storageState, .env, credentials, cookies, tokens

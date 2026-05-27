@@ -1151,6 +1151,44 @@ PR creation commands.
 
 ---
 
+## Phase 5N — Accessibility + Performance + Passive Security Safety Rules
+
+**5N-1. Default mode is always `planning_only` (skeleton generator, no network calls).**
+All three runners (`AccessibilityRunner`, `PerformanceSmokeRunner`, `PassiveSecurityRunner`)
+generate Playwright TypeScript specs without making any network requests. Status is
+always `"planning_only"` until explicit approval flags are passed.
+
+**5N-2. Approved execution for accessibility and performance requires dual flags.**
+`--execute --approve-public-readonly-execution --approve-browser-execution` both required.
+Missing either flag → `ValueError` raised, exit 1.
+
+**5N-3. Approved execution for passive security requires one flag (HEAD only).**
+`--execute --approve-public-readonly-execution` — performs a single passive HEAD request.
+No active scanning, no fuzzing, no exploit attempts, no auth bypass — ever.
+
+**5N-4. Active scanning is always blocked regardless of flags.**
+`active_scan_allowed=False` is hardcoded in `__post_init__` and `from_dict`.
+No CLI flag, environment variable, or dict injection can override this.
+
+**5N-5. Exploit attempts are always blocked.**
+`exploit_attempts_allowed=False` hardcoded in `__post_init__`. Passing
+`--allow-exploit` CLI flag exits with code 1 before reaching any runner.
+
+**5N-6. Load testing is always blocked.**
+`load_testing_allowed=False` hardcoded in `PerformanceSmokeReport.__post_init__`.
+The `--load-test` CLI flag exits with code 1.
+
+**5N-7. Delivery pack must not present skeleton-only results as completed testing.**
+If `status == "planning_only"`, the QA report table shows:
+"Generated checks only; execution requires approval."
+Only `status == "executed"` shows results as completed.
+
+**5N-8. Human review is always required before client delivery.**
+`human_review_required=True` hardcoded in all Phase 5N schemas.
+Client Delivery Pack always shows execution status — never marks planning artifacts as done.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

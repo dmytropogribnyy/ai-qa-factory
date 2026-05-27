@@ -1418,6 +1418,58 @@ smoke exclusion of blocked endpoints, CI/CD content invariants).
 
 ---
 
+## Phase 5N — Accessibility + Performance + Passive Security `[implemented]`
+
+**Modules:**
+- `core/accessibility_runner.py` — axe-core Playwright skeleton generator + approved execution
+- `core/performance_smoke_runner.py` — CDP timing skeleton generator + approved execution
+- `core/passive_security_runner.py` — OWASP header skeleton + real HEAD request (approved)
+- `core/schemas/accessibility.py` — `AccessibilityReport`, `AccessibilityViolation`
+- `core/schemas/performance_smoke.py` — `PerformanceSmokeReport`, `PerformanceThreshold`
+- `core/schemas/passive_security.py` — `PassiveSecurityReport`, `SecurityHeaderCheck`
+- `tools/run_accessibility_smoke.py` — CLI
+- `tools/run_performance_smoke.py` — CLI
+- `tools/run_passive_security_smoke.py` — CLI
+- `tests/test_phase5n_accessibility.py` — 58 tests
+- `tests/test_phase5n_performance_smoke.py` — 58 tests
+- `tests/test_phase5n_passive_security.py` — 58 tests
+
+**Execution model (hybrid):**
+- Default mode: skeleton generator — Playwright TypeScript spec + planning report, no network
+- Approved execution: `--execute` + approval flags — approved execution path per module
+- Passive security only: real urllib HEAD request (truly passive, no browser needed)
+- Accessibility/performance: spec generated, execution via `npx playwright test` (manual)
+
+**Status field distinguishes:**
+- `planning_only` — skeleton generated, no execution (default, delivery shows "Generated checks only")
+- `executed` — checks were actually performed
+- `partial` — some checks ran, some skipped
+
+**Safety invariants (all hardcoded in `__post_init__`):**
+- `read_only=True`
+- `active_scan_allowed=False`
+- `exploit_attempts_allowed=False`
+- `auth_bypass_allowed=False` (passive security)
+- `destructive_actions_allowed=False` (passive security)
+- `load_testing_allowed=False` (performance)
+- `production_write_allowed=False` (performance)
+- `human_review_required=True`
+
+**Artifact directories:**
+- `outputs/<id>/29_accessibility/` — accessibility spec + report + summary + violations CSV
+- `outputs/<id>/30_performance/` — performance spec + report + summary + slow_resources.json
+- `outputs/<id>/31_passive_security/` — security spec + report + summary + security_headers.json
+
+**Client Delivery Pack integration:**
+- `_collect_source_data` reads 29/30/31 dirs and status fields
+- QA report table shows "Generated checks only; execution requires approval" for `planning_only`
+- Evidence Index notes execution status for each 5N module
+
+**Quality gates:**
+- ruff: clean; pytest: 2472 passed (174 new Phase 5N tests)
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

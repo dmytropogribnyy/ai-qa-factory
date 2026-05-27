@@ -167,6 +167,17 @@ def _collect_source_data(project_id: str, outputs_root: Path) -> dict:
         "cicd_platform": "",
         "generated_test_files": [],
         "qa_summary_excerpt": "",
+        # Phase 5N
+        "has_accessibility": False,
+        "a11y_status": "planning_only",
+        "a11y_checks_planned": 0,
+        "has_performance": False,
+        "perf_status": "planning_only",
+        "perf_endpoints": 0,
+        "has_passive_security": False,
+        "sec_status": "planning_only",
+        "sec_total_checked": 0,
+        "sec_missing_headers": 0,
     }
 
     if not project_dir.exists():
@@ -212,6 +223,46 @@ def _collect_source_data(project_id: str, outputs_root: Path) -> dict:
             elif "gitlab" in f.name.lower():
                 data["cicd_platform"] = "GitLab CI"
 
+    # Phase 5N — Accessibility
+    a11y_dir = project_dir / "29_accessibility"
+    if a11y_dir.exists():
+        data["has_accessibility"] = True
+        for f in a11y_dir.glob("accessibility_report.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+                data["a11y_status"] = d.get("status", "planning_only")
+                data["a11y_checks_planned"] = len(d.get("checks_planned", []))
+                break
+            except (OSError, json.JSONDecodeError):
+                pass
+
+    # Phase 5N — Performance
+    perf_dir = project_dir / "30_performance"
+    if perf_dir.exists():
+        data["has_performance"] = True
+        for f in perf_dir.glob("performance_report.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+                data["perf_status"] = d.get("status", "planning_only")
+                data["perf_endpoints"] = len(d.get("endpoints_to_measure", []))
+                break
+            except (OSError, json.JSONDecodeError):
+                pass
+
+    # Phase 5N — Passive Security
+    sec_dir = project_dir / "31_passive_security"
+    if sec_dir.exists():
+        data["has_passive_security"] = True
+        for f in sec_dir.glob("passive_security_report.json"):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+                data["sec_status"] = d.get("status", "planning_only")
+                data["sec_total_checked"] = d.get("total_headers_checked", 0)
+                data["sec_missing_headers"] = d.get("missing_headers", 0)
+                break
+            except (OSError, json.JSONDecodeError):
+                pass
+
     return data
 
 
@@ -253,6 +304,37 @@ def _generate_qa_report(project_id: str, data: dict, generated_at: str) -> str:
         api_row = f"| API contract | {ep} endpoints | {safe} safe, {approval} approval-required, {blocked} blocked |"
     else:
         api_row = "| API contract | Planning artifact | Endpoints classified |"
+
+    # Phase 5N rows — distinguish executed vs planning_only per GPT guidance
+    _status_label = {
+        "executed": "Executed",
+        "partial": "Partial execution",
+        "planning_only": "Generated checks only; execution requires approval",
+    }
+
+    if data["has_accessibility"]:
+        a11y_label = _status_label.get(data["a11y_status"], "Generated checks only; execution requires approval")
+        a11y_row = f"| Accessibility (WCAG AA) | {a11y_label} | {data['a11y_checks_planned']} checks planned |"
+    else:
+        a11y_row = ""
+
+    if data["has_performance"]:
+        perf_label = _status_label.get(data["perf_status"], "Generated checks only; execution requires approval")
+        perf_row = f"| Performance smoke | {perf_label} | LCP<2500ms, FCP<1800ms thresholds |"
+    else:
+        perf_row = ""
+
+    if data["has_passive_security"]:
+        sec_label = _status_label.get(data["sec_status"], "Generated checks only; execution requires approval")
+        if data["sec_status"] == "executed":
+            sec_detail = f"{data['sec_total_checked']} headers checked, {data['sec_missing_headers']} missing"
+        else:
+            sec_detail = "OWASP headers planned"
+        sec_row = f"| Passive security | {sec_label} | {sec_detail} |"
+    else:
+        sec_row = ""
+
+    phase5n_rows = "\n".join(r for r in [a11y_row, perf_row, sec_row] if r)
 
     # QA evidence excerpt
     excerpt = data["qa_summary_excerpt"]
@@ -360,6 +442,7 @@ All outputs are planning artifacts and require senior QA review before client de
 | Mobile viewport | Stubs available | Review required |
 | Auth flows | Not included | Requires test account setup |
 | CI/CD config | Generated | Manual copy required |
+{phase5n_rows}
 
 **Generated test files:**
 {test_files_str}
@@ -611,6 +694,33 @@ def _generate_evidence_index(project_id: str, data: dict, generated_at: str) -> 
             entries.append(f"- **Generated Test:** `outputs/{project_id}/26_generated_tests/{tf}`")
     if data["has_cicd"]:
         entries.append(f"- **CI/CD Config:** `outputs/{project_id}/27_cicd/`")
+    if data["has_accessibility"]:
+        a11y_note = (
+            f"(status: {data['a11y_status']})"
+            if data.get("a11y_status") != "planning_only"
+            else "(generated checks only; execution requires approval)"
+        )
+        entries.append(
+            f"- **Accessibility Report** {a11y_note}: `outputs/{project_id}/29_accessibility/`"
+        )
+    if data["has_performance"]:
+        perf_note = (
+            f"(status: {data['perf_status']})"
+            if data.get("perf_status") != "planning_only"
+            else "(generated checks only; execution requires approval)"
+        )
+        entries.append(
+            f"- **Performance Smoke Report** {perf_note}: `outputs/{project_id}/30_performance/`"
+        )
+    if data["has_passive_security"]:
+        sec_note = (
+            f"(status: {data['sec_status']}, {data['sec_missing_headers']} headers missing)"
+            if data.get("sec_status") == "executed"
+            else "(generated checks only; execution requires approval)"
+        )
+        entries.append(
+            f"- **Passive Security Report** {sec_note}: `outputs/{project_id}/31_passive_security/`"
+        )
     if not entries:
         entries.append("- No evidence artifacts from previous phases found")
         entries.append("- Run earlier pipeline phases to generate evidence")

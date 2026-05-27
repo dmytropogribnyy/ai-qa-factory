@@ -707,6 +707,32 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Section 19 — Phase 5N — Accessibility + Performance + Passive Security Rules
+
+- **Default mode is always `planning_only` (no network).**
+  All three runners generate Playwright TypeScript specs locally with no network calls.
+  `status` field is always `"planning_only"` until explicit approval flags are passed.
+
+- **Approved execution requires explicit dual-flag for accessibility and performance.**
+  `--execute` + `--approve-public-readonly-execution` + `--approve-browser-execution`.
+  Missing either flag → `ValueError` raised; agent must not attempt workarounds.
+
+- **Passive security approved execution is HEAD-only.**
+  `--execute` + `--approve-public-readonly-execution` → single passive HEAD request.
+  No active scan, no fuzzing, no auth bypass — these flags exit 1.
+
+- **Safety flags are injection-proof.**
+  `read_only`, `active_scan_allowed`, `exploit_attempts_allowed`, `auth_bypass_allowed`,
+  `load_testing_allowed` are hardcoded in both `__post_init__` and `from_dict`.
+
+- **Delivery pack must reflect execution status honestly.**
+  `planning_only` → report shows "Generated checks only; execution requires approval."
+  Never represent skeleton output as completed testing.
+
+- **Artifact dirs: `29_accessibility/`, `30_performance/`, `31_passive_security/` only.**
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

@@ -1992,3 +1992,100 @@ python -m pytest tests/test_phase5mr_demo_workflow.py -v
 - All classification is done before any test generation
 - No network calls in any Phase 5M component (local fixture files only)
 - `blocked_by_default` endpoints never appear as executable `test()` blocks
+
+---
+
+## Section 44 — Phase 5N: Accessibility + Performance + Passive Security
+
+### Purpose
+
+Generate and optionally execute accessibility, performance, and passive security smoke checks.
+Default mode is always skeleton-only (no network). Approved execution requires explicit flags.
+
+### Accessibility Smoke
+
+**Step 1 — Generate skeleton spec (no network):**
+```bash
+python tools/run_accessibility_smoke.py \
+  --project-id <id> \
+  --target-url https://staging.example.com \
+  --wcag-level AA
+```
+
+**Step 2 — Review generated spec:**
+- Check `outputs/<id>/29_accessibility/accessibility_smoke.generated.spec.ts`
+- Verify WCAG level, target URL, and check list
+- Confirm no unexpected URLs or checks
+
+**Step 3 (optional) — Approved execution:**
+```bash
+python tools/run_accessibility_smoke.py \
+  --project-id <id> \
+  --target-url https://staging.example.com \
+  --execute \
+  --approve-public-readonly-execution \
+  --approve-browser-execution
+```
+
+Then run: `npx playwright test accessibility_smoke.generated.spec.ts --grep @accessibility`
+
+**Outputs:** `accessibility_report.json` | `accessibility_summary.md` | `accessibility_violations.csv`
+
+---
+
+### Performance Smoke
+
+**Step 1 — Generate skeleton spec:**
+```bash
+python tools/run_performance_smoke.py \
+  --project-id <id> \
+  --target-url https://staging.example.com \
+  --endpoints / /about /products
+```
+
+**Step 2 — Review thresholds** in `performance_summary.md` (LCP<2500ms, FCP<1800ms, TTFB<800ms).
+
+**Step 3 (optional) — Approved execution:**
+```bash
+python tools/run_performance_smoke.py \
+  --project-id <id> --target-url https://staging.example.com \
+  --execute --approve-public-readonly-execution --approve-browser-execution
+```
+
+Then run: `npx playwright test performance_smoke.generated.spec.ts --grep @performance`
+
+**Outputs:** `performance_report.json` | `performance_summary.md` | `slow_resources.json`
+
+---
+
+### Passive Security Smoke (can execute without browser)
+
+**Step 1 — Generate skeleton spec:**
+```bash
+python tools/run_passive_security_smoke.py \
+  --project-id <id> \
+  --target-url https://staging.example.com
+```
+
+**Step 2 — Approved execution (real HEAD request):**
+```bash
+python tools/run_passive_security_smoke.py \
+  --project-id <id> \
+  --target-url https://staging.example.com \
+  --execute \
+  --approve-public-readonly-execution
+```
+
+**Outputs:** `passive_security_report.json` | `passive_security_summary.md` | `security_headers.json`
+
+**OWASP headers checked:** HSTS, CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy
+
+---
+
+### Safety checklist
+
+- [ ] No `--active-scan`, `--exploit`, `--bypass-auth`, `--load-test`, `--fuzzing` flags used
+- [ ] `human_review_required=True` in all output JSON files
+- [ ] Status field shows `planning_only` for skeleton-only runs
+- [ ] Delivery report shows "Generated checks only; execution requires approval" for planning_only
+- [ ] No credentials in any generated spec or report file

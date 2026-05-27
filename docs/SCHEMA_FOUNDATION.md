@@ -1055,6 +1055,49 @@ NOT forced (reflect real routing state):
 
 ---
 
+---
+
+## Phase 5N — Accessibility + Performance + Passive Security schemas
+
+### `core/schemas/accessibility.py`
+
+| Class | Purpose |
+|---|---|
+| `AccessibilityViolation` | Single WCAG violation result (template, populated after execution) |
+| `AccessibilityReport` | Accessibility smoke plan/result — planning or executed |
+
+**Safety flags (hardcoded):** `read_only=True`, `active_scan_allowed=False`, `exploit_attempts_allowed=False`, `human_review_required=True`
+
+**Status tracking:** `status` (`planning_only`|`executed`|`partial`), `checks_planned`, `checks_executed`, `checks_skipped`, `checks_blocked`
+
+---
+
+### `core/schemas/performance_smoke.py`
+
+| Class | Purpose |
+|---|---|
+| `PerformanceThreshold` | Single Core Web Vitals threshold (metric, threshold_ms, guidance) |
+| `PerformanceSmokeReport` | Performance smoke plan/result — planning or executed |
+
+**Safety flags:** `read_only=True`, `load_testing_allowed=False`, `active_scan_allowed=False`, `production_write_allowed=False`, `human_review_required=True`
+
+**Default thresholds:** LCP < 2500ms | FCP < 1800ms | TTFB < 800ms | TBT < 300ms | CLS < 100ms
+
+---
+
+### `core/schemas/passive_security.py`
+
+| Class | Purpose |
+|---|---|
+| `SecurityHeaderCheck` | Single OWASP header check result (present/missing/not_checked) |
+| `PassiveSecurityReport` | Passive security smoke plan/result — passive HEAD only |
+
+**Safety flags:** `read_only=True`, `active_scan_allowed=False`, `exploit_attempts_allowed=False`, `auth_bypass_allowed=False`, `destructive_actions_allowed=False`, `human_review_required=True`
+
+**OWASP headers:** HSTS, CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic
