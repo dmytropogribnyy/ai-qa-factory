@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 6.4.0
+**Version:** 6.5.0
 **Updated:** 2026-05-27
-**Phase:** 6-R
+**Phase:** 6.1
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1589,6 +1589,53 @@ Client Delivery Pack.
 - CLI blocked flags exit 1 with `[BLOCKED]` in stderr
 
 **Quality gates:** ruff clean; pytest 2738 passed (95 new Phase 6 tests)
+
+---
+
+## Phase 6.1 — One-Command Client Audit Workflow `[implemented]`
+
+**Purpose:** Single safe entrypoint that orchestrates a full client QA audit using existing AI QA Factory modules and produces a client delivery pack.
+
+**New artifacts:**
+- `core/schemas/client_audit.py` — `ClientAuditMode`, `ClientAuditInputs`, `ClientAuditPlan`, `ClientAuditResult`, `ModuleResult`, `SkippedModule`
+- `core/client_audit_workflow.py` — `ClientAuditWorkflow` orchestrator
+- `tools/run_client_audit.py` — one-command CLI
+- `tests/test_phase6_1_client_audit_workflow.py` — 106 tests
+- Output dir: `33_client_audit/` per project
+
+**Modes:**
+
+| Mode | Modules |
+|---|---|
+| `safe_audit` | api_contract_importer (if spec) + accessibility + performance + passive_security (if url) + delivery_pack |
+| `api_only` | api_contract_importer (if spec) + delivery_pack |
+| `frontend_readonly` | accessibility + performance + passive_security (if url) + delivery_pack |
+| `delivery_only` | delivery_pack only |
+
+**Allowed actions:**
+- Call any mode with planning-only defaults (no network, no browser)
+- Approve specific modules with explicit per-run flags
+- Inspect preflight plan before running
+
+**Blocked actions:**
+- `--auto-approve-all` — always blocked (exit 1)
+- `--skip-human-review` — always blocked (exit 1)
+- `--force-deliver` — always blocked (exit 1)
+- Raw secrets as CLI arguments (always blocked)
+
+**Safety invariants (enforced in `__post_init__`):**
+- `ClientAuditInputs`: `raw_secrets_allowed=False`, `destructive_actions_allowed=False`, `production_write_allowed=False`, `auto_send_allowed=False`, `client_delivery_auto_approved=False`, `human_review_required=True`
+- `ClientAuditResult`: same invariants + `approved_for_client_delivery=False`
+
+**Acceptance criteria:**
+- Preflight plan printed before any module runs
+- All module results have name, status, note
+- All safety invariants enforced regardless of caller-supplied values
+- No credentials in any JSON or Markdown output
+- ASCII-only terminal output (no Unicode encoding errors on Windows)
+- 4 artifact files always created in `33_client_audit/` when write_files=True
+
+**Quality gates:** ruff clean; pytest 2893 passed (106 new Phase 6.1 tests)
 
 ---
 

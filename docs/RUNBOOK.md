@@ -1,6 +1,6 @@
 # Operational Runbook — Guided QA Automation Workbench
 
-**Version:** 6.4.0  
+**Version:** 6.5.0  
 **Updated:** 2026-05-27
 
 > **AI drafts. Senior QA decides.**
@@ -2221,7 +2221,54 @@ python tools/run_mcp_server.py
 
 ---
 
-## Section 47 — Phase 6-R: MCP Demo Workflow
+## Section 47 — Phase 6.1: One-Command Client Audit
+
+**Purpose:** Run a full client QA audit with a single command using existing modules.
+
+### Run safe audit (planning mode)
+
+```bash
+python tools/run_client_audit.py --project-id my-demo --mode safe_audit --no-write
+```
+
+### Run with spec file (adds API contract import)
+
+```bash
+python tools/run_client_audit.py \
+  --project-id client-x --spec-file openapi.json --mode safe_audit
+```
+
+### Run API-only mode
+
+```bash
+python tools/run_client_audit.py \
+  --project-id api-audit --spec-file openapi.json --mode api_only
+```
+
+### Delivery-only mode (existing outputs)
+
+```bash
+python tools/run_client_audit.py --project-id existing --mode delivery_only
+```
+
+### Validate 106 tests
+
+```bash
+python -m pytest tests/test_phase6_1_client_audit_workflow.py -q
+```
+
+### Safety checklist
+
+- [ ] Blocked flags (`--auto-approve-all`, `--skip-human-review`, `--force-deliver`) reject and exit 1
+- [ ] Preflight plan printed before any module runs
+- [ ] `human_review_required=True` in run report JSON
+- [ ] `approved_for_client_delivery=False` in run report JSON
+- [ ] No credentials in any JSON or Markdown output
+- [ ] `33_client_audit/` dir created with plan + preflight + run report + summary
+
+---
+
+## Section 48 — Phase 6-R: MCP Demo Workflow
 
 **Purpose:** End-to-end validation of all 7 MCP tool handlers against demo fixtures.
 

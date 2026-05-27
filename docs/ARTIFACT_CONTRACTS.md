@@ -685,6 +685,25 @@ Secret scan runs before ZIP creation. storageState, .env, credentials, cookies, 
 
 ---
 
+## Phase 6.1 — One-Command Client Audit
+
+New output directory: `outputs/<project_id>/33_client_audit/`
+
+| File | Purpose |
+|---|---|
+| `client_audit_plan.json` | Preflight plan: enabled/skipped/blocked modules, expected artifacts |
+| `client_audit_preflight.md` | Human-readable preflight plan |
+| `client_audit_run_report.json` | Full run results with safety invariants |
+| `client_audit_summary.md` | Human-readable final summary |
+| `api_contract_report.json` | API contract analysis (if spec_file provided) |
+
+**Existing dirs still used:** `28_client_delivery/`, `29_accessibility/`, `30_performance/`, `31_passive_security/`
+
+**Artifact ownership:** `33_client_audit/` is owned by `core/client_audit_workflow.py`.
+All other directories remain owned by their original modules.
+
+---
+
 ## Phase 6 — MCP adapter (no new artifact directories)
 
 Phase 6 is a thin adapter layer. No new `outputs/` directories are created.

@@ -1250,6 +1250,31 @@ This cannot be overridden by any tool argument or client configuration.
 
 ---
 
+## Phase 6.1 — One-Command Client Audit Safety Rules
+
+**6.1-1. Safety invariants are enforced via `__post_init__`, not caller trust.**
+`ClientAuditInputs` and `ClientAuditResult` reset safety fields regardless of what the caller passes.
+Any caller setting `raw_secrets_allowed=True` or `destructive_actions_allowed=True` is silently overridden.
+
+**6.1-2. Blocked CLI flags always exit 1 before any module runs.**
+`--auto-approve-all`, `--skip-human-review`, `--force-deliver` are checked before argparse.
+
+**6.1-3. All module approvals are per-run and per-module.**
+Approving browser execution unlocks only `accessibility_runner` and `performance_runner`.
+Approving public-readonly unlocks only `passive_security_runner`.
+No blanket approval path exists.
+
+**6.1-4. `approved_for_client_delivery` is always False in `ClientAuditResult`.**
+Human sign-off is required — the workflow orchestrator cannot grant delivery approval.
+
+**6.1-5. No raw secrets accepted via CLI flags or `ClientAuditInputs`.**
+`raw_secrets_allowed=False` hardcoded. Env var names are acceptable; raw values are not.
+
+**6.1-6. ASCII-only terminal output.**
+`tools/run_client_audit.py` must not emit Unicode characters in print output.
+
+---
+
 ## Phase 6-R — MCP Demo Workflow Safety Rules
 
 **6-R-1. Demo workflow blocked flags always exit 1.**

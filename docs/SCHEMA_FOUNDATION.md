@@ -1137,6 +1137,31 @@ Safety invariants enforced in `integrations/mcp/tool_handlers.py`:
 
 ---
 
+## Phase 6.1 — One-Command Client Audit
+
+New schemas in `core/schemas/client_audit.py`:
+
+| Class | Description |
+|---|---|
+| `ClientAuditMode` | Enum: `safe_audit`, `api_only`, `frontend_readonly`, `delivery_only` |
+| `ClientAuditInputs` | All inputs; safety invariants enforced in `__post_init__` |
+| `SkippedModule` | Name + reason for a skipped module |
+| `ClientAuditPlan` | Preflight plan: enabled/skipped/blocked/approval-required modules |
+| `ModuleResult` | Single module run outcome: name, status, artifacts, note |
+| `ClientAuditResult` | Full run result; safety invariants enforced in `__post_init__` |
+
+**Safety fields enforced in `__post_init__` (both `ClientAuditInputs` and `ClientAuditResult`):**
+- `raw_secrets_allowed=False`
+- `destructive_actions_allowed=False`
+- `production_write_allowed=False`
+- `auto_send_allowed=False`
+- `client_delivery_auto_approved=False`
+- `human_review_required=True` (`ClientAuditInputs`)
+- `approval_required_for_execution=True` (`ClientAuditInputs`)
+- `approved_for_client_delivery=False` (`ClientAuditResult`)
+
+---
+
 ## Phase 6-R — MCP Demo Workflow
 
 No new schemas. Demo workflow calls existing `dispatch()` and returns `dict[str, dict]`.

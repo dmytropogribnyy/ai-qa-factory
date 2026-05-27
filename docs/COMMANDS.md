@@ -1,6 +1,6 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 6.4.0  
+**Version:** 6.5.0  
 **Updated:** 2026-05-27
 
 Status labels:
@@ -2818,6 +2818,60 @@ python tools/run_mcp_server.py
 ```
 
 **MCP adapter location:** `integrations/mcp/` — handlers in `tool_handlers.py`, server in `server.py`
+
+---
+
+## Phase 6.1 — One-Command Client Audit Workflow
+
+Single safe entrypoint that orchestrates a full client QA audit using existing modules and produces a delivery pack.
+
+### `tools/run_client_audit.py`
+
+```bash
+# Safe audit (all modules in planning mode, no network, no browser)
+python tools/run_client_audit.py --project-id my-demo --mode safe_audit
+
+# With OpenAPI spec (adds API contract import)
+python tools/run_client_audit.py \
+  --project-id client-x --spec-file openapi.json --mode safe_audit
+
+# API-only mode (spec import + delivery pack)
+python tools/run_client_audit.py \
+  --project-id api-audit --spec-file openapi.json --mode api_only
+
+# Frontend-readonly mode (a11y/perf/security + delivery pack)
+python tools/run_client_audit.py \
+  --project-id fe-audit --target-url https://example.com --mode frontend_readonly
+
+# Delivery-only (collect existing outputs and build delivery pack)
+python tools/run_client_audit.py --project-id existing --mode delivery_only
+
+# Dry run (no files written)
+python tools/run_client_audit.py --project-id demo --no-write
+
+# Emit JSON results
+python tools/run_client_audit.py --no-write --json-output
+```
+
+**Workflow modes:**
+
+| Mode | API contract | a11y/perf/sec | Delivery pack |
+|---|---|---|---|
+| `safe_audit` | if --spec-file | planning_only | yes |
+| `api_only` | if --spec-file | skipped | yes |
+| `frontend_readonly` | skipped | planning_only | yes |
+| `delivery_only` | skipped | skipped | yes |
+
+**Approval flags (unlock full execution):**
+
+| Flag | Unlocks |
+|---|---|
+| `--approve-public-readonly-execution` | passive security HEAD request |
+| `--approve-browser-execution` | accessibility/performance browser run |
+
+**Blocked flags (exit 1):** `--auto-approve-all`, `--skip-human-review`, `--force-deliver`
+
+**Output artifacts:** `outputs/<project-id>/33_client_audit/`
 
 ---
 

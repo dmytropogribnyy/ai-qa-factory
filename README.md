@@ -197,7 +197,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **2787 passed** (all phases through 6-R — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow, flaky test analyzer, MCP server adapter, MCP demo workflow validation)
+Expected: **2893 passed** (all phases through 6.1 — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow, flaky test analyzer, MCP server adapter, MCP demo workflow validation, one-command client audit workflow)
 
 ---
 
@@ -225,7 +225,18 @@ Expected: **2787 passed** (all phases through 6-R — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v6.4.0 — MCP Demo Workflow Validation (current)
+### v6.5.0 — One-Command Client Audit Workflow (current)
+
+- Phase 6.1: `tools/run_client_audit.py` — single entrypoint for a full client QA audit
+- Phase 6.1: `core/client_audit_workflow.py` — thin orchestrator over existing modules
+- Phase 6.1: `core/schemas/client_audit.py` — `ClientAuditMode`, `ClientAuditInputs`, `ClientAuditResult` with `__post_init__` safety invariants
+- Phase 6.1: 4 workflow modes: `safe_audit`, `api_only`, `frontend_readonly`, `delivery_only`
+- Phase 6.1: Preflight plan printed before any module runs (detected inputs, enabled/skipped/blocked)
+- Phase 6.1: Output dir `33_client_audit/` with plan JSON, preflight MD, run report JSON, summary MD
+- Phase 6.1: 106 new tests; 2893 total
+- Blocked: `--auto-approve-all`, `--skip-human-review`, `--force-deliver`
+
+### v6.4.0 — MCP Demo Workflow Validation
 
 - Phase 6-R: `tools/run_mcp_demo_workflow.py` — 7-step demo runner validates full QA Factory flow
 - Phase 6-R: Flow: health → analyze → quality_audit → flaky_analysis → proposals → delivery_pack → blocked_apply

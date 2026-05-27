@@ -783,7 +783,26 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
-## Section 22 — Phase 6-R — MCP Demo Workflow Rules
+## Section 22 — Phase 6.1 — One-Command Client Audit Rules
+
+- **`ClientAuditInputs.__post_init__` is not negotiable.**
+  All safety invariants are re-enforced after object construction. Callers cannot opt out.
+
+- **`ClientAuditResult.__post_init__` is not negotiable.**
+  `approved_for_client_delivery=False` is always set. The orchestrator cannot approve delivery.
+
+- **Mode determines modules; flags determine execution depth.**
+  Mode selects which modules run. Approval flags select planning vs. execution within each module.
+
+- **`build_plan()` must be called and shown before `run()`.**
+  The CLI shows the preflight plan before running any modules, so the operator knows what will happen.
+
+- **Blocked flags are checked before argparse.**
+  `--auto-approve-all`, `--skip-human-review`, `--force-deliver` exit 1 before any parsing.
+
+---
+
+## Section 23 — Phase 6-R — MCP Demo Workflow Rules
 
 - **Demo runner is read/analysis-only by default.**
   `tools/run_mcp_demo_workflow.py --no-write` produces no file artifacts.
