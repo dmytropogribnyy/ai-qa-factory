@@ -225,7 +225,17 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v7.3.0 — Email/Password Auth Runner (current)
+### v7.4.0 — Auth Demo Workflow (current)
+
+- Phase 7R: `core/auth_demo_workflow.py` — `AuthDemoScenario`, `AuthDemoResult` (safety invariants via `__post_init__`), `AuthDemoWorkflow` orchestrating 7A→7B→7C→7D in planning-only mode
+- Phase 7R: `tools/run_auth_demo_workflow.py` — CLI with blocked-flag guard; no real credentials or storageState required
+- Phase 7R: Generates 5 artifact subdirs + `33_client_audit/client_report.md` with Authentication Coverage (Executed/Planned/Skipped/Blocked sections)
+- Phase 7R: 4 hardcoded blocked safety cases in every run: personal account, production account, raw CLI password, CAPTCHA bypass
+- Phase 7R: `approved_for_client_delivery=False`, `human_review_required=True` always enforced
+- Phase 7R: AGENT_CONTRACT.md updated with 7D and 7R agent rules
+- Phase 7R: 84 new tests; 3519 total
+
+### v7.3.0 — Email/Password Auth Runner
 
 - Phase 7D: `core/schemas/email_password.py` — `EmailPasswordRunStatus` (5 states), `EmailPasswordModeReadiness` (3 states), `EmailPasswordInputs`, `EmailPasswordPlan`, `EmailPasswordRunResult` — all with 7 safety invariants via `__post_init__`
 - Phase 7D: `core/email_password_runner.py` — `EmailPasswordRunner`: check_env_vars (presence only), build_plan, run (Node.js smoke), render_artifacts, format_auth_coverage_section

@@ -1886,3 +1886,30 @@ Client Delivery Pack.
 **Safety invariants always enforced (7):** `raw_secrets_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `captcha_bypass_allowed=False`, `credential_logging_allowed=False`, `client_delivery_allowed=False`, `human_review_required=True`
 
 **Quality gates:** ruff clean; pytest 3435 passed (84 new Phase 7D tests).
+
+---
+
+## Phase 7R — Auth Demo Workflow `[implemented]`
+
+**Objective:** Validate the full auth workbench flow end-to-end using existing Phase 7A/7B/7C/7D capabilities and generate a complete Authentication Coverage section in the client report.
+
+**New files:**
+- `core/auth_demo_workflow.py` — `AuthDemoScenario`, `AuthDemoResult` (safety invariants via `__post_init__`), `AuthDemoWorkflow` orchestrating 7A→7B→7C→7D→client_report
+- `tools/run_auth_demo_workflow.py` — CLI entry point with blocked-flag guard
+- `tests/test_phase7r_auth_demo_workflow.py` — 84 tests
+
+**Behavioral contracts:**
+- `AuthDemoWorkflow.run()` always produces planning-only or blocked results — no real credentials or storageState required
+- Generates 5 artifact subdirectories under `outputs/<project_id>/`: `33_client_audit/`, `34_auth_capability/`, `35_auth_strategy/`, `16_google_oauth/`, `37_email_password_auth/`
+- `client_report.md` always contains Authentication Coverage with 4 sections: Executed (none in demo), Planned, Skipped, Blocked
+- `_BLOCKED_SAFETY_CASES` (4 entries: personal account, production account, raw CLI password, CAPTCHA bypass) always appear in every demo run
+- `AuthDemoResult.approved_for_client_delivery` always False; `human_review_required` always True (enforced by `__post_init__`)
+- Google OAuth: `storage_state_path=""` → mode=MANUAL_CAPTURE → status=planning_only → category=skipped
+- Email/Password: env vars unset → planning_only → category=skipped; env vars set but no approval → blocked → category=blocked
+- Blocked CLI flags (8) exit 1 before argparse
+- Scenario phase labels: 7A, 7B, 7C, 7D, "safety" (for hardcoded blocked cases)
+- Google OAuth artifacts go to `16_google_oauth/` (consistent with Phase 7C contract), not `36_google_oauth/`
+
+**Safety invariants always enforced:** `approved_for_client_delivery=False`, `human_review_required=True` in `AuthDemoResult`
+
+**Quality gates:** ruff clean; pytest 3519 passed (84 new Phase 7R tests).

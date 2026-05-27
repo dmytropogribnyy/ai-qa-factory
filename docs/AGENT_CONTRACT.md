@@ -941,3 +941,38 @@ Do not instruct users to re-capture unless the session has expired. Captured sto
 
 **7C-5. `format_auth_coverage_section()` for client reports.**
 When building client delivery reports that need an Authentication Coverage section, call `GoogleOAuthRunner.format_auth_coverage_section(result)` to get the formatted markdown block. Do not compose this section manually.
+
+---
+
+## Phase 7D — Email/Password Auth Agent Rules
+
+**7D-1. Credentials are never accepted via CLI flags.**
+`--username`, `--password`, `--secret`, `--token`, `--cookie`, `--access-token`, `--bearer`, `--client-secret` all exit 1 before argparse. Only env var NAMES are accepted. Agents must never construct CLI invocations that pass raw credential values.
+
+**7D-2. Python never reads credential values.**
+`check_env_vars()` returns `(bool, bool)` only. Agents must not call `os.environ.get(var_name)` and pass the result to any logging, output, or serialization path.
+
+**7D-3. `email_password_runner` is the correct runner for `next_runner: "email_password_runner"`.**
+`AuthStrategySelector` maps `email_password` → `next_runner: "email_password_runner"`. Phase 7D implements this runner. Future agents must invoke `EmailPasswordRunner` for the email/password execution path.
+
+**7D-4. `format_auth_coverage_section()` for client reports.**
+Call `EmailPasswordRunner.format_auth_coverage_section(result)` to produce the markdown Authentication Coverage block. Do not compose it manually.
+
+---
+
+## Phase 7R — Auth Demo Workflow Agent Rules
+
+**7R-1. The demo workflow is planning-only by design.**
+`AuthDemoWorkflow.run()` produces only `planning_only` and `blocked` statuses. No real credentials or storageState are required. Agents must not add `approve_execution=True` to the demo inputs.
+
+**7R-2. `approved_for_client_delivery` is always False in demo results.**
+`AuthDemoResult.__post_init__()` hard-resets this field. Agents must not attempt to override it or present demo output as client-deliverable.
+
+**7R-3. Do not misrepresent planned/skipped auth as executed.**
+The client_report.md explicitly labels executed vs planned vs skipped vs blocked auth flows. Agents must preserve these categories accurately when summarising or transforming demo output.
+
+**7R-4. Safety invariant cases must appear in every demo run.**
+`_BLOCKED_SAFETY_CASES` in `core/auth_demo_workflow.py` lists 4 always-blocked cases that must appear in every demo report. Agents must not remove or reorder these entries.
+
+**7R-5. Google OAuth artifacts go to `16_google_oauth/`.**
+`GoogleOAuthRunner.render_artifacts()` writes to `outputs/<project>/16_google_oauth/`. The demo workflow preserves this path. Do not create a parallel `36_google_oauth/` directory.

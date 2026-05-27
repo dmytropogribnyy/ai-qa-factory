@@ -2608,3 +2608,56 @@ python tools/run_email_password_smoke.py \
 - [ ] `approved_for_client_delivery` is `False` in report JSON
 - [ ] No credential values appear in artifacts, logs, or stdout
 - [ ] Only dedicated test account used (never personal/production)
+
+---
+
+## 7R. Running the Auth Demo Workflow
+
+**Purpose:** Validate the full auth workbench (7A→7B→7C→7D) end-to-end and generate an Authentication Coverage section for the client report. No real credentials or storageState required.
+
+### Step-by-step
+
+**Step 1 — run the demo:**
+```bash
+python tools/run_auth_demo_workflow.py
+```
+Or with a custom project id:
+```bash
+python tools/run_auth_demo_workflow.py --project-id my-project
+```
+
+**Step 2 — check artifacts:**
+```
+outputs/demo-auth-workflow/
+  33_client_audit/client_report.md        ← Authentication Coverage section
+  34_auth_capability/auth_capability_plan.json
+  35_auth_strategy/auth_strategy_decision.json
+  16_google_oauth/google_oauth_report.json
+  37_email_password_auth/email_password_report.json
+```
+
+**Step 3 — review client_report.md:**
+Open `33_client_audit/client_report.md`. Verify:
+- Executed section says "none — demo mode"
+- Planned section lists 7A and 7B results
+- Skipped section lists Google OAuth and Email/Password (missing prerequisites)
+- Blocked section lists 4 safety invariant cases
+- Safety boundary table shows all flags as `False` / `True`
+- `approved_for_client_delivery=False` and `human_review_required=True`
+
+### Interpreting results
+
+| Category | Meaning |
+|---|---|
+| `planned` | Auth method identified by 7A/7B; planning artifacts produced |
+| `skipped` | Method known but prerequisites missing (no storageState, no env vars) |
+| `blocked` | Safety invariant prevents execution (personal account, raw password, etc.) |
+| `executed` | Actual auth smoke ran successfully (requires real credentials — not in demo mode) |
+
+### Safety checklist (7R)
+
+- [ ] `approved_for_client_delivery` is `False` in demo result JSON
+- [ ] `human_review_required` is `True` in demo result JSON
+- [ ] No credential values in any artifact
+- [ ] All 4 safety blocked cases present in client_report.md
+- [ ] client_report.md labelled as "Draft"

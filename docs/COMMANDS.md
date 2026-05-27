@@ -1,6 +1,6 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 6.6.0  
+**Version:** 6.7.0  
 **Updated:** 2026-05-27
 
 Status labels:
@@ -3232,3 +3232,52 @@ Raw secrets are never accepted via CLI flags. Set credentials as OS-level env va
 - `email_password_summary.md` — human-readable summary with safety boundary table
 
 **Safety invariants always enforced (7 flags via `__post_init__`):** `raw_secrets_allowed=False`, `personal_account_allowed=False`, `production_account_allowed=False`, `captcha_bypass_allowed=False`, `credential_logging_allowed=False`, `client_delivery_allowed=False`, `human_review_required=True`
+
+---
+
+## Phase 7R — Auth Demo Workflow
+
+**CLI:** `python tools/run_auth_demo_workflow.py`
+
+**Usage (human-readable output, default project-id):**
+```bash
+python tools/run_auth_demo_workflow.py
+```
+
+**Usage (custom project-id):**
+```bash
+python tools/run_auth_demo_workflow.py --project-id my-demo
+```
+
+**Usage (JSON result output):**
+```bash
+python tools/run_auth_demo_workflow.py --project-id my-demo --json
+```
+
+**Flags:**
+
+| Flag | Type | Description |
+|---|---|---|
+| `--project-id` | str | Project identifier (default: `demo-auth-workflow`) |
+| `--outputs-root` | str | Root for artifacts (default: `outputs`) |
+| `--json` | flag | Print result as JSON |
+
+**Blocked flags (exit 1 before argparse):** same 8 flags as Phase 7C and 7D.
+
+**What the demo produces:**
+
+| Phase | Artifact | Status |
+|---|---|---|
+| 7A | `34_auth_capability/auth_capability_plan.json` | planning_only |
+| 7B | `35_auth_strategy/auth_strategy_decision.json` | planning_only |
+| 7C | `16_google_oauth/google_oauth_report.json` | planning_only (no storageState) |
+| 7D | `37_email_password_auth/email_password_report.json` | planning_only / blocked |
+| Report | `33_client_audit/client_report.md` | Draft — not client-deliverable |
+
+**Scenarios covered:**
+
+- **Planned**: 7A capability plan, 7B strategy decision
+- **Skipped**: Google OAuth (storageState missing), Email/password (env vars not set)
+- **Blocked**: personal account, production account, raw password via CLI, CAPTCHA bypass
+
+**Safety:** `approved_for_client_delivery=False`, `human_review_required=True` always enforced in `AuthDemoResult.__post_init__()`. All scenarios run in planning-only or blocked mode — no real credentials required.
