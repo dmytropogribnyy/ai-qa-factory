@@ -678,6 +678,35 @@ ONLY through the Phase 5G dedicated runner with explicit approval flags.
 
 ---
 
+## Section 18 — Phase 5M — API Contract Importer + CI/CD Builder Rules
+
+### Rules
+
+- **Credential flags are blocked before argument parsing.**
+  All three Phase 5M CLI tools exit with code 2 on `--password`, `--token`, `--secret`,
+  `--api-key`, `--cookie`, `--pat`, `--access-token`, `--bearer`, `--db-url`,
+  `--connection-string`, `--dsn`.
+- **No network calls during import.**
+  `APIContractImporter` reads only local files. No URL fetching is permitted.
+- **Only safe_readonly endpoints generate active test stubs.**
+  `requires_approval` endpoints are skipped (commented). `blocked_by_default` endpoints
+  are excluded entirely. This classification cannot be overridden via CLI flags.
+- **Generated tests are not auto-executable.**
+  `GeneratedTestsReport.executable_without_approval=False` hardcoded in `__post_init__`
+  AND `from_dict`. No generated spec file may be executed without human review.
+- **CI/CD configs are planning artifacts — no auto-commit, no auto-push.**
+  `CICDConfig.auto_pr_creation_allowed=False` and `client_repo_writeback_allowed=False`
+  hardcoded. Generated files must be manually copied to the target repository.
+- **No secrets in generated CI/CD configs.**
+  Use CI/CD platform secret stores. Never embed raw credentials in workflow YAML.
+- **Safety invariants are unconditional.**
+  `APIContractReport`, `GeneratedTestsReport`, `CICDConfig`, `CICDManifest` all have
+  safety flags hardcoded in `__post_init__` AND `from_dict`. Passing overriding values
+  in `from_dict` is silently ignored.
+- **Artifact dirs: `25_api_contract/`, `26_generated_tests/`, `27_cicd/` only.**
+
+---
+
 ## Related Documents
 
 - [`PHASE_CONTRACTS.md`](PHASE_CONTRACTS.md) — phase boundaries and contracts

@@ -1063,6 +1063,43 @@ to the current target, causing cross-site contamination. Use `const BASE = 'http
 
 ---
 
+## Phase 5M Safety Rules
+
+**5M-1. No network calls during API contract import.**
+`APIContractImporter.analyze()` reads only local files. Passing a URL as `--spec-file`
+is not blocked at the CLI level but will fail with a file-not-found error — by design.
+Never add URL-fetch logic without a separate safety review.
+
+**5M-2. Credential flags are blocked at entry, before any parsing.**
+`import_api_contract.py`, `generate_api_tests.py`, `build_cicd_config.py` all block
+`--password`, `--token`, `--secret`, `--api-key`, `--cookie`, `--pat`, `--access-token`,
+`--bearer`, `--db-url`, `--connection-string`, `--dsn` with exit code 2.
+
+**5M-3. Only safe_readonly endpoints get active test stubs.**
+`APITestGenerator` generates active `test(...)` blocks only for endpoints classified as
+`safe_readonly`. `requires_approval` endpoints appear as commented-out skip stubs.
+`blocked_by_default` endpoints are excluded entirely from generated specs.
+
+**5M-4. `executable_without_approval=False` is hardcoded in `GeneratedTestsReport`.**
+All generated test files are planning artifacts. No generated spec may be auto-executed
+without human review. Set unconditionally in `__post_init__` AND `from_dict`.
+
+**5M-5. `auto_pr_creation_allowed=False` and `client_repo_writeback_allowed=False` hardcoded.**
+CI/CD configs are planning artifacts only. The builder does not commit, push, or create
+PRs. Generated files must be manually copied to the target repository and reviewed.
+
+**5M-6. No secrets or credentials in generated CI/CD configs.**
+`CICDBuilder` must never embed API keys, tokens, passwords, or connection strings in
+generated workflow files. Secrets must be referenced via CI/CD platform secret stores
+(e.g., `${{ secrets.MY_SECRET }}` in GitHub Actions).
+
+**5M-7. `blocked_by_default` classification is a hard gate.**
+Endpoints matching payment, billing, refund, admin, delete, deactivate, ban, suspend,
+purge, or destroy path terms are classified `blocked_by_default` and must not appear
+in any generated test file as an executable test case.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

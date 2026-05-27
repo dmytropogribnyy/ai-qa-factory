@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.10.0
-**Updated:** 2026-05-26
-**Phase:** 5J-R
+**Version:** 5.11.0
+**Updated:** 2026-05-27
+**Phase:** 5M
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1280,6 +1280,53 @@ consolidated QA Evidence Report with multi-source aggregation and secret scan.
 - `personal_accounts_blocked=True`
 - `production_accounts_blocked=True`
 - No credentials accepted or stored in any artifact
+
+---
+
+## Phase 5M — API Contract Importer + CI/CD Builder [implemented]
+
+**What Phase 5M IS:**
+- `APIContractImporter` — parses OpenAPI JSON/YAML and Postman collections into a
+  classified `APIContractReport` with per-endpoint safety levels (safe_readonly /
+  requires_approval / blocked_by_default)
+- `APITestGenerator` — generates Playwright API test skeleton files from a contract
+  report. Only safe_readonly endpoints get active stubs. All output is planning-only.
+- `CICDBuilder` — generates GitHub Actions and GitLab CI workflow files for running
+  Playwright smoke tests. All configs are planning artifacts — not auto-committed.
+- Three CLI tools: `import_api_contract.py`, `generate_api_tests.py`, `build_cicd_config.py`
+- Three artifact dirs: `25_api_contract/`, `26_generated_tests/`, `27_cicd/`
+
+**What Phase 5M is NOT:**
+- Not a live API tester — no network calls during import or generation
+- Not a code committer — generated CI configs must be copied manually
+- Not a test executor — all generated specs have `executable_without_approval=False`
+- Not a credential store — no tokens, API keys, or secrets accepted via CLI flags
+
+**Allowed Actions:**
+- Reading local spec files (JSON/YAML/Postman) from the local filesystem
+- Writing planning artifacts to `25_api_contract/`, `26_generated_tests/`, `27_cicd/`
+- Generating TypeScript test file skeletons and YAML CI configs
+
+**Blocked Actions:**
+- Network calls to fetch specs from URLs
+- Accepting credential flags (`--password`, `--token`, `--secret`, etc.)
+- Auto-executing generated tests
+- Auto-committing or pushing generated CI configs to any repository
+- Embedding secrets in generated workflow files
+
+**Acceptance Criteria:**
+- `APIContractReport.raw_secrets_allowed=False`, `destructive_api_calls_allowed=False`,
+  `production_write_allowed=False`, `human_review_required=True` hardcoded in `__post_init__` AND `from_dict`
+- `GeneratedTestsReport.executable_without_approval=False` hardcoded in `__post_init__` AND `from_dict`
+- `CICDConfig.auto_pr_creation_allowed=False`, `client_repo_writeback_allowed=False`,
+  `production_deploy_allowed=False` hardcoded in `__post_init__` AND `from_dict`
+- Blocked flags exit with code 2 before any parsing
+- ruff: clean; pytest: 2067 passed (101 new Phase 5M tests)
+
+**Safety invariants (all hardcoded, cannot be bypassed):**
+- `APIContractReport`: `raw_secrets_allowed=False`, `destructive_api_calls_allowed=False`, `production_write_allowed=False`, `human_review_required=True`, `client_delivery_allowed=False`
+- `GeneratedTestsReport`: `executable_without_approval=False`, `raw_secrets_allowed=False`, `human_review_required=True`, `client_delivery_allowed=False`
+- `CICDConfig/CICDManifest`: `auto_pr_creation_allowed=False`, `client_repo_writeback_allowed=False`, `production_deploy_allowed=False`, `human_review_required=True`
 
 ---
 

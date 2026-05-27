@@ -82,7 +82,7 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 1966 tests, mock mode, no API keys needed
+python -m pytest -q             # 2067 tests, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
@@ -197,7 +197,7 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **1966 passed** (all phases through 5L — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI)
+Expected: **2067 passed** (all phases through 5M — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder)
 
 ---
 
@@ -225,7 +225,18 @@ Expected: **1966 passed** (all phases through 5L — schema foundations, classif
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v5.6.0 — Desktop Browser Execution CLI + Advanced Smoke Suite (current)
+### v5.7.0 — API Contract Importer + CI/CD Builder (current)
+
+- Phase 5M: `APIContractImporter` — parse OpenAPI JSON/YAML and Postman collections into classified endpoint reports
+- Phase 5M: `APITestGenerator` — generate Playwright API smoke + schema test skeletons (safe_readonly only; planning artifact, not auto-executable)
+- Phase 5M: `CICDBuilder` — generate GitHub Actions + GitLab CI workflows for Playwright smoke (planning artifact, manual copy required)
+- Phase 5M: Safety classification per endpoint: `safe_readonly / requires_approval / blocked_by_default`
+- Phase 5M: 3 CLI tools (`import_api_contract.py`, `generate_api_tests.py`, `build_cicd_config.py`)
+- Phase 5M: 3 artifact dirs (`25_api_contract/`, `26_generated_tests/`, `27_cicd/`)
+- Phase 5M: 101 new tests; 2067 total
+- All safety invariants double-enforced in `__post_init__` + `from_dict` across all new schemas
+
+### v5.6.0 — Desktop Browser Execution CLI + Advanced Smoke Suite
 
 - Phase 5L: `tools/run_browser_execution.py` — approval-gated desktop Playwright smoke CLI
 - Phase 5L: Dual-approval model for ecommerce targets (Amazon, Alza): both `--approve-demo-execution` AND `--approve-public-readonly-execution` required

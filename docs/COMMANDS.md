@@ -1,7 +1,7 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 5.5.0  
-**Updated:** 2026-05-26
+**Version:** 5.7.0  
+**Updated:** 2026-05-27
 
 Status labels:
 - `[implemented]` — works now
@@ -2413,6 +2413,140 @@ outputs/<project_id>/03_framework/playwright/
 - HTML report: `playwright-report/index.html` (always generated)
 
 **Exit codes:** `0` = build/plan OK, `1` = blocked, `2` = bad flags
+
+---
+
+## Phase 5M — API Contract Importer + CI/CD Builder
+
+### `tools/import_api_contract.py` — API Contract Importer
+
+Parses OpenAPI (JSON/YAML) or Postman collection spec files and produces a classified
+`APIContractReport` with per-endpoint safety levels.
+
+```bash
+# From OpenAPI JSON
+python tools/import_api_contract.py \
+  --project-id my-project \
+  --spec-file path/to/openapi.json
+
+# From OpenAPI YAML
+python tools/import_api_contract.py \
+  --project-id my-project \
+  --spec-file path/to/swagger.yaml
+
+# Skip writing artifacts
+python tools/import_api_contract.py \
+  --project-id my-project \
+  --spec-file openapi.json \
+  --no-write
+```
+
+**Flags:**
+- `--project-id NAME` *(required)*
+- `--spec-file PATH` *(required)* — local file only; no network calls
+- `--outputs-root PATH` — override output root (default: `outputs`)
+- `--no-write` — skip writing artifacts
+
+**Endpoint safety classification:**
+- `safe_readonly` — GET/HEAD/OPTIONS on non-risky paths
+- `requires_approval` — POST/PUT/PATCH/DELETE or GET with risky path terms
+- `blocked_by_default` — any method with payment/billing/admin/delete/refund in path
+
+**Blocked flags (exit 2):** `--password`, `--token`, `--secret`, `--api-key`, `--cookie`,
+`--pat`, `--access-token`, `--bearer`, `--db-url`, `--connection-string`, `--dsn`
+
+**Generated artifacts** (`outputs/<project_id>/25_api_contract/`):
+```
+api_contract_inventory.json
+api_contract_summary.md
+auth_requirements_map.json
+risky_endpoints.json
+```
+
+**Exit codes:** `0` = parsed OK, `1` = file not found/blocked, `2` = bad flags
+
+---
+
+### `tools/generate_api_tests.py` — API Test Generator
+
+Reads an `api_contract_inventory.json` and generates Playwright API test skeleton files.
+All generated tests are planning artifacts — `executable_without_approval=False`.
+
+```bash
+python tools/generate_api_tests.py \
+  --project-id my-project \
+  --contract-report-path outputs/my-project/25_api_contract/api_contract_inventory.json
+
+python tools/generate_api_tests.py \
+  --project-id my-project \
+  --contract-report-path outputs/my-project/25_api_contract/api_contract_inventory.json \
+  --no-write
+```
+
+**Flags:**
+- `--project-id NAME` *(required)*
+- `--contract-report-path PATH` *(required)* — path to `api_contract_inventory.json`
+- `--outputs-root PATH` — override output root
+- `--no-write` — skip writing files
+
+**Safety invariants (hardcoded):**
+- `executable_without_approval=False`, `raw_secrets_allowed=False`
+- `human_review_required=True`, `client_delivery_allowed=False`
+- Only `safe_readonly` endpoints get active test stubs
+- `requires_approval` endpoints appear as commented-out skips
+- `blocked_by_default` endpoints are excluded entirely
+
+**Generated artifacts** (`outputs/<project_id>/26_generated_tests/`):
+```
+api_smoke.generated.spec.ts
+api_schema.generated.spec.ts
+api_negative_candidates.md
+generated_tests_manifest.json
+```
+
+**Exit codes:** `0` = generated OK, `1` = contract file not found, `2` = bad flags
+
+---
+
+### `tools/build_cicd_config.py` — CI/CD Config Builder
+
+Generates a CI/CD pipeline configuration (GitHub Actions or GitLab CI) for running
+Playwright smoke tests. Generated configs are planning artifacts — review before use.
+
+```bash
+# GitHub Actions (default)
+python tools/build_cicd_config.py \
+  --project-id my-project \
+  --platform github_actions \
+  --scaffold-root outputs/my-project/03_framework/playwright
+
+# GitLab CI
+python tools/build_cicd_config.py \
+  --project-id my-project \
+  --platform gitlab_ci
+```
+
+**Flags:**
+- `--project-id NAME` *(required)*
+- `--platform {github_actions,gitlab_ci,azure_devops}` (default: `github_actions`)
+- `--scaffold-root PATH` — path to Playwright scaffold (default: `03_framework/playwright`)
+- `--outputs-root PATH` — override output root
+- `--no-write` — skip writing artifacts
+
+**Safety invariants (hardcoded):**
+- `auto_pr_creation_allowed=False` — generated files must be copied manually
+- `client_repo_writeback_allowed=False` — no repo write-back
+- `production_deploy_allowed=False` — no deployment steps
+- `human_review_required=True` — review before committing to CI
+
+**Generated artifacts** (`outputs/<project_id>/27_cicd/`):
+```
+github-actions-qa-smoke.yml   (or equivalent for selected platform)
+cicd_summary.md
+cicd_manifest.json
+```
+
+**Exit codes:** `0` = generated OK, `1` = blocked, `2` = bad flags
 
 ---
 

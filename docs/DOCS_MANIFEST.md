@@ -409,6 +409,32 @@ All Phase 5K oracle artifacts: `raw_input_stored=False`, `executable_without_app
 
 All Phase 5K evidence intelligence artifacts: `network_calls_made=False`, `execution_performed=False`, `safe_to_deliver=False`, `human_review_required=True` always.
 
+### `25_api_contract/` (Phase 5M — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `api_contract_inventory.json` | JSON | system | `APIContractReport` schema — endpoints with safety classifications |
+| `api_contract_summary.md` | MD | system | Human-readable endpoint table with safety levels |
+| `auth_requirements_map.json` | JSON | system | Detected auth schemes |
+| `risky_endpoints.json` | JSON | system | requires_approval + blocked_by_default endpoints |
+
+### `26_generated_tests/` (Phase 5M — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `api_smoke.generated.spec.ts` | TS | system | Playwright API smoke stubs (safe_readonly only) |
+| `api_schema.generated.spec.ts` | TS | system | Schema validation stubs |
+| `api_negative_candidates.md` | MD | system | Negative test planning document |
+| `generated_tests_manifest.json` | JSON | system | `GeneratedTestsReport` — counts, safety flags |
+
+### `27_cicd/` (Phase 5M — implemented)
+
+| Filename | Format | Owner | Purpose |
+|---|---|---|---|
+| `github-actions-qa-smoke.yml` | YAML | system | GitHub Actions workflow (or platform equivalent) |
+| `cicd_summary.md` | MD | system | Usage instructions and safety review checklist |
+| `cicd_manifest.json` | JSON | system | `CICDManifest` — artifact list, safety flags |
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

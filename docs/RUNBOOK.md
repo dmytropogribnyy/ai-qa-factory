@@ -1830,3 +1830,73 @@ test-results/*/trace.zip            # Trace (retained on failure)
 - `personal_accounts_blocked=True`, `production_accounts_blocked=True` — hardcoded
 - Ecommerce dual-approval: both `--approve-demo-execution` AND `--approve-public-readonly-execution`
 - No credentials, no auth, no checkout, no form submission
+
+### 39. API Contract Importer (Phase 5M)
+
+**Purpose:** Parse OpenAPI/Postman spec files into a classified endpoint inventory.
+No approval flag needed — reads local files only, no network calls.
+
+**Checklist:**
+- [ ] Spec file is local (JSON/YAML/Postman collection)
+- [ ] Review `api_contract_summary.md` — check safety classifications
+- [ ] Review `risky_endpoints.json` — verify requires_approval and blocked lists
+
+**Command:**
+```bash
+python tools/import_api_contract.py \
+    --project-id my-project \
+    --spec-file path/to/openapi.json
+```
+
+### 40. API Test Generator (Phase 5M)
+
+**Purpose:** Generate Playwright API test skeleton files from an APIContractReport.
+All output is planning-only — `executable_without_approval=False`.
+
+**Checklist:**
+- [ ] `25_api_contract/api_contract_inventory.json` exists
+- [ ] Review generated `.spec.ts` files before running
+- [ ] Do NOT auto-execute without human review
+
+**Command:**
+```bash
+python tools/generate_api_tests.py \
+    --project-id my-project \
+    --contract-report-path outputs/my-project/25_api_contract/api_contract_inventory.json
+```
+
+### 41. CI/CD Builder (Phase 5M)
+
+**Purpose:** Generate GitHub Actions or GitLab CI workflow for running Playwright
+smoke tests. Generated configs are planning artifacts — must be copied manually.
+
+**Checklist:**
+- [ ] Review generated workflow YAML before committing
+- [ ] Replace placeholder comments with real secrets via CI/CD platform secret stores
+- [ ] Do NOT auto-commit or auto-push — copy manually to your repository
+
+**Commands:**
+```bash
+# GitHub Actions
+python tools/build_cicd_config.py \
+    --project-id my-project \
+    --platform github_actions \
+    --scaffold-root outputs/my-project/03_framework/playwright
+
+# GitLab CI
+python tools/build_cicd_config.py \
+    --project-id my-project \
+    --platform gitlab_ci
+```
+
+**Output artifacts:**
+```
+outputs/<project_id>/27_cicd/github-actions-qa-smoke.yml
+outputs/<project_id>/27_cicd/cicd_summary.md
+outputs/<project_id>/27_cicd/cicd_manifest.json
+```
+
+**Safety invariants:**
+- `auto_pr_creation_allowed=False` — no auto-commit, copy manually
+- `client_repo_writeback_allowed=False` — no repo write-back
+- `production_deploy_allowed=False` — no deployment steps generated

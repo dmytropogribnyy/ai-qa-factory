@@ -575,6 +575,44 @@ Safety guarantees: `network_calls_made=False`, `execution_performed=False`, `saf
 
 ---
 
+### `outputs/<project_id>/25_api_contract/` (Phase 5M)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `api_contract_inventory.json` | `APIContractReport` | system | All endpoints with safety classifications |
+| `api_contract_summary.md` | — | system | Human-readable endpoint table |
+| `auth_requirements_map.json` | `AuthRequirement[]` | system | Detected auth schemes |
+| `risky_endpoints.json` | `APIEndpoint[]` | system | requires_approval + blocked endpoints |
+
+Safety guarantees: `raw_secrets_allowed=False`, `destructive_api_calls_allowed=False`, `production_write_allowed=False`, `human_review_required=True` always. No network calls — local file analysis only.
+
+---
+
+### `outputs/<project_id>/26_generated_tests/` (Phase 5M)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `api_smoke.generated.spec.ts` | — | system | Playwright API smoke stubs (safe_readonly only) |
+| `api_schema.generated.spec.ts` | — | system | Schema validation stubs |
+| `api_negative_candidates.md` | — | system | Negative test planning (approval required before use) |
+| `generated_tests_manifest.json` | `GeneratedTestsReport` | system | Manifest with safety flags |
+
+Safety guarantees: `executable_without_approval=False`, `human_review_required=True` always. Planning artifacts only — must not be auto-executed.
+
+---
+
+### `outputs/<project_id>/27_cicd/` (Phase 5M)
+
+| File | Schema | Owner | Notes |
+|---|---|---|---|
+| `github-actions-qa-smoke.yml` | — | system | GitHub Actions workflow (or platform equivalent) |
+| `cicd_summary.md` | — | system | Usage instructions and safety notes |
+| `cicd_manifest.json` | `CICDManifest` | system | Artifact list with safety flags |
+
+Safety guarantees: `auto_pr_creation_allowed=False`, `client_repo_writeback_allowed=False`, `production_deploy_allowed=False`, `human_review_required=True` always. No secrets embedded. Must be manually copied to target repo.
+
+---
+
 ## Related Documents
 
 - [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — agent operating rules

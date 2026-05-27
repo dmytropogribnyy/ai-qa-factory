@@ -1003,6 +1003,58 @@ NOT forced (reflect real routing state):
 
 ---
 
+### Phase 5M — API Contract + CI/CD
+
+#### `core/schemas/api_contract.py`
+
+| Class | Schema class | Purpose |
+|---|---|---|
+| `APIParameter` | `APIParameter` | Single endpoint parameter — name, location, type |
+| `APIEndpoint` | `APIEndpoint` | Endpoint with method, path, and safety classification |
+| `AuthRequirement` | `AuthRequirement` | Auth scheme detected from the spec |
+| `APIContractReport` | `APIContractReport` | Full contract analysis — endpoints, auth, counts |
+| `GeneratedTestFile` | `GeneratedTestFile` | Metadata for a single generated test file |
+| `GeneratedTestsReport` | `GeneratedTestsReport` | Report of all generated test artifacts |
+| `CICDConfig` | `CICDConfig` | CI/CD workflow content + platform metadata |
+| `CICDManifest` | `CICDManifest` | Artifact list for the generated CI/CD config |
+
+**Constants:**
+- `ENDPOINT_SAFETY_LEVELS` — `safe_readonly`, `requires_approval`, `blocked_by_default`
+- `SAFE_METHODS` — `GET`, `HEAD`, `OPTIONS`
+- `RISKY_PATH_TERMS` — path terms that escalate classification
+- `CICD_PLATFORMS` — `github_actions`, `gitlab_ci`, `azure_devops`
+- `SOURCE_FORMATS` — `openapi_json`, `openapi_yaml`, `postman_collection`, `unknown`
+
+**Hardcoded safety defaults in `APIContractReport`:**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `raw_secrets_allowed` | `False` | `__post_init__` + `from_dict` |
+| `destructive_api_calls_allowed` | `False` | `__post_init__` + `from_dict` |
+| `production_write_allowed` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
+| `client_delivery_allowed` | `False` | `__post_init__` + `from_dict` |
+
+**Hardcoded safety defaults in `GeneratedTestsReport`:**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `executable_without_approval` | `False` | `__post_init__` + `from_dict` |
+| `raw_secrets_allowed` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
+| `client_delivery_allowed` | `False` | `__post_init__` + `from_dict` |
+
+**Hardcoded safety defaults in `CICDConfig` / `CICDManifest`:**
+
+| Field | Hardcoded value | Enforced in |
+|---|---|---|
+| `auto_pr_creation_allowed` | `False` | `__post_init__` + `from_dict` |
+| `client_repo_writeback_allowed` | `False` | `__post_init__` + `from_dict` |
+| `production_deploy_allowed` | `False` | `__post_init__` + `from_dict` |
+| `human_review_required` | `True` | `__post_init__` + `from_dict` |
+
+---
+
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels used in `AutomationAction.risk_level` and `ApprovalDecision.risk_level`
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — rules enforced by `SafetyCheck` / `SafetyReport`
 - [`TOOLING_DECISIONS.md`](TOOLING_DECISIONS.md) — why pure dataclasses over Pydantic
