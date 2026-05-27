@@ -1,0 +1,41 @@
+openapi: "3.0.0"
+info:
+  title: Sample YAML API
+  version: "2.0.0"
+  description: AI QA Factory Phase 5M-R demo spec -- OpenAPI YAML sample
+servers:
+  - url: https://api.yaml-sample.example.com/v2
+paths:
+  /items:
+    get:
+      operationId: listItems
+      summary: List all items
+      tags: [items]
+    post:
+      operationId: createItem
+      summary: Create an item
+      tags: [items]
+  /items/{id}:
+    get:
+      operationId: getItem
+      summary: Get item by ID
+      tags: [items]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+    patch:
+      operationId: patchItem
+      summary: Partially update item
+      tags: [items]
+  /categories:
+    get:
+      operationId: listCategories
+      summary: List categories
+      tags: [categories]
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check

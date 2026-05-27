@@ -1,0 +1,66 @@
+{
+  "info": {
+    "name": "Sample Postman Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "AI QA Factory Phase 5M-R demo Postman collection"
+  },
+  "item": [
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get all users",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "https://api.example.com/users", "path": ["users"] }
+          }
+        },
+        {
+          "name": "Get user by ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "https://api.example.com/users/1", "path": ["users", "1"] }
+          }
+        },
+        {
+          "name": "Create user",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "https://api.example.com/users", "path": ["users"] }
+          }
+        },
+        {
+          "name": "Delete user",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "https://api.example.com/users/1", "path": ["users", "1"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "https://api.example.com/health", "path": ["health"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "Charge payment",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "https://api.example.com/payment/charge", "path": ["payment", "charge"] }
+          }
+        }
+      ]
+    }
+  ]
+}

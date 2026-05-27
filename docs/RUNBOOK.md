@@ -1900,3 +1900,47 @@ outputs/<project_id>/27_cicd/cicd_manifest.json
 - `auto_pr_creation_allowed=False` — no auto-commit, copy manually
 - `client_repo_writeback_allowed=False` — no repo write-back
 - `production_deploy_allowed=False` — no deployment steps generated
+
+---
+
+## Section 42 — Phase 5M-R: Demo Workflow Validation
+
+**Purpose:** Validate the full Phase 5M pipeline against realistic fixture specs.
+
+**Fixture specs** (`fixtures/demo_specs/`):
+
+| File | Format | Coverage |
+|------|--------|----------|
+| `petstore_openapi.json` | OpenAPI 3.0 JSON | GET/POST/PUT/HEAD/OPTIONS |
+| `sample_openapi.yaml` | OpenAPI 3.0 YAML | GET/POST/PATCH |
+| `risky_api_openapi.json` | OpenAPI 3.0 JSON | DELETE/payment/admin/refund |
+| `postman_sample.json` | Postman v2.1 | GET/POST/DELETE, /health, /payment/charge |
+
+**Run demo tests:**
+```bash
+python -m pytest tests/test_phase5mr_demo_workflow.py -v
+```
+
+**Key classification rules validated:**
+- DELETE method → always `blocked_by_default` (regardless of path)
+- POST /payments/charge → `blocked_by_default` (payment term in path)
+- POST /payments/refund → `blocked_by_default` (refund term in path)
+- POST /account/deactivate → `blocked_by_default` (deactivate term in path)
+- DELETE /admin/users → `blocked_by_default` (DELETE + admin term)
+- GET /health → `safe_readonly`
+- GET /users, GET /products → `safe_readonly`
+- POST /users → `requires_approval`
+
+**CI/CD hardening verified programmatically:**
+- No `password:` in workflow YAML
+- No `api_key:` in workflow YAML
+- No `deploy` step
+- No `git push` command
+- No `gh pr create` or `create-pull-request` action
+- `upload-artifact` step present
+- `smoke` keyword present
+
+**Safety invariants:**
+- All classification is done before any test generation
+- No network calls in any Phase 5M component (local fixture files only)
+- `blocked_by_default` endpoints never appear as executable `test()` blocks

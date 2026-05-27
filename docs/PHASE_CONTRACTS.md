@@ -1,8 +1,8 @@
 # Phase Contracts — Guided QA Automation Workbench
 
-**Version:** 5.11.0
+**Version:** 5.12.0
 **Updated:** 2026-05-27
-**Phase:** 5M
+**Phase:** 5M-R
 
 This document defines the contract for each implementation phase: inputs, outputs,
 allowed actions, blocked actions, and acceptance criteria. Agents must respect these
@@ -1327,6 +1327,47 @@ consolidated QA Evidence Report with multi-source aggregation and secret scan.
 - `APIContractReport`: `raw_secrets_allowed=False`, `destructive_api_calls_allowed=False`, `production_write_allowed=False`, `human_review_required=True`, `client_delivery_allowed=False`
 - `GeneratedTestsReport`: `executable_without_approval=False`, `raw_secrets_allowed=False`, `human_review_required=True`, `client_delivery_allowed=False`
 - `CICDConfig/CICDManifest`: `auto_pr_creation_allowed=False`, `client_repo_writeback_allowed=False`, `production_deploy_allowed=False`, `human_review_required=True`
+
+---
+
+## Phase 5M-R — Real Demo Workflow + Hardening `[implemented]`
+
+**Purpose:** Validate the full Phase 5M pipeline against real fixture specs covering all
+safety classification levels. Harden edge cases (DELETE always blocked, PyYAML error messages,
+smoke exclusion of blocked endpoints, CI/CD content invariants).
+
+**Input artifacts:**
+- `fixtures/demo_specs/petstore_openapi.json` — OpenAPI 3.0 JSON with GET/POST/PUT/HEAD/OPTIONS
+- `fixtures/demo_specs/sample_openapi.yaml` — OpenAPI 3.0 YAML with GET/POST/PATCH
+- `fixtures/demo_specs/risky_api_openapi.json` — OpenAPI with DELETE/payment/admin/refund endpoints
+- `fixtures/demo_specs/postman_sample.json` — Postman v2.1 collection
+
+**Output artifacts:**
+- `tests/test_phase5mr_demo_workflow.py` — 51 end-to-end demo workflow tests
+
+**Pipeline validated:** `fixtures/demo_specs/` → `APIContractImporter` → `APITestGenerator` → `CICDBuilder`
+
+**Allowed Actions:**
+- Parse local fixture files (no network calls)
+- Classify all endpoints before test generation
+- Generate smoke/schema/negative content from fixture reports
+- Write artifacts to `tmp_path` in pytest fixtures
+
+**Blocked Actions:**
+- Network calls to fetch specs from external URLs
+- Auto-executing generated tests
+- Modifying production CI/CD configuration
+
+**Acceptance Criteria:**
+- DELETE method always classified `blocked_by_default` regardless of path
+- `POST /payments/charge` classified `blocked_by_default`; `GET /health` classified `safe_readonly`
+- Smoke content never includes active `test()` blocks for DELETE or `charge` paths
+- CI/CD workflow content contains no passwords, API keys, deploy steps, git push, or PR creation
+- ruff: clean; pytest: 2118 passed (51 new Phase 5M-R tests)
+
+**Key fixes applied:**
+- `classify_endpoint`: DELETE checked first — always `blocked_by_default`
+- PyYAML ImportError message: "YAML parsing requires pyyaml. Install with: pip install pyyaml"
 
 ---
 

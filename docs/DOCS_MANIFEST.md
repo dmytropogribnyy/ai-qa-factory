@@ -435,6 +435,20 @@ All Phase 5K evidence intelligence artifacts: `network_calls_made=False`, `execu
 | `cicd_summary.md` | MD | system | Usage instructions and safety review checklist |
 | `cicd_manifest.json` | JSON | system | `CICDManifest` — artifact list, safety flags |
 
+---
+
+## Phase 5M-R fixture specs
+
+Demo fixture specs for end-to-end pipeline validation. Located in `fixtures/demo_specs/`.
+These are planning/test artifacts, not client deliverables.
+
+| Filename | Format | Safety levels covered |
+|---|---|---|
+| `petstore_openapi.json` | OpenAPI 3.0 JSON | safe_readonly, requires_approval |
+| `sample_openapi.yaml` | OpenAPI 3.0 YAML | safe_readonly, requires_approval |
+| `risky_api_openapi.json` | OpenAPI 3.0 JSON | all three (safe, approval, blocked) |
+| `postman_sample.json` | Postman v2.1 JSON | safe_readonly, requires_approval, blocked |
+
 Run `python tools/docs_audit.py` to check for missing required docs.
 
 ---

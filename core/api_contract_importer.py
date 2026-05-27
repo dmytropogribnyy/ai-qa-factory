@@ -47,14 +47,18 @@ def classify_endpoint(method: str, path: str) -> Tuple[str, str]:
     method = method.upper()
     path_lower = path.lower()
 
-    # Blocked: unsafe method + risky path term
+    # DELETE is always blocked — inherently destructive regardless of path
+    if method == "DELETE":
+        return "blocked_by_default", f"method={method} is destructive by default"
+
+    # Blocked: unsafe method + blocked path term (payment, billing, admin, etc.)
     if method not in SAFE_METHODS:
         for term in _BLOCKED_PATH_TERMS:
             pattern = rf"(^|[/_-]){re.escape(term)}([/_-]|$)"
             if re.search(pattern, path_lower):
                 return "blocked_by_default", f"method={method} path contains '{term}'"
 
-    # Requires approval: non-safe method
+    # Requires approval: any remaining non-safe method
     if method not in SAFE_METHODS:
         for term in _RISKY_PATH_TERMS:
             pattern = rf"(^|[/_-]){re.escape(term)}([/_-]|$|\d)"
@@ -88,6 +92,11 @@ def _load_file(path: Path) -> Tuple[Optional[dict], str, List[str]]:
     if suffix in (".yaml", ".yml"):
         try:
             import yaml  # type: ignore[import]
+        except ImportError:
+            return None, "openapi_yaml", [
+                "YAML parsing requires pyyaml. Install with: pip install pyyaml"
+            ]
+        try:
             data = yaml.safe_load(raw)
             if isinstance(data, dict):
                 return data, "openapi_yaml", errors
@@ -110,12 +119,14 @@ def _load_file(path: Path) -> Tuple[Optional[dict], str, List[str]]:
     except json.JSONDecodeError:
         pass
 
-    # Try YAML as fallback (no pyyaml dependency guard)
+    # Try YAML as fallback for non-.yaml files (e.g. .yml without extension detection)
     try:
         import yaml  # type: ignore[import]
         data = yaml.safe_load(raw)
         if isinstance(data, dict):
             return data, "openapi_yaml", errors
+    except ImportError:
+        errors.append("YAML parsing requires pyyaml. Install with: pip install pyyaml")
     except Exception:
         pass
 

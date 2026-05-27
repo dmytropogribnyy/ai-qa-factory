@@ -1,0 +1,61 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Petstore Demo API",
+    "version": "1.0.0",
+    "description": "AI QA Factory Phase 5M-R demo spec — Petstore-style read-only catalog"
+  },
+  "servers": [
+    { "url": "https://petstore.example.com/v1" }
+  ],
+  "paths": {
+    "/pets": {
+      "get": {
+        "operationId": "listPets",
+        "summary": "List all pets",
+        "tags": ["pets"],
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer" } }
+        ]
+      },
+      "post": {
+        "operationId": "createPet",
+        "summary": "Create a pet",
+        "tags": ["pets"]
+      }
+    },
+    "/pets/{petId}": {
+      "get": {
+        "operationId": "showPetById",
+        "summary": "Info for a specific pet",
+        "tags": ["pets"],
+        "parameters": [
+          { "name": "petId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ]
+      },
+      "put": {
+        "operationId": "updatePet",
+        "summary": "Update a pet",
+        "tags": ["pets"]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "healthCheck",
+        "summary": "Health check endpoint"
+      }
+    },
+    "/status": {
+      "head": {
+        "operationId": "statusHead",
+        "summary": "HEAD status check"
+      }
+    },
+    "/api": {
+      "options": {
+        "operationId": "apiOptions",
+        "summary": "API OPTIONS"
+      }
+    }
+  }
+}

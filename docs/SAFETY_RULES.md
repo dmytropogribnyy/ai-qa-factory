@@ -1100,6 +1100,27 @@ in any generated test file as an executable test case.
 
 ---
 
+## Phase 5M-R safety rules
+
+**5MR-1. DELETE method is always `blocked_by_default`.**
+`classify_endpoint` checks `method == "DELETE"` first, before any path inspection.
+DELETE is inherently destructive; no path term can override this.
+
+**5MR-2. Fixture specs must not contain real credentials or real service URLs.**
+Demo fixture files under `fixtures/demo_specs/` must use placeholder domains
+(e.g., `petstore.example.com`, `risky.example.com`) — never real endpoints.
+
+**5MR-3. Generated smoke content must not include `test()` blocks for blocked endpoints.**
+Programmatic test: scan generated content for lines containing `test(` and a blocked
+path term (e.g., `charge`, `DELETE`) that are not comment lines. Must be zero matches.
+
+**5MR-4. CI/CD hardening invariants are verified by automated tests, not just documentation.**
+`TestCICDHardening` in `test_phase5mr_demo_workflow.py` asserts programmatically that
+generated workflow content contains no passwords, API keys, deploy steps, git push, or
+PR creation commands.
+
+---
+
 ## Related documents
 
 - [`APPROVAL_MODEL.md`](APPROVAL_MODEL.md) — risk levels and approval gates

@@ -1,6 +1,6 @@
 # Command Reference — Guided QA Automation Workbench
 
-**Version:** 5.7.0  
+**Version:** 5.8.0  
 **Updated:** 2026-05-27
 
 Status labels:
@@ -2547,6 +2547,34 @@ cicd_manifest.json
 ```
 
 **Exit codes:** `0` = generated OK, `1` = blocked, `2` = bad flags
+
+---
+
+---
+
+## Phase 5M-R — Demo workflow validation
+
+No new CLI commands in Phase 5M-R. This phase adds fixture specs and end-to-end tests
+that exercise the Phase 5M pipeline.
+
+**New fixture specs** (`fixtures/demo_specs/`):
+- `petstore_openapi.json` — Petstore OpenAPI 3.0 JSON (GET/POST/PUT/HEAD/OPTIONS)
+- `sample_openapi.yaml` — Sample YAML OpenAPI 3.0 (GET/POST/PATCH)
+- `risky_api_openapi.json` — Risky endpoints (DELETE/payment/admin/refund)
+- `postman_sample.json` — Postman v2.1 collection
+
+**New tests** (`tests/test_phase5mr_demo_workflow.py`, 51 tests):
+- `TestPetstorePipeline` — full pipeline from JSON spec to generated artifacts
+- `TestYAMLSpec` — YAML parsing with graceful pyyaml skip
+- `TestRiskyAPIClassification` — DELETE/admin/payment/refund classified `blocked_by_default`
+- `TestPostmanPipeline` — Postman collection format detection and classification
+- `TestCICDHardening` — CI/CD content never contains secrets/deploy/git-push/PR-create
+- `TestGeneratedArtifactJSON` — JSON round-trip and safety flag invariants
+
+Run demo workflow tests:
+```bash
+python -m pytest tests/test_phase5mr_demo_workflow.py -v
+```
 
 ---
 

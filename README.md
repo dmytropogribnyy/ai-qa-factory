@@ -225,7 +225,16 @@ Expected: **2067 passed** (all phases through 5M — schema foundations, classif
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v5.7.0 — API Contract Importer + CI/CD Builder (current)
+### v5.8.0 — Demo Workflow Hardening (current)
+
+- Phase 5M-R: 4 realistic fixture specs (`petstore_openapi.json`, `sample_openapi.yaml`, `risky_api_openapi.json`, `postman_sample.json`)
+- Phase 5M-R: 51 end-to-end demo workflow tests (`tests/test_phase5mr_demo_workflow.py`)
+- Phase 5M-R: DELETE method always `blocked_by_default` (path-independent fix)
+- Phase 5M-R: PyYAML ImportError gives clear install instructions
+- Phase 5M-R: CI/CD content hardening verified programmatically (no secrets/deploy/git-push/PR-create)
+- Phase 5M-R: 51 new tests; 2118 total
+
+### v5.7.0 — API Contract Importer + CI/CD Builder
 
 - Phase 5M: `APIContractImporter` — parse OpenAPI JSON/YAML and Postman collections into classified endpoint reports
 - Phase 5M: `APITestGenerator` — generate Playwright API smoke + schema test skeletons (safe_readonly only; planning artifact, not auto-executable)
