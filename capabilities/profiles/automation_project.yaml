@@ -1,0 +1,18 @@
+# Capability Profile — automation_project (Phase 8.0 foundation)
+name: automation_project
+title: Workflow / browser automation project
+description: Automate repeatable flows; external writes and comms are approval-gated.
+capabilities:
+  - web_navigation
+  - browser_form_interaction
+  - external_communication
+  - evidence_collection
+  - delivery_assembly
+candidate_backends: [playwright_cli, playwright_mcp, existing_runner]
+candidate_mcp_servers: [playwright, resend]
+default_policy: planning_only
+evidence_expectations:
+  - run logs
+  - before/after state
+delivery_shape:
+  - AUTOMATION_REPORT.md

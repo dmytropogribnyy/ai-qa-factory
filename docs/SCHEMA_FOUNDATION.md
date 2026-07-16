@@ -1347,3 +1347,27 @@ No new schema types. The report generator (`core/reporting/client_delivery_repor
 | `ORANGEHRM_DEFAULT_LOGIN_URL` | `https://opensource-demo.orangehrmlive.com/web/index.php/auth/login` |
 | `ORANGEHRM_DEFAULT_SUCCESS_URL` | `https://opensource-demo.orangehrmlive.com/web/index.php/dashboard/index` |
 | `SUPPORTED_TARGETS` | `{"orangehrm_demo"}` |
+
+---
+
+## Phase 8.0 — ARK schema family (additive)
+
+New additive schemas under `core/schemas/`. All follow the `SchemaMixin` pattern with safe
+deserialization resets. Nothing runs at runtime in Phase 8.0.
+
+| File | Classes | Note |
+|---|---|---|
+| `requirement.py` | `Requirement` | atomic verifiable unit; resets `satisfied→unverified` on load |
+| `work_packet.py` | `WorkPacket` | wraps existing `WorkRequest` by reference (no duplication) |
+| `capability.py` | `Capability`, `CapabilityProfile` | atomic ability vs. reusable bundle |
+| `capability_plan.py` | `CapabilityPlan`, `PlannedCapability` | planned capabilities for a packet |
+| `mcp_descriptor.py` | `MCPServerDescriptor`, `MCPToolDescriptor` | annotations are untrusted hints; `enabled=False` default |
+| `toolchain_plan.py` | `ToolchainPlan`, `SelectedMCPTool`, `ToolExecutionPolicy`, `ExecutionBudget` | `untrusted_output` forced True on load |
+| `work_run_state.py` | `WorkRunState`, `StateTransition` | resumable lifecycle + `run_idempotency_key`, `state_version` |
+| `work_delivery.py` | `WorkDeliveryManifest` | references `ClientDeliveryManifest`; resets approval→False |
+| `capability_gap.py` | `CapabilityGap`, `CapabilityGapReport`, `MCPRecommendation` | recommendations only; schema, not runtime |
+| `evidence.py` (additive) | `EvidenceClaim` | independent verification; resets `verified→unverified` |
+
+**Reuse decisions:** existing schemas preserved; `ClientDeliveryManifest` unchanged;
+`ToolSelection` unchanged (stays a recommendation input); `WorkRunState` complements — does not
+replace — `ProjectStatus`; sensitive MCP fields are reference-only (env-var names, `ref:` URLs).

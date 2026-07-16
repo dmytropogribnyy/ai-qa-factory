@@ -1,0 +1,20 @@
+# Capability Profile — web_app_audit (Phase 8.0 foundation)
+name: web_app_audit
+title: Web application QA audit
+description: Functional, accessibility and performance audit of a web app (read-first).
+capabilities:
+  - web_navigation
+  - dom_inspection
+  - browser_form_interaction
+  - evidence_collection
+  - delivery_assembly
+candidate_backends: [playwright_mcp, chrome_devtools_mcp, playwright_cli, existing_runner]
+candidate_mcp_servers: [playwright, chrome-devtools]
+default_policy: planning_only
+evidence_expectations:
+  - core web vitals
+  - accessibility findings
+  - navigation traces
+delivery_shape:
+  - QA_REPORT.md
+  - evidence index

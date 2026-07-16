@@ -1,0 +1,97 @@
+# Atomic Capability Registry — Phase 8.0 (ARK universal work layer)
+#
+# An atomic capability is a single ability the Factory can plan for (and later,
+# in gated phases, execute). Capability PROFILES (capabilities/profiles/*.yaml)
+# reference these names; they never redefine them.
+#
+# capability_class ∈ {read, compute, write, financial, external_communication, destructive}
+# default_requires_approval: true for anything not purely read/compute.
+# candidate_* list the backends/MCP servers that could realise the capability.
+# Nothing executes in Phase 8.0.
+
+capabilities:
+  repository_read:
+    class: read
+    default_requires_approval: false
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: [github]
+  repository_write:
+    class: write
+    default_requires_approval: true
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: [github]
+  web_navigation:
+    class: read
+    default_requires_approval: false
+    candidate_backends: [playwright_mcp, playwright_cli, existing_runner]
+    candidate_mcp_servers: [playwright]
+  dom_inspection:
+    class: read
+    default_requires_approval: false
+    candidate_backends: [playwright_mcp, chrome_devtools_mcp, existing_runner]
+    candidate_mcp_servers: [playwright, chrome-devtools]
+  browser_form_interaction:
+    class: write
+    default_requires_approval: true
+    candidate_backends: [playwright_mcp, playwright_cli, existing_runner]
+    candidate_mcp_servers: [playwright]
+  api_contract_analysis:
+    class: read
+    default_requires_approval: false
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: [context7]
+  api_read_execution:
+    class: read
+    default_requires_approval: true
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: []
+  database_read:
+    class: read
+    default_requires_approval: true
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: [supabase]
+  database_write:
+    class: write
+    default_requires_approval: true
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: [supabase]
+  code_generation:
+    class: compute
+    default_requires_approval: false
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: []
+  code_modification:
+    class: write
+    default_requires_approval: true
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: []
+  test_execution:
+    class: compute
+    default_requires_approval: true
+    candidate_backends: [existing_runner, playwright_cli]
+    candidate_mcp_servers: []
+  deployment_write:
+    class: write
+    default_requires_approval: true
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: [cloudflare]
+  external_communication:
+    class: external_communication
+    default_requires_approval: true
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: [resend, gmail]
+  financial_action:
+    class: financial
+    default_requires_approval: true
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: [stripe]
+  evidence_collection:
+    class: read
+    default_requires_approval: false
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: []
+  delivery_assembly:
+    class: compute
+    default_requires_approval: false
+    candidate_backends: [existing_runner]
+    candidate_mcp_servers: []

@@ -225,7 +225,23 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v7.4.0 — Auth Demo Workflow (current)
+### v8.0.0 — ARK universal orchestration foundation (current)
+
+- **Planning/schema foundation only — no runtime MCP client yet.** No `main.py work` command
+  is available; existing QA workflows remain unchanged.
+- ARK layer builds additively on the mature QA Factory core (see `docs/PRODUCT_VISION_2026.md`,
+  `docs/UNIVERSAL_WORK_FACTORY.md`, `docs/REUSE_MAP_PHASE8.md`).
+- New additive schemas: `WorkPacket`, `Requirement`, `Capability`/`CapabilityProfile`,
+  `CapabilityPlan`, `MCPServerDescriptor`/`MCPToolDescriptor`, `ToolchainPlan`/`SelectedMCPTool`/
+  `ToolExecutionPolicy`/`ExecutionBudget`, `WorkRunState`, `WorkDeliveryManifest`, `EvidenceClaim`,
+  capability-gap schemas. `ClientDeliveryManifest` and `ToolSelection` unchanged.
+- Reference-only MCP manifest `config/mcp_servers.yaml` (all servers `enabled: false`, no
+  `@latest`, env-var auth references only) + atomic capability registry + 8 capability profiles.
+- MCP consumption is **planned, not implemented**: no live discovery, no MCP invocation, no
+  browser/network execution, no external writes, no server install/enable.
+- 3563 tests total (44 new Phase 8.0 tests).
+
+### v7.4.0 — Auth Demo Workflow
 
 - Phase 7R: `core/auth_demo_workflow.py` — `AuthDemoScenario`, `AuthDemoResult` (safety invariants via `__post_init__`), `AuthDemoWorkflow` orchestrating 7A→7B→7C→7D in planning-only mode
 - Phase 7R: `tools/run_auth_demo_workflow.py` — CLI with blocked-flag guard; no real credentials or storageState required

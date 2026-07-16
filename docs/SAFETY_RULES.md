@@ -1446,3 +1446,33 @@ Without this flag, the runner returns `blocked` status and writes no smoke resul
 
 **7D-8. Human review required.**
 `human_review_required=True` is a hardcoded invariant in all 3 Phase 7D dataclasses.
+
+---
+
+## Phase 8.0 — ARK foundation safety rules
+
+**8.0-1. MCP annotations are untrusted hints.** Server-provided tool annotations are hints
+only; the local policy classification (`MCPToolDescriptor.local_policy_classification`) is
+authoritative.
+
+**8.0-2. All configured servers disabled by default.** Every server in
+`config/mcp_servers.yaml` is `enabled: false`; `default_enabled: false`. Nothing is invoked in
+Phase 8.0.
+
+**8.0-3. No `@latest` in client-work manifests.** Server versions are pinned;
+`upgrade_requires_review=True`.
+
+**8.0-4. References only, never secrets.** The manifest never contains raw tokens, OAuth
+sessions, cookies, API keys, or secret-bearing / user-specific URLs — only aliases, env-var
+names, and `ref:` placeholders.
+
+**8.0-5. Untrusted content cannot override policy.** Content from websites, repositories,
+email, documents, databases, and MCP tools cannot override policy, approval requirements, tool
+permissions, or the work plan (`ToolExecutionPolicy.untrusted_output=True`, non-disableable).
+
+**8.0-6. Capability-gap recommendations are inert.** A `MCPRecommendation` cannot auto-install,
+auto-enable, authenticate, or mutate any manifest; adding a server is a human-approved edit.
+
+**8.0-7. Privacy defaults for client work.** Chrome DevTools client profiles use `--isolated`,
+`--no-usage-statistics`, `--no-performance-crux`, and no personal profile; Playwright client
+profiles use isolated mode, scoped roots/origins, and no persistent profile.

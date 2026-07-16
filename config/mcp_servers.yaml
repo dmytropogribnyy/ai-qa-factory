@@ -1,0 +1,152 @@
+# ARK MCP Server Manifest — Phase 8.0 (foundation only)
+#
+# SAFETY CONTRACT (non-negotiable):
+# - References ONLY. No access tokens, OAuth tokens, API keys, cookies, or
+#   secret-bearing / user-specific URLs are ever stored here.
+# - `auth_ref` holds an ENVIRONMENT VARIABLE NAME, never a value.
+# - Remote URLs are redacted to their public host or a `ref:` placeholder.
+# - `enabled: false` for every server in Phase 8.0 — nothing is invoked yet.
+# - Client-work profiles must PIN versions. `@latest` is not permitted here.
+# - This manifest is read/validated by tests only in Phase 8.0. Live discovery
+#   (tools/list) begins in Phase 8.3 and writes MCP_DISCOVERY_SNAPSHOT.json.
+#
+# availability_scopes vocabulary (see core/schemas/mcp_descriptor.py):
+#   available_to_claude_agent | available_to_factory_process |
+#   requires_factory_auth_setup | configured_but_unreachable |
+#   known_candidate_not_configured
+
+version: 1
+schema_version: "8.0"
+default_enabled: false
+
+servers:
+  - name: context7
+    transport: stdio
+    command_template: "npx -y @upstash/context7-mcp@${CONTEXT7_MCP_VERSION}"
+    auth_ref: ""                       # none required
+    enabled: false
+    trust_level: semi_trusted
+    capability_classes: [read]
+    availability_scopes: [available_to_claude_agent, available_to_factory_process]
+    version_policy: pinned
+    last_verified_version: ""          # pin before enabling for client work
+    upgrade_requires_review: true
+    default_policy: read_only
+    proposed_phase: "8.3"
+    notes: "Up-to-date library docs. Stdio; Factory can spawn after launch check."
+
+  - name: playwright
+    transport: stdio
+    command_template: "npx @playwright/mcp@${PLAYWRIGHT_MCP_VERSION}"
+    auth_ref: ""
+    enabled: false
+    trust_level: semi_trusted
+    capability_classes: [read, write]
+    availability_scopes: [available_to_claude_agent, available_to_factory_process]
+    version_policy: pinned
+    last_verified_version: ""          # live config uses @latest; pin before client use
+    upgrade_requires_review: true
+    default_policy: read_only          # navigate/snapshot=read; click/fill=write→approval
+    client_defaults: [isolated, scoped_workspace_roots, scoped_origins, no_persistent_profile]
+    proposed_phase: "8.4"
+    notes: "Browser exploration/surface mapping. Not a replacement for existing runners."
+
+  - name: chrome-devtools
+    transport: stdio
+    command_template: "npx chrome-devtools-mcp@${CHROME_DEVTOOLS_MCP_VERSION}"
+    auth_ref: ""
+    enabled: false
+    trust_level: semi_trusted
+    capability_classes: [read]
+    availability_scopes: [available_to_claude_agent, available_to_factory_process]
+    version_policy: pinned
+    last_verified_version: "1.6.0"
+    upgrade_requires_review: true
+    default_policy: read_only
+    client_defaults: [isolated, no_usage_statistics, no_performance_crux, no_personal_profile]
+    proposed_phase: "8.4"
+    notes: "Performance/network/console/a11y/heap. Privacy flags mandatory for client work."
+
+  - name: stripe
+    transport: http
+    url_ref: "ref:stripe_mcp_host"     # redacted; public host resolved from env at setup
+    auth_ref: STRIPE_MCP_AUTH_REF
+    enabled: false
+    trust_level: semi_trusted
+    capability_classes: [financial, read]
+    availability_scopes: [available_to_claude_agent, requires_factory_auth_setup]
+    version_policy: pinned
+    upgrade_requires_review: true
+    default_policy: blocked
+    proposed_phase: "8.7+"
+    notes: "Financial. HTTP/OAuth — Factory cannot reuse Claude session; separate auth setup."
+
+  - name: resend
+    transport: http
+    url_ref: "ref:resend_mcp_host"
+    auth_ref: RESEND_MCP_AUTH_REF
+    enabled: false
+    trust_level: semi_trusted
+    capability_classes: [external_communication]
+    availability_scopes: [available_to_claude_agent, requires_factory_auth_setup]
+    version_policy: pinned
+    upgrade_requires_review: true
+    default_policy: blocked
+    proposed_phase: "8.7+"
+    notes: "Outbound email. External communication gate + approval required."
+
+  - name: cloudflare
+    transport: http
+    url_ref: "ref:cloudflare_mcp_host"
+    auth_ref: CLOUDFLARE_MCP_AUTH_REF
+    enabled: false
+    trust_level: semi_trusted
+    capability_classes: [write, read]
+    availability_scopes: [available_to_claude_agent, requires_factory_auth_setup]
+    version_policy: pinned
+    upgrade_requires_review: true
+    default_policy: blocked
+    proposed_phase: "8.7+"
+    notes: "Workers/D1/KV/R2 + deploy. Write/deploy gate. Namespacing needed (multiple endpoints)."
+
+  - name: supabase
+    transport: http
+    url_ref: "ref:supabase_mcp_host"
+    auth_ref: SUPABASE_MCP_AUTH_REF
+    enabled: false
+    trust_level: semi_trusted
+    capability_classes: [read, write]
+    availability_scopes: [requires_factory_auth_setup]
+    version_policy: pinned
+    upgrade_requires_review: true
+    default_policy: blocked
+    health_note: "needs_authentication"
+    proposed_phase: "8.6+"
+    notes: "DB/auth. Currently needs OAuth in an interactive session before use."
+
+  - name: github
+    transport: http
+    url_ref: "ref:github_mcp_host"
+    auth_ref: GITHUB_MCP_AUTH_REF
+    enabled: false
+    trust_level: semi_trusted
+    capability_classes: [read, write]
+    availability_scopes: [configured_but_unreachable]
+    version_policy: pinned
+    upgrade_requires_review: true
+    default_policy: blocked
+    health_note: "unreachable"
+    proposed_phase: "deferred"
+    notes: "Configured but failing health check. Do not repair or rely on in Phase 8.0."
+
+# Candidate servers observed but not part of the initial work pipeline.
+# Recorded for completeness; not configured for Factory consumption yet.
+candidates:
+  - name: gmail
+    availability_scopes: [available_to_claude_agent, requires_factory_auth_setup]
+    capability_classes: [external_communication, read]
+    proposed_phase: "8.6+"
+  - name: google-drive
+    availability_scopes: [available_to_claude_agent, requires_factory_auth_setup]
+    capability_classes: [read, write]
+    proposed_phase: "8.6+"

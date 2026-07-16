@@ -1,0 +1,20 @@
+# Capability Profile — code_project (Phase 8.0 foundation)
+name: code_project
+title: Code implementation project
+description: Generate/modify code with tests; repository writes are approval-gated.
+capabilities:
+  - repository_read
+  - code_generation
+  - code_modification
+  - test_execution
+  - evidence_collection
+  - delivery_assembly
+candidate_backends: [existing_runner, playwright_cli]
+candidate_mcp_servers: [context7, github]
+default_policy: planning_only
+evidence_expectations:
+  - diff summary
+  - test results
+delivery_shape:
+  - WORK_SUMMARY.md
+  - test report

@@ -47,6 +47,25 @@ These support day-to-day work. They should stay current but are secondary to sou
 
 ---
 
+## ARK / Phase 8 architecture docs (planned foundation)
+
+These describe the ARK universal orchestration + MCP-consumption layer. Phase 8.0 is
+additive foundation (docs, schemas, manifests, tests); runtime is planned, not implemented.
+
+| Path | Purpose | Source of Truth | Update Triggers | Status | Notes |
+|---|---|---|---|---|---|
+| `docs/PRODUCT_VISION_2026.md` | ARK product vision (extends VISION.md scope) | Yes | phase_completed, workflow_changed | current | Phase 8.0 |
+| `docs/UNIVERSAL_WORK_FACTORY.md` | ARK component architecture + reuse mapping | Yes | phase_completed, schema_changed | current | Phase 8.0 |
+| `docs/MCP_ORCHESTRATION_ARCHITECTURE.md` | MCP consumption, availability scopes, discovery | Yes | integration_added, schema_changed | current | Phase 8.0 |
+| `docs/MCP_SECURITY_AND_TRUST_MODEL.md` | Untrusted-content, trust, budgets, privacy defaults | Yes | safety_rule_changed, integration_added | current | Phase 8.0 |
+| `docs/AGENT_INTEROPERABILITY.md` | Shared-state + ARK MCP tool contract | Yes | workflow_changed, agent_behavior_changed | current | Phase 8.0 |
+| `docs/WORK_EXECUTION_MODEL.md` | WorkRunState machine + backend strategy | Yes | phase_completed, workflow_changed | current | Phase 8.0 |
+| `docs/REUSE_MAP_PHASE8.md` | Exact reuse/extend/new decisions | Yes | schema_changed, phase_completed | current | Phase 8.0 |
+| `AGENTS.md` | Cross-agent operating rules (repo root) | Yes | safety_rule_changed, agent_behavior_changed | current | Phase 8.0 |
+| `CLAUDE.md` | Claude Code project instructions (repo root) | Yes | safety_rule_changed, command_added | current | Phase 8.0 |
+
+---
+
 ## Tool / integration guides
 
 These explain optional tools. All optional tools must be described as optional.

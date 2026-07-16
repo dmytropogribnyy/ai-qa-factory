@@ -1,0 +1,18 @@
+# Capability Profile — mvp_launch_audit (Phase 8.0 foundation)
+name: mvp_launch_audit
+title: MVP / launch readiness audit
+description: Broad pre-launch audit across web, performance, and delivery readiness.
+capabilities:
+  - web_navigation
+  - dom_inspection
+  - api_contract_analysis
+  - evidence_collection
+  - delivery_assembly
+candidate_backends: [chrome_devtools_mcp, playwright_mcp, existing_runner]
+candidate_mcp_servers: [chrome-devtools, playwright, context7]
+default_policy: planning_only
+evidence_expectations:
+  - readiness checklist
+  - performance + accessibility snapshot
+delivery_shape:
+  - LAUNCH_READINESS_REPORT.md

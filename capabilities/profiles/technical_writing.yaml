@@ -1,0 +1,16 @@
+# Capability Profile — technical_writing (Phase 8.0 foundation)
+name: technical_writing
+title: Technical writing / documentation
+description: Produce documentation and technical content from provided sources.
+capabilities:
+  - api_contract_analysis
+  - evidence_collection
+  - delivery_assembly
+candidate_backends: [existing_runner]
+candidate_mcp_servers: [context7]
+default_policy: planning_only
+evidence_expectations:
+  - source references
+  - draft review notes
+delivery_shape:
+  - DOCUMENT.md

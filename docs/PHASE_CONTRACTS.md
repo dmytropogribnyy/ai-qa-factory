@@ -1913,3 +1913,24 @@ Client Delivery Pack.
 **Safety invariants always enforced:** `approved_for_client_delivery=False`, `human_review_required=True` in `AuthDemoResult`
 
 **Quality gates:** ruff clean; pytest 3519 passed (84 new Phase 7R tests).
+
+---
+
+## Phase 8.0 — ARK Orchestration Foundation `[implemented]`
+
+Additive foundation for the ARK universal orchestration + MCP-consumption layer. Runtime is
+`[planned]` for later sub-phases and is **not implemented** here.
+
+**Allowed actions (this phase):**
+- Add additive schemas (`core/schemas/` Phase 8 family), documentation, reference-only
+  manifests (`config/mcp_servers.yaml`), capability profiles (`capabilities/`), and tests.
+
+**Blocked actions (this phase):**
+- Runtime MCP discovery and MCP tool invocation — `[planned]`, not implemented.
+- Browser / network execution and any external writes — blocked.
+- Server installation, enabling, or authentication — blocked (all servers `enabled: false`).
+- Existing runner replacement or modification — blocked.
+- Client delivery approval — blocked (`approved_for_delivery=False` invariant).
+
+**Acceptance criteria:** ruff clean; full pytest green (44 new Phase 8.0 tests); docs audit
+`[PASS]`; agent readiness `[PASS]`; secret/reference scan clean; no runtime MCP code introduced.

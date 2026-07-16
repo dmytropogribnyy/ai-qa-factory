@@ -1,0 +1,18 @@
+# Capability Profile — api_project (Phase 8.0 foundation)
+name: api_project
+title: API testing / contract project
+description: Analyse API contracts and generate/execute API tests (execution gated).
+capabilities:
+  - api_contract_analysis
+  - api_read_execution
+  - test_execution
+  - evidence_collection
+  - delivery_assembly
+candidate_backends: [existing_runner]
+candidate_mcp_servers: [context7]
+default_policy: planning_only
+evidence_expectations:
+  - contract coverage
+  - request/response logs (redacted)
+delivery_shape:
+  - API_TEST_REPORT.md

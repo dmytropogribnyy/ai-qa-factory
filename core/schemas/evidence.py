@@ -122,3 +122,40 @@ class EvidenceRedactionReport(SchemaMixin):
     unsafe_paths: List[str] = field(default_factory=list)
     client_visible_blocked: bool = True
     notes: List[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# EvidenceClaim — Phase 8.0 (ARK universal work layer)
+#
+# ADDITIVE: extends the evidence family for capability-agnostic verification.
+# EvidenceRecord = a stored artifact; EvidenceClaim = an assertion ("requirement X
+# is satisfied") backed by evidence records, carrying an independent verification
+# status set by the EvidenceVerifier (never the implementer).
+# ---------------------------------------------------------------------------
+
+EVIDENCE_CLAIM_STATUSES = frozenset({
+    "unverified", "verified", "refuted", "insufficient_evidence", "not_applicable",
+})
+
+
+@dataclass
+class EvidenceClaim(SchemaMixin):
+    """An assertion backed by evidence, independently verifiable."""
+    id: str = ""
+    claim_text: str = ""
+    capability: str = ""                        # atomic capability this claim relates to
+    requirement_ref: str = ""                   # Requirement.id, if any
+    evidence_refs: List[str] = field(default_factory=list)   # EvidenceRecord ids/paths
+    verification_status: str = "unverified"
+    verified_by: str = ""                       # must differ from the implementer
+    confidence: float = 0.0
+    notes: List[str] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> EvidenceClaim:
+        obj = super().from_dict(data)
+        # Safety: a claim can never be rehydrated from disk as already verified.
+        if obj.verification_status == "verified":
+            obj.verification_status = "unverified"
+        return obj

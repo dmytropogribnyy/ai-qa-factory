@@ -886,3 +886,22 @@ New artifact added to `outputs/<project_id>/33_client_audit/`:
 - `core/schemas/email_password.py` — schema dataclasses
 - `core/email_password_runner.py` — runner logic
 - `tools/run_email_password_smoke.py` — CLI entry point
+
+---
+
+## Phase 8.0 — ARK foundation (source config vs. planned artifacts)
+
+**Source configuration (not a runtime artifact):**
+- `config/mcp_servers.yaml` — reference-only MCP server manifest. Contains references only
+  (aliases, transports, env-var auth reference names, `ref:` URL placeholders, version pins).
+  It is committed source config, never a generated artifact, and never holds secrets.
+- `capabilities/atomic_capabilities.yaml`, `capabilities/profiles/*.yaml` — source config.
+
+**Planned future artifacts (NOT generated in Phase 8.0):**
+- `WORK_PACKET.json`, `WORK_SUMMARY.md`, `CAPABILITY_PLAN.json`, `TOOLCHAIN_PLAN.json`,
+  `AGENT_TASKS.md`, `APPROVALS_REQUIRED.md`, `NEXT_ACTION.md`,
+  `MCP_CONFIGURED_SERVERS_SNAPSHOT.json` — planned for Phase 8.1 (`main.py work`, planning-only).
+- `MCP_DISCOVERY_SNAPSHOT.json` — planned for Phase 8.3 (live protocol discovery).
+
+**Contract distinction:** configured-server health (config-level) and live protocol discovery
+(`tools/list`) are different contracts. Phase 8.0 records neither at runtime; both are planned.

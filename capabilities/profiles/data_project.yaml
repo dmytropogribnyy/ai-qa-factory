@@ -1,0 +1,17 @@
+# Capability Profile — data_project (Phase 8.0 foundation)
+name: data_project
+title: Database / data project
+description: Read-first database work; writes and migrations are approval-gated.
+capabilities:
+  - database_read
+  - database_write
+  - evidence_collection
+  - delivery_assembly
+candidate_backends: [existing_runner]
+candidate_mcp_servers: [supabase]
+default_policy: planning_only
+evidence_expectations:
+  - schema / RLS findings
+  - query results (redacted)
+delivery_shape:
+  - DATA_AUDIT_REPORT.md

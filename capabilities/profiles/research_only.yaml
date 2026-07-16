@@ -1,0 +1,17 @@
+# Capability Profile — research_only (Phase 8.0 foundation)
+# A profile is a reusable BUNDLE that references atomic capabilities by name.
+name: research_only
+title: Research / discovery only
+description: Read-only investigation, documentation lookup, no changes to any system.
+capabilities:
+  - api_contract_analysis
+  - dom_inspection
+  - evidence_collection
+candidate_backends: [existing_runner]
+candidate_mcp_servers: [context7]
+default_policy: planning_only
+evidence_expectations:
+  - source references
+  - summarised findings
+delivery_shape:
+  - RESEARCH_SUMMARY.md
