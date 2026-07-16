@@ -18,7 +18,13 @@ from uuid import uuid4
 from core.schemas.base import SchemaMixin
 
 CAPABILITY_AVAILABILITY = frozenset({
-    "available", "missing", "blocked", "requires_approval", "requires_auth_setup",
+    "available",            # a verified in-repo backend can realise it now
+    "candidate",            # a manifest MCP server *might* realise it (unverified)
+    "requires_discovery",   # needs Phase 8.3 live discovery before it can be used
+    "missing",              # no backend or candidate exists
+    "blocked",              # blocked by policy
+    "requires_approval",
+    "requires_auth_setup",
 })
 
 
@@ -32,6 +38,7 @@ class PlannedCapability(SchemaMixin):
     candidate_backend: str = ""
     candidate_mcp_server: str = ""
     requires_approval: bool = True
+    requires_discovery: bool = False            # True if only an unverified MCP candidate exists
     reason: str = ""
 
     @classmethod

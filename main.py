@@ -26,6 +26,116 @@ def read_input(path: str | None) -> str:
     return file_path.read_text(encoding="utf-8").strip()
 
 
+_WORK_MAX_INPUT_BYTES = 200_000
+_PROJECT_ID_RE = __import__("re").compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def _valid_project_id(pid: str) -> bool:
+    import os
+    return (
+        bool(pid)
+        and _PROJECT_ID_RE.fullmatch(pid) is not None
+        and ".." not in pid
+        and "/" not in pid and "\\" not in pid
+        and not os.path.isabs(pid)
+    )
+
+
+def run_work(args) -> int:
+    """Phase 8.1 planning-only entrypoint. Exit: 0 ok (incl WAITING), 1 invalid, 2 safety block."""
+    import sys as _sys
+    from core.config import get_settings
+
+    # 1. Resolve input (mutually exclusive; enforced by argparse group)
+    try:
+        if getattr(args, "stdin", False):
+            raw = _sys.stdin.read()
+        elif getattr(args, "text", None) is not None:
+            raw = args.text
+        else:
+            raw = read_input(args.input)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=_sys.stderr)
+        return 1
+
+    raw = (raw or "").strip()
+    if not raw:
+        print("ERROR: empty input", file=_sys.stderr)
+        return 1
+    if len(raw.encode("utf-8")) > _WORK_MAX_INPUT_BYTES:
+        print(f"ERROR: input exceeds {_WORK_MAX_INPUT_BYTES} bytes", file=_sys.stderr)
+        return 1
+
+    # 2. Resolve project id (generate a safe one when omitted; validate either way)
+    from core.orchestration.providers import ClockProvider, IdProvider, generate_project_id
+    generated = args.project_id is None
+    if generated:
+        project_id = generate_project_id(raw, IdProvider())
+    else:
+        project_id = args.project_id
+    if not _valid_project_id(project_id):
+        print("ERROR: invalid project id (use [A-Za-z0-9._-], no separators, not absolute)",
+              file=_sys.stderr)
+        return 2
+
+    # 3. Run planning-only workflow
+    try:
+        from core.orchestration.work_workflow import WorkPlanningWorkflow
+        from core.orchestration.content_safety import ArtifactPublishError
+        from core.orchestration.work_workflow import WorkPlanningError
+
+        settings = get_settings()
+        out_dir = Path(settings.output_dir).resolve()
+        wf = WorkPlanningWorkflow(ClockProvider(), IdProvider(), output_dir=out_dir)
+        # Defensive: resolved target must stay inside the output dir.
+        target = (out_dir / project_id / "40_ark_work").resolve()
+        if out_dir not in target.parents:
+            print("ERROR: resolved output path escapes the output directory", file=_sys.stderr)
+            return 2
+        result = wf.run(
+            raw, project_id=project_id,
+            source_platform=args.source_platform, profile_override=args.profile,
+            fresh_only=generated,
+        )
+    except (ArtifactPublishError,) as exc:
+        print(f"BLOCKED (safety): {exc}", file=_sys.stderr)
+        return 2
+    except WorkPlanningError as exc:
+        print(f"BLOCKED: {exc}", file=_sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=_sys.stderr)
+        return 1
+
+    # 4. Report (redacted summary only)
+    if getattr(args, "as_json", False):
+        import json as _json
+        # Exactly one redacted JSON object on stdout; no banner, no raw brief.
+        print(_json.dumps({
+            "project_id": result.project_id,
+            "project_id_generated": generated,
+            "selected_profile": result.profile,
+            "state": result.final_status,
+            "artifact_directory": result.target_dir,
+            "artifact_paths": result.artifacts,
+            "missing_information": result.missing_information_count,
+            "approvals_required": result.approvals_required_count,
+            "secrets_redacted": result.secrets_redacted,
+            "planning_only": result.planning_only,
+        }, indent=2, ensure_ascii=False))
+    else:
+        origin = "generated" if generated else "provided"
+        print(f"Project id ({origin}): {result.project_id}")
+        print(f"Work planned (planning-only): profile={result.profile or '(unresolved)'} "
+              f"state={result.final_status}")
+        print(f"Missing info: {result.missing_information_count} | "
+              f"Approvals: {result.approvals_required_count}")
+        print(f"Artifacts ({len(result.artifacts)}) -> {result.target_dir}")
+        if result.warnings:
+            print("Warnings: " + "; ".join(result.warnings))
+    return 0
+
+
 def require_real_llm_guard(settings, require_real_llm: bool, allow_mock: bool = False) -> None:
     if require_real_llm and settings.is_mock and not allow_mock:
         raise RuntimeError(
@@ -90,7 +200,26 @@ def main(argv: list[str] | None = None) -> int:
     ask_cmd.add_argument("--project-id", required=True)
     ask_cmd.add_argument("--question", "-q", help="Question to ask. If omitted in a TTY, starts a small REPL.")
 
+    # Phase 8.1 — ARK universal work entrypoint (planning-only; no MCP calls, no execution)
+    work_cmd = subparsers.add_parser(
+        "work", help="Plan a unit of work (planning-only): produce WorkPacket + plans + approvals"
+    )
+    work_src = work_cmd.add_mutually_exclusive_group(required=True)
+    work_src.add_argument("--input", "-i", help="Path to a brief file")
+    work_src.add_argument("--text", help="Literal brief text")
+    work_src.add_argument("--stdin", action="store_true", help="Read the brief from stdin")
+    work_cmd.add_argument("--project-id", help="Project id (safe name; no separators). "
+                          "Optional: a safe id is generated when omitted; pass it to resume.")
+    work_cmd.add_argument("--source-platform", default="unknown",
+                          help="Commercial source platform (e.g. upwork, direct). NOT an input type.")
+    work_cmd.add_argument("--profile", help="Optional capability-profile override")
+    work_cmd.add_argument("--json", action="store_true", dest="as_json",
+                          help="Print a redacted machine summary")
+
     args = parser.parse_args(argv)
+
+    if args.mode == "work":
+        return run_work(args)
 
 
     if args.mode == "batch-filter":

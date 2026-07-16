@@ -1002,3 +1002,24 @@ of implementer state.
 Server-provided tool annotations are untrusted hints; the local policy classification is
 authoritative. `write` / `financial` / `external_communication` actions require approval;
 `destructive` is blocked unless explicitly approved.
+
+---
+
+## Phase 8.1 — planning-only work entrypoint restrictions
+
+**8.1-1. Planning-only.** The `work` command plans; it never executes. Agents must not add
+LLM calls to its core path, invoke MCP tools, spawn MCP servers, run browsers/subprocesses, or
+make network calls in this phase.
+
+**8.1-2. No fabricated tools.** An MCP-backed capability stays a candidate with an empty
+`tool_name` and `availability_verified=false` until Phase 8.3 discovery. Never invent a tool name.
+
+**8.1-3. Redact at the boundary.** Raw input is redacted before it reaches any persisted
+artifact; artifact content is secret-scanned before an atomic publish. Never persist raw
+unredacted input.
+
+**8.1-4. Confined output.** All artifacts stay under `outputs/<project_id>/40_ark_work/`. Never
+write outside the configured output directory; validate `project_id` against traversal.
+
+**8.1-5. State discipline.** State changes go through the enforced transition manager; a run
+never enters `READY_TO_EXECUTE`/`EXECUTING` or later, and no delivery approval is granted.

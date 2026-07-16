@@ -905,3 +905,30 @@ New artifact added to `outputs/<project_id>/33_client_audit/`:
 
 **Contract distinction:** configured-server health (config-level) and live protocol discovery
 (`tools/list`) are different contracts. Phase 8.0 records neither at runtime; both are planned.
+
+---
+
+## Phase 8.1 — `40_ark_work/` planning artifacts (generated)
+
+The `work` command generates a planning-only artifact set under
+`outputs/<project_id>/40_ark_work/` (gitignored, never committed). Published atomically after a
+content secret scan; on any secret or failure the set is not published (rollback).
+
+| Artifact | Kind | Contents |
+|---|---|---|
+| `INPUT_MAP.json` | machine | classified, redacted inputs |
+| `WORK_REQUEST.json` | machine | normalised intake record (raw brief redacted) |
+| `TASK_CLASSIFICATION.json` | machine | heuristic classification |
+| `INTAKE_REPORT.json` | machine | profile selection + missing-info + redaction flag |
+| `WORK_PACKET.json` | machine | assembled packet; `work_request_ref` resolves to `WORK_REQUEST.json` |
+| `WORK_RUN_STATE.json` | machine | resumable state + immutable transition history |
+| `CAPABILITY_PLAN.json` | machine | planned capabilities (candidate/requires_discovery) |
+| `TOOLCHAIN_PLAN.json` | machine | steps; MCP steps unresolved (`tool_name=""`) until Phase 8.3 |
+| `MCP_CONFIGURED_SERVERS_SNAPSHOT.json` | machine | config-level only; `live_discovery_performed=false` |
+| `WORK_SUMMARY.md` | human | overview |
+| `AGENT_TASKS.md` | human | proposed (not executed) tasks |
+| `APPROVALS_REQUIRED.md` | human | unresolved approvals (none granted) |
+| `NEXT_ACTION.md` | human | what to provide/approve next |
+
+`MCP_DISCOVERY_SNAPSHOT.json` remains planned for Phase 8.3 (not produced in 8.1). Determinism:
+with a fixed clock and id sequence, the same input yields byte-identical artifacts.

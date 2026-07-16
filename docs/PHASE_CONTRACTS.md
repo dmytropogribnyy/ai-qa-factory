@@ -1934,3 +1934,23 @@ Additive foundation for the ARK universal orchestration + MCP-consumption layer.
 
 **Acceptance criteria:** ruff clean; full pytest green (44 new Phase 8.0 tests); docs audit
 `[PASS]`; agent readiness `[PASS]`; secret/reference scan clean; no runtime MCP code introduced.
+
+---
+
+## Phase 8.1 — Planning-Only Universal Work Entrypoint `[implemented]`
+
+First runtime ARK phase: the `work` command turns a brief into a reviewable plan.
+
+**Allowed actions:** deterministic intake (redact → classify), profile inference, requirement
+extraction, missing-information analysis, capability + toolchain planning, enforced state
+transitions, config-level MCP snapshot, content-scanned atomic artifact publication.
+
+**Blocked actions:** LLM calls in the core path; `tools/list` / MCP invocation / MCP server
+spawning; browser or network activity; subprocess; repository writes outside `outputs/`; agent
+task execution; external communication; runner replacement; delivery approval; entering
+`READY_TO_EXECUTE`/`EXECUTING` or any later state.
+
+**Acceptance criteria:** ruff clean; full pytest green (36 new Phase 8.1 tests); docs audit
+`[PASS]`; agent readiness `[PASS]`; deterministic byte-identical artifacts under fixed
+clock/ids; guards prove no LLM/network/subprocess/MCP calls; content secret scan + atomic
+rollback verified.

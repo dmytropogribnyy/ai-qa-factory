@@ -1371,3 +1371,16 @@ deserialization resets. Nothing runs at runtime in Phase 8.0.
 **Reuse decisions:** existing schemas preserved; `ClientDeliveryManifest` unchanged;
 `ToolSelection` unchanged (stays a recommendation input); `WorkRunState` complements — does not
 replace — `ProjectStatus`; sensitive MCP fields are reference-only (env-var names, `ref:` URLs).
+
+## Phase 8.1 — additive schema changes
+
+| Schema | Change |
+|---|---|
+| `profile_selection.py` (new) | `ProfileSelection` — deterministic profile inference result |
+| `toolchain_plan.SelectedMCPTool` | + `resolution_status`, `selection_basis`, `discovery_required`, `availability_verified`; `RESOLUTION_STATUSES`; MCP candidates cannot rehydrate as verified and keep empty `tool_name` |
+| `capability_plan.PlannedCapability` | + `requires_discovery`; availability adds `candidate`, `requires_discovery` |
+| `mcp_descriptor` | availability scope `factory_process_launch_unverified` (stdio not yet Factory-verified) |
+| `work_run_state.WorkRunState` | (from 8.0) `run_idempotency_key`, `state_version` now enforced by `WorkStateManager` |
+
+All additive with safe defaults; existing round-trips preserved. Runtime lives in the new
+`core/orchestration/` package (deterministic, planning-only).

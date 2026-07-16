@@ -225,7 +225,23 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.0.0 — ARK universal orchestration foundation (current)
+### v8.1.0 — ARK planning-only work entrypoint (current)
+
+- New command `python main.py work` (planning-only): turns a brief into a reviewable plan.
+  **No LLM in the core path, no MCP calls, no network, no browser, no execution.**
+- Deterministic pipeline (`core/orchestration/`): redact → classify → infer profile →
+  extract requirements → analyse missing info → plan capabilities → compose toolchain →
+  enforced state machine → content-scanned atomic artifact publication.
+- Universal `UniversalProfileSelector` (8 profiles; unknown work stays unresolved, never
+  silently QA). MCP-backed steps stay unresolved candidates (`tool_name=""`,
+  `availability_verified=false`) until Phase 8.3 discovery.
+- Real content secret scanning before an atomic publish (the legacy scanner only checked
+  filenames); artifacts confined to `outputs/<project_id>/40_ark_work/`.
+- Additive schema fields (resolution status, candidate/discovery, `factory_process_launch_unverified`,
+  `ProfileSelection`); `WorkStateManager` enforces transitions + `state_version`.
+- 3599 tests total (36 new Phase 8.1 tests). Still no live MCP client / discovery.
+
+### v8.0.0 — ARK universal orchestration foundation
 
 - **Planning/schema foundation only — no runtime MCP client yet.** No `main.py work` command
   is available; existing QA workflows remain unchanged.

@@ -35,6 +35,9 @@ class WorkPacket(SchemaMixin):
     source_platform: str = "unknown"            # upwork | direct | url | repo | ...
     source_ref: str = ""                        # label / artifact path, not a live URL
     work_request_ref: str = ""                  # WorkRequest.id this packet wraps
+    # Deterministic digest of the REDACTED normalised input (+ platform + profile override).
+    # Used to detect a reused project id pointing at different work. Never derived from raw input.
+    input_fingerprint: str = ""
     requirements: List[Requirement] = field(default_factory=list)
     capability_profile: str = ""                # chosen CapabilityProfile name
     detected_capabilities: List[str] = field(default_factory=list)
@@ -58,6 +61,7 @@ class WorkPacket(SchemaMixin):
             "source_platform": self.source_platform,
             "source_ref": self.source_ref,
             "work_request_ref": self.work_request_ref,
+            "input_fingerprint": self.input_fingerprint,
             "requirements": [r.to_dict() for r in self.requirements],
             "capability_profile": self.capability_profile,
             "detected_capabilities": list(self.detected_capabilities),
@@ -74,8 +78,8 @@ class WorkPacket(SchemaMixin):
     def from_dict(cls, data: Dict[str, Any]) -> WorkPacket:
         known = {
             "id", "project_id", "title", "summary", "source_platform", "source_ref",
-            "work_request_ref", "capability_profile", "detected_capabilities",
-            "constraints", "assumptions", "missing_information",
+            "work_request_ref", "input_fingerprint", "capability_profile",
+            "detected_capabilities", "constraints", "assumptions", "missing_information",
             "capability_plan_ref", "toolchain_plan_ref", "run_state_ref", "created_at",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}

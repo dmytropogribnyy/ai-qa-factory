@@ -34,7 +34,8 @@ MCP_HEALTH_STATUSES = frozenset({
 # Independent availability scopes (a server may hold several at once).
 MCP_AVAILABILITY_SCOPES = frozenset({
     "available_to_claude_agent",
-    "available_to_factory_process",
+    "available_to_factory_process",       # verified: the Factory process itself reached it (8.3+)
+    "factory_process_launch_unverified",  # stdio server the Factory has NOT yet launched/verified
     "requires_factory_auth_setup",
     "configured_but_unreachable",
     "known_candidate_not_configured",
