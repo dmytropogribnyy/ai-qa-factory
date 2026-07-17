@@ -49,6 +49,9 @@ REQUIRED_DOCS: list[tuple[str, str]] = [
     ("docs/SCHEMA_FOUNDATION.md",          "Schema layer overview"),
     ("docs/DOCUMENTATION_GOVERNANCE.md",   "Docs governance rules"),
     ("docs/DOCS_MANIFEST.md",              "Documentation manifest / registry"),
+    # Nested architecture specifications (source-of-truth for their domain).
+    ("docs/architecture/README.md",         "Architecture specifications index"),
+    ("docs/architecture/PROSPECT_QA_RADAR_SPEC.md", "Prospect QA Radar / Super Scout spec"),
 ]
 
 # Docs that must be source-of-truth docs (checked for existence only here)
@@ -241,15 +244,20 @@ def check_commands_md_markings(root: Path) -> list[CheckResult]:
 
 
 def check_foundation_only_features(root: Path) -> list[CheckResult]:
-    """Warn if docs describe foundation-only features as fully-implemented runtime."""
+    """Warn if docs describe foundation-only features as fully-implemented runtime.
+
+    Recursive: nested architecture specs under docs/ (e.g. docs/architecture/) are scanned
+    too. Archive docs (docs/archive/) keep their intentional exemption — they are not
+    authoritative and are not held to the runtime-overclaim policy.
+    """
     results = []
-    doc_files = list((root / "docs").glob("*.md")) + [root / "README.md"]
+    doc_files = list((root / "docs").rglob("*.md")) + [root / "README.md"]
     for doc_file in doc_files:
         if not doc_file.exists():
             continue
         rel = str(doc_file.relative_to(root)).replace("\\", "/")
-        if rel in SKIP_FOUNDATION_SCAN:
-            continue  # legacy/stale doc — skip foundation scan
+        if rel in SKIP_FOUNDATION_SCAN or rel.startswith("docs/archive/"):
+            continue  # legacy/stale/archive doc — skip foundation scan
         content = read_file(doc_file).lower()
         for feature_label, claim_terms, ok_terms in FOUNDATION_ONLY_FEATURES:
             for claim in claim_terms:
