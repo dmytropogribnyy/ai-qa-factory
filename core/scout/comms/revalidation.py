@@ -85,6 +85,9 @@ def revalidate(mem: MemoryRepository, comms: CommsRepository, revision_id: str, 
     elif (finding["lifecycle_state"] != "ACTIVE" or finding["verification_state"] != "VERIFIED"
           or not finding["client_safe"]):
         blockers.append("finding_not_sendable")
+    # Responsible disclosure: a security finding can never enter normal outreach.
+    if finding is not None and finding.get("category") == "security":
+        blockers.append("responsible_disclosure_blocked")
     if events & _BLOCKING_EVENTS:
         blockers.append("contact_blocked_by_event")
     for e in evidence:

@@ -36,6 +36,9 @@ def _current_binding(mem: MemoryRepository, *, revision_id: str, company_id: str
     evidence = mem.evidence_for_finding(finding_id)
     if contact is None or finding is None:
         raise ApprovalError("cannot build a revision from missing contact/finding")
+    if finding.get("category") == "security":
+        # Responsible disclosure: never build an outreach revision from a security finding.
+        raise ApprovalError("responsible-disclosure (security) finding cannot enter outreach")
     ev_ids = [e["evidence_id"] for e in evidence]
     finding_dict = {"finding_id": finding["finding_id"],
                     "verification_state": finding["verification_state"],
