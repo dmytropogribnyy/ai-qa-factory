@@ -223,7 +223,9 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd = subparsers.add_parser(
         "scout", help="Prospect QA Scout v1.0 — bounded read-only local QA over public seeds"
     )
-    scout_cmd.add_argument("action", choices=["run", "demo", "dashboard", "control", "smoke"])
+    scout_cmd.add_argument("action", choices=[
+        "run", "demo", "dashboard", "control", "smoke",
+        "campaign-demo", "campaign-plan", "campaign-run", "providers"])
     scout_cmd.add_argument("--seeds", help="Comma-separated public URLs (run; or dashboard "
                                            "to start an active run)")
     scout_cmd.add_argument("--url", help="Single public URL (smoke)")
@@ -239,6 +241,32 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("--port", type=int, default=8765, help="Dashboard port")
     scout_cmd.add_argument("--signal", choices=["pause", "resume", "cancel", "kill"],
                            help="Control signal (scout control)")
+    # Phase 8.4 — discovery / commercial triage options.
+    scout_cmd.add_argument("--import", dest="import_file",
+                           help="Import file for campaign-run/plan (CSV/JSON/NDJSON/txt)")
+    scout_cmd.add_argument("--countries", default="", help="Comma-separated country codes")
+    scout_cmd.add_argument("--languages", default="", help="Comma-separated language codes")
+    scout_cmd.add_argument("--industries", default="", help="Comma-separated industries")
+    scout_cmd.add_argument("--business-types", dest="business_types", default="",
+                           help="Comma-separated business types")
+    scout_cmd.add_argument("--keywords", default="", help="Comma-separated keywords")
+    scout_cmd.add_argument("--campaign-id", dest="campaign_id", default="",
+                           help="Explicit campaign id (else a unique one is generated)")
+    scout_cmd.add_argument("--min-commercial", dest="min_commercial", type=int, default=40,
+                           help="Minimum commercial triage score to be eligible (0..100)")
+    scout_cmd.add_argument("--max-promoted", dest="max_promoted", type=int, default=5,
+                           help="Max candidates promoted into the Scout QA engine")
+    scout_cmd.add_argument("--per-provider-budget", dest="per_provider_budget", type=int,
+                           default=50, help="Max results per provider call")
+    scout_cmd.add_argument("--matrix-max", dest="matrix_max", type=int, default=500,
+                           help="Hard cap on campaign matrix size (fails closed above this)")
+    scout_cmd.add_argument("--cost-ceiling", dest="cost_ceiling", type=float, default=0.0,
+                           help="Optional monetary ceiling (USD); 0 disables the check")
+    scout_cmd.add_argument("--sample", type=int, default=None,
+                           help="Deterministically sample an over-limit matrix to this size")
+    scout_cmd.add_argument("--approve-live-discovery", dest="approve_live_discovery",
+                           action="store_true",
+                           help="Explicitly approve configured live providers (never required by tests)")
 
     args = parser.parse_args(argv)
 
