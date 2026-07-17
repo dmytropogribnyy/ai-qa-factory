@@ -225,7 +225,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     scout_cmd.add_argument("action", choices=[
         "run", "demo", "dashboard", "control", "smoke",
-        "campaign-demo", "campaign-plan", "campaign-run", "providers"])
+        "campaign-demo", "campaign-plan", "campaign-run", "providers",
+        "presend-demo", "db-status", "db-backup", "db-restore", "review-list", "doctor"])
     scout_cmd.add_argument("--seeds", help="Comma-separated public URLs (run; or dashboard "
                                            "to start an active run)")
     scout_cmd.add_argument("--url", help="Single public URL (smoke)")
@@ -267,6 +268,9 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("--approve-live-discovery", dest="approve_live_discovery",
                            action="store_true",
                            help="Explicitly approve configured live providers (never required by tests)")
+    # Final Phase I — pre-send pipeline + memory database options.
+    scout_cmd.add_argument("--db", help="Memory database path (db-status/backup/restore/review-list)")
+    scout_cmd.add_argument("--dest", help="Destination path (db-backup/db-restore)")
 
     args = parser.parse_args(argv)
 

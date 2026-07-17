@@ -3410,3 +3410,39 @@ invalid/private URLs are never fetched; budgets and the campaign matrix fail clo
 score never collects contacts or authorizes outreach; and a promoted candidate never bypasses
 Scout URL safety. **No contact discovery, outreach, form submission, account, order, or payment
 occurs.**
+
+### Complete pre-send pipeline (Final Phase I)
+
+```bash
+# One command: the deterministic complete pre-send demo (no network/browser; nothing sent)
+python main.py scout presend-demo
+
+# Memory database + human review queue
+python main.py scout db-status  --db outputs/scout/<campaign>/memory.db
+python main.py scout db-backup  --db outputs/scout/<campaign>/memory.db --dest backups/mem.bak
+python main.py scout db-restore --db backups/mem.bak --dest outputs/scout/<campaign>/memory.db
+python main.py scout review-list --db outputs/scout/<campaign>/memory.db
+python main.py scout doctor      # environment readiness (playwright/axe optional)
+
+# Read-only pre-send review on the dashboard (no send button)
+python main.py scout dashboard --run-id <campaign> --port 8765   # /api/presend
+
+# Real local acceptance (optional; needs playwright + axe-core + Chromium)
+.venv/Scripts/python.exe -m pytest -m final1_browser_acceptance -q
+```
+
+The pre-send pipeline runs adaptive deep QA (real axe + a real rendered performance observation +
+deep SEO + a bounded reversible cart action with verified cleanup) → normalized verified findings
++ sanitized evidence → transactional company/site memory → rechecks → public contact intelligence
+→ suppression governance → audit-offer mapping → controlled disclosure → outreach **drafts** →
+human review queue. Artifacts land under `outputs/scout/<campaign>/report/` (SITE_PROFILE,
+BUSINESS_CONTEXT, CAPABILITY_PLAN, INTERACTION_BOUNDARY, COVERAGE_MAP, NORMALIZED_FINDINGS,
+COMPANY_IDENTITY, SITE_FINGERPRINT, RECHECK_RESULT, LEAD_SCORECARD, CONTACTS, CONTACT_VERIFICATION,
+SUPPRESSION_CHECK, AUDIT_OFFER, DISCLOSURE_MANIFEST, OUTREACH_DRAFTS.md, REVIEW_QUEUE,
+RETENTION_PLAN, CAMPAIGN_SUMMARY) plus finding-level artifacts and a `memory.db`.
+
+**Pre-send safety:** **nothing is sent** (no Gmail/Resend/SMTP/contact-form/LinkedIn); there is no
+send command or send button. Inferred/named-person contacts are never send-eligible without
+review; `NO_OUTREACH` permanently blocks draft readiness; drafts are PENDING_REVIEW (a DB CHECK
+makes "sent" unrepresentable); reversible-cleanup failure blocks client-safe evidence; and axe /
+performance claims correspond to actually-executed tools.

@@ -13,6 +13,7 @@ from core.scout.discovery.providers import (
     FileImportDiscoveryProvider,
     FixtureDiscoveryProvider,
     ProviderMetadata,
+    ProviderRegistry,
     UnconfiguredRealProvider,
 )
 from core.scout.discovery.suppression import apply_suppression
@@ -162,6 +163,55 @@ def test_config_fails_closed(kw):
     base.update(kw)
     with pytest.raises(DiscoveryConfigError):
         DiscoveryCampaignConfig(**base)
+
+
+def test_provider_bad_result_is_skipped_not_crashed(tmp_path):
+    from core.scout.discovery.engine import DiscoveryEngine
+    from core.scout.store import RunStore
+
+    class _BadProvider:
+        metadata = _meta(provider_id="bad")
+
+        def discover(self, cell, limit):
+            return [{"not": "a candidate"}]  # wrong type on purpose
+
+        def readiness(self):
+            return {}
+
+    reg = ProviderRegistry()
+    reg.register(_BadProvider())
+    cfg = DiscoveryCampaignConfig(campaign_name="c", provider_allowlist=["bad"],
+                                  countries=["US"], resolve_dns=False, output_dir=str(tmp_path),
+                                  campaign_id="bad-run")
+    state = DiscoveryEngine(cfg, reg, RunStore(str(tmp_path), "bad-run")).run()
+    assert state["status"] == "COMPLETED"
+    assert state["counts"]["candidates"] == 0  # the malformed result was skipped, not promoted
+
+
+def test_campaign_dir_reuse_fails_closed(tmp_path):
+    from core.scout.discovery.engine import DiscoveryEngine
+    from core.scout.store import RunStore
+    store = RunStore(str(tmp_path), "dup-campaign")
+    store.save_state({"existing": True})
+    cfg = DiscoveryCampaignConfig(campaign_name="c", provider_allowlist=["file_import"],
+                                  output_dir=str(tmp_path), campaign_id="dup-campaign")
+    with pytest.raises(DiscoveryError):
+        DiscoveryEngine(cfg, ProviderRegistry(), store).run()
+
+
+def test_file_import_readiness_has_no_absolute_path(tmp_path):
+    f = tmp_path / "t.csv"
+    f.write_text("website\nhttps://x.example/\n", encoding="utf-8")
+    p = FileImportDiscoveryProvider(_meta(provider_type="file_import"), str(f))
+    r = p.readiness()
+    assert "path" not in r and r["file"] == "t.csv"  # basename only, never an absolute path
+
+
+def test_candidate_from_dict_coerces_malformed_lists():
+    rec = CandidateRecord.from_dict({"candidate_id": "x", "reason_codes": "oops",
+                                     "source_provenance": None, "commercial_scorecard": "bad"})
+    assert rec.reason_codes == [] and rec.source_provenance == []
+    assert rec.commercial_scorecard == {}
 
 
 def test_matrix_enforces_provider_call_ceiling(tmp_path):

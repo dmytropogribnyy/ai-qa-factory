@@ -2736,6 +2736,26 @@ read-only Scout QA engine. It never collects contacts, drafts, or sends outreach
 - [ ] The commercial score is explainable and never authorizes contact or outreach
 - [ ] Promoted candidates run the real Scout engine (URL safety re-validated) with provenance
 
+**Complete pre-send pipeline (Final Phase I):**
+```bash
+python main.py scout presend-demo                        # one command: complete pre-send demo
+python main.py scout db-status --db outputs/scout/<c>/memory.db
+python main.py scout review-list --db outputs/scout/<c>/memory.db
+python main.py scout dashboard --run-id <campaign>       # read-only pre-send review (no send button)
+```
+The pipeline runs adaptive deep QA → verified findings + evidence → company/site memory → rechecks
+→ public contacts → suppression governance → audit offers → controlled disclosure → outreach
+**drafts** → human review queue. **Nothing is sent.**
+
+**Pre-send checklist:**
+- [ ] Real axe / performance claims correspond to actually-executed tools (static is labelled)
+- [ ] Reversible cart cleanup is VERIFIED; a cleanup failure blocks client-safe evidence
+- [ ] Only independently verified, sanitized, current findings are CLIENT_SAFE
+- [ ] Inferred / named-person contacts are never send-eligible without review
+- [ ] `NO_OUTREACH` permanently blocks draft readiness; drafts are PENDING_REVIEW and never sent
+- [ ] The memory DB migrates, restarts, backs up, restores, and fails closed on corruption
+- [ ] No message, form, account, booking, order, payment, or external communication occurs
+
 **Checklist:**
 - [ ] Only explicit public http(s) seeds are used (localhost/private IPs rejected)
 - [ ] CAPTCHA / access-prohibition prospects are `MANUAL_ACTION_REQUIRED` (no interaction)

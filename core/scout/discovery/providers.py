@@ -340,8 +340,9 @@ class FileImportDiscoveryProvider:
         return rows
 
     def readiness(self) -> Dict[str, Any]:
+        # Report only the basename — an absolute local path must never leak into an artifact.
         return {"provider_id": self.metadata.provider_id, "readiness": "locally_configured",
-                "configured": self._path.exists(), "path": str(self._path)}
+                "configured": self._path.exists(), "file": self._path.name}
 
 
 # ---------------------------------------------------------------------------

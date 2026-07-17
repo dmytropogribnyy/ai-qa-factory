@@ -137,6 +137,20 @@ class RunStore:
             return None
         return self._load_json(path)
 
+    def save_bytes(self, parts: List[str], data: bytes) -> str:
+        """Atomically write raw bytes to a path-confined location (e.g. a screenshot)."""
+        for part in parts:
+            self._safe_component(part)
+        path = self._confine(*parts)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.parent / (path.name + ".tmp")
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        return str(path.relative_to(self.root)).replace("\\", "/")
+
     # --- final report (atomic, secret-scanned set) ------------------------
     def report_dir(self) -> Path:
         return self._confine("report")

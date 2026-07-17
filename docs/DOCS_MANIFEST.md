@@ -1,10 +1,10 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 8.4.0
+**Version:** 1.9.0
 
 **Updated:** 2026-07-17
 
-**Phase:** 8.1 + 8.2 complete; 8.3 Prospect QA Scout v1.0 + 8.3.1 v1.0.1 hardening implemented; 8.4 discovery + commercial triage (Scout v1.1.0) implemented
+**Phase:** 8.1 + 8.2 complete; 8.3/8.3.1 Scout QA runtime; 8.4 discovery + triage (v1.1.0); Final Phase I complete pre-send pipeline (Prospect QA Radar v1.9.0) implemented. Remaining roadmap frozen at Final Phase II + Final Independent Acceptance.
 
 This file is the registry of all documentation tracked by the workbench.
 Run `python tools/docs_audit.py` to verify that these docs are current.

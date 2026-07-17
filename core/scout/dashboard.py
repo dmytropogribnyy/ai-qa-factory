@@ -75,6 +75,8 @@ def _make_handler(service: ScoutService):
             if path == "/api/providers":
                 return self._json(200, {"providers": self._read_report(
                     "PROVIDER_REGISTRY_SNAPSHOT.json") or []})
+            if path == "/api/presend":
+                return self._json(200, self._presend_summary())
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
@@ -206,9 +208,50 @@ cost ${_esc(budget.get('cost_usd', 0))} — APIs: <a href="/api/campaign">campai
 <p><em>Read-only discovery. No contact was collected; no outreach/form/order/payment occurred.</em></p>
 </body></html>"""
 
+        def _presend_summary(self):
+            findings = self._read_report("NORMALIZED_FINDINGS.json") or []
+            contacts = self._read_report("CONTACT_VERIFICATION.json") or []
+            offers = self._read_report("AUDIT_OFFER.json") or []
+            review = self._read_report("REVIEW_QUEUE.json") or []
+            suppression = self._read_report("SUPPRESSION_CHECK.json") or []
+            return {"findings": len(findings), "contacts": len(contacts), "offers": len(offers),
+                    "review_items": len(review), "suppression": suppression,
+                    "any_send_control": False}  # there is no send control in Final Phase I
+
+        def _presend_html(self) -> str:
+            s = self._presend_summary()
+            findings = self._read_report("NORMALIZED_FINDINGS.json") or []
+            review = self._read_report("REVIEW_QUEUE.json") or []
+            frows = "".join(
+                f"<tr><td>{_esc(f.get('capability'))}</td><td>{_esc(f.get('severity'))}</td>"
+                f"<td>{_esc(f.get('title'))}</td><td>{_esc(f.get('is_client_safe'))}</td></tr>"
+                for f in findings[:200])
+            rrows = "".join(
+                f"<tr><td>{_esc(r.get('queue'))}</td><td>{_esc(r.get('draft') or r.get('contact') or r.get('company'))}</td></tr>"
+                for r in review[:200])
+            return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
+<title>{SCOUT_PRODUCT_NAME} — Pre-Send</title>
+<style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:1100px}}
+table{{border-collapse:collapse;width:100%;margin-bottom:1.5rem}}td,th{{border:1px solid #ccc;padding:5px;font-size:13px;text-align:left}}
+.banner{{background:#efe;border:1px solid #7a7;padding:.6rem;border-radius:4px}}</style></head>
+<body><h1>{SCOUT_PRODUCT_NAME} <small>pre-send review</small></h1>
+<p class=banner><strong>Nothing is sent.</strong> This is a human review view for the Final
+Phase II sending workflow. There is no send button.</p>
+<p>Findings: {s['findings']} · Contacts: {s['contacts']} · Offers: {s['offers']} ·
+Review items: {s['review_items']} — APIs: <a href="/api/presend">presend</a>,
+<a href="/artifact?path=report/OUTREACH_DRAFTS.md">drafts</a>,
+<a href="/artifact?path=report/CAMPAIGN_SUMMARY.md">summary</a></p>
+<h2>Verified findings</h2><table><tr><th>capability</th><th>severity</th><th>title</th>
+<th>client-safe</th></tr>{frows or '<tr><td colspan=4>none</td></tr>'}</table>
+<h2>Review queue</h2><table><tr><th>queue</th><th>subject</th></tr>
+{rrows or '<tr><td colspan=2>none</td></tr>'}</table>
+</body></html>"""
+
         def _overview_html(self) -> str:
             status = service.status()
             st = status.get("state", {})
+            if self._read_report("NORMALIZED_FINDINGS.json") is not None:
+                return self._presend_html()
             if isinstance(st.get("candidates"), list):
                 return self._campaign_html(status, st)
             prospects = st.get("prospects", {})

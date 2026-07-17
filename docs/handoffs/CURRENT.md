@@ -8,7 +8,55 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
-## Phase 8.4 — Discovery + commercial triage (Scout v1.1.0) — READ FIRST (latest)
+## Final Phase I — Complete pre-send prospect pipeline (Prospect QA Radar v1.9.0) — READ FIRST (latest)
+
+**Author:** Claude Code. **Branch:** `final/phase-1-pre-send-pipeline` (from `main@7cecb26`, the
+Scout v1.1.0 release). **`scout-v1.0.0`/`1.0.1`/`1.1.0` were not moved.**
+
+Completes the first of the two frozen remaining functional phases. The remaining pre-v2 roadmap is
+now frozen at exactly **Final Phase I** (done) + **Final Phase II** (planned) + a verification-only
+pass; the historical 8.5–8.9 map is preserved as superseded. Non-blocking depth is recorded only in
+`docs/POST_V2_BACKLOG.md`.
+
+**Implemented (all committed + tested):**
+- Phase 8.4 independent review → 4 fail-closed fixes (provider-result type confusion,
+  campaign-dir reuse guard, absolute-path leak, malformed CandidateRecord coercion).
+- Adaptive deep-QA planner (per-profile capability selection + Phase 8.2 SITE_PROFILE/
+  BUSINESS_CONTEXT/INTERACTION_BOUNDARY/COVERAGE_MAP/CAPABILITY_PLAN) + static capabilities (reuse
+  Scout checks + deep SEO).
+- Real capabilities: **real axe-core** (`run_axe`), a real rendered `chrome_perf_observation`
+  (not Lighthouse), and a bounded reversible cart action with verified cleanup — all
+  real-Chromium acceptance-proven (`-m final1_browser_acceptance`).
+- Evidence center + finding normalization + full lifecycle (UNVERIFIED→…→VERIFIED and
+  ACTIVE→RESOLVED→REGRESSED); client-safe gated on verified+sanitized+clean-session+active.
+- Transactional SQLite company/site memory (migrations + interrupted-rollback, FKs/constraints,
+  backup/restore, corruption fail-closed, idempotent importer); durable scheduler/queues (leases,
+  retries, dead-letter, crash-recovery reclaim, pause/kill).
+- Rechecks + site fingerprints + retention/storage (confirmed, path-confined, audited purge).
+- Public contact intelligence + governance (inferred/named-person never send-eligible without
+  review; `NO_OUTREACH` permanently blocks); audit offers; controlled disclosure (Phase 8.2
+  manifest, computed readiness, fail-closed ceilings); drafts from structured facts only; human
+  review queues.
+- Pre-send orchestrator + full campaign artifact set; read-only dashboard pre-send view with **no
+  send button**; `scout presend-demo` + `db-status/backup/restore/review-list/doctor`.
+
+**Nothing is sent** — no send command, button, or worker; a DB CHECK makes a "sent" draft
+unrepresentable. **Deferred to Final Phase II:** human-approved sending, reply/opt-out history,
+follow-ups, CRM metrics, installer, benchmark, v2.0 release.
+
+**Validation (this session, on the branch and merged main):** full suite **4208 passed, 4
+pre-existing warnings, 0 failed** (was 4152 at Scout v1.1.0; +56 Final Phase I). ruff clean; docs
+audit `[PASS]`; agent readiness `[PASS]`; `git diff --check` clean. Deterministic integrated
+pre-send E2E green; real axe/performance/reversible Chromium acceptance **3 passed**; the Scout QA
+demo, discovery campaign-demo, and prior Playwright acceptance still pass. SCOUT_VERSION → 1.9.0.
+Merged `--no-ff` and tagged `scout-v1.9.0` (new tag; older tags untouched); exact merged-main
+HEAD/tag are in the final report. **Honest scope:** real axe/perf/reversible are acceptance-proven;
+the default deterministic pipeline is static-mode and browser-free; deeper polish is in
+POST_V2_BACKLOG. No cloud/SaaS/deployment; no accessibility certification; not Lighthouse.
+
+---
+
+## Phase 8.4 — Discovery + commercial triage (Scout v1.1.0) — READ FIRST (previous)
 
 **Author:** Claude Code. **Branch:** `phase/8.4-discovery-commercial-triage` (from `main@dbe1579`,
 the v1.0.1 release). **`scout-v1.0.0` and `scout-v1.0.1` were not moved.**

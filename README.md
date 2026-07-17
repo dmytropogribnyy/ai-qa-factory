@@ -229,7 +229,26 @@ handoff, not inline here, so this instruction never drifts as the suite grows.
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.4.0 — Prospect QA Scout v1.1.0 (local discovery + commercial-triage release, current)
+### v1.9.0 — Prospect QA Radar v1.9.0 (complete local pre-send prospect pipeline, current)
+
+- **Final Phase I** completes the local pre-send workflow: adaptive deep QA (real axe-core + a
+  real rendered `chrome_perf_observation` — not Lighthouse — + deep technical SEO + a bounded
+  reversible cart action with verified cleanup) → normalized verified findings + a sanitized,
+  hashed evidence center → a transactional SQLite company/site memory (migrations, backup/restore,
+  corruption fail-closed, idempotent import) → durable scheduler/queues → rechecks + site
+  fingerprints + retention → public contact intelligence + suppression governance → audit-offer
+  mapping → controlled disclosure → outreach **drafts** → human review queue. New packages
+  `core/scout/pipeline`, `core/scout/memory`, `core/scout/scheduler`, `core/scout/outreach`.
+- **Nothing is sent.** There is no send command, no send button, and no external-communication
+  worker; a DB CHECK makes a "sent" draft unrepresentable. Inferred/named-person contacts are
+  never send-eligible without review; `NO_OUTREACH` permanently blocks draft readiness;
+  reversible-cleanup failure blocks client-safe evidence.
+- One command: `python main.py scout presend-demo` (deterministic; no network/browser). Real
+  axe/performance/reversible have a marked real-Chromium acceptance (`-m final1_browser_acceptance`).
+  The remaining roadmap is frozen at **Final Phase II** (human-approved sending) + a
+  verification-only pass. **Local release; no sending, cloud/SaaS, or production deployment.**
+
+### v8.4.0 — Prospect QA Scout v1.1.0 (local discovery + commercial-triage release)
 
 - **Discovery front end**: `python main.py scout campaign-run|campaign-demo|campaign-plan|
   providers` extends the Scout runtime from explicit seeds to campaign → controlled discovery →
