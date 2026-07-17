@@ -8,7 +8,47 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
-## Phase 8.3 — Prospect QA Scout v1.0 (local runtime) — READ FIRST (latest)
+## Phase 8.3.1 — Scout v1.0.1 acceptance hardening — READ FIRST (latest)
+
+**Author:** Claude Code. **Branch:** `fix/scout-v1.0.1-acceptance-hardening` (from `main@3035cf4`,
+the v1.0.0 release). **`scout-v1.0.0` was not moved.**
+
+An independent post-release acceptance pass that reproduced and fixed six review findings without
+changing the runtime boundary:
+
+1. **Dashboard/control** — `scout dashboard --seeds` now starts a run OWNED by one `ScoutService`
+   (worker + `RunControl`), so pause/resume/cancel/global-kill genuinely drive it and the report
+   is built on success; `--run-id` attaches READ-ONLY. `/api/control` fail-closes with **HTTP 409**
+   for a read-only/attached run (no fake success), **400** for unknown actions; same-origin CSRF
+   guard; no HTTP start/scan endpoint (start is CLI-owned). Worker failure → `FAILED`, not stuck
+   `RUNNING`.
+2. **Playwright SSRF** — every navigation/redirect/subresource is intercepted and re-validated;
+   the final URL is re-validated before content is read; HTML is byte-bounded; arrays capped;
+   screenshot ref is a basename; browser always closes. Redirect/rebinding now blocked on **both**
+   backends.
+3. **Run isolation** — fresh scans get a unique run id (timestamp + entropy); the engine fails
+   closed on run-id reuse and on a `--resume` config mismatch (no stale-artifact mixing).
+4. **Concurrency** — fail-closed to `1` (sequential runtime; parallel deferred).
+5. **Real browser acceptance** — a marked `playwright_acceptance` test launches real headless
+   Chromium against an allow-listed local fixture (proves launch/render/console/failed-resource/
+   blocked-subresource/screenshot/CAPTCHA-manual/no-submit + engine→report). Actually executed.
+6. **Docs truthfulness** — removed brittle inline test totals from the README generic sections;
+   clarified static a11y/perf as bounded heuristics (not axe/Lighthouse); added a regression guard.
+
+**Validation (this session, on the branch):** full suite **4124 passed, 4 pre-existing
+`PytestCollectionWarning`s, 0 failed** (was 4090 at v1.0.0; +34, incl. 2 real-browser acceptance
+tests that run because Chromium is installed and otherwise skip). ruff clean; docs audit `[PASS]`;
+agent readiness `[PASS]`; `git diff --check` clean; `python main.py scout demo` COMPLETED;
+dashboard-control HTTP acceptance green; real Playwright acceptance green
+(`python -m pytest -m playwright_acceptance -q`). Playwright stays an **optional** dependency (not
+in `requirements.txt`). **Local release only** — no cloud/SaaS/unrestricted discovery/automated
+outreach/deployment/full-a11y-cert/Lighthouse. Merged to `main` with `--no-ff` and tagged
+`scout-v1.0.1` (new tag; `scout-v1.0.0` untouched); exact merged-main HEAD/tag recorded in the
+final report.
+
+---
+
+## Phase 8.3 — Prospect QA Scout v1.0 (local runtime) — READ FIRST (previous)
 
 **Author:** Claude Code. **Branch:** `phase/8.3-scout-vertical-mvp` (created from `main@7a10485`).
 

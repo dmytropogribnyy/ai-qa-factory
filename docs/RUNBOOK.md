@@ -2687,7 +2687,7 @@ Use `python main.py work` to turn a brief into a reviewable plan. It never execu
 
 ---
 
-## Prospect QA Scout v1.0 (Phase 8.3 — bounded read-only local runtime)
+## Prospect QA Scout v1.0.1 (Phase 8.3 / 8.3.1 — bounded read-only local runtime)
 
 `python main.py scout` runs a bounded, read-only QA vertical over explicit public seeds. It
 never submits forms, logs in, sends outreach, or performs any external side effect.
@@ -2698,20 +2698,26 @@ python main.py scout demo
 ```
 This runs the bundled demo site end to end and writes `outputs/scout/scout-demo/report/`.
 
-**Scan your own public sites:**
+**Scan your own public sites** (each fresh run gets a unique run id):
 ```bash
 python main.py scout run --seeds "https://a.example/,https://b.example/" --campaign my-scan
 ```
 
-**Watch/control a run:** in another terminal,
+**Run WITH a live dashboard you can control** (the dashboard owns the run):
 ```bash
-python main.py scout dashboard --run-id <run_id>     # http://127.0.0.1:8765
-python main.py scout control --signal pause --port 8765
-python main.py scout control --signal kill  --port 8765   # global kill stops all work
+python main.py scout dashboard --seeds "https://a.example/" --campaign my-scan --port 8765
+# then, in another terminal, drive the active run:
+python main.py scout control --signal pause  --port 8765
+python main.py scout control --signal resume --port 8765
+python main.py scout control --signal kill   --port 8765   # global kill stops all work
 ```
 
+**Watch a finished run read-only:** `python main.py scout dashboard --run-id <run_id>` — the
+controls are disabled and `/api/control` returns HTTP 409 (it never fakes success).
+
 **Live browser (optional):** `pip install playwright && python -m playwright install chromium`,
-then add `--browser playwright`.
+then add `--browser playwright`. Run the real-browser acceptance with
+`python -m pytest -m playwright_acceptance -q`.
 
 **Checklist:**
 - [ ] Only explicit public http(s) seeds are used (localhost/private IPs rejected)

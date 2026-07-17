@@ -1,12 +1,12 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 8.3.0
+**Version:** 8.3.1
 
 **Updated:** 2026-07-17
 
-**Phase:** 8.1 + 8.2 complete; 8.3 Prospect QA Scout v1.0 (bounded read-only local runtime) implemented
+**Phase:** 8.1 + 8.2 complete; 8.3 Prospect QA Scout v1.0 implemented; 8.3.1 Scout v1.0.1 acceptance hardening implemented
 
-This file is the registry of all documentation tracked by the workbench.  
+This file is the registry of all documentation tracked by the workbench.
 Run `python tools/docs_audit.py` to verify that these docs are current.
 
 ---
@@ -197,7 +197,7 @@ Produced during workbench runs. Not source of truth. Not committed by default.
 
 ## Foundation-only features — not yet runtime
 
-These features have schema foundations in `core/schemas/` but no runtime implementation yet.  
+These features have schema foundations in `core/schemas/` but no runtime implementation yet.
 Any doc describing them must include a qualifier: `schema-only`, `foundation-only`, `planned`, or `[planned]`.
 
 | Feature | Schema module | Runtime phase | Notes |
