@@ -1,0 +1,37 @@
+# Capability Profile — prospect_qa_radar (Phase 8.2 planning slice)
+#
+# Planning-only profile for the Prospect QA Radar / Super Scout work contour.
+# It reuses existing atomic capabilities and does NOT claim MCP/provider runtime
+# availability. Capabilities that Prospect Radar will eventually want but that are
+# not yet atomic capabilities are recorded under `planned_capability_gaps` — they are
+# deliberately NOT invented as new atomic capabilities here.
+name: prospect_qa_radar
+title: Prospect QA Radar planning profile
+description: >-
+  Planning-only bundle for bounded, public, read-first prospect QA/SEO analysis.
+  No discovery, crawling, browser, MCP, contact lookup, or outreach runtime is implied.
+capabilities:
+  - web_navigation
+  - dom_inspection
+  - evidence_collection
+  - delivery_assembly
+# Candidate backends/servers are candidates only — not verified availability.
+candidate_backends: [playwright_mcp, chrome_devtools_mcp, playwright_cli, existing_runner]
+candidate_mcp_servers: [playwright, chrome-devtools]
+default_policy: planning_only
+# Capabilities Prospect Radar will want but that are not yet atomic capabilities.
+# Recorded as gaps; each requires its own reuse analysis before promotion.
+planned_capability_gaps:
+  - accessibility_analysis
+  - performance_analysis
+  - technical_seo_analysis
+  - evidence_verification
+evidence_expectations:
+  - bounded public QA findings
+  - accessibility findings
+  - performance findings
+  - technical SEO findings
+  - sanitized evidence index
+delivery_shape:
+  - PROSPECT_QA_FINDINGS.md
+  - evidence index

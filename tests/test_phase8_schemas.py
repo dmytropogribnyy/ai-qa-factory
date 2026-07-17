@@ -196,6 +196,7 @@ class TestConstants:
         assert CAPABILITY_PROFILES == frozenset({
             "research_only", "code_project", "web_app_audit", "api_project",
             "data_project", "automation_project", "mvp_launch_audit", "technical_writing",
+            "prospect_qa_radar",
         })
 
     def test_backends(self):
