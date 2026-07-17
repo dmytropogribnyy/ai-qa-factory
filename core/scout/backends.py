@@ -31,6 +31,7 @@ _SAFE_RESPONSE_HEADERS = frozenset({
     "x-content-type-options", "referrer-policy", "vary", "content-language",
 })
 _MAX_REDIRECTS = 5
+_MAX_EVENT_ITEMS = 200  # bound console-error / failed-resource / blocked-request arrays
 _USER_AGENT = "ARK-Prospect-QA-Scout/1.0 (+local, read-only)"
 
 
@@ -85,6 +86,7 @@ class PageObservation:
     # Playwright-only (empty for the static backend):
     console_errors: List[str] = field(default_factory=list)
     failed_resources: List[str] = field(default_factory=list)
+    blocked_requests: List[str] = field(default_factory=list)   # unsafe requests we aborted
     timing_ms: Dict[str, float] = field(default_factory=dict)
     screenshot_ref: str = ""
     backend: str = "static"
@@ -327,11 +329,26 @@ class _NoAutoRedirect(urllib.request.HTTPRedirectHandler):
 # ---------------------------------------------------------------------------
 
 class PlaywrightBackend:
+    """Optional real-browser backend with SSRF-hardened navigation.
+
+    Every request the page makes is intercepted and validated against the same URL policy
+    (blocking redirects/subresources/navigations to loopback / private / link-local / reserved
+    addresses and unsupported schemes). The final URL after navigation is re-validated; if it
+    is unsafe the page content is NOT read. Rendered HTML is byte-bounded, event arrays are
+    bounded, and the browser/context always close. A ``_playwright_factory`` seam lets the
+    adversarial tests drive the full flow with fakes (no real browser required).
+    """
+
     name = "playwright"
 
-    def __init__(self, policy: Optional[UrlPolicy] = None, screenshot_dir: Optional[str] = None) -> None:
+    def __init__(self, policy: Optional[UrlPolicy] = None, screenshot_dir: Optional[str] = None,
+                 _playwright_factory=None) -> None:
         self.policy = policy or UrlPolicy()
         self.screenshot_dir = screenshot_dir
+        self._playwright_factory = _playwright_factory
+
+    def _url_allowed(self, url: str) -> bool:
+        return check_url(url, policy=self.policy).eligible
 
     def observe(self, url: str, timeout_s: float, max_bytes: int) -> PageObservation:
         obs = PageObservation(url=url, backend=self.name)
@@ -339,44 +356,92 @@ class PlaywrightBackend:
         if not elig.eligible:
             obs.fetch_error = f"blocked URL: {elig.reason}"
             return obs
-        try:
-            from playwright.sync_api import sync_playwright  # lazy: optional dependency
-        except Exception as exc:  # pragma: no cover - only when playwright missing
-            obs.fetch_error = (
-                "playwright is not installed. Run: pip install playwright && "
-                f"python -m playwright install chromium  ({exc})"
-            )
-            return obs
+        factory = self._playwright_factory
+        if factory is None:
+            try:
+                from playwright.sync_api import sync_playwright  # lazy: optional dependency
+                factory = sync_playwright
+            except Exception as exc:  # pragma: no cover - only when playwright missing
+                obs.fetch_error = (
+                    "playwright is not installed. Run: pip install playwright && "
+                    f"python -m playwright install chromium  ({exc})"
+                )
+                return obs
+        with factory() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context()
+            try:
+                page = context.new_page()
+                self._observe_with_page(page, url, timeout_s, max_bytes, obs)
+            except Exception as exc:
+                obs.fetch_error = f"browser error: {type(exc).__name__}: {str(exc)[:160]}"
+            finally:
+                self._safe_close(context, browser)
+        return obs
+
+    def _observe_with_page(self, page, url: str, timeout_s: float, max_bytes: int,
+                           obs: PageObservation) -> None:
         console_errors: List[str] = []
         failed: List[str] = []
-        with sync_playwright() as p:  # pragma: no cover - requires a real browser
-            browser = p.chromium.launch(headless=True)
+        blocked: List[str] = []
+
+        def _on_route(route):
+            req_url = getattr(getattr(route, "request", None), "url", "") or ""
+            if self._url_allowed(req_url):
+                route.continue_()
+            else:
+                blocked.append(req_url)
+                route.abort()
+
+        page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+        page.on("requestfailed", lambda r: failed.append(r.url))
+        page.route("**/*", _on_route)
+
+        start = time.time()
+        response = page.goto(url, wait_until="load", timeout=timeout_s * 1000)
+        obs.timing_ms["load"] = round((time.time() - start) * 1000, 1)
+        obs.blocked_requests = blocked[:_MAX_EVENT_ITEMS]
+        obs.console_errors = console_errors[:_MAX_EVENT_ITEMS]
+        obs.failed_resources = failed[:_MAX_EVENT_ITEMS]
+
+        # Re-validate the URL we actually ended on (redirects may have moved us).
+        final_url = page.url
+        obs.final_url = final_url
+        if not self._url_allowed(final_url):
+            obs.fetch_error = f"final URL blocked after navigation: {final_url}"
+            obs.ok = False
+            return  # never read/parse content from an unsafe destination
+
+        obs.status = response.status if response else 0
+        obs.ok = bool(response and 200 <= response.status < 300)
+        obs.headers = _safe_headers(_HeaderShim(response.headers if response else {}))
+        obs.content_type = obs.headers.get("content-type", "")
+
+        html = page.content()
+        encoded = html.encode("utf-8", errors="replace")
+        if len(encoded) > max_bytes:
+            obs.truncated = True
+            obs.html_bytes = max_bytes
+            html = encoded[:max_bytes].decode("utf-8", errors="replace")
+        else:
+            obs.html_bytes = len(encoded)
+        _parse_html(final_url, html, obs)
+
+        if self.screenshot_dir:
+            import os
+            os.makedirs(self.screenshot_dir, exist_ok=True)
+            shot = os.path.join(self.screenshot_dir, "page.png")
+            page.screenshot(path=shot)
+            obs.screenshot_ref = "page.png"  # basename only — never leak an absolute path
+
+    @staticmethod
+    def _safe_close(*closables) -> None:
+        for c in closables:
             try:
-                page = browser.new_page()
-                page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
-                page.on("requestfailed", lambda r: failed.append(r.url))
-                start = time.time()
-                response = page.goto(url, wait_until="load", timeout=timeout_s * 1000)
-                obs.timing_ms["load"] = round((time.time() - start) * 1000, 1)
-                obs.status = response.status if response else 0
-                obs.ok = bool(response and 200 <= response.status < 300)
-                obs.final_url = page.url
-                obs.headers = _safe_headers(_HeaderShim(response.headers if response else {}))
-                obs.content_type = obs.headers.get("content-type", "")
-                html = page.content()
-                obs.html_bytes = len(html.encode("utf-8", errors="replace"))
-                _parse_html(obs.final_url, html, obs)
-                obs.console_errors = console_errors
-                obs.failed_resources = failed
-                if self.screenshot_dir:
-                    import os
-                    os.makedirs(self.screenshot_dir, exist_ok=True)
-                    shot = os.path.join(self.screenshot_dir, "page.png")
-                    page.screenshot(path=shot)
-                    obs.screenshot_ref = shot
-            finally:
-                browser.close()
-        return obs
+                if c is not None:
+                    c.close()
+            except Exception:
+                pass
 
 
 class _HeaderShim:
