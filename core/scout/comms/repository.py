@@ -44,15 +44,17 @@ class CommsRepository:
         return (rows[0]["n"] or 0) + 1
 
     def create_revision(self, rev: Dict[str, Any]) -> str:
+        import json as _json
         with self.db.transaction() as c:
             c.execute(
                 "INSERT INTO draft_revisions (revision_id, draft_id, revision_number, company_id, "
-                "contact_id, channel, recipient_hash, subject, body, body_hash, disclosure_hash, "
-                "finding_hash, evidence_hash, contact_provenance_hash, suppression_hash, "
-                "generated_at, expires_at, creator, state) VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'PENDING_REVIEW')",
+                "contact_id, channel, finding_id, evidence_ids, recipient_hash, subject, body, "
+                "body_hash, disclosure_hash, finding_hash, evidence_hash, contact_provenance_hash, "
+                "suppression_hash, generated_at, expires_at, creator, state) VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'PENDING_REVIEW')",
                 (rev["revision_id"], rev["draft_id"], rev["revision_number"], rev["company_id"],
-                 rev.get("contact_id", ""), rev["channel"], rev.get("recipient_hash", ""),
+                 rev.get("contact_id", ""), rev["channel"], rev.get("finding_id", ""),
+                 _json.dumps(rev.get("evidence_ids", [])), rev.get("recipient_hash", ""),
                  rev.get("subject", ""), rev.get("body", ""), rev.get("body_hash", ""),
                  rev.get("disclosure_hash", ""), rev.get("finding_hash", ""),
                  rev.get("evidence_hash", ""), rev.get("contact_provenance_hash", ""),
@@ -146,6 +148,30 @@ class CommsRepository:
                                 (msg["idempotency_key"],))
             return (row[0]["message_id"] if row else msg["message_id"]), False
         return msg["message_id"], True
+
+    def reserve_and_authorize(self, msg: Dict[str, Any], approval_id: str) -> tuple:
+        """Atomically (one transaction): idempotency-check, consume the approval exactly once, and
+        reserve the message. Returns (message_id, 'reserved' | 'idempotent_existing'). Raises
+        CommsError('approval_not_consumable') — rolling back — if the approval is not consumable."""
+        with self.db.transaction() as c:
+            ex = c.execute("SELECT message_id FROM outbound_messages WHERE idempotency_key=?",
+                           (msg["idempotency_key"],)).fetchall()
+            if ex:
+                return ex[0]["message_id"], "idempotent_existing"
+            cur = c.execute("UPDATE approval_records SET consumed=1, state='CONSUMED' "
+                            "WHERE approval_id=? AND state='APPROVED' AND consumed=0", (approval_id,))
+            if cur.rowcount != 1:
+                raise CommsError("approval_not_consumable")
+            c.execute(
+                "INSERT INTO outbound_messages (message_id, revision_id, approval_id, company_id, "
+                "contact_id, channel, provider_id, idempotency_key, state, created_at, reserved_at, "
+                "updated_at) VALUES (?,?,?,?,?,?,?,?, 'RESERVED', ?,?,?)",
+                (msg["message_id"], msg["revision_id"], approval_id, msg["company_id"],
+                 msg.get("contact_id", ""), msg["channel"], msg["provider_id"],
+                 msg["idempotency_key"], msg["now"], msg["now"], msg["now"]))
+            c.execute("UPDATE draft_revisions SET state='RESERVED_FOR_SEND' WHERE revision_id=?",
+                      (msg["revision_id"],))
+        return msg["message_id"], "reserved"
 
     def set_message_state(self, message_id: str, state: str, now: str, *,
                           provider_message_id: str = "", error: str = "", sent: bool = False) -> None:

@@ -146,6 +146,7 @@ _MIGRATION_2: List[str] = [
     """CREATE TABLE draft_revisions (
         revision_id TEXT PRIMARY KEY, draft_id TEXT NOT NULL, revision_number INTEGER NOT NULL,
         company_id TEXT NOT NULL, contact_id TEXT NOT NULL DEFAULT '', channel TEXT NOT NULL,
+        finding_id TEXT NOT NULL DEFAULT '', evidence_ids TEXT NOT NULL DEFAULT '[]',
         recipient_hash TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '',
         body TEXT NOT NULL DEFAULT '', body_hash TEXT NOT NULL DEFAULT '',
         disclosure_hash TEXT NOT NULL DEFAULT '', finding_hash TEXT NOT NULL DEFAULT '',
