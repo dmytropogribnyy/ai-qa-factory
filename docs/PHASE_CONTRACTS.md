@@ -1990,3 +1990,15 @@ authenticated/private access; dashboard background workers; autonomous remediati
 **Acceptance criteria:** planning/schema/governance artifacts only; ruff clean; full pytest
 green; docs audit `[PASS]`; agent readiness `[PASS]`; no runtime added; no new runnable command;
 reuse analysis documented before any new schema.
+
+**Progress — slice 1 `[implemented]` (campaign definition contracts):** the first
+contracts-only slice is implemented on branch `phase/8.2-prospect-core-contracts`
+(schema/planning only; no runtime, discovery, browser, network, or MCP). It adds
+`core/schemas/prospect_interaction.py` (`InteractionActionClass`, fail-closed
+`InteractionBoundary`) and `core/schemas/prospect_campaign.py` (`ProspectCampaign`,
+`CampaignTargetCriteria`, `MarketPolicy`, `DiscoverySourcePolicy`), plus a planning-only
+`capabilities/profiles/prospect_qa_radar.yaml` and focused tests. Reuse decisions are
+recorded in `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md` and `docs/REUSE_MAP_PHASE8.md`.
+**Phase 8.2 as a whole remains `[planned]`** — the remaining candidate contracts
+(contact/identity, findings/disclosure, scoring, synthetic data, site memory, dashboard)
+are not implemented.

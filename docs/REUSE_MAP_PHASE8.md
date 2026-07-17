@@ -59,7 +59,8 @@ See the table in `docs/UNIVERSAL_WORK_FACTORY.md`. Highlights:
 
 - `capabilities/atomic_capabilities.yaml` — 17 atomic capabilities with class, approval
   default, candidate backends, and candidate MCP servers.
-- `capabilities/profiles/*.yaml` — 8 profiles referencing atomic capabilities.
+- `capabilities/profiles/*.yaml` — 9 profiles referencing atomic capabilities (the 9th,
+  `prospect_qa_radar`, was added in Phase 8.2 slice 1 and is planning-only).
 - `config/mcp_servers.yaml` — redacted, versioned MCP server manifest (plugin-style; new
   server = new YAML block).
 
@@ -90,3 +91,24 @@ audit-offer mapping; dashboard read models/projections.
 report generator; a separate secret scanner; a universal crawler from scratch when established
 providers/adapters suffice; automatic outreach in the MVP; an anti-bot/CAPTCHA bypass engine;
 mass proxy-evasion infrastructure.
+
+### Implemented in Phase 8.2 — slice 1 (campaign definition contracts)
+
+First contracts-only slice (planning only; no runtime). Reuse decisions actually taken:
+
+- **REUSED as-is:** `SchemaMixin` (serialization, additive-safe unknown-key handling);
+  `SourceReference` (campaign origin/owner — no new provenance model).
+- **REUSED as pattern:** `WorkRunState` (uuid id / UTC ISO timestamps / explicit version,
+  without reusing client-work states); `ToolExecutionPolicy` / `IntegrationPolicy`
+  (conservative `read_only` / approval-default policy shape); `config/mcp_servers.yaml`
+  reference-only manifest (a discovery source is a planning candidate, never verified
+  runtime); the documented `APPROVAL_MODEL.md` action classes (typed as
+  `InteractionActionClass`).
+- **NEW THIN domain models:** `ProspectCampaign`, `CampaignTargetCriteria`, `MarketPolicy`,
+  `DiscoverySourcePolicy`, `InteractionBoundary` (fail-closed) in
+  `core/schemas/prospect_campaign.py` + `core/schemas/prospect_interaction.py`.
+- **EXTENDED (data):** `capabilities/profiles/prospect_qa_radar.yaml` (planning-only,
+  reuses existing atomic capabilities, records the rest as `planned_capability_gaps`);
+  `CAPABILITY_PROFILES` gains `prospect_qa_radar`.
+- **Still deferred:** contact/identity, findings/disclosure, scoring, synthetic data, site
+  memory, dashboard — see `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md`.

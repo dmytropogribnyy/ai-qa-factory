@@ -1384,3 +1384,24 @@ replace — `ProjectStatus`; sensitive MCP fields are reference-only (env-var na
 
 All additive with safe defaults; existing round-trips preserved. Runtime lives in the new
 `core/orchestration/` package (deterministic, planning-only).
+
+## Phase 8.2 — Prospect Radar planning contracts (slice 1)
+
+First contracts-only slice of the Prospect QA Radar / Super Scout domain (planning only;
+no runtime, discovery, browser, network, or MCP). See
+[architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md) and the
+reuse analysis in `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md`.
+
+| File | Classes | Note |
+|---|---|---|
+| `prospect_interaction.py` (new) | `InteractionActionClass`, `InteractionBoundary` | typed form of the planned action classes in `APPROVAL_MODEL.md`; fail-closed defaults; CAPTCHA-bypass / access-control / proxy-stealth evasion cannot be enabled through the contract |
+| `prospect_campaign.py` (new) | `ProspectCampaign`, `CampaignTargetCriteria`, `MarketPolicy`, `DiscoverySourcePolicy` | campaign header + policies; reuses `SourceReference`; `read_only=True` discovery; market policy never auto-approves outreach |
+
+**Reuse decisions (verified):** serialization via `SchemaMixin` (unknown keys ignored →
+additive-safe); origin/owner via existing `SourceReference` (no new provenance model);
+lifecycle/versioning mirrors the `WorkRunState` pattern (uuid id, UTC ISO timestamps,
+explicit `schema_version`) without reusing client-work states; policy shape modeled on
+`ToolExecutionPolicy` / `IntegrationPolicy`; `DiscoverySourcePolicy` mirrors the
+reference-only `config/mcp_servers.yaml` manifest (planning candidate, never verified
+runtime). New schemas are imported directly from their modules (Phase 8 convention; not
+re-exported in `core/schemas/__init__.py`). Remaining Phase 8.2 contracts stay planned.

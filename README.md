@@ -226,7 +226,21 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.1.0 — ARK planning-only work entrypoint (current)
+### v8.2.0 — Prospect Radar planning contracts, slice 1 (current)
+
+- New planning-only domain contracts (schema/contracts only — **no runtime, discovery,
+  browser, network, or MCP**): `ProspectCampaign`, `CampaignTargetCriteria`, `MarketPolicy`,
+  `DiscoverySourcePolicy` (`core/schemas/prospect_campaign.py`) and `InteractionActionClass`
+  + fail-closed `InteractionBoundary` (`core/schemas/prospect_interaction.py`).
+- Fail-closed defaults: only `READ_ONLY` permitted; destructive blocked; financial /
+  external-communication approval-gated; CAPTCHA-bypass and access-control / proxy-stealth
+  evasion cannot be enabled through the contract; market policy never auto-approves outreach.
+- New planning-only capability profile `prospect_qa_radar` (9 profiles total; reuses
+  existing atomic capabilities, records the rest as planned gaps).
+- Reuses `SchemaMixin`, `SourceReference`, and the `WorkRunState` / `ToolExecutionPolicy`
+  patterns — no duplicate schemas. Remaining Phase 8.2 contracts stay planned.
+
+### v8.1.0 — ARK planning-only work entrypoint
 
 - New command `python main.py work` (planning-only): turns a brief into a reviewable plan.
   **No LLM in the core path, no MCP calls, no network, no browser, no execution.**
