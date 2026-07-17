@@ -62,3 +62,31 @@ See the table in `docs/UNIVERSAL_WORK_FACTORY.md`. Highlights:
 - `capabilities/profiles/*.yaml` — 8 profiles referencing atomic capabilities.
 - `config/mcp_servers.yaml` — redacted, versioned MCP server manifest (plugin-style; new
   server = new YAML block).
+
+---
+
+## Prospect QA Radar / Super Scout — reuse decisions (future-facing, Phase 8.2+)
+
+The second ARK contour must consume existing capabilities, not rebuild them. See
+[architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md). Nothing here
+is implemented; each candidate below requires reuse analysis before any model is added.
+
+**REUSE (as-is):** existing browser and test runners; Playwright framework; API testing
+capabilities; accessibility pipeline; Lighthouse/performance pipeline; passive security/privacy
+checks; evidence manager; evidence intelligence; quality gate; test oracle; client delivery
+pack; content redaction; credential safety; approval model; `WorkRunState` patterns; capability
+registry; capability planner; opportunity/prescreen components where they genuinely fit.
+
+**EXTEND:** capability profiles; capability planning; artifact contracts; evidence claims;
+lifecycle/state semantics; policy model; scoring model; verification adapters;
+delivery/disclosure projections; storage/retention governance.
+
+**NEW, THIN, DOMAIN-SPECIFIC:** campaign planning; business eligibility; business-flow
+classification; company identity resolution; contact provenance; contact/suppression lifecycle;
+site memory; recheck planning; evidence disclosure policy; prospect prioritization;
+audit-offer mapping; dashboard read models/projections.
+
+**DO NOT BUILD:** a second QA engine; a second evidence engine; a second verifier; a second
+report generator; a separate secret scanner; a universal crawler from scratch when established
+providers/adapters suffice; automatic outreach in the MVP; an anti-bot/CAPTCHA bypass engine;
+mass proxy-evasion infrastructure.

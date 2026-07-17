@@ -8,7 +8,7 @@
 ## Layered overview
 
 ```
-                 main.py work --input <brief|job|url>   (planned, Phase 8.1)
+                 main.py work --input <brief|job|url>   (Phase 8.1 — implemented, planning-only)
                                   │
    ┌───────────────────── ORCHESTRATION CORE ─────────────────────┐
    │ UniversalWorkIntake → WorkPacketBuilder → WorkPacket          │
@@ -57,7 +57,7 @@
 
 Profiles reference capabilities by name; they never redefine them.
 
-## Planning-only artifacts (planned for Phase 8.1)
+## Planning-only artifacts (Phase 8.1 — implemented)
 
 `WORK_PACKET.json`, `WORK_SUMMARY.md`, `CAPABILITY_PLAN.json`, `TOOLCHAIN_PLAN.json`,
 `AGENT_TASKS.md`, `APPROVALS_REQUIRED.md`, `NEXT_ACTION.md`,
@@ -71,3 +71,29 @@ discovery (`tools/list`) is planned for Phase 8.3 and writes `MCP_DISCOVERY_SNAP
 Existing runners are preserved. A backend strategy field selects among
 `existing_runner`, `playwright_cli`, `playwright_mcp`, `chrome_devtools_mcp`. MCP backends
 are optional and are not a replacement for existing runners until parity is proven.
+
+## Status note (Phase 8.1)
+
+`main.py work` **exists as of Phase 8.1**. It remains deterministic and planning-only: it does
+not execute MCP, network, browser, or external actions, and never enters an execution state.
+
+## Second work contour — Prospect QA Radar / Super Scout (future-facing)
+
+Prospect Radar is an **additive** ARK work contour (approved architecture, **not implemented**;
+see [architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md)). It is
+not a separate QA product, not a replacement for the Client Work Factory, not an independent
+evidence system, not a from-scratch crawler, and not a currently working runtime. It reuses the
+existing chain:
+
+```
+Prospect campaign planning
+  → ARK requirement and capability planning
+  → selected existing QA capabilities
+  → existing QA runners (later phases)
+  → existing evidence engine
+  → independent verifier
+  → existing delivery / reporting components
+```
+
+Domain contracts for this contour are planned for Phase 8.2 (see `docs/PHASE_CONTRACTS.md`);
+`CapabilityRegistry`/`CapabilityPlanner` already exist and are extended, not rebuilt.

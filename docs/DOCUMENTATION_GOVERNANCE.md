@@ -208,3 +208,25 @@ Run after any phase that changes schemas, commands, workflows, safety rules, or 
 - [`COMMANDS.md`](COMMANDS.md) — CLI commands including planned docs commands
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — safety rules that govern all execution
 - [`RUNBOOK.md`](RUNBOOK.md) — operational workflow including docs freshness section
+
+---
+
+## Nested architecture specifications (`docs/architecture/`)
+
+A distinct documentation category for detailed architecture specifications of ARK capability
+domains and work contours.
+
+Rules:
+
+- A nested architecture doc **may be source of truth** for a specific domain.
+- It **may be approved but future-facing** — it must clearly distinguish approved architecture
+  from implemented runtime (a status block near the top).
+- `docs/PHASE_CONTRACTS.md` is authoritative for **implementation status**;
+  `docs/PRODUCT_VISION_2026.md` owns the high-level **phase map**.
+- Nested architecture docs **are included in the docs audit** (the content/runtime-overclaim
+  scan is recursive) and **must be registered in** [`DOCS_MANIFEST.md`](DOCS_MANIFEST.md).
+- Archive documents under `docs/archive/` are **not authoritative** and are handled separately
+  (excluded from the runtime-overclaim scan by design).
+
+**Update triggers** for nested architecture docs: `phase_completed`, `architecture_approved`,
+`schema_changed`, `runtime_status_changed`.

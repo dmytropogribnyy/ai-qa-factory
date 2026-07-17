@@ -897,10 +897,11 @@ New artifact added to `outputs/<project_id>/33_client_audit/`:
   It is committed source config, never a generated artifact, and never holds secrets.
 - `capabilities/atomic_capabilities.yaml`, `capabilities/profiles/*.yaml` — source config.
 
-**Planned future artifacts (NOT generated in Phase 8.0):**
+**Not generated in Phase 8.0:**
 - `WORK_PACKET.json`, `WORK_SUMMARY.md`, `CAPABILITY_PLAN.json`, `TOOLCHAIN_PLAN.json`,
   `AGENT_TASKS.md`, `APPROVALS_REQUIRED.md`, `NEXT_ACTION.md`,
-  `MCP_CONFIGURED_SERVERS_SNAPSHOT.json` — planned for Phase 8.1 (`main.py work`, planning-only).
+  `MCP_CONFIGURED_SERVERS_SNAPSHOT.json` — **now generated in Phase 8.1** (`main.py work`,
+  planning-only); see the Phase 8.1 `40_ark_work/` section below.
 - `MCP_DISCOVERY_SNAPSHOT.json` — planned for Phase 8.3 (live protocol discovery).
 
 **Contract distinction:** configured-server health (config-level) and live protocol discovery
@@ -932,3 +933,30 @@ content secret scan; on any secret or failure the set is not published (rollback
 
 `MCP_DISCOVERY_SNAPSHOT.json` remains planned for Phase 8.3 (not produced in 8.1). Determinism:
 with a fixed clock and id sequence, the same input yields byte-identical artifacts.
+
+---
+
+## Phase 8.2 — Prospect Radar artifact namespace (planned, future-facing)
+
+Planned artifacts for the Prospect QA Radar contour (see
+[architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md)). **None are
+generated today.** They must reuse existing evidence/delivery artifact structures where possible;
+duplicate schemas must not be finalized before the Phase 8.2 reuse review. Current Phase 8.1
+`40_ark_work/` contracts are preserved unchanged.
+
+**Campaign-level (planned):** `PROSPECT_CAMPAIGN.json`, `MARKET_POLICY.json`,
+`DISCOVERY_PLAN.json`, `DISCOVERED_BUSINESSES.json`, `ELIGIBLE_TARGETS.json`,
+`BUSINESS_CONTEXT.json`, `SITE_PROFILE.json`, `INTERACTION_BOUNDARY.json`,
+`SITE_TRIAGE_PLAN.json`, `CAPABILITY_PLAN.json`, `COVERAGE_MAP.json`, `NORMALIZED_FINDINGS.json`,
+`LEAD_SCORECARD.json`, `PROSPECT_SHORTLIST.json`, `CONTACTS.json`, `OUTREACH_DRAFTS.md`,
+`DISCLOSURE_MANIFEST.json`, `SUPPRESSION_CHECK.json`, `SITE_MEMORY.json`, `SITE_FINGERPRINT.json`,
+`RECHECK_POLICY.json`, `CHANGE_DETECTION_RESULT.json`, `FINDING_REVALIDATION.json`,
+`PRE_SEND_REVALIDATION.json`, `RETENTION_PLAN.json`, `CAMPAIGN_SUMMARY.md`.
+
+**Finding-level (planned):** `FINDING_<id>.json`, `REPRODUCTION_STEPS_<id>.md`,
+`EVIDENCE_INDEX_<id>.json`, `SCREENSHOT_ORIGINAL_<id>.png`, `SCREENSHOT_ANNOTATED_<id>.png`,
+`TRACE_<id>.zip`, `VIDEO_<id>.webm`, `CONSOLE_SANITIZED_<id>.log`, `NETWORK_SANITIZED_<id>.json`,
+`VERIFICATION_RESULT_<id>.json`, `OUTREACH_EVIDENCE_SUMMARY_<id>.md`.
+
+Ownership and exact directory namespace will be fixed during Phase 8.2 contract work; these are
+planned names only, marked to avoid duplicate future schemas.

@@ -27,9 +27,18 @@ universal orchestration + MCP-consumption layer on top. See `docs/PRODUCT_VISION
 
 ## Current phase
 
-Phase 8.0 — additive foundation: docs, schemas, manifests, tests. **Do not** implement
-live MCP discovery/invocation, `main.py work`, browser/network execution, external writes,
-or runner replacement in this phase. Do not commit or push without human review.
+Phase 8.0 and Phase 8.1 are **complete**. The Phase 8.1 planning workflow (`main.py work`) is
+implemented and **planning-only**. **Live MCP discovery and external execution remain future
+work.** Phase 8.2 (planned) is contracts/docs only. `docs/PHASE_CONTRACTS.md` controls the
+current scope of any phase. Do not commit or push without human review.
+
+## Prospect QA Radar / Super Scout (future-facing)
+
+See [docs/architecture/PROSPECT_QA_RADAR_SPEC.md](docs/architecture/PROSPECT_QA_RADAR_SPEC.md).
+Prospect Radar is a future-facing ARK work contour. Agents must implement it **incrementally**;
+`PHASE_CONTRACTS.md` controls current scope; no full-spec implementation in a single phase. All
+existing reuse, safety, approval, independent-verification, and source-of-truth rules remain
+mandatory (this section weakens none of them).
 
 ## Before claiming done
 

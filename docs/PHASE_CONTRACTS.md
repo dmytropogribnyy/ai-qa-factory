@@ -1954,3 +1954,39 @@ task execution; external communication; runner replacement; delivery approval; e
 `[PASS]`; agent readiness `[PASS]`; deterministic byte-identical artifacts under fixed
 clock/ids; guards prove no LLM/network/subprocess/MCP calls; content secret scan + atomic
 rollback + backup-recovery + fail-closed overwrite verified.
+
+**Status:** Phase 8.1 is **complete** (merged to main). Baseline: 3635 total tests, 72 Phase
+8.1 tests. `CapabilityRegistry` and `CapabilityPlanner` already exist as of Phase 8.1.
+
+---
+
+## Phase 8.2 — ARK Planning Contracts + Prospect Radar Domain Contracts `[planned]`
+
+Planning / schema / contracts / governance only. Extends the existing planning layer with typed
+Prospect QA Radar domain contracts (see
+[../docs/architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md)). It
+does **not** create `CapabilityRegistry`/`CapabilityPlanner` from zero — those exist.
+
+**Allowed actions:** typed domain contracts + planning semantics + artifact contracts +
+capability/profile extensions + governance docs. Every candidate schema below requires an
+explicit **reuse analysis** first — do not blindly implement all of them.
+
+**Candidate domain contracts** (reuse-first, not a build list): `ProspectCampaign`,
+`CampaignTargetCriteria`, `MarketPolicy`, `DiscoverySourcePolicy`, `BusinessContext`,
+`SiteProfile`, `BusinessFlowProfile`, `InteractionBoundary`, `InteractionActionClass`,
+`SyntheticPersona`, `SyntheticDataPolicy`, `CoverageMap`, `CompanyIdentity`, `DomainIdentity`,
+`ContactRecord`, `ContactProvenance`, `ContactStatus`, `FindingDisclosurePolicy`,
+`DisclosureManifest`, `LeadScorecard`, `ProspectPriority`, `ProspectLifecycle`, `RecheckPolicy`,
+`SiteFingerprint`, `RetentionPolicy`, `SuppressionPolicy`, `StorageClass`; dashboard information
+architecture; planned artifact contracts; Prospect Radar capability/profile extensions.
+
+**Explicitly blocked from Phase 8.2:** live discovery; live crawling; browser execution;
+Playwright execution; MCP discovery/invocation; network calls; provider installation; public
+contact lookup runtime; email sending; external communication; automatic outreach; CAPTCHA
+solving or bypass; stealth/fingerprint evasion; residential proxy rotation; real form
+submission; account creation; order creation; booking or slot hold; payment; file upload;
+authenticated/private access; dashboard background workers; autonomous remediation; deployment.
+
+**Acceptance criteria:** planning/schema/governance artifacts only; ruff clean; full pytest
+green; docs audit `[PASS]`; agent readiness `[PASS]`; no runtime added; no new runnable command;
+reuse analysis documented before any new schema.

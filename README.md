@@ -219,6 +219,7 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 | [`docs/ARTIFACT_CONTRACTS.md`](docs/ARTIFACT_CONTRACTS.md) | Artifact paths, ownership, and delivery rules |
 | [`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md) | Agent operating rules and safety obligations |
 | [`docs/AGENT_HANDOFF_TEMPLATE.md`](docs/AGENT_HANDOFF_TEMPLATE.md) | Final phase report template |
+| [`docs/architecture/PROSPECT_QA_RADAR_SPEC.md`](docs/architecture/PROSPECT_QA_RADAR_SPEC.md) | Prospect QA Radar / Super Scout — **approved future-facing architecture; no runtime yet**, integration starts with Phase 8.2 contracts |
 
 ---
 

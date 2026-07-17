@@ -182,3 +182,25 @@ Every external execution will have a recorded approval decision in the project s
 - [`SAFETY_RULES.md`](SAFETY_RULES.md) — hard rules, no exceptions
 - [`RUNBOOK.md`](RUNBOOK.md) — approval checkpoints checklist (section 4)
 - [`REAL_TESTING_PREPARATION.md`](REAL_TESTING_PREPARATION.md) — full staging checklist
+
+---
+
+## Prospect QA Radar — planned action classes (future-facing)
+
+Planned semantics for the Prospect QA Radar contour (see
+[architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md)). **Runtime
+enforcement is not implemented in this phase** — these define the intended model only.
+
+| Action class | Planned semantics |
+|---|---|
+| `READ_ONLY` | may be automatically permitted under campaign budgets and policy |
+| `REVERSIBLE_SESSION_WRITE` | auto-permitted only when cleanup and absence of external effects can be demonstrated |
+| `POTENTIAL_BUSINESS_SIDE_EFFECT` | requires policy evaluation and generally human approval |
+| `EXTERNAL_COMMUNICATION` | requires explicit human approval |
+| `FINANCIAL` | requires explicit authorization and sandbox/test controls |
+| `DESTRUCTIVE` | blocked by default |
+
+**Examples of potential business side effects:** reservation hold; appointment slot hold;
+checkout submission; account creation; form submission; subscription; generated email/SMS/OTP.
+
+No runtime enforcement is added in Phase 8.2; this is a documented planning model.

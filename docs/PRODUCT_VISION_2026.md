@@ -57,17 +57,42 @@ The AI QA Factory core remains:
 5. The verifier is independent of the implementer.
 6. Source of truth is artifacts, not chat history.
 
-## Phase map (planned)
+## Two ARK work contours
+
+ARK spans two work contours that share the same QA runners, evidence engine,
+redaction/credential safety, independent verification, approval model, state model,
+reporting, and delivery pack generation:
+
+1. **Client Work Factory** — incoming client work → intake → planning → controlled
+   execution → evidence → independent verification → delivery. `main.py work` (Phase 8.1,
+   **implemented, planning-only**) is its deterministic front door.
+2. **Prospect QA Radar / Super Scout** — campaign → discovery → eligibility → cheap triage
+   → bounded QA/SEO analysis → evidence → independent verification → prospect scoring →
+   contact intelligence → controlled disclosure → human-approved outreach draft → paid
+   audit opportunity. **Approved future-facing architecture; not implemented.** See
+   [docs/architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md).
+
+Prospect Radar is not a second QA product, not a replacement for the Client Work Factory,
+and not a separate evidence system — it consumes the existing capabilities.
+
+## Phase map
 
 | Phase | Scope | State |
 |---|---|---|
-| 8.0 | Docs, schemas, manifests, tests (this) | foundation only |
-| 8.1 | `main.py work` — planning-only artifacts | planned |
-| 8.2 | Typed CapabilityRegistry + CapabilityPlanner | planned |
-| 8.3 | MCPRegistry + live discovery + ToolPolicyEngine (discovery only) | planned |
-| 8.4 | Read-only pilots: context7, Playwright, Chrome DevTools | planned |
-| 8.5 | Universal EvidenceVerifier + DeliveryAssembler adapters | planned |
-| 8.6+ | Controlled write integrations (approval-gated) | planned |
+| 8.0 | ARK documentation, schemas, manifests, and foundation tests | complete |
+| 8.1 | Deterministic planning-only `main.py work` workflow | complete |
+| 8.2 | ARK planning contracts and Prospect Radar domain contracts | planned |
+| 8.3 | Live MCP discovery, provider metadata, adapters, and policy engine | planned |
+| 8.4 | Bounded read-only execution pilots and thin local dashboard | planned |
+| 8.5 | Finding normalization, independent verification, scoring, contacts, and disclosure | planned |
+| 8.6 | Campaign persistence, site memory, rechecks, retention, review queues, and full local dashboard | planned |
+| 8.7 | Optional approval-gated outreach, authorized full E2E, and controlled remediation | planned |
+
+**Status:** Phase 8.0 and Phase 8.1 are complete. `main.py work` is implemented but
+planning-only; live MCP discovery and external execution remain unimplemented.
+`CapabilityRegistry` and `CapabilityPlanner` already exist as of Phase 8.1 — Phase 8.2 does
+not create them from zero; it extends the planning/contracts layer with typed Prospect Radar
+domain contracts and planning semantics.
 
 See `docs/UNIVERSAL_WORK_FACTORY.md` for the component architecture and
 `docs/REUSE_MAP_PHASE8.md` for the exact reuse decisions.

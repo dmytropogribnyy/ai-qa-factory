@@ -1496,3 +1496,26 @@ target directory blocks the run.
 
 **8.1-5. No approval or delivery.** Approvals are surfaced as unresolved; none are granted or
 persisted; the run never enters an execution or delivery state.
+
+---
+
+## Prospect QA Radar — safety rules (planned / future-facing)
+
+These apply to the Prospect QA Radar contour (see
+[architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md)). All execution
+behavior below is **planned for later, explicitly approved phases** — none is implemented now.
+
+**Planned low-risk actions** (only in later approved execution phases): public read-only
+discovery; low-rate public page analysis; reversible browser-session actions; search / filter /
+sort / navigation; cart add/remove when session-only; validation without submit; synthetic
+pre-submit form population; screenshots and sanitized evidence; public technical SEO analysis.
+
+**Approval-gated or blocked actions:** external communication; contact-form submission; account
+creation; newsletter subscription; email / SMS / OTP; real order; booking; slot hold; payment;
+coupon action with business effect; file upload; authenticated / private access; destructive
+action; access-control bypass; CAPTCHA solving or bypass; stealth / fingerprint evasion;
+rate-limit evasion; proxy rotation to avoid blocks.
+
+**Protected sites:** a protected site is **not** automatically rejected as a prospect. It may
+become `PARTIAL_ANALYSIS`, `CONTACT_FIRST`, `MANUAL_REVIEW_REQUIRED`, or
+`AUTHORIZED_AUDIT_REQUIRED`. Access restrictions must never be bypassed automatically.

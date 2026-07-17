@@ -1,8 +1,10 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 6.7.0  
-**Updated:** 2026-05-27  
-**Phase:** 6.3
+**Version:** 8.2.0
+
+**Updated:** 2026-07-17
+
+**Phase:** 8.1 complete; 8.2 Prospect Radar contracts/docs planned
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.
@@ -63,6 +65,8 @@ additive foundation (docs, schemas, manifests, tests); runtime is planned, not i
 | `docs/REUSE_MAP_PHASE8.md` | Exact reuse/extend/new decisions | Yes | schema_changed, phase_completed | current | Phase 8.0 |
 | `AGENTS.md` | Cross-agent operating rules (repo root) | Yes | safety_rule_changed, agent_behavior_changed | current | Phase 8.0 |
 | `CLAUDE.md` | Claude Code project instructions (repo root) | Yes | safety_rule_changed, command_added | current | Phase 8.0 |
+| `docs/architecture/README.md` | Index of nested ARK architecture specifications | Yes | architecture_approved, phase_completed | current | Phase 8.2 |
+| `docs/architecture/PROSPECT_QA_RADAR_SPEC.md` | Prospect QA Radar / Super Scout product, architecture, discovery, QA/SEO, evidence, scoring, contact, disclosure, retention, recheck, and dashboard specification | Yes (Prospect Radar domain architecture) | architecture_approved, phase_completed, runtime_status_changed | planned / future-facing | Phase 8.2+; approved direction; does not represent implemented runtime |
 
 ---
 
