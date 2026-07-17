@@ -1,8 +1,9 @@
-# Prospect QA Radar v1.9.0 — Runtime Architecture
+# Prospect QA Radar v2.0.0 — Runtime Architecture
 
 **Status:** Implemented (Phase 8.3 QA runtime; hardened in 8.3.1; discovery + commercial triage in
-8.4; complete pre-send pipeline in Final Phase I). Local, bounded, read-only runtime. **Nothing is
-sent.**
+8.4; complete pre-send pipeline in Final Phase I; approved communication + product completion in
+Final Phase II). Local. Sending is **disabled by default** and only via individually human-approved,
+revalidated, at-most-once provider calls; the deterministic tests use a confined local sink only.
 **Scope:** the first runnable slice of the [Prospect QA Radar spec](PROSPECT_QA_RADAR_SPEC.md).
 It is **not** cloud/SaaS, not unrestricted discovery, not automated outreach, not a deployment,
 not full accessibility certification, and not Lighthouse-level performance.
@@ -109,6 +110,29 @@ unrepresentable); inferred/named-person contacts are never send-eligible without
 `NO_OUTREACH` permanently blocks draft readiness; reversible-cleanup failure blocks client-safe
 evidence; real axe/performance are distinguishable from static heuristics (never "Lighthouse"
 unless Lighthouse runs); the memory DB fails closed on corruption and never silently empties.
+
+## Approved communication (Final Phase II)
+
+`core/scout/comms/` and `core/scout/integrations/` complete the product, entrypoints
+`python main.py scout radar-demo|send|outreach-control|comms-status|mcp-audit`:
+
+```
+verified prospect (Final Phase I memory)
+  → immutable draft revision (snapshot hashes of recipient/body/finding/evidence/disclosure/suppression)
+  → explicit single-use, expiring human approval bound to the exact revision + snapshots
+  → immediate pre-send revalidation (recompute every gate from authoritative truth; reject placeholders)
+  → transactional reservation: consume approval + reserve message (one idempotency key) in one tx
+  → provider called EXACTLY ONCE (local sink / sandbox / adapter-ready real; disabled by default)
+  → normalized delivery/reply/bounce/opt-out events → durable suppression + follow-up gating
+  → human-approved follow-ups (separate revisions) → commercial funnel metrics → artifacts
+```
+
+**Invariants:** sending disabled by default + dry-run by default; editing/recipient-change/resolved-
+finding/opt-out invalidates the approval; approval replay / duplicate command / restart never send
+twice; `OUTCOME_UNKNOWN` never auto-retries; opt-out/bounce/complaint immediately block; a security
+finding never enters outreach; MCP servers are disabled by default and never live-accepted (agent-
+only ≠ Factory). Schema v2 migrates a real v1.9.0 DB preserving history + suppression. **Exactly-
+once external delivery is not claimed**; the tests use a confined local sink (nothing sent).
 
 ## Runtime reuse map
 

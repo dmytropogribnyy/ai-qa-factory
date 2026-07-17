@@ -1,10 +1,9 @@
 # Product Vision 2026 — ARK / Capability-Driven AI Work & Delivery Factory
 
-**Version:** 1.9.0 (complete local pre-send prospect pipeline)
-**Status:** Target architecture with a large implemented local runtime — Phases 8.0–8.4 and
-**Final Phase I** are implemented. The remaining roadmap is frozen at exactly two functional
-phases (Final Phase I — done; Final Phase II — planned) plus a verification-only pass. See the
-three-part phase map below (target / implemented / remaining).
+**Version:** 2.0.0 (complete local, human-approved prospect qualification & communication product)
+**Status:** The functional roadmap is complete — Phases 8.0–8.4, **Final Phase I**, and **Final
+Phase II** are implemented. Only the verification-only Final Independent Acceptance pass remains.
+See the three-part phase map below (target / implemented / remaining).
 **Supersedes scope of:** `docs/VISION.md` (which remains the canonical vision for the QA capability domain).
 
 ---
@@ -123,14 +122,16 @@ mega-phase) may be added; non-blocking enhancements are recorded only in
 
 | Phase | Scope | State |
 |---|---|---|
-| **Final Phase I** — Complete Pre-Send Prospect Pipeline | Adaptive deep QA (real axe + real performance mode + deep technical SEO + safe bounded business-flow QA with verified reversible-session cleanup); evidence center + finding normalization + lifecycle; transactional SQLite company/site memory (migrations, backup/restore, corruption fail-closed, import); scheduler + durable queues; rechecks + site fingerprints + retention/storage; public contact intelligence + suppression governance; audit-offer mapping; controlled disclosure + outreach **draft** generation + human review queues; full local dashboard. **Nothing is sent.** | implemented (runtime) |
-| **Final Phase II** — Approved Communication & Product Completion | Explicitly human-approved sending; reply/bounce/opt-out history; follow-up controls; CRM/commercial metrics; startup/installer; evaluation benchmark; final Prospect QA Radar v2.0 release. No inferred-contact sending; no bulk spam behavior. | planned |
+| **Final Phase I** — Complete Pre-Send Prospect Pipeline | Adaptive deep QA (real axe + real performance mode + deep technical SEO + safe bounded business-flow QA with verified reversible-session cleanup); evidence center + finding normalization + lifecycle; transactional SQLite company/site memory; scheduler + durable queues; rechecks + retention; public contact intelligence + suppression governance; audit-offer mapping; controlled disclosure + outreach **draft** generation + human review queues; full local dashboard. **Nothing is sent.** | implemented (runtime) |
+| **Final Phase II** — Approved Communication & Product Completion | Immutable draft revisions + single-use expiring approvals; immediate pre-send revalidation; controlled provider send (disabled by default; local sink drives the E2E; at-most-once automatic invocation); reply/bounce/opt-out history; human-approved follow-ups; commercial metrics; MCP + VS Code integration audit; startup/doctor; CI; evaluation benchmark; **Prospect QA Radar v2.0.0** release. No inferred-contact / bulk / autonomous sending. | implemented (runtime) |
 | **Final Independent Acceptance** | Verification and confirmed-defect fixes only — **may not** introduce another functional phase. | planned |
 
-**Status:** Phases 8.0–8.4 and **Final Phase I** are implemented (8.2 as contracts; 8.3/8.3.1/8.4
-+ Final Phase I as runtime). Final Phase I prepares the complete pre-send workflow up to a human
-review queue but **sends nothing** — no Gmail/Resend/SMTP/contact-form/LinkedIn or any external
-communication executes. Sending is gated to Final Phase II with explicit human approval.
+**Status:** The functional roadmap is **complete**. Phases 8.0–8.4, **Final Phase I**, and **Final
+Phase II** are implemented; only the verification-only Final Independent Acceptance pass remains
+(review/test/fix confirmed defects; may issue v2.0.1). Sending is **disabled by default** and every
+external message must be individually, explicitly, and currently human-approved after a
+transactional pre-send revalidation; the deterministic tests and full E2E use only a confined local
+sink (nothing sent externally). Exactly-once external delivery is not claimed.
 
 ### Historical remaining-roadmap mapping (superseded)
 

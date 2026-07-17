@@ -229,7 +229,28 @@ handoff, not inline here, so this instruction never drifts as the suite grows.
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v1.9.0 — Prospect QA Radar v1.9.0 (complete local pre-send prospect pipeline, current)
+### v2.0.0 — Prospect QA Radar v2.0.0 (complete local, human-approved product, current)
+
+- **Final Phase II** completes the product: immutable draft revisions + single-use expiring
+  approvals (bound to exact recipient/body/finding/evidence/disclosure/suppression hashes; any
+  change invalidates them) → immediate pre-send revalidation from authoritative truth → controlled
+  provider send → immutable send history → normalized delivery/reply/bounce/opt-out events →
+  human-approved follow-ups → commercial metrics. New packages `core/scout/comms`,
+  `core/scout/integrations`; additive SQLite schema-v2 migration (a real v1.9.0 DB upgrades
+  preserving history + suppression).
+- **Sending is disabled by default and dry-run by default.** `python main.py scout send` sends ONE
+  approved revision; live needs `--approve-send` + `--reviewer` + exact `--confirm-recipient` (no
+  bulk / "approve all"). The provider is called **at most once** per approval; an ambiguous outcome
+  is `OUTCOME_UNKNOWN` and never auto-retried. Opt-out/bounce/complaint immediately block; security
+  findings never enter outreach. **Exactly-once external delivery is not claimed.**
+- **MCP + VS Code integration audit:** 14 servers in `config/mcp_servers.v2.yaml`, all disabled by
+  default, honestly classified, never live-accepted; agent-only ≠ Factory. `.vscode` recommendation
+  files. CI (deterministic + browser + provider-contract) never sends an external message.
+- One command: `python main.py scout radar-demo` (complete-product demo to a confined LOCAL SINK;
+  **nothing sent externally**). The functional roadmap is complete; only a verification-only Final
+  Independent Acceptance pass remains. **Local product; no cloud/SaaS, deployment, or real send.**
+
+### v1.9.0 — Prospect QA Radar v1.9.0 (complete local pre-send prospect pipeline)
 
 - **Final Phase I** completes the local pre-send workflow: adaptive deep QA (real axe-core + a
   real rendered `chrome_perf_observation` — not Lighthouse — + deep technical SEO + a bounded

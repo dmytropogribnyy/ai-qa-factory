@@ -8,7 +8,52 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
-## Final Phase I — Complete pre-send prospect pipeline (Prospect QA Radar v1.9.0) — READ FIRST (latest)
+## Final Phase II — Approved communication & product completion (Prospect QA Radar v2.0.0) — READ FIRST (latest)
+
+**Author:** Claude Code. **Branch:** `final/phase-2-product-completion` (from `main@86b2339`, the
+v1.9.0 release). **`scout-v1.0.0`/`1.0.1`/`1.1.0`/`1.9.0` were not moved.**
+
+The second and final functional phase. The functional roadmap is now **complete**; only the
+verification-only Final Independent Acceptance pass remains.
+
+**Implemented (all committed + tested):**
+- Independent FP I review → the canonical snapshot/hashing layer + placeholder-reference rejector.
+- Additive **schema v2** migration (draft_revisions, approval_records, outbound_messages,
+  send_attempts, provider_events, contact_events, followup_plans, commercial_events,
+  outreach_controls, recipient_allowlist). A real v1.9.0 DB migrates preserving data + suppression +
+  no-send drafts history; transactional interrupted-rollback; idempotent; backup/restore across
+  versions.
+- **Immutable revisions + single-use expiring approvals** (bound to exact snapshot hashes; edited/
+  recipient-changed/resolved-finding/opt-out invalidates them; reviewer required; no bulk approval).
+- **Immediate pre-send revalidation** from authoritative truth (rejects placeholder refs).
+- **Providers** (mandatory DeterministicLocalSinkProvider + sandbox + adapter-ready real email) +
+  outreach controls (**disabled by default**, global kill) checked at every gate.
+- **Transactional send** (dry-run default; consume approval + reserve message atomically; provider
+  called **exactly once**; `OUTCOME_UNKNOWN` never auto-retried; crash reconcile).
+- **Events** (delivery/reply/bounce/opt-out/complaint; idempotent; durable suppression), **follow-up**
+  (individually approved), **responsible disclosure** (security findings never enter outreach),
+  **commercial metrics** (factual; zero-incident counters).
+- **MCP + VS Code integration audit** (14 servers, all disabled by default, never live-accepted,
+  agent-only ≠ Factory; adversarial guards; `.vscode` recommendation files; `mcp-audit` CLI).
+- **CLI** (`send`/`radar-demo`/`outreach-control`/`comms-status`/`mcp-audit`/`doctor`), a read-only
+  dashboard communication view with **no send button**, a Windows launcher, and **CI**.
+
+**Nothing is sent to a real recipient.** Sending is disabled by default; the deterministic tests +
+full E2E + benchmark use a confined local sink. Exactly-once external delivery is not claimed.
+
+**Validation (this session, on the branch and merged main):** full suite **4251 passed, 4
+pre-existing warnings, 0 failed** (was 4208 at v1.9.0; +43 FP II). ruff clean; docs audit `[PASS]`;
+agent readiness `[PASS]`; `git diff --check` clean. Complete deterministic local-sink v2 E2E green;
+benchmark meets all zero-incident targets; schema v1→v2 migration + backup/restore green; Scout QA
+demo, discovery, pre-send, radar demos, and prior Playwright/axe acceptance still pass. SCOUT_VERSION
+→ 2.0.0. Merged `--no-ff` and tagged `scout-v2.0.0` (new tag; older tags untouched); exact
+merged-main HEAD/tag in the final report. **CI:** the workflow is added; a real GitHub Actions run
+is triggered by the push to main and must be verified on GitHub (not claimed green here). **No real
+external message was sent during acceptance.**
+
+---
+
+## Final Phase I — Complete pre-send prospect pipeline (Prospect QA Radar v1.9.0) — READ FIRST (previous)
 
 **Author:** Claude Code. **Branch:** `final/phase-1-pre-send-pipeline` (from `main@7cecb26`, the
 Scout v1.1.0 release). **`scout-v1.0.0`/`1.0.1`/`1.1.0` were not moved.**

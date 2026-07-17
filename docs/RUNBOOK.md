@@ -2753,8 +2753,28 @@ The pipeline runs adaptive deep QA → verified findings + evidence → company/
 - [ ] Only independently verified, sanitized, current findings are CLIENT_SAFE
 - [ ] Inferred / named-person contacts are never send-eligible without review
 - [ ] `NO_OUTREACH` permanently blocks draft readiness; drafts are PENDING_REVIEW and never sent
-- [ ] The memory DB migrates, restarts, backs up, restores, and fails closed on corruption
-- [ ] No message, form, account, booking, order, payment, or external communication occurs
+
+**Approved communication (Final Phase II):**
+```bash
+python main.py scout radar-demo                              # complete-product demo (LOCAL SINK; nothing sent)
+python main.py scout outreach-control --db <db> --state enable
+python main.py scout send --db <db> --draft-revision <rev> --provider local_sink   # dry-run
+python main.py scout send --db <db> --draft-revision <rev> --provider local_sink \
+  --approve-send --reviewer "you" --confirm-recipient <exact-recipient>             # live (gated)
+python main.py scout outreach-control --db <db> --state kill   # global kill
+```
+Sending is **disabled by default** and **dry-run by default**; live needs `--approve-send` +
+`--reviewer` + exact `--confirm-recipient`. Approvals are single-use/expiring and bound to snapshot
+hashes; pre-send revalidation recomputes every gate; the provider is called at most once;
+`OUTCOME_UNKNOWN` is never auto-retried. The demo/tests use a confined local sink only.
+
+**Final Phase II checklist:**
+- [ ] Outreach is DISABLED by default; live sending needs approve + reviewer + exact recipient
+- [ ] Editing a draft / changing recipient / a resolved finding / opt-out invalidates the approval
+- [ ] Approval replay, duplicate command, and restart never send twice; ambiguous never retries
+- [ ] Opt-out/hard-bounce/complaint block future sends and follow-up; security findings never go out
+- [ ] MCP servers are disabled by default and never live-accepted; agent-only ≠ Factory
+- [ ] No inferred/suppressed/unapproved/bulk send, no contact-form/LinkedIn automation, no real message
 
 **Checklist:**
 - [ ] Only explicit public http(s) seeds are used (localhost/private IPs rejected)
