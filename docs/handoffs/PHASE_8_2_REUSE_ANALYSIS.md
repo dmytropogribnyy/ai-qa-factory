@@ -282,6 +282,15 @@ yet — those are the genuinely new domain surface.
 - **Additive fields:** `registrable_domain`, `subdomains`, `is_apex`.
 - **Phase:** 8.2 (slice 4) or omit.
 - **Duplicate risk:** high — decide fold-in during slice 4 review.
+- **IMPLEMENTED DECISION (slice 3, verified):** kept as a **standalone** `DomainIdentity`
+  (not omitted) because `CompanyIdentity` needs hostname-unique domain lists with a
+  per-domain `relation`/`is_primary`/provenance, and a shared `normalize_hostname()` helper
+  is cleaner as a first-class type. Fields implemented as `hostname` (normalized bare host,
+  not `registrable_domain`), `relation`, `is_primary`, `sources`, `confidence`.
+
+#### CompanyIdentity — implemented as specified (slice 3)
+- Implemented in `core/schemas/prospect_identity.py` with hostname-unique domains, ≤1
+  primary domain, deduped brand/alias lists, reusing `SourceReference` + `Confidence`.
 
 ### Contact group (most sensitive — defer)
 
@@ -428,6 +437,14 @@ yet — those are the genuinely new domain surface.
 - **Dependencies:** `SchemaMixin`, `StorageClass`.
 - **Phase:** 8.2 (slice 6).
 - **Duplicate risk:** low.
+- **IMPLEMENTED DECISION (slice 3, verified):** implemented as
+  `core/schemas/prospect_governance.py` → `ProspectRetentionPolicy`, which **composes the
+  existing `core/schemas/cleanup.py` `CleanupPolicy`** rather than duplicating a cleanup
+  engine. It forces `dry_run_required` / `preserve_git_tracked_files` /
+  `preserve_client_outputs` on and preserves suppression + identity metadata. Retention
+  windows are per prospect stage (failed-eligibility/weak-rejected/qualified/contacted/
+  positive-reply/evidence) rather than the tentatively-proposed per-`StorageClass` map;
+  `StorageClass` remains deferred. Deletion is never executed by the schema.
 
 #### SuppressionPolicy — NEW THIN DOMAIN MODEL
 - **Precursor:** none.

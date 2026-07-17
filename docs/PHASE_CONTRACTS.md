@@ -2014,6 +2014,24 @@ off). `DiscoverySourcePolicy` rejects unknown provider status; `MarketPolicy` re
 commercial opportunity; `COVERED`/`PARTIAL` require evidence; fingerprints reject
 secret/session inputs.
 
+**Progress — slice 2 hardening `[implemented]`:** distinct `BUSINESS_TYPES` vs.
+`RESOURCE_TYPES`; `SiteProfile` surface de-dup + public/authenticated exclusivity +
+`public_open` rule; `BusinessFlowProfile` rejects `DESTRUCTIVE`; `SiteFingerprint` requires
+valid `sha256` hex digests; `CoverageArea` non-empty area + non-blank evidence + ref dedup.
+
+**Progress — slice 3 `[implemented]` (identity / lifecycle / governance):** adds
+`core/schemas/prospect_identity.py` (`DomainIdentity`, `CompanyIdentity`),
+`core/schemas/prospect_lifecycle.py` (`ProspectTransition`, `ProspectLifecycle` + state
+machine), and `core/schemas/prospect_governance.py` (`SuppressionPolicy`,
+`ProspectRetentionPolicy` composing `CleanupPolicy`, `RecheckPolicy`,
+`ProspectGovernancePlan`). No DNS/network/scheduler/filesystem runtime; deletion never
+executed.
+
+**Progress — slice 4 `[implemented]` (scoring foundation):** adds
+`core/schemas/prospect_scoring.py` (`ScoreDimension`, `LeadScorecard`, `ProspectPriority`)
+— 12 independent visible dimensions; optional weighted total only from explicit validated
+weights; no automatic outreach eligibility; no hidden single-score model.
+
 **Phase 8.2 as a whole remains `[planned]`** — the remaining candidate contracts
-(contact/identity, findings/disclosure, scoring/lifecycle, synthetic data,
-retention/suppression/storage-class, dashboard) are not implemented.
+(contact records/provenance, findings/disclosure, synthetic data, storage-class,
+dashboard) are not implemented.

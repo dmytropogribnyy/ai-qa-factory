@@ -8,7 +8,96 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
-## Implementation Session Update (2026-07-17, continued) — READ FIRST
+## Implementation Session Update (2026-07-17, slices 2H/3/4) — READ FIRST
+
+This session hardened slice 2 and added two more contracts-only slices (identity/lifecycle/
+governance and scoring). All schema/planning only; no runtime. Merge was not performed.
+
+### Latest state
+
+- **Active branch:** `phase/8.2-prospect-core-contracts`
+- **Active branch HEAD:** tip of that branch (run `git log --oneline -10`) — the
+  `docs: document Phase 8.2 identity and lifecycle slice` commit.
+- **Base documentation branch:** `phase/8.2-prospect-radar-contracts` @ `6a25288`, pushed.
+- **origin/main:** `d467eba74f478a968415abfa5da39dd43812f973` (unchanged).
+- **Merge state:** neither branch merged.
+
+**New commits this session (newest last):**
+
+| Commit | Subject |
+|---|---|
+| `b957a38` | fix: harden Phase 8.2 business profile contracts (Part A) |
+| `8fa7f3d` | feat: add Phase 8.2 prospect identity and lifecycle contracts (Part B) |
+| `5f20740` | feat: add Phase 8.2 prospect scoring contracts (Part C) |
+| `<tip>` | docs: document Phase 8.2 identity and lifecycle slice |
+
+**Part A — slice-2 hardening (`b957a38`):**
+1. `BusinessContext.business_type` uses new `BUSINESS_TYPES`; `SiteProfile.resource_type`
+   uses `RESOURCE_TYPES` — distinct vocabularies (old values kept for backward compat).
+2. `SiteProfile` de-dups surfaces; a route cannot be both public and authenticated;
+   `public_open` cannot have authenticated surfaces.
+3. `SiteFingerprint` adds `fingerprint_algorithm` (`sha256`) and validates digest shape
+   (64 lowercase hex; rejects URLs/secrets/prose; empty allowed; lowercase-normalized).
+4. `BusinessFlowProfile.planned_interaction_action_class` rejects `DESTRUCTIVE`.
+5. `CoverageArea` requires non-empty `area`, rejects blank evidence refs, dedups refs.
+
+**Part B — slice 3 identity/lifecycle/governance (`8fa7f3d`):**
+- `prospect_identity.py` — `DomainIdentity` (bare-hostname normalization; rejects
+  URL/credentials/port/whitespace/single-label; lowercase + trailing-dot strip),
+  `CompanyIdentity` (hostname-unique domains, ≤1 primary, deduped brands/aliases).
+- `prospect_lifecycle.py` — `ProspectTransition`, `ProspectLifecycle` + `PROSPECT_STATES`
+  + deterministic `ALLOWED_TRANSITIONS` + `TERMINAL_STATES`. `CONTACTED` requires an
+  APPROVED/COOLDOWN lineage; `APPROVED`≠sent; `PAID_AUDIT`≠payment; SUPPRESSED≠ARCHIVED.
+- `prospect_governance.py` — `SuppressionPolicy` (modes NO_OUTREACH/NO_SCAN/COOLDOWN/
+  MONITOR_CHANGES_ONLY; enabled requires reason; COOLDOWN requires expiry),
+  `ProspectRetentionPolicy` (**composes `CleanupPolicy`**; forces dry-run/preserve-git/
+  preserve-client; preserves suppression+identity; negative durations rejected; deletion
+  never executed), `RecheckPolicy` (L0–L4; pre-send revalidation default on; full re-audit
+  default off), `ProspectGovernancePlan` (NO_SCAN conflicts with an active recheck).
+
+**Part C — slice 4 scoring foundation (`5f20740`):**
+- `prospect_scoring.py` — `ScoreDimension` (12 independent 0..100 axes), `LeadScorecard`
+  (dimensions stay visible; optional `weighted_total` only from explicit/validated/
+  normalized weights; no hidden single score; `outreach_eligible` default False;
+  access-complexity/public-coverage/remediation-fit independent), `ProspectPriority`
+  (A/B/C/D/REJECTED). `OpportunityFilterAgent` inspected as precursor only, not reused.
+
+**Reuse decisions taken (verified):** `SchemaMixin`; `SourceReference`; `Confidence`
+values; `WorkRunState`/`StateTransition` *shape* for the lifecycle (parallel vocabulary);
+`CleanupPolicy` **composed** by retention (no competing cleanup engine). `DomainIdentity`
+kept standalone (not folded into `CompanyIdentity`). `StorageClass` remains deferred.
+
+### Validation (this session)
+
+| Gate | Result |
+|---|---|
+| Targeted prospect tests (4 modules) | **206 passed** (60 + 64 + 60 + 22) |
+| Full suite `pytest tests/ -q` | **3850 passed, 4 warnings** |
+| `ruff check .` | All checks passed |
+| `tools/docs_audit.py` | [PASS] |
+| `tools/agent_readiness_audit.py` | [PASS] |
+| `git diff --check` | clean |
+
+Test progression: 3747 → 3768 (Part A +21) → 3828 (Part B +60) → 3850 (Part C +22). The 4
+warnings are the same pre-existing `PytestCollectionWarning`s (unrelated).
+
+### Deferred (still planned Phase 8.2)
+
+Contact records/provenance/status, findings/disclosure, synthetic data, `StorageClass`,
+dashboard information architecture. **Phase 8.2 as a whole remains planned.**
+
+### Unresolved questions for Claude Code
+
+- Confirm the prospect lifecycle transition map (esp. control-state edges and the
+  `CONTACTED` approved-lineage guard) matches the intended Scout workflow.
+- Confirm `ProspectRetentionPolicy` composing `CleanupPolicy` (vs. a per-`StorageClass`
+  map) is the desired retention shape; `StorageClass` was deferred.
+- Confirm `DomainIdentity` staying standalone (not folded into `CompanyIdentity`) is desired.
+- Confirm hostname normalization rejecting single-label/internal hosts is acceptable.
+
+---
+
+## Implementation Session Update (2026-07-17, continued) — historical
 
 The human extended this Copilot session and authorized: committing the handoff files,
 pushing the documentation branch, creating an implementation branch, implementing the
@@ -424,10 +513,12 @@ Claude Code must:
 6. **Withhold merge if any concern remains.** Only merge after explicit human authorization.
 
 Do not create every candidate schema at once. Do not start runtime. Slices 1 (campaign
-definition), 1-hardening, and 2 (business/site profiles) are complete. The next
-contracts-only slice (if approved) is the scoring/lifecycle group (`LeadScorecard`,
-`ProspectPriority`, `ProspectLifecycle`) — **not** contact/identity, disclosure, outreach,
-dashboard, or any execution runtime — per `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md`.
+definition), 1-hardening, 2 (business/site profiles), 2-hardening, 3 (identity/lifecycle/
+governance), and 4 (scoring foundation) are complete. The next contracts-only slice (if
+approved) is the **contact group** (`ContactRecord`, `ContactProvenance`, `ContactStatus`)
+plus `StorageClass` and disclosure (`FindingDisclosurePolicy`, `DisclosureManifest`) — the
+most PII-sensitive area, still contract-only — per `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md`.
+No contact lookup, outreach, dashboard, or execution runtime.
 
 ---
 

@@ -134,3 +134,31 @@ Second contracts-only slice (planning only; no runtime). Reuse decisions actuall
   fingerprint inputs reject secret/session/volatile terms; unknown enums/statuses raise.
 - **Still deferred:** contact/identity, findings/disclosure, scoring/lifecycle, synthetic
   data, retention/suppression/storage-class, dashboard.
+
+### Implemented in Phase 8.2 — slice 3 (identity / lifecycle / governance)
+
+- **REUSED as-is:** `SchemaMixin`; `SourceReference` (identity provenance); `Confidence`
+  values; `CleanupPolicy` (**composed** by `ProspectRetentionPolicy` — no competing cleanup
+  engine; retention forces dry-run / preserve-git / preserve-client and preserves
+  suppression + identity metadata; deletion is never executed).
+- **REUSED as pattern:** `WorkRunState` / `StateTransition` shape for `ProspectLifecycle`
+  (a parallel prospect vocabulary + deterministic transition map, not a reuse of the
+  client-work states).
+- **NEW THIN domain models:** `DomainIdentity`, `CompanyIdentity`
+  (`core/schemas/prospect_identity.py`); `ProspectTransition`, `ProspectLifecycle`
+  (`core/schemas/prospect_lifecycle.py`); `SuppressionPolicy`, `ProspectRetentionPolicy`,
+  `RecheckPolicy`, `ProspectGovernancePlan` (`core/schemas/prospect_governance.py`).
+- **Fail-closed rules:** hostname normalization rejects URLs/credentials/ports/single-label;
+  ≤ 1 primary domain and hostname-unique; `CONTACTED` requires approved lineage; suppression
+  requires a reason (COOLDOWN requires expiry); negative durations rejected; `NO_SCAN`
+  suppression cannot coexist with an active recheck.
+
+### Implemented in Phase 8.2 — slice 4 (scoring foundation)
+
+- **INSPECTED precursor, NOT reused:** `agents/opportunity_filter.py` (runtime heuristic).
+  `prospect_scoring.py` is a pure data contract instead.
+- **NEW THIN domain models:** `ScoreDimension`, `LeadScorecard`, `ProspectPriority`.
+- **Fail-closed rules:** 12 independent visible dimensions (0..100); optional weighted total
+  only from explicit, validated, normalized weights (no hidden single score); no automatic
+  outreach eligibility; access complexity / public coverage / remediation fit stay
+  independent (never auto-derived from one another).

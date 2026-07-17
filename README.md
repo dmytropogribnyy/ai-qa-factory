@@ -226,7 +226,24 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.2.1 — Prospect Radar contracts: hardening + business/site profiles (current)
+### v8.2.2 — Prospect Radar contracts: identity, lifecycle, governance & scoring (current)
+
+- Slice-2 hardening: distinct `BUSINESS_TYPES`/`RESOURCE_TYPES`; `SiteProfile` surface
+  de-dup + public/authenticated exclusivity; `BusinessFlowProfile` rejects `DESTRUCTIVE`;
+  `SiteFingerprint` requires valid `sha256` hex digests; `CoverageArea` hygiene.
+- Slice 3 (identity/lifecycle/governance, planning-only): `DomainIdentity`,
+  `CompanyIdentity` (`prospect_identity.py`); `ProspectLifecycle` + deterministic transition
+  map (`prospect_lifecycle.py`); `SuppressionPolicy`, `ProspectRetentionPolicy` (composing
+  the existing `CleanupPolicy`), `RecheckPolicy`, `ProspectGovernancePlan`
+  (`prospect_governance.py`). No DNS/network/scheduler/filesystem runtime; deletion never
+  executed; `CONTACTED` requires approved lineage.
+- Slice 4 (scoring foundation): `ScoreDimension`, `LeadScorecard`, `ProspectPriority`
+  (`prospect_scoring.py`) — 12 independent visible dimensions, optional weighted total only
+  from explicit validated weights, no automatic outreach eligibility, no hidden single score.
+- Reuses `SchemaMixin`, `SourceReference`, `Confidence`, `WorkRunState` shape, and
+  `CleanupPolicy` — no duplicate engines. Remaining Phase 8.2 contracts stay planned.
+
+### v8.2.1 — Prospect Radar contracts: hardening + business/site profiles
 
 - Hardened slice-1 `InteractionBoundary` with deterministic fail-closed normalization
   (mandatory approval classes preserved; permitted never overlaps restricted;
