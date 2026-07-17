@@ -8,6 +8,40 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
+## Claude Code Finalization Session (2026-07-17) — READ FIRST (latest)
+
+**Author:** Claude Code. **Branch:** `phase/8.2-prospect-contact-disclosure-contracts`.
+**origin/main before this session:** `d467eba` (unchanged until the merge below).
+
+**What this session did:**
+
+1. **Recovered + independently reviewed** the interrupted local diff (Copilot then Codex):
+   `prospect_contact.py`, `prospect_disclosure.py`, and their tests. Verified every claimed
+   invariant against code and adversarial tests — the contact/disclosure hardening is
+   complete and correct. Committed as **`bc2ae99`** (`fix: harden Phase 8.2 contact and
+   disclosure readiness`).
+2. **Phase 8.2-wide review** found a real fail-open: the earlier-slice `from_dict` methods
+   silently dropped malformed nested list entries and silently coerced a present-but-malformed
+   nested object to a permissive default (a corrupted `suppression`/`retention` policy became
+   a disabled default — a suppression bypass). Fixed fail-closed across `prospect_interaction`
+   (shared helpers) + `prospect_campaign/identity/business/coverage/lifecycle/scoring/
+   governance`. Added the full synthetic contract journey test
+   (`tests/test_phase82_contract_journey.py`, 27 tests). Committed as **`e235fcd`**
+   (`fix: fail-closed nested parsing across Phase 8.2 contracts + journey test`).
+
+**Validation (this session):** ruff clean; Phase 8.2 targeted **372 passed** (60+64+94+30+53+44
++ 27 journey); full suite **4016 passed, 4 warnings, 0 failed**; docs audit [PASS]; agent
+readiness [PASS]; `git diff --check` clean. The 4 warnings are the pre-existing
+`PytestCollectionWarning`s (unrelated).
+
+**Merge:** after these commits and gates, this session merges the child branch into `main`
+with `--no-ff` (no squash/rebase/amend), re-runs the full gate on merged main, and pushes
+main. No release tag. All Phase 8.2 remains contracts/planning only — **no runtime**
+(no discovery, crawl, browser, MCP, network, contact lookup, outreach, dashboard worker,
+CAPTCHA, proxy evasion, or external side effect occurred).
+
+---
+
 ## Implementation Session Update (2026-07-17, slice-3/4 hardening + contact/disclosure) — READ FIRST
 
 Two branches are now in play (neither merged):
