@@ -1,6 +1,7 @@
-# Prospect QA Scout v1.0.1 — Runtime Architecture
+# Prospect QA Scout v1.1.0 — Runtime Architecture
 
-**Status:** Implemented (Phase 8.3; hardened in 8.3.1). Local, bounded, read-only runtime.
+**Status:** Implemented (Phase 8.3 QA runtime; hardened in 8.3.1; discovery + commercial triage
+added in 8.4). Local, bounded, read-only runtime.
 **Scope:** the first runnable slice of the [Prospect QA Radar spec](PROSPECT_QA_RADAR_SPEC.md).
 It is **not** cloud/SaaS, not unrestricted discovery, not automated outreach, not a deployment,
 not full accessibility certification, and not Lighthouse-level performance.
@@ -52,6 +53,33 @@ A pluggable `BrowserBackend` keeps automated tests deterministic:
   unsupported schemes are aborted; the final URL is re-validated before content is read; rendered
   HTML is byte-bounded; and the browser always closes on error. A marked `playwright_acceptance`
   test exercises the real Chromium path against an allow-listed local fixture.
+
+## Discovery + commercial triage (Phase 8.4)
+
+`core/scout/discovery/` adds a controlled front end to the QA runtime, entrypoints
+`python main.py scout campaign-demo|campaign-plan|campaign-run|providers`:
+
+```
+campaign (Phase 8.2 ProspectCampaign) + budgets
+  → deterministic matrix (country x language x industry x business_type x flow x provider)
+  → providers (fixture / file-import / adapter-ready real; budget + terms + trust gated)
+  → normalize + dedup (Scout URL safety + Phase 8.2 normalize_hostname)
+  → suppression (Phase 8.2 SuppressionPolicy: NO_SCAN blocks all fetch)
+  → cheap technical eligibility (static profiler; never Playwright)
+  → explainable commercial triage (Phase 8.2 LeadScorecard; never authorizes outreach)
+  → bounded top-N promotion INTO the existing Scout QA engine (unchanged, re-validates URLs)
+  → atomic, secret-scanned artifacts + read-only dashboard views
+```
+
+- Providers declare typed metadata (auth by env-var reference only); terms-blocked / disabled /
+  unapproved-live providers never execute. The only built-in live path is an adapter interface
+  that reports a factual readiness state — no scraping fallback. Live discovery is opt-in
+  (`--approve-live-discovery`) and never required by tests.
+- Duplicates, `NO_SCAN`-suppressed, and invalid/private URLs are never fetched. The commercial
+  score ranks candidates for QA only; it never collects contacts or authorizes outreach.
+- No new persistence layer, URL-safety engine, company-identity model, Scout engine, crawler, or
+  dashboard app — everything reuses the existing components. Site-memory / transactional DB,
+  contact intelligence, and outreach remain future-facing (Phases 8.5–8.8).
 
 ## Runtime reuse map
 

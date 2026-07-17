@@ -229,7 +229,27 @@ handoff, not inline here, so this instruction never drifts as the suite grows.
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.3.1 — Prospect QA Scout v1.0.1 (hardened local release, current)
+### v8.4.0 — Prospect QA Scout v1.1.0 (local discovery + commercial-triage release, current)
+
+- **Discovery front end**: `python main.py scout campaign-run|campaign-demo|campaign-plan|
+  providers` extends the Scout runtime from explicit seeds to campaign → controlled discovery →
+  normalization/dedup/suppression → cheap commercial triage → bounded promotion into the existing
+  Scout QA engine. New package `core/scout/discovery/`.
+- **Providers**: a deterministic fixture provider and a bounded, path-confined, secret-scanned
+  file-import provider (CSV/JSON/NDJSON/newline); typed provider metadata (auth by env-var
+  reference only); terms-blocked / disabled / unapproved-live providers never execute; the real
+  provider path is an adapter interface with a factual readiness report (no scraping fallback).
+  Live discovery is opt-in (`--approve-live-discovery`) and never required by tests.
+- **Bounded + explainable**: the campaign matrix and budgets (matrix ceiling, per-provider result
+  budget, candidate/eligible/promoted caps, optional cost ceiling) fail closed; commercial triage
+  uses the Phase 8.2 `LeadScorecard` and **never authorizes contact or outreach**.
+- **Safety**: discovery content is untrusted; duplicates, `NO_SCAN`-suppressed, and invalid/private
+  URLs are never fetched; a promoted candidate never bypasses Scout URL safety; artifacts are
+  content-secret-scanned. Reuses the Phase 8.2 contracts, Scout URL safety/profiler, `RunStore`,
+  and the dashboard — no second engine/persistence/crawler. **Local release; no contact
+  enrichment, outreach, cloud/SaaS, or production deployment.**
+
+### v8.3.1 — Prospect QA Scout v1.0.1 (hardened local release)
 
 - **Dashboard controls now really work**: `scout dashboard --seeds` starts a run owned by one
   `ScoutService`, so pause/resume/cancel/global-kill genuinely drive it and the report is built

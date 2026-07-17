@@ -122,6 +122,21 @@ class RunStore:
         self._safe_component(prospect_id)
         return self._confine("prospects", prospect_id)
 
+    # --- generic root-level artifacts (atomic, path-confined) -------------
+    def save_artifact(self, name: str, obj: Any) -> str:
+        """Atomically write a root-level JSON artifact (e.g. a discovery working file)."""
+        self._safe_component(name)
+        path = self._confine(name)
+        _atomic_write_text(path, json.dumps(obj, indent=2, ensure_ascii=False, sort_keys=True))
+        return str(path.relative_to(self.root)).replace("\\", "/")
+
+    def load_artifact(self, name: str) -> Optional[Any]:
+        self._safe_component(name)
+        path = self._confine(name)
+        if not path.exists():
+            return None
+        return self._load_json(path)
+
     # --- final report (atomic, secret-scanned set) ------------------------
     def report_dir(self) -> Path:
         return self._confine("report")

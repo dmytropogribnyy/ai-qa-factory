@@ -8,7 +8,43 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
-## Phase 8.3.1 — Scout v1.0.1 acceptance hardening — READ FIRST (latest)
+## Phase 8.4 — Discovery + commercial triage (Scout v1.1.0) — READ FIRST (latest)
+
+**Author:** Claude Code. **Branch:** `phase/8.4-discovery-commercial-triage` (from `main@dbe1579`,
+the v1.0.1 release). **`scout-v1.0.0` and `scout-v1.0.1` were not moved.**
+
+Adds the first controlled discovery + commercial-triage runtime (`core/scout/discovery/`,
+`python main.py scout campaign-demo|campaign-plan|campaign-run|providers`) and rebases the roadmap
+on reality.
+
+- **Roadmap rebase.** `PRODUCT_VISION_2026` phase map split into target / implemented (8.0–8.4) /
+  remaining (8.5–8.9, finite); `PROSPECT_QA_RADAR_SPEC` status corrected from "not implemented" to
+  "partially implemented"; explicit Phase 8.4 contract added to `PHASE_CONTRACTS.md`.
+- **Runtime.** campaign (Phase 8.2 `ProspectCampaign`) → bounded matrix + budgets → providers
+  (deterministic fixture + file-import + adapter-ready real, all gated by trust/terms/approval;
+  terms-blocked and unconfigured never execute) → normalize + dedup (Scout URL safety +
+  `normalize_hostname`; uncertain identity held, never merged) → suppression (`SuppressionPolicy`;
+  `NO_SCAN` blocks all fetch) → cheap static technical eligibility → explainable commercial triage
+  (`LeadScorecard`; never authorizes outreach) → bounded top-N promotion into the **unchanged**
+  Scout v1.0.1 engine (re-validates URL safety) → 15 atomic secret-scanned artifacts + read-only
+  dashboard campaign views.
+- **Reuse-first.** No second URL-safety engine, company-identity model, Scout engine, persistence
+  layer, crawler, or dashboard app. Contact intelligence, disclosure, outreach, and a
+  transactional site-memory DB remain deferred (Phases 8.6–8.8).
+
+**Validation (this session, on the branch and merged main):** full suite **4152 passed, 4
+pre-existing `PytestCollectionWarning`s, 0 failed** (was 4124 at v1.0.1; +28 Phase 8.4). ruff
+clean; docs audit `[PASS]`; agent readiness `[PASS]`; `git diff --check` clean. Deterministic
+discovery-to-Scout E2E green (`pytest tests/test_phase84_discovery_e2e.py`; `python main.py scout
+campaign-demo` → COMPLETED, 3 promoted, 1 held). The Scout v1.0.1 QA demo (`scout demo` → v1.1.0
+COMPLETED) and the real Playwright acceptance (2 passed) still pass. Playwright stays optional.
+**Local release only** — no contact enrichment/discovery, outreach, cloud/SaaS, or deployment.
+Merged to `main` with `--no-ff` and tagged `scout-v1.1.0` (new tag; `scout-v1.0.0`/`scout-v1.0.1`
+untouched); exact merged-main HEAD/tag are in the final report.
+
+---
+
+## Phase 8.3.1 — Scout v1.0.1 acceptance hardening — READ FIRST (previous)
 
 **Author:** Claude Code. **Branch:** `fix/scout-v1.0.1-acceptance-hardening` (from `main@3035cf4`,
 the v1.0.0 release). **`scout-v1.0.0` was not moved.**

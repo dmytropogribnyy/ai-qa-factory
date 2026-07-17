@@ -172,7 +172,13 @@ def _print_summary(state, summary) -> None:
         print(f"  [{row['priority']}] {row['url']}  defects={row['verified_defects']}")
 
 
+_DISCOVERY_ACTIONS = frozenset({"campaign-demo", "campaign-plan", "campaign-run", "providers"})
+
+
 def run_scout_cli(args) -> int:
+    if args.action in _DISCOVERY_ACTIONS:
+        from core.scout.discovery.cli import run_discovery_cli
+        return run_discovery_cli(args)
     return {
         "run": cmd_run, "demo": cmd_demo, "dashboard": cmd_dashboard,
         "control": cmd_control, "smoke": cmd_smoke,
