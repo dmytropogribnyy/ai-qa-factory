@@ -22,6 +22,9 @@ from core.schemas.prospect_coverage import (
     SiteFingerprint,
 )
 
+# sha256("") — a valid 64-hex digest used across fingerprint tests.
+_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
 
 class TestBusinessContext:
     def test_unknown_classification_is_explicit_default(self):
@@ -226,9 +229,44 @@ class TestCoverageMap:
 
 class TestSiteFingerprint:
     def test_defaults_and_round_trip(self):
-        fp = SiteFingerprint(subject_ref="example.com", content_fingerprint="abc123")
+        fp = SiteFingerprint(subject_ref="example.com", content_fingerprint=_SHA256)
         assert fp.comparison_status == "unknown"
+        assert fp.fingerprint_algorithm == "sha256"
         assert SiteFingerprint.from_dict(fp.to_dict()).to_dict() == fp.to_dict()
+
+    def test_empty_planning_values_allowed(self):
+        # An incomplete planning record may leave fingerprint values empty.
+        fp = SiteFingerprint(subject_ref="example.com")
+        assert fp.content_fingerprint == ""
+        assert SiteFingerprint.from_dict(fp.to_dict()).to_dict() == fp.to_dict()
+
+    def test_valid_sha256_digest_accepted(self):
+        fp = SiteFingerprint(
+            content_fingerprint=_SHA256,
+            structural_fingerprint=_SHA256,
+            commercial_flow_fingerprint=_SHA256,
+        )
+        assert fp.content_fingerprint == _SHA256
+
+    def test_invalid_digest_length_rejected(self):
+        with pytest.raises(ValueError):
+            SiteFingerprint(content_fingerprint="abc123")
+
+    def test_non_hex_digest_rejected(self):
+        with pytest.raises(ValueError):
+            SiteFingerprint(content_fingerprint="z" * 64)
+
+    def test_raw_secret_in_fingerprint_value_rejected(self):
+        with pytest.raises(ValueError):
+            SiteFingerprint(structural_fingerprint="https://user:pass@example.com/path")
+
+    def test_digest_case_normalized_lowercase(self):
+        fp = SiteFingerprint(content_fingerprint=_SHA256.upper())
+        assert fp.content_fingerprint == _SHA256
+
+    def test_unsupported_algorithm_rejected(self):
+        with pytest.raises(ValueError):
+            SiteFingerprint(fingerprint_algorithm="md5", content_fingerprint="a" * 32)
 
     def test_inputs_are_deterministic(self):
         fp = SiteFingerprint(fingerprint_inputs=["b", "a", "b", "c"])
@@ -266,6 +304,102 @@ class TestSiteFingerprint:
         b = SiteFingerprint()
         a.notes.append("x")
         assert b.notes == []
+
+
+class TestSlice2Hardening:
+    """Slice-2 hardening invariants (A1, A2, A4, A5)."""
+
+    # --- A1: business type vs resource type are independent vocabularies ---
+    def test_business_type_and_resource_type_independent(self):
+        bc = BusinessContext(business_type="clinic")
+        sp = SiteProfile(resource_type="booking_site")
+        assert bc.business_type == "clinic"
+        assert sp.resource_type == "booking_site"
+
+    def test_business_only_value_rejected_as_resource(self):
+        BusinessContext(business_type="clinic")
+        with pytest.raises(ValueError):
+            SiteProfile(resource_type="clinic")
+
+    def test_resource_only_value_rejected_as_business(self):
+        SiteProfile(resource_type="booking_site")
+        with pytest.raises(ValueError):
+            BusinessContext(business_type="booking_site")
+
+    def test_backward_compatible_shared_values_still_accepted(self):
+        assert BusinessContext(business_type="ecommerce").business_type == "ecommerce"
+        assert SiteProfile(resource_type="saas").resource_type == "saas"
+
+    # --- A2: site surface consistency ---
+    def test_overlapping_surfaces_rejected(self):
+        with pytest.raises(ValueError):
+            SiteProfile(
+                public_surfaces=["/shared"],
+                authenticated_surfaces=["/shared"],
+                access_classification="partially_protected",
+            )
+
+    def test_surfaces_deduplicated(self):
+        sp = SiteProfile(
+            public_surfaces=["/", "/", "/products"],
+            authenticated_surfaces=["/account", "/account"],
+            access_classification="partially_protected",
+        )
+        assert sp.public_surfaces == ["/", "/products"]
+        assert sp.authenticated_surfaces == ["/account"]
+
+    def test_public_open_cannot_have_authenticated_surfaces(self):
+        with pytest.raises(ValueError):
+            SiteProfile(
+                access_classification="public_open",
+                authenticated_surfaces=["/account"],
+            )
+
+    def test_partially_protected_allows_disjoint_both(self):
+        sp = SiteProfile(
+            public_surfaces=["/"],
+            authenticated_surfaces=["/account"],
+            access_classification="partially_protected",
+        )
+        assert sp.public_surfaces == ["/"]
+        assert sp.authenticated_surfaces == ["/account"]
+        assert SiteProfile.from_dict(sp.to_dict()).to_dict() == sp.to_dict()
+
+    # --- A4: destructive is never a planned interaction class ---
+    def test_destructive_planned_class_rejected(self):
+        with pytest.raises(ValueError):
+            BusinessFlowProfile(planned_interaction_action_class="DESTRUCTIVE")
+
+    def test_non_destructive_planned_classes_allowed(self):
+        for cls in (
+            "READ_ONLY", "REVERSIBLE_SESSION_WRITE", "POTENTIAL_BUSINESS_SIDE_EFFECT",
+            "EXTERNAL_COMMUNICATION", "FINANCIAL",
+        ):
+            f = BusinessFlowProfile(planned_interaction_action_class=cls)
+            assert f.planned_interaction_action_class == cls
+
+    # --- A5: coverage contract hygiene ---
+    def test_empty_area_rejected(self):
+        with pytest.raises(ValueError):
+            CoverageArea(area="   ")
+
+    def test_blank_evidence_ref_rejected(self):
+        with pytest.raises(ValueError):
+            CoverageArea(area="a11y", status="COVERED", evidence_refs=["  "])
+
+    def test_covered_with_blank_verification_rejected(self):
+        with pytest.raises(ValueError):
+            CoverageArea(area="a11y", status="COVERED", verification_ref="   ")
+
+    def test_capability_and_evidence_refs_deduped(self):
+        area = CoverageArea(
+            area="perf",
+            status="COVERED",
+            evidence_refs=["EV-1", "EV-1", "EV-2"],
+            capability_refs=["web_navigation", "web_navigation"],
+        )
+        assert area.evidence_refs == ["EV-1", "EV-2"]
+        assert area.capability_refs == ["web_navigation"]
 
 
 class TestExistingSchemaCompatibility:

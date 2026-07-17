@@ -37,17 +37,30 @@ from core.schemas.prospect_interaction import (
 # Reused confidence vocabulary (values of the existing Confidence enum).
 CONFIDENCE_LEVELS = frozenset(c.value for c in Confidence)
 
-# Shared business/site resource taxonomy. "unknown" keeps classification explicit.
+# Business/organization taxonomy (the KIND of commercial entity). Distinct from
+# RESOURCE_TYPES (the kind of digital resource). Older values are retained for backward
+# compatibility; richer categories were added in slice-2 hardening (A1).
+BUSINESS_TYPES = frozenset({
+    "unknown",
+    # backward-compatible values previously accepted for business_type:
+    "ecommerce", "saas", "marketplace", "local_service", "lead_generation",
+    "content_media", "booking", "other",
+    # richer organization categories:
+    "ecommerce_business", "saas_company", "marketplace_operator", "agency",
+    "professional_services", "education", "real_estate", "hospitality", "hotel",
+    "clinic", "restaurant", "personal_brand", "startup_mvp",
+})
+
+# Digital-resource taxonomy (the KIND of site/application). Distinct from BUSINESS_TYPES.
+# Older values retained for backward compatibility.
 RESOURCE_TYPES = frozenset({
     "unknown",
-    "ecommerce",
-    "saas",
-    "local_service",
-    "marketplace",
-    "content_media",
-    "booking",
-    "lead_generation",
-    "other",
+    # backward-compatible values previously accepted for resource_type:
+    "ecommerce", "saas", "local_service", "marketplace", "content_media", "booking",
+    "lead_generation", "other",
+    # richer resource categories:
+    "corporate_site", "ecommerce_site", "saas_marketing_site", "web_application",
+    "booking_site", "premium_landing", "public_app_area", "authenticated_app",
 })
 
 BUSINESS_MODELS = frozenset({
@@ -100,6 +113,17 @@ def _require_subset(values: List[str], allowed: frozenset[str], field_name: str)
             raise ValueError(f"Unknown value {value!r} in {field_name}")
 
 
+def _dedup(seq: List[str]) -> List[str]:
+    """Order-preserving de-duplication."""
+    seen: set[str] = set()
+    out: List[str] = []
+    for item in seq:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
 @dataclass
 class BusinessContext(SchemaMixin):
     """Observed / inferred commercial context for a prospect (planning-only).
@@ -124,7 +148,7 @@ class BusinessContext(SchemaMixin):
     notes: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if self.business_type not in RESOURCE_TYPES:
+        if self.business_type not in BUSINESS_TYPES:
             raise ValueError(f"Unknown business_type: {self.business_type!r}")
         if self.business_model not in BUSINESS_MODELS:
             raise ValueError(f"Unknown business_model: {self.business_model!r}")
@@ -201,6 +225,20 @@ class SiteProfile(SchemaMixin):
             raise ValueError(
                 f"Unknown classification_confidence: {self.classification_confidence!r}"
             )
+        # Surface consistency (A2): de-duplicate, forbid a route appearing in both
+        # lists, and forbid public_open coexisting with authenticated surfaces.
+        self.public_surfaces = _dedup(self.public_surfaces)
+        self.authenticated_surfaces = _dedup(self.authenticated_surfaces)
+        overlap = set(self.public_surfaces) & set(self.authenticated_surfaces)
+        if overlap:
+            raise ValueError(
+                "a surface cannot be both public and authenticated: "
+                f"{sorted(overlap)}"
+            )
+        if self.access_classification == "public_open" and self.authenticated_surfaces:
+            raise ValueError(
+                "access_classification 'public_open' cannot have authenticated surfaces"
+            )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SiteProfile":
@@ -240,6 +278,14 @@ class BusinessFlowProfile(SchemaMixin):
             raise ValueError(
                 "Unknown planned_interaction_action_class: "
                 f"{self.planned_interaction_action_class!r}"
+            )
+        # A planned Scout interaction is never destructive. This field describes the
+        # planned Prospect Radar interaction class, not what the site itself can do;
+        # actual permission is governed only by InteractionBoundary.
+        if self.planned_interaction_action_class == InteractionActionClass.DESTRUCTIVE.value:
+            raise ValueError(
+                "DESTRUCTIVE is not a valid planned_interaction_action_class for a "
+                "prospect flow"
             )
 
     @classmethod

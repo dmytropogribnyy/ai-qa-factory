@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict, List
 
 from core.schemas.base import SchemaMixin
@@ -52,6 +53,17 @@ COVERAGE_PLANNING_SAFE_STATUSES = frozenset({
 })
 
 COMPARISON_STATUSES = frozenset({"unknown", "new", "unchanged", "changed"})
+
+# Supported fingerprint digest algorithms and their required hex length. Fingerprint
+# values are opaque digests produced by a future runtime; the schema never hashes.
+SUPPORTED_FINGERPRINT_ALGORITHMS = frozenset({"sha256"})
+_DIGEST_HEX_LENGTHS = {"sha256": 64}
+_HEX_RE = re.compile(r"^[0-9a-f]+$")
+_FINGERPRINT_VALUE_FIELDS = (
+    "content_fingerprint",
+    "structural_fingerprint",
+    "commercial_flow_fingerprint",
+)
 
 # Terms that must never appear in fingerprint inputs (no secrets / session / volatile
 # browser state may be captured into a fingerprint).
@@ -85,6 +97,17 @@ def _require_subset(values: List[str], allowed: frozenset[str], field_name: str)
             raise ValueError(f"Unknown value {value!r} in {field_name}")
 
 
+def _dedup(seq: List[str]) -> List[str]:
+    """Order-preserving de-duplication."""
+    seen: set[str] = set()
+    out: List[str] = []
+    for item in seq:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
 @dataclass
 class CoverageArea(SchemaMixin):
     """One QA coverage area with a fail-closed status (planning-only).
@@ -105,13 +128,23 @@ class CoverageArea(SchemaMixin):
     def __post_init__(self) -> None:
         if self.status not in COVERAGE_STATUSES:
             raise ValueError(f"Unknown coverage status: {self.status!r}")
+        if not self.area.strip():
+            raise ValueError("CoverageArea.area must be a non-empty string")
+        # Deterministic de-duplication + capability validation.
+        self.capability_refs = _dedup(self.capability_refs)
         _require_subset(self.capability_refs, ATOMIC_CAPABILITIES, "capability_refs")
+        self.evidence_refs = _dedup(self.evidence_refs)
+        for ref in self.evidence_refs:
+            if not ref.strip():
+                raise ValueError("evidence_refs entries must be non-empty strings")
+        # COVERED/PARTIAL assert observed coverage: they require a non-blank evidence or
+        # verification reference (a blank placeholder is rejected).
         if self.status in _COVERAGE_REQUIRES_EVIDENCE and not (
-            self.evidence_refs or self.verification_ref.strip()
+            any(e.strip() for e in self.evidence_refs) or self.verification_ref.strip()
         ):
             raise ValueError(
-                f"coverage status {self.status!r} requires an evidence or verification "
-                "reference"
+                f"coverage status {self.status!r} requires a non-empty evidence or "
+                "verification reference"
             )
 
     @classmethod
@@ -162,6 +195,7 @@ class SiteFingerprint(SchemaMixin):
 
     schema_version: str = PROSPECT_CONTRACT_SCHEMA_VERSION
     subject_ref: str = ""
+    fingerprint_algorithm: str = "sha256"
     content_fingerprint: str = ""
     structural_fingerprint: str = ""
     commercial_flow_fingerprint: str = ""
@@ -175,6 +209,25 @@ class SiteFingerprint(SchemaMixin):
     def __post_init__(self) -> None:
         if self.comparison_status not in COMPARISON_STATUSES:
             raise ValueError(f"Unknown comparison_status: {self.comparison_status!r}")
+        if self.fingerprint_algorithm not in SUPPORTED_FINGERPRINT_ALGORITHMS:
+            raise ValueError(
+                f"Unsupported fingerprint_algorithm: {self.fingerprint_algorithm!r}"
+            )
+        # Fingerprint value fields must be empty (incomplete planning record) or a valid
+        # digest of the selected algorithm. This rejects raw URLs, secrets, cookies,
+        # tokens, user data, or prose (they are not hex digests of the right length).
+        expected_len = _DIGEST_HEX_LENGTHS[self.fingerprint_algorithm]
+        for name in _FINGERPRINT_VALUE_FIELDS:
+            raw = getattr(self, name)
+            if not raw:
+                continue
+            normalized = raw.strip().lower()
+            if len(normalized) != expected_len or not _HEX_RE.match(normalized):
+                raise ValueError(
+                    f"{name} must be a {self.fingerprint_algorithm} hex digest "
+                    f"({expected_len} hex chars), got {raw!r}"
+                )
+            setattr(self, name, normalized)  # deterministic lowercase normalization
         for item in self.fingerprint_inputs:
             lowered = item.lower()
             for term in _FORBIDDEN_FINGERPRINT_TERMS:
@@ -189,6 +242,7 @@ class SiteFingerprint(SchemaMixin):
         return {
             "schema_version": self.schema_version,
             "subject_ref": self.subject_ref,
+            "fingerprint_algorithm": self.fingerprint_algorithm,
             "content_fingerprint": self.content_fingerprint,
             "structural_fingerprint": self.structural_fingerprint,
             "commercial_flow_fingerprint": self.commercial_flow_fingerprint,
@@ -203,10 +257,10 @@ class SiteFingerprint(SchemaMixin):
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SiteFingerprint":
         known = {
-            "schema_version", "subject_ref", "content_fingerprint",
-            "structural_fingerprint", "commercial_flow_fingerprint",
-            "fingerprint_inputs", "generated_at", "previous_fingerprint_ref",
-            "comparison_status", "notes",
+            "schema_version", "subject_ref", "fingerprint_algorithm",
+            "content_fingerprint", "structural_fingerprint",
+            "commercial_flow_fingerprint", "fingerprint_inputs", "generated_at",
+            "previous_fingerprint_ref", "comparison_status", "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
         refs = data.get("source_refs") or []
