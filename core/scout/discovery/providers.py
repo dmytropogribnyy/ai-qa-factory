@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,9 +31,9 @@ TRUST_STATUSES = frozenset({"untrusted", "semi_trusted", "trusted"})
 TERMS_STATUSES = frozenset({"not_reviewed", "in_review", "reviewed_approved", "reviewed_blocked"})
 _LOCAL_TYPES = frozenset({"fixture", "file_import"})
 
-# Bound on how much of a raw provider payload we ever retain (debug only, sanitized).
-_MAX_RAW_CHARS = 2000
 _MAX_FILE_BYTES = 5 * 1024 * 1024
+# An auth reference must look like an environment-variable name, never a secret value.
+_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
 
 class DiscoveryError(Exception):
@@ -84,9 +85,8 @@ class ProviderMetadata:
                 raise DiscoveryError(f"{name} cannot be negative")
         if self.cost_per_result_usd < 0:
             raise DiscoveryError("cost_per_result_usd cannot be negative")
-        # An auth_ref must be a NAME, never a secret value.
-        if self.auth_ref and (":" in self.auth_ref or "/" in self.auth_ref
-                              or len(self.auth_ref) > 64):
+        # An auth_ref must be an environment-variable NAME (UPPER_SNAKE), never a secret value.
+        if self.auth_ref and not _ENV_NAME_RE.match(self.auth_ref):
             raise DiscoveryError("auth_ref must be an environment-variable name, not a value")
 
     @property
