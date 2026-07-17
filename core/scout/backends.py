@@ -41,13 +41,14 @@ class FormObservation:
     field_count: int = 0
     has_required: bool = False
     input_types: List[str] = field(default_factory=list)
+    field_names: List[str] = field(default_factory=list)
     submit_labels: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "method": self.method, "action": self.action, "field_count": self.field_count,
             "has_required": self.has_required, "input_types": list(self.input_types),
-            "submit_labels": list(self.submit_labels),
+            "field_names": list(self.field_names), "submit_labels": list(self.submit_labels),
         }
 
 
@@ -70,6 +71,7 @@ class PageObservation:
     robots_meta: str = ""
     x_robots_tag: str = ""
     lang: str = ""
+    has_viewport_meta: bool = False
     headers: Dict[str, str] = field(default_factory=dict)
     headings: List[Dict[str, Any]] = field(default_factory=list)   # {level:int, text:str}
     links: List[str] = field(default_factory=list)                 # absolute hrefs
@@ -117,6 +119,7 @@ class _HtmlExtractor(HTMLParser):
         self.canonical = ""
         self.robots_meta = ""
         self.lang = ""
+        self.has_viewport_meta = False
         self.headings: List[Dict[str, Any]] = []
         self.links: List[str] = []
         self.images: List[Dict[str, str]] = []
@@ -143,6 +146,8 @@ class _HtmlExtractor(HTMLParser):
                 self.meta_description = a.get("content", "")
             elif name == "robots":
                 self.robots_meta = a.get("content", "")
+            elif name == "viewport":
+                self.has_viewport_meta = True
         elif tag == "link" and a.get("rel", "").lower() == "canonical":
             self.canonical = urljoin(self.base_url, a.get("href", ""))
         elif tag == "a" and a.get("href"):
@@ -166,6 +171,8 @@ class _HtmlExtractor(HTMLParser):
             self._cur_form.field_count += 1
             itype = a.get("type", "text").lower() if tag == "input" else tag
             self._cur_form.input_types.append(itype)
+            if a.get("name"):
+                self._cur_form.field_names.append(a["name"].lower())
             if "required" in a:
                 self._cur_form.has_required = True
             has_label = bool(a.get("aria-label") or a.get("aria-labelledby") or a.get("title") or a.get("id"))
@@ -211,6 +218,7 @@ def _parse_html(base_url: str, html: str, obs: PageObservation) -> None:
     obs.canonical = ex.canonical
     obs.robots_meta = ex.robots_meta
     obs.lang = ex.lang
+    obs.has_viewport_meta = ex.has_viewport_meta
     obs.headings = ex.headings
     obs.links = list(dict.fromkeys(ex.links))
     obs.images = ex.images
