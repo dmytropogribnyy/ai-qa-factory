@@ -120,3 +120,24 @@ def test_no_secret_leak_across_artifacts_and_db(tmp_path):
     for p in tmp_path.rglob("*"):
         if p.is_file():
             assert b"secretcookievalue" not in p.read_bytes(), f"leak in {p}"
+
+
+def test_dashboard_presend_view_has_no_send_button(tmp_path):
+    import urllib.request
+
+    from core.scout.dashboard import start_dashboard
+    from core.scout.service import ScoutService
+    _run(tmp_path)
+    service = ScoutService(str(tmp_path))
+    service.attach("campaign-presend")
+    server, url = start_dashboard(service)
+    try:
+        with urllib.request.urlopen(url + "/api/presend", timeout=5) as r:
+            data = json.loads(r.read())
+            assert data["findings"] >= 1 and data["any_send_control"] is False
+        with urllib.request.urlopen(url + "/", timeout=5) as r:
+            html = r.read().decode("utf-8")
+        assert "Nothing is sent" in html and "no send button" in html.lower()
+        assert "send button" not in html.replace("no send button", "")  # no actual send control
+    finally:
+        server.shutdown()
