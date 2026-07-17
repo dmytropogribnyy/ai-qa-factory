@@ -1,0 +1,88 @@
+name: CI
+
+# Deterministic + browser acceptance for AI QA Factory / ARK Prospect QA Radar.
+# CI never sends an external message, never uses live provider credentials, never contacts a real
+# third-party target, and publishes no secrets. All sending in tests uses the confined local sink.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-deterministic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Ruff
+        run: python -m ruff check .
+      - name: Full deterministic tests (browser acceptance auto-skips without playwright/axe)
+        env:
+          LLM_MODE: mock
+          MODEL_PROFILE: mock
+        run: python -m pytest tests/ -q
+      - name: Docs audit
+        run: python tools/docs_audit.py --no-write
+      - name: Agent readiness audit
+        run: python tools/agent_readiness_audit.py
+      - name: Whitespace check
+        run: git diff --check
+      - name: Scout + discovery + pre-send + radar demos (no network, nothing sent)
+        run: |
+          python main.py scout demo
+          python main.py scout campaign-demo
+          python main.py scout presend-demo
+          python main.py scout radar-demo
+          python main.py scout mcp-audit --output outputs
+
+  browser-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install core + optional browser/axe dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install playwright axe-core-python
+          python -m playwright install --with-deps chromium
+      - name: Real local Playwright + axe + performance acceptance (local fixtures only)
+        env:
+          LLM_MODE: mock
+          MODEL_PROFILE: mock
+        run: |
+          python -m pytest -m playwright_acceptance -q
+          python -m pytest -m final1_browser_acceptance -q
+
+  provider-contract:
+    # Fake adapters + local sink only. No live credentials, no real recipient, no external message.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Communication + MCP contract tests (local sink / fake adapters)
+        env:
+          LLM_MODE: mock
+          MODEL_PROFILE: mock
+        run: python -m pytest tests/test_final2_send.py tests/test_final2_e2e.py
+          tests/test_final2_mcp_integration.py tests/test_final2_events.py -q

@@ -25,7 +25,7 @@ class MigrationError(MemoryError):
     pass
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Each migration is (version, [DDL statements]). Applied atomically in ascending order.
 _MIGRATION_1: List[str] = [
@@ -141,7 +141,95 @@ _MIGRATION_1: List[str] = [
     "CREATE INDEX idx_jobs_queue_state ON jobs(queue, state)",
 ]
 
-MIGRATIONS: List[Tuple[int, List[str]]] = [(1, _MIGRATION_1)]
+# Final Phase II — approved communication history (additive; v1 tables + no-send drafts kept).
+_MIGRATION_2: List[str] = [
+    """CREATE TABLE draft_revisions (
+        revision_id TEXT PRIMARY KEY, draft_id TEXT NOT NULL, revision_number INTEGER NOT NULL,
+        company_id TEXT NOT NULL, contact_id TEXT NOT NULL DEFAULT '', channel TEXT NOT NULL,
+        finding_id TEXT NOT NULL DEFAULT '', evidence_ids TEXT NOT NULL DEFAULT '[]',
+        recipient_hash TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '', body_hash TEXT NOT NULL DEFAULT '',
+        disclosure_hash TEXT NOT NULL DEFAULT '', finding_hash TEXT NOT NULL DEFAULT '',
+        evidence_hash TEXT NOT NULL DEFAULT '', contact_provenance_hash TEXT NOT NULL DEFAULT '',
+        suppression_hash TEXT NOT NULL DEFAULT '', generated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL DEFAULT '', creator TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'DRAFT', superseded INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE,
+        UNIQUE (draft_id, revision_number)
+    )""",
+    """CREATE TABLE approval_records (
+        approval_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL, recipient_hash TEXT NOT NULL,
+        body_hash TEXT NOT NULL, disclosure_hash TEXT NOT NULL, finding_hash TEXT NOT NULL,
+        evidence_hash TEXT NOT NULL, contact_provenance_hash TEXT NOT NULL,
+        suppression_hash TEXT NOT NULL, channel TEXT NOT NULL, reviewer TEXT NOT NULL,
+        decision TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', approved_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL DEFAULT '', invalidated_at TEXT NOT NULL DEFAULT '',
+        invalidation_reason TEXT NOT NULL DEFAULT '', reviewed_content_hash TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'PENDING', single_use INTEGER NOT NULL DEFAULT 1,
+        consumed INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (revision_id) REFERENCES draft_revisions(revision_id) ON DELETE CASCADE,
+        CHECK (consumed IN (0,1))
+    )""",
+    """CREATE TABLE outbound_messages (
+        message_id TEXT PRIMARY KEY, revision_id TEXT NOT NULL, approval_id TEXT NOT NULL,
+        company_id TEXT NOT NULL, contact_id TEXT NOT NULL DEFAULT '', channel TEXT NOT NULL,
+        provider_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'PREPARED',
+        provider_message_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+        reserved_at TEXT NOT NULL DEFAULT '', sent_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (revision_id) REFERENCES draft_revisions(revision_id) ON DELETE CASCADE,
+        FOREIGN KEY (approval_id) REFERENCES approval_records(approval_id) ON DELETE CASCADE,
+        UNIQUE (idempotency_key)
+    )""",
+    """CREATE TABLE send_attempts (
+        attempt_id TEXT PRIMARY KEY, message_id TEXT NOT NULL, provider TEXT NOT NULL,
+        request_hash TEXT NOT NULL DEFAULT '', idempotency_key TEXT NOT NULL DEFAULT '',
+        attempt_number INTEGER NOT NULL DEFAULT 1, started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL DEFAULT '',
+        provider_response_ref TEXT NOT NULL DEFAULT '', ambiguity_state TEXT NOT NULL DEFAULT '',
+        error TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (message_id) REFERENCES outbound_messages(message_id) ON DELETE CASCADE
+    )""",
+    """CREATE TABLE provider_events (
+        event_id TEXT PRIMARY KEY, provider TEXT NOT NULL DEFAULT '',
+        provider_version TEXT NOT NULL DEFAULT '', message_ref TEXT NOT NULL DEFAULT '',
+        thread_ref TEXT NOT NULL DEFAULT '', normalized_type TEXT NOT NULL,
+        provider_ts TEXT NOT NULL DEFAULT '', received_ts TEXT NOT NULL,
+        metadata TEXT NOT NULL DEFAULT '{}', signature_status TEXT NOT NULL DEFAULT 'n/a',
+        dedup_key TEXT NOT NULL, processing_result TEXT NOT NULL DEFAULT '',
+        UNIQUE (dedup_key)
+    )""",
+    """CREATE TABLE contact_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, contact_id TEXT NOT NULL, company_id TEXT NOT NULL,
+        event_type TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', at TEXT NOT NULL,
+        FOREIGN KEY (contact_id) REFERENCES contacts(contact_id) ON DELETE CASCADE
+    )""",
+    """CREATE TABLE followup_plans (
+        plan_id TEXT PRIMARY KEY, company_id TEXT NOT NULL, contact_id TEXT NOT NULL DEFAULT '',
+        parent_message_id TEXT NOT NULL DEFAULT '', sequence_no INTEGER NOT NULL DEFAULT 1,
+        state TEXT NOT NULL DEFAULT 'ELIGIBLE', reason TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE
+    )""",
+    """CREATE TABLE commercial_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, company_id TEXT NOT NULL DEFAULT '',
+        event_type TEXT NOT NULL, value REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'fixture', at TEXT NOT NULL
+    )""",
+    """CREATE TABLE outreach_controls (
+        scope TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'DISABLED', extra TEXT NOT NULL DEFAULT '{}'
+    )""",
+    """CREATE TABLE recipient_allowlist (
+        normalized_value TEXT PRIMARY KEY, note TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL DEFAULT ''
+    )""",
+    # Sending is DISABLED by default: seed the global outreach control off.
+    "INSERT INTO outreach_controls (scope, state) VALUES ('__global_outreach__', 'DISABLED')",
+    "CREATE INDEX idx_revisions_draft ON draft_revisions(draft_id)",
+    "CREATE INDEX idx_messages_state ON outbound_messages(state)",
+    "CREATE INDEX idx_provider_events_type ON provider_events(normalized_type)",
+]
+
+MIGRATIONS: List[Tuple[int, List[str]]] = [(1, _MIGRATION_1), (2, _MIGRATION_2)]
 
 
 class MemoryDB:

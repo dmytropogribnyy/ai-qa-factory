@@ -129,6 +129,28 @@ class MemoryRepository:
     def contacts_for(self, company_id: str) -> List[sqlite3.Row]:
         return self.db.query("SELECT * FROM contacts WHERE company_id=?", (company_id,))
 
+    def get_contact(self, contact_id: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM contacts WHERE contact_id=?", (contact_id,))
+        return dict(rows[0]) if rows else None
+
+    def set_contact_status(self, contact_id: str, status: str) -> None:
+        with self.db.transaction() as c:
+            c.execute("UPDATE contacts SET status=? WHERE contact_id=?", (status, contact_id))
+
+    def get_finding(self, finding_id: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM findings WHERE finding_id=? ORDER BY last_seen_at DESC "
+                             "LIMIT 1", (finding_id,))
+        return dict(rows[0]) if rows else None
+
+    def set_finding_lifecycle(self, finding_id: str, lifecycle_state: str) -> None:
+        with self.db.transaction() as c:
+            c.execute("UPDATE findings SET lifecycle_state=? WHERE finding_id=?",
+                      (lifecycle_state, finding_id))
+
+    def evidence_for_finding(self, finding_id: str) -> List[Dict[str, Any]]:
+        return [dict(r) for r in self.db.query(
+            "SELECT * FROM evidence WHERE finding_id=? ORDER BY evidence_id", (finding_id,))]
+
     # --- offers / disclosure / drafts / review ---------------------------
     def add_offer(self, offer_id: str, company_id: str, offer_type: str, rationale: str,
                   now: str) -> None:

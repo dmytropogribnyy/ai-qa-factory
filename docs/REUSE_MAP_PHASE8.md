@@ -240,3 +240,17 @@ Extends the runtime from explicit seeds to campaign-driven discovery + qualifica
   source; performance uses Playwright's rendered timing (never Lighthouse).
 - **DID NOT BUILD:** any send path, provider send-call, or external-communication worker; a second
   QA/evidence engine; automatic contact enrichment. Sending is Final Phase II.
+
+### Implemented in Final Phase II — approved communication + product completion
+
+- **REUSED as-is:** the Final Phase I memory (`MemoryDB`/`MemoryRepository`) extended by an additive
+  schema-v2 migration; the Phase 8.2 `DisclosureManifest` (recomputed in revalidation); the Scout
+  `Sanitizer`/`ContentSecretScanner`/`ArtifactSafeWriter`, `RunStore`, and dashboard/service.
+- **NEW THIN runtime:** `core/scout/comms/` (snapshots, comms repository, providers, controls,
+  revalidation, approval, send, events, follow-up, metrics, responsible disclosure, demo, benchmark,
+  cli) and `core/scout/integrations/` (MCP audit). The RealEmailAdapter is adapter-ready only; the
+  DeterministicLocalSinkProvider drives every test (no network). MCP servers are references-only,
+  disabled by default.
+- **DID NOT BUILD:** autonomous/bulk sending; a live provider send in tests/CI; automatic
+  contact-form/LinkedIn submission; a hosted DB or cloud deployment; a live MCP invocation path.
+  Only the verification-only Final Independent Acceptance pass remains.

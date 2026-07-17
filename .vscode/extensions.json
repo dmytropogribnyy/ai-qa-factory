@@ -1,0 +1,15 @@
+{
+  "// note": "Recommendations only. Nothing is installed automatically. Review before installing.",
+  "recommendations": [
+    "GitHub.copilot",
+    "ms-playwright.playwright",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "charliermarsh.ruff",
+    "SonarSource.sonarlint-vscode",
+    "snyk-security.snyk-vulnerability-scanner",
+    "ms-azuretools.vscode-containers",
+    "eamodio.gitlens"
+  ],
+  "unwantedRecommendations": []
+}

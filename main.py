@@ -226,7 +226,8 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("action", choices=[
         "run", "demo", "dashboard", "control", "smoke",
         "campaign-demo", "campaign-plan", "campaign-run", "providers",
-        "presend-demo", "db-status", "db-backup", "db-restore", "review-list", "doctor"])
+        "presend-demo", "db-status", "db-backup", "db-restore", "review-list", "doctor",
+        "radar-demo", "send", "outreach-control", "comms-status", "mcp-audit"])
     scout_cmd.add_argument("--seeds", help="Comma-separated public URLs (run; or dashboard "
                                            "to start an active run)")
     scout_cmd.add_argument("--url", help="Single public URL (smoke)")
@@ -271,6 +272,19 @@ def main(argv: list[str] | None = None) -> int:
     # Final Phase I — pre-send pipeline + memory database options.
     scout_cmd.add_argument("--db", help="Memory database path (db-status/backup/restore/review-list)")
     scout_cmd.add_argument("--dest", help="Destination path (db-backup/db-restore)")
+    # Final Phase II — approved communication options (sending is disabled by default).
+    scout_cmd.add_argument("--draft-revision", dest="draft_revision", help="Draft revision id (send)")
+    scout_cmd.add_argument("--approval-id", dest="approval_id", default="",
+                           help="Approval id (send; defaults to ap-<revision>)")
+    scout_cmd.add_argument("--provider", help="Outbound provider id (send)")
+    scout_cmd.add_argument("--approve-send", dest="approve_send", action="store_true",
+                           help="Go LIVE (default is dry-run). Requires --reviewer + --confirm-recipient")
+    scout_cmd.add_argument("--reviewer", help="Non-empty reviewer identity (send)")
+    scout_cmd.add_argument("--confirm-recipient", dest="confirm_recipient",
+                           help="Exact normalized recipient confirmation (send)")
+    scout_cmd.add_argument("--scope", help="Outreach-control scope (global|campaign:x|provider:x|channel:x)")
+    scout_cmd.add_argument("--state", choices=["enable", "disable", "pause", "kill"],
+                           help="Outreach-control state")
 
     args = parser.parse_args(argv)
 

@@ -3441,8 +3441,39 @@ COMPANY_IDENTITY, SITE_FINGERPRINT, RECHECK_RESULT, LEAD_SCORECARD, CONTACTS, CO
 SUPPRESSION_CHECK, AUDIT_OFFER, DISCLOSURE_MANIFEST, OUTREACH_DRAFTS.md, REVIEW_QUEUE,
 RETENTION_PLAN, CAMPAIGN_SUMMARY) plus finding-level artifacts and a `memory.db`.
 
-**Pre-send safety:** **nothing is sent** (no Gmail/Resend/SMTP/contact-form/LinkedIn); there is no
-send command or send button. Inferred/named-person contacts are never send-eligible without
-review; `NO_OUTREACH` permanently blocks draft readiness; drafts are PENDING_REVIEW (a DB CHECK
-makes "sent" unrepresentable); reversible-cleanup failure blocks client-safe evidence; and axe /
-performance claims correspond to actually-executed tools.
+**Pre-send safety:** in Final Phase I nothing is sent. In Final Phase II sending is **disabled by
+default** and only via the gated `send` command below. Inferred/named-person contacts are never
+send-eligible without review; `NO_OUTREACH` permanently blocks readiness; reversible-cleanup
+failure blocks client-safe evidence; and axe/performance claims correspond to actually-executed
+tools.
+
+### Approved communication (Final Phase II)
+
+```bash
+# One command: the complete-product demo to a confined LOCAL SINK (nothing sent externally)
+python main.py scout radar-demo
+
+# Enable outreach (DISABLED by default), then send ONE approved revision (dry-run by default)
+python main.py scout outreach-control --db outputs/scout/<c>/memory.db --state enable
+python main.py scout send --db outputs/scout/<c>/memory.db --draft-revision <rev_id> \
+  --provider local_sink                                     # DRY-RUN (default): shows gates, no send
+python main.py scout send --db outputs/scout/<c>/memory.db --draft-revision <rev_id> \
+  --provider local_sink --approve-send --reviewer "you" --confirm-recipient hello@example.com
+
+# Controls, status, MCP audit
+python main.py scout outreach-control --db <memory.db> --state kill    # global kill
+python main.py scout comms-status --db <memory.db>
+python main.py scout mcp-audit --output outputs
+python main.py scout doctor --db <memory.db>                           # + communication readiness
+```
+
+**Send safety (Final Phase II):** sending is **disabled by default** and **dry-run by default**;
+`--approve-send` goes live and requires a non-empty `--reviewer` and an exact `--confirm-recipient`.
+One revision per invocation — **no bulk / "approve all"**. An approval is single-use, expiring, and
+bound to exact recipient/body/finding/evidence/disclosure/suppression hashes; any change invalidates
+it. An immediate pre-send revalidation recomputes every gate from authoritative truth. The message
+is reserved at most once per idempotency key and the provider is called **exactly once**; an
+ambiguous outcome is `OUTCOME_UNKNOWN` and **never auto-retried**. Global/campaign/provider/channel
+controls + global kill are checked at every gate. Opt-out/bounce/complaint immediately block; a
+security finding can never enter outreach. **Exactly-once external delivery is not claimed.** The
+deterministic demo/tests use only a confined local sink — **no real external message is sent**.

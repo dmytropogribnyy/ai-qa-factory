@@ -1,10 +1,10 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 1.9.0
+**Version:** 2.0.0
 
 **Updated:** 2026-07-17
 
-**Phase:** 8.1 + 8.2 complete; 8.3/8.3.1 Scout QA runtime; 8.4 discovery + triage (v1.1.0); Final Phase I complete pre-send pipeline (Prospect QA Radar v1.9.0) implemented. Remaining roadmap frozen at Final Phase II + Final Independent Acceptance.
+**Phase:** Functional roadmap COMPLETE — 8.1/8.2 contracts; 8.3/8.3.1 Scout QA runtime; 8.4 discovery + triage; Final Phase I complete pre-send pipeline; Final Phase II approved communication + product completion (Prospect QA Radar v2.0.0). Only the verification-only Final Independent Acceptance pass remains.
 
 This file is the registry of all documentation tracked by the workbench.
 Run `python tools/docs_audit.py` to verify that these docs are current.
