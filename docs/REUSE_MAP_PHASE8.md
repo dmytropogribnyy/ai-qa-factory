@@ -224,3 +224,19 @@ Extends the runtime from explicit seeds to campaign-driven discovery + qualifica
 - **DID NOT BUILD:** a second URL-safety engine, company-identity model, Scout QA engine,
   persistence layer, crawler, or dashboard app; no contact discovery/enrichment; no outreach
   drafting or sending; no transactional site-memory database (that is Phase 8.6).
+
+### Implemented in Final Phase I — complete pre-send pipeline
+
+- **REUSED as-is:** the Phase 8.2 contracts (`SiteProfile`/`BusinessContext`/`CoverageMap`/
+  `InteractionBoundary`, `ContactRecord`/`ContactProvenance`/`ContactCollection`, `DisclosureItem`/
+  `FindingDisclosurePolicy`/`DisclosureManifest`, `LeadScorecard`/`ScoreDimension`,
+  `SuppressionPolicy`, `SiteFingerprint`); the Scout URL safety, static profiler/checks, `Sanitizer`,
+  `RunStore`, `ArtifactSafeWriter`/`ContentSecretScanner`, and the dashboard/service.
+- **NEW THIN runtime:** `core/scout/pipeline/` (finding/evidence/normalize/lifecycle, planner,
+  static + browser capabilities, fingerprint, retention, presend orchestrator, demo, cli),
+  `core/scout/memory/` (SQLite db/repository/importer — no prior local DB existed),
+  `core/scout/scheduler/` (durable queue — no prior queue existed), `core/scout/outreach/`
+  (contacts/governance/offers/disclosure/drafts). Real axe uses the optional `axe-core-python`
+  source; performance uses Playwright's rendered timing (never Lighthouse).
+- **DID NOT BUILD:** any send path, provider send-call, or external-communication worker; a second
+  QA/evidence engine; automatic contact enrichment. Sending is Final Phase II.

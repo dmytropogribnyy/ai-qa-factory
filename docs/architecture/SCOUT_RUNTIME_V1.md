@@ -1,7 +1,8 @@
-# Prospect QA Scout v1.1.0 — Runtime Architecture
+# Prospect QA Radar v1.9.0 — Runtime Architecture
 
-**Status:** Implemented (Phase 8.3 QA runtime; hardened in 8.3.1; discovery + commercial triage
-added in 8.4). Local, bounded, read-only runtime.
+**Status:** Implemented (Phase 8.3 QA runtime; hardened in 8.3.1; discovery + commercial triage in
+8.4; complete pre-send pipeline in Final Phase I). Local, bounded, read-only runtime. **Nothing is
+sent.**
 **Scope:** the first runnable slice of the [Prospect QA Radar spec](PROSPECT_QA_RADAR_SPEC.md).
 It is **not** cloud/SaaS, not unrestricted discovery, not automated outreach, not a deployment,
 not full accessibility certification, and not Lighthouse-level performance.
@@ -80,6 +81,34 @@ campaign (Phase 8.2 ProspectCampaign) + budgets
 - No new persistence layer, URL-safety engine, company-identity model, Scout engine, crawler, or
   dashboard app — everything reuses the existing components. Site-memory / transactional DB,
   contact intelligence, and outreach remain future-facing (Phases 8.5–8.8).
+
+## Complete pre-send pipeline (Final Phase I)
+
+`core/scout/pipeline/`, `core/scout/memory/`, `core/scout/scheduler/`, and
+`core/scout/outreach/` extend discovery/QA into the full pre-send workflow, entrypoint
+`python main.py scout presend-demo`:
+
+```
+promoted candidate
+  → adaptive deep-QA planner (relevant capabilities per profile; Phase 8.2 profile artifacts)
+  → capabilities: static heuristics (reuse Scout checks) + deep SEO; real axe + real
+    chrome_perf_observation + bounded reversible cart (verified cleanup) — acceptance-proven
+  → normalized findings (merge on shared root impact; provenance preserved) + full lifecycle
+  → evidence center (sanitized, hashed, retention-stamped; secret-bearing payloads rejected)
+  → independent verification (client-safe only when verified+sanitized+clean-session+active)
+  → transactional SQLite company/site memory (migrations, backup/restore, corruption fail-closed)
+  → site fingerprint + recheck classification
+  → public contact intelligence (Phase 8.2 contacts) + suppression governance
+  → audit-offer mapping → controlled disclosure (Phase 8.2 manifest, computed readiness)
+  → outreach DRAFT (structured facts only) → human review queue
+  → durable scheduler/queues for internal work
+```
+
+**Invariants:** nothing is sent (no send command/button/worker; a DB CHECK makes a "sent" draft
+unrepresentable); inferred/named-person contacts are never send-eligible without review;
+`NO_OUTREACH` permanently blocks draft readiness; reversible-cleanup failure blocks client-safe
+evidence; real axe/performance are distinguishable from static heuristics (never "Lighthouse"
+unless Lighthouse runs); the memory DB fails closed on corruption and never silently empties.
 
 ## Runtime reuse map
 
