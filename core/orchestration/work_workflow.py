@@ -190,32 +190,49 @@ class WorkPlanningWorkflow:
     def _guard_overwrite(
         self, target: Path, project_id: str, fresh_only: bool, current_fingerprint: str
     ) -> None:
+        # A generated id must never collide with an existing project directory at all
+        # (the whole outputs/<project_id>/, not just 40_ark_work/).
+        if fresh_only:
+            if target.parent.exists():
+                raise WorkPlanningError(
+                    f"{target.parent} already exists; refusing to reuse a generated id "
+                    "(re-run to get a new id, or pass an explicit --project-id to resume)"
+                )
+            return
+
         if not target.exists():
             return
-        # A generated id must never collide with an existing project directory.
-        if fresh_only:
+
+        # Fail closed: an existing output may be replaced ONLY when a valid packet
+        # proves the same project id AND the exact same input fingerprint. Any
+        # uncertainty blocks and preserves the existing output.
+        packet = target / "WORK_PACKET.json"
+        if not packet.exists():
             raise WorkPlanningError(
-                f"{target} already exists; refusing to overwrite a generated-id run "
-                "(re-run to get a new id, or pass an explicit --project-id to resume)"
+                f"{target} exists but has no WORK_PACKET.json; refusing to overwrite "
+                "(choose a new --project-id or remove it manually)"
             )
-        existing = target / "WORK_PACKET.json"
-        if existing.exists():
-            try:
-                data = json.loads(existing.read_text(encoding="utf-8"))
-            except Exception:
-                return
-            if data.get("project_id") and data["project_id"] != project_id:
-                raise WorkPlanningError(
-                    f"{target} holds a different project ({data['project_id']}); "
-                    "use a new --project-id"
-                )
-            # Explicit id may resume/regenerate ONLY the same logical work request.
-            prior_fp = data.get("input_fingerprint", "")
-            if prior_fp and current_fingerprint and prior_fp != current_fingerprint:
-                raise WorkPlanningError(
-                    f"project id '{project_id}' already holds a different work request "
-                    "(input fingerprint mismatch); choose a new --project-id"
-                )
+        try:
+            data = json.loads(packet.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise WorkPlanningError(
+                f"{packet} is malformed ({exc}); refusing to overwrite; use a new --project-id"
+            ) from exc
+        prior_id = data.get("project_id")
+        prior_fp = data.get("input_fingerprint")
+        if not prior_id or prior_id != project_id:
+            raise WorkPlanningError(
+                f"{target} project id mismatch or missing (found {prior_id!r}); use a new --project-id"
+            )
+        if not prior_fp:
+            raise WorkPlanningError(
+                f"{target} has no input fingerprint; refusing to overwrite; use a new --project-id"
+            )
+        if not current_fingerprint or prior_fp != current_fingerprint:
+            raise WorkPlanningError(
+                f"project id '{project_id}' already holds a different work request "
+                "(input fingerprint mismatch); choose a new --project-id"
+            )
 
     def _render_artifacts(
         self, intake, selection, requirements, missing, packet, state,

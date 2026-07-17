@@ -481,6 +481,156 @@ class TestInputFingerprint:
 
 
 # ---------------------------------------------------------------------------
+# Generated project id must be built from redacted text
+# ---------------------------------------------------------------------------
+
+class TestGeneratedIdRedaction:
+    BRIEF = "password=SuperSecret123 audit the website accessibility"
+
+    def test_secret_absent_everywhere(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        rc = main_module.main(["work", "--text", self.BRIEF, "--json"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "SuperSecret123" not in out                      # JSON stdout
+        obj = json.loads(out)
+        assert "SuperSecret123" not in obj["project_id"]        # generated id
+        assert "SuperSecret123" not in obj["artifact_directory"]
+        # filesystem paths + artifacts
+        for p in tmp_path.rglob("*"):
+            assert "SuperSecret123" not in str(p)
+            if p.is_file():
+                assert "SuperSecret123" not in p.read_text(encoding="utf-8")
+
+    def test_human_stdout_has_no_secret(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        main_module.main(["work", "--text", self.BRIEF])
+        assert "SuperSecret123" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Credential-bearing URL: keep host/path, drop only userinfo
+# ---------------------------------------------------------------------------
+
+class TestCredentialUrlRedaction:
+    def test_userinfo_removed_host_path_kept(self):
+        from core.orchestration.content_safety import redact_intake_text
+        r = redact_intake_text("see https://user:pass@alpha.example.com/a/b")
+        assert "user" not in r.text and "pass@" not in r.text
+        assert "alpha.example.com/a/b" in r.text
+        assert r.secrets_found
+
+    def test_distinct_hosts_distinct_fingerprints_no_creds(self):
+        from core.orchestration.content_safety import redact_intake_text
+        from core.orchestration.work_workflow import input_fingerprint
+        ra = redact_intake_text("https://user:pass@alpha.example.com/a")
+        rb = redact_intake_text("https://user:pass@beta.example.com/b")
+        fa = input_fingerprint(ra.text, "upwork", None)
+        fb = input_fingerprint(rb.text, "upwork", None)
+        assert fa != fb                                  # host/path preserved -> distinct identity
+        assert "pass" not in fa and "pass" not in fb     # digest carries no credentials
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed overwrite guard
+# ---------------------------------------------------------------------------
+
+class TestFailClosedGuard:
+    def _seed_target(self, tmp_path, pid, packet_content):
+        d = tmp_path / pid / "40_ark_work"
+        d.mkdir(parents=True)
+        if packet_content is not None:
+            (d / "WORK_PACKET.json").write_text(packet_content, encoding="utf-8")
+        return d
+
+    def _expect_block(self, tmp_path, pid):
+        from core.orchestration.work_workflow import WorkPlanningError
+        with pytest.raises(WorkPlanningError):
+            _wf(tmp_path).run("Audit the website accessibility", pid)
+
+    def test_missing_packet_blocks(self, tmp_path):
+        self._seed_target(tmp_path, "p", None)
+        self._expect_block(tmp_path, "p")
+
+    def test_malformed_packet_blocks(self, tmp_path):
+        self._seed_target(tmp_path, "p", "{not valid json")
+        self._expect_block(tmp_path, "p")
+
+    def test_missing_fingerprint_blocks(self, tmp_path):
+        self._seed_target(tmp_path, "p", json.dumps({"project_id": "p"}))
+        self._expect_block(tmp_path, "p")
+
+    def test_missing_project_id_blocks(self, tmp_path):
+        self._seed_target(tmp_path, "p", json.dumps({"input_fingerprint": "abc"}))
+        self._expect_block(tmp_path, "p")
+
+    def test_mismatched_project_id_blocks(self, tmp_path):
+        self._seed_target(tmp_path, "p", json.dumps({"project_id": "other", "input_fingerprint": "abc"}))
+        self._expect_block(tmp_path, "p")
+
+    def test_generated_collision_on_project_dir(self, tmp_path):
+        from core.orchestration.work_workflow import WorkPlanningError
+        # outputs/<id>/ exists but no 40_ark_work yet -> generated id must still collide.
+        (tmp_path / "gid").mkdir()
+        (tmp_path / "gid" / "other.txt").write_text("x", encoding="utf-8")
+        with pytest.raises(WorkPlanningError):
+            _wf(tmp_path).run("Audit the website", "gid", fresh_only=True)
+
+
+# ---------------------------------------------------------------------------
+# ArtifactSafeWriter: name confinement + crash recovery
+# ---------------------------------------------------------------------------
+
+class TestWriterHardening:
+    @pytest.mark.parametrize("bad", ["../escape.json", "sub/nested.json", "..\\win.json", "/abs.json"])
+    def test_rejects_unsafe_names(self, tmp_path, bad):
+        with pytest.raises(ArtifactPublishError):
+            ArtifactSafeWriter(tmp_path / "p" / "40_ark_work").publish({bad: "{}"})
+        assert not (tmp_path / "p" / "40_ark_work").exists()
+
+    def test_stale_backup_missing_target_is_restored(self, tmp_path):
+        target = tmp_path / "p" / "40_ark_work"
+        bak = tmp_path / "p" / "40_ark_work.bak_publish"
+        bak.mkdir(parents=True)
+        (bak / "old.md").write_text("recovered", encoding="utf-8")
+        # New publish must recover (not delete) the backup, then publish the new set.
+        ArtifactSafeWriter(target).publish({"new.md": "n"})
+        assert (target / "new.md").exists()
+        assert not bak.exists()   # consumed by recovery+swap, never left dangling
+
+    def test_target_and_backup_both_present_fail_closed(self, tmp_path):
+        target = tmp_path / "p" / "40_ark_work"
+        bak = tmp_path / "p" / "40_ark_work.bak_publish"
+        target.mkdir(parents=True)
+        (target / "t.txt").write_text("t", encoding="utf-8")
+        bak.mkdir(parents=True)
+        (bak / "b.txt").write_text("b", encoding="utf-8")
+        with pytest.raises(ArtifactPublishError):
+            ArtifactSafeWriter(target).publish({"x.md": "x"})
+        # Neither directory is auto-deleted.
+        assert (target / "t.txt").read_text() == "t"
+        assert (bak / "b.txt").read_text() == "b"
+
+    def test_stale_temp_cleaned(self, tmp_path):
+        target = tmp_path / "p" / "40_ark_work"
+        tmp = tmp_path / "p" / "40_ark_work.tmp_publish"
+        target.mkdir(parents=True)
+        (target / "v.md").write_text("v1", encoding="utf-8")
+        tmp.mkdir(parents=True)
+        (tmp / "junk.md").write_text("junk", encoding="utf-8")
+        ArtifactSafeWriter(target).publish({"v.md": "v2"})
+        assert (target / "v.md").read_text() == "v2"
+        assert not tmp.exists()
+
+    def test_no_file_written_outside_target(self, tmp_path):
+        target = tmp_path / "p" / "40_ark_work"
+        ArtifactSafeWriter(target).publish({"a.md": "1", "b.json": "{}"})
+        for f in tmp_path.rglob("*"):
+            if f.is_file():
+                assert target in f.parents
+
+
+# ---------------------------------------------------------------------------
 # State precedence + API approval state
 # ---------------------------------------------------------------------------
 

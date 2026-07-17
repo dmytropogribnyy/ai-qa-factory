@@ -12,13 +12,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.input_context_resolver import InputContextResolver, _redact_secrets
+from core.input_context_resolver import InputContextResolver
 from core.work_request_classifier import WorkRequestClassifier
 from core.schemas.input_map import InputMap
 from core.schemas.work_request import WorkRequest
 from core.schemas.task_classification import TaskClassification
 from core.orchestration.providers import ClockProvider, IdProvider
-from core.orchestration.content_safety import redact_secrets as _redact_content_secrets
+from core.orchestration.content_safety import redact_intake_text
 
 
 @dataclass
@@ -40,12 +40,10 @@ class UniversalWorkIntake:
         self._classifier = WorkRequestClassifier()
 
     def run(self, raw_text: str, project_id: str, source_platform: str = "unknown") -> IntakeResult:
-        # Two-stage redaction at the intake boundary so no unredacted secret ever
-        # reaches WorkRequest.raw_brief or any artifact: URL/webhook creds first,
-        # then the full content-secret set (bearer/api-key/JWT/cookie/password/...).
-        url_redacted, url_found = _redact_secrets(raw_text)
-        redacted, content_found = _redact_content_secrets(url_redacted)
-        secrets_found = url_found or content_found
+        # Single public redactor at the intake boundary so no unredacted secret ever
+        # reaches WorkRequest.raw_brief or any artifact (host/path of URLs preserved).
+        red = redact_intake_text(raw_text)
+        redacted, secrets_found = red.text, red.secrets_found
         input_map = self._resolver.resolve([redacted], project_id)
         # Deterministic identity/timestamps for the input map (production uses real providers).
         input_map.created_at = self._clock.now_iso()

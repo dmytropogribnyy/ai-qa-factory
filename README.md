@@ -239,7 +239,7 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
   filenames); artifacts confined to `outputs/<project_id>/40_ark_work/`.
 - Additive schema fields (resolution status, candidate/discovery, `factory_process_launch_unverified`,
   `ProfileSelection`); `WorkStateManager` enforces transitions + `state_version`.
-- 3599 tests total (36 new Phase 8.1 tests). Still no live MCP client / discovery.
+- 3635 tests total (72 new Phase 8.1 tests). Still no live MCP client / discovery.
 
 ### v8.0.0 — ARK universal orchestration foundation
 

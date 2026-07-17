@@ -68,9 +68,12 @@ def run_work(args) -> int:
 
     # 2. Resolve project id (generate a safe one when omitted; validate either way)
     from core.orchestration.providers import ClockProvider, IdProvider, generate_project_id
+    from core.orchestration.content_safety import redact_intake_text
     generated = args.project_id is None
     if generated:
-        project_id = generate_project_id(raw, IdProvider())
+        # Generate the id from REDACTED text so a secret can never reach the path/stdout/logs.
+        redacted_seed = redact_intake_text(raw).text
+        project_id = generate_project_id(redacted_seed, IdProvider())
     else:
         project_id = args.project_id
     if not _valid_project_id(project_id):

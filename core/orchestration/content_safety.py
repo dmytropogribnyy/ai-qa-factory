@@ -39,25 +39,44 @@ _SECRET_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
 _ALLOWED_PLACEHOLDERS = ("[REDACTED", "ref:", "${", "<pin", "env-var", "<redacted")
 
 
-def redact_secrets(text: str) -> tuple[str, bool]:
-    """Redact every content secret pattern with a safe placeholder.
+# Credential-bearing URL: strip only the userinfo, keep scheme + host + path so
+# classification and fingerprint identity are preserved (distinct hosts stay distinct).
+_CRED_URL = re.compile(r"(https?://)[^\s/@:]+:[^\s/@]+@")
 
-    Returns (redacted_text, secrets_found). Applied at the intake boundary so no
-    unredacted secret reaches any persisted artifact. Uses the same patterns the
-    ContentSecretScanner blocks on, so redacted output passes the pre-publish scan.
+
+@dataclass
+class RedactionResult:
+    text: str
+    secrets_found: bool = False
+
+
+def redact_intake_text(text: str) -> RedactionResult:
+    """Single public intake-boundary redactor.
+
+    Removes secrets while preserving non-secret structure:
+    - credential URLs -> `scheme://[REDACTED_CREDENTIALS]@host/path` (host/path kept);
+    - bearer/api-key/JWT/cookie/password/etc. -> `[REDACTED_<label>]`.
+
+    Used for the generated project-id seed, intake, the input fingerprint, and all
+    persisted content, so no raw secret can reach a path, log, stdout, or artifact.
+    Output passes the ContentSecretScanner (placeholders are allowed).
     """
-    redacted = text
     found = False
+    redacted, n = _CRED_URL.subn(lambda m: f"{m.group(1)}[REDACTED_CREDENTIALS]@", text or "")
+    if n:
+        found = True
     for label, pat in _SECRET_PATTERNS:
+        if label == "basic_auth_url":
+            continue  # handled above, preserving host/path
         def _sub(m: "re.Match[str]", _label: str = label) -> str:
             snippet = m.group(0)
             if any(ph in snippet for ph in _ALLOWED_PLACEHOLDERS):
                 return snippet
             return f"[REDACTED_{_label}]"
-        redacted, n = pat.subn(_sub, redacted)
-        if n:
+        redacted, k = pat.subn(_sub, redacted)
+        if k:
             found = True
-    return redacted, found
+    return RedactionResult(text=redacted, secrets_found=found)
 
 
 @dataclass
@@ -98,13 +117,46 @@ class ArtifactSafeWriter:
         self.target_dir = Path(target_dir)
         self.scanner = scanner or ContentSecretScanner()
 
+    @staticmethod
+    def _validate_names(artifacts: Dict[str, str]) -> None:
+        """Permit flat filenames only — reject separators, traversal, absolute paths."""
+        for name in artifacts:
+            if (
+                not name
+                or "/" in name or "\\" in name
+                or ".." in name
+                or os.path.isabs(name)
+                or Path(name).name != name
+            ):
+                raise ArtifactPublishError(f"unsafe artifact name: {name!r}")
+
+    def _recover_crash_state(self, tmp_dir: Path, bak_dir: Path) -> None:
+        """Resolve leftover state from a previous crash BEFORE touching anything.
+
+        A `.bak_publish` is the last known-good output, never disposable temp:
+        - backup present + target missing  -> restore backup to target (recover);
+        - backup present + target present  -> fail closed (manual review required);
+        - stale temp (no ambiguous backup)  -> safe to remove.
+        """
+        if bak_dir.exists():
+            if not self.target_dir.exists():
+                os.replace(bak_dir, self.target_dir)  # restore last good output
+            else:
+                raise ArtifactPublishError(
+                    f"both {self.target_dir.name} and its backup exist "
+                    f"({bak_dir.name}); manual recovery required, refusing to proceed"
+                )
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+
     def publish(self, artifacts: Dict[str, str]) -> ContentScanResult:
         """Scan content, then publish safely. Raise ArtifactPublishError on secrets.
 
         `artifacts` maps filename -> already-serialized content (JSON/Markdown strings).
 
         Windows-safe strategy (no reliance on overwriting a non-empty directory):
-        1. Scan all content IN MEMORY first — a secret is never written to disk.
+        1. Validate artifact names (flat only); scan all content IN MEMORY — a secret
+           is never written to disk; recover any prior crash state (backup is sacred).
         2. Write the full set into a sibling temp dir; validate completeness.
         3. Move any existing valid output aside to a backup name (os.replace to a
            non-existing path — atomic rename on the same filesystem).
@@ -113,6 +165,7 @@ class ArtifactSafeWriter:
            output is preserved until the new set is fully staged, so a failure can
            never leave a mixed old/new set.
         """
+        self._validate_names(artifacts)
         result = self.scanner.scan_all(artifacts)
         if not result.clean:
             raise ArtifactPublishError(
@@ -123,9 +176,7 @@ class ArtifactSafeWriter:
         parent.mkdir(parents=True, exist_ok=True)
         tmp_dir = parent / (self.target_dir.name + ".tmp_publish")
         bak_dir = parent / (self.target_dir.name + ".bak_publish")
-        for stale in (tmp_dir, bak_dir):
-            if stale.exists():
-                shutil.rmtree(stale)
+        self._recover_crash_state(tmp_dir, bak_dir)
 
         # Stage the complete new set in the temp dir.
         tmp_dir.mkdir(parents=True)

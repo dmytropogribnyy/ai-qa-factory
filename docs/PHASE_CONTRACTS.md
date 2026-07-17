@@ -1950,7 +1950,7 @@ spawning; browser or network activity; subprocess; repository writes outside `ou
 task execution; external communication; runner replacement; delivery approval; entering
 `READY_TO_EXECUTE`/`EXECUTING` or any later state.
 
-**Acceptance criteria:** ruff clean; full pytest green (36 new Phase 8.1 tests); docs audit
+**Acceptance criteria:** ruff clean; full pytest green (72 new Phase 8.1 tests); docs audit
 `[PASS]`; agent readiness `[PASS]`; deterministic byte-identical artifacts under fixed
 clock/ids; guards prove no LLM/network/subprocess/MCP calls; content secret scan + atomic
-rollback verified.
+rollback + backup-recovery + fail-closed overwrite verified.
