@@ -27,7 +27,7 @@ servers:
     enabled: false
     trust_level: semi_trusted
     capability_classes: [read]
-    availability_scopes: [available_to_claude_agent, available_to_factory_process]
+    availability_scopes: [available_to_claude_agent, factory_process_launch_unverified]
     version_policy: pinned
     last_verified_version: ""          # pin before enabling for client work
     upgrade_requires_review: true
@@ -42,7 +42,7 @@ servers:
     enabled: false
     trust_level: semi_trusted
     capability_classes: [read, write]
-    availability_scopes: [available_to_claude_agent, available_to_factory_process]
+    availability_scopes: [available_to_claude_agent, factory_process_launch_unverified]
     version_policy: pinned
     last_verified_version: ""          # live config uses @latest; pin before client use
     upgrade_requires_review: true
@@ -58,7 +58,7 @@ servers:
     enabled: false
     trust_level: semi_trusted
     capability_classes: [read]
-    availability_scopes: [available_to_claude_agent, available_to_factory_process]
+    availability_scopes: [available_to_claude_agent, factory_process_launch_unverified]
     version_policy: pinned
     last_verified_version: "1.6.0"
     upgrade_requires_review: true

@@ -1476,3 +1476,23 @@ auto-enable, authenticate, or mutate any manifest; adding a server is a human-ap
 **8.0-7. Privacy defaults for client work.** Chrome DevTools client profiles use `--isolated`,
 `--no-usage-statistics`, `--no-performance-crux`, and no personal profile; Playwright client
 profiles use isolated mode, scoped roots/origins, and no persistent profile.
+
+---
+
+## Phase 8.1 — planning-only entrypoint safety rules
+
+**8.1-1. Planning never executes.** The `work` command produces a plan only. No LLM in its core
+path, no MCP calls, no `tools/list`, no browser, no network, no subprocess.
+
+**8.1-2. Redact then persist.** Raw input is redacted at intake; artifact content is scanned for
+secrets before an atomic publish. Content secrets block publication (no partial write).
+
+**8.1-3. Confined, validated output.** Artifacts stay under `outputs/<project_id>/40_ark_work/`;
+`project_id` is validated against path traversal and absolute paths; a foreign project in the
+target directory blocks the run.
+
+**8.1-4. No fabricated availability.** MCP-backed capabilities remain candidates
+(`tool_name=""`, `availability_verified=false`, `discovery_required=true`) until Phase 8.3.
+
+**8.1-5. No approval or delivery.** Approvals are surfaced as unresolved; none are granted or
+persisted; the run never enters an execution or delivery state.

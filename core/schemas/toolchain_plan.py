@@ -26,6 +26,17 @@ BACKENDS = frozenset({
     "existing_runner", "playwright_cli", "playwright_mcp", "chrome_devtools_mcp",
 })
 
+# Resolution status of a planned step. Phase 8.1 is planning-only with no live
+# discovery, so an undiscovered MCP tool must stay unresolved (no fake tool names).
+RESOLUTION_STATUSES = frozenset({
+    "existing_backend_available",   # a concrete in-repo backend can realise this now
+    "mcp_server_candidate",         # a manifest server *might* realise it (not verified)
+    "mcp_discovery_required",       # needs Phase 8.3 tools/list before a tool can be named
+    "auth_setup_required",          # server needs Factory-side auth first
+    "capability_missing",           # no backend or server candidate exists
+    "capability_blocked",           # blocked by policy/approval class
+})
+
 CAPABILITY_CLASSES = frozenset({
     "read", "compute", "write", "financial", "external_communication", "destructive",
 })
@@ -75,11 +86,17 @@ class SelectedMCPTool(SchemaMixin):
     """One concrete tool selected for a step, with its resolved backend and policy."""
 
     server_name: str = ""
-    tool_name: str = ""
+    tool_name: str = ""                         # empty for MCP candidates until Phase 8.3 discovery
     capability: str = ""                        # atomic capability this step realises
     capability_class: str = "read"
     backend: str = "existing_runner"
     requires_approval: bool = True
+    # Resolution semantics (Phase 8.1): a manifest server is only a candidate until
+    # live discovery verifies it. availability_verified stays False until Phase 8.3.
+    resolution_status: str = "existing_backend_available"
+    selection_basis: str = ""                   # why this backend/status was chosen
+    discovery_required: bool = False
+    availability_verified: bool = False
     policy: ToolExecutionPolicy = field(default_factory=ToolExecutionPolicy)
     notes: str = ""
 
@@ -91,6 +108,10 @@ class SelectedMCPTool(SchemaMixin):
             "capability_class": self.capability_class,
             "backend": self.backend,
             "requires_approval": self.requires_approval,
+            "resolution_status": self.resolution_status,
+            "selection_basis": self.selection_basis,
+            "discovery_required": self.discovery_required,
+            "availability_verified": self.availability_verified,
             "policy": self.policy.to_dict(),
             "notes": self.notes,
         }
@@ -99,7 +120,8 @@ class SelectedMCPTool(SchemaMixin):
     def from_dict(cls, data: Dict[str, Any]) -> SelectedMCPTool:
         known = {
             "server_name", "tool_name", "capability", "capability_class",
-            "backend", "requires_approval", "notes",
+            "backend", "requires_approval", "resolution_status", "selection_basis",
+            "discovery_required", "availability_verified", "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
         policy = data.get("policy")
@@ -107,7 +129,15 @@ class SelectedMCPTool(SchemaMixin):
             ToolExecutionPolicy.from_dict(policy) if isinstance(policy, dict)
             else ToolExecutionPolicy()
         )
-        return cls(**kwargs)
+        obj = cls(**kwargs)
+        # Safety: an undiscovered MCP candidate can never be rehydrated as verified,
+        # and must not carry a concrete tool name before Phase 8.3 discovery.
+        if obj.resolution_status in (
+            "mcp_server_candidate", "mcp_discovery_required", "auth_setup_required",
+        ):
+            obj.availability_verified = False
+            obj.tool_name = ""
+        return obj
 
 
 @dataclass

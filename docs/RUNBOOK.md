@@ -2661,3 +2661,26 @@ Open `33_client_audit/client_report.md`. Verify:
 - [ ] No credential values in any artifact
 - [ ] All 4 safety blocked cases present in client_report.md
 - [ ] client_report.md labelled as "Draft"
+
+---
+
+## ARK universal work planning (Phase 8.1, planning-only)
+
+Use `python main.py work` to turn a brief into a reviewable plan. It never executes.
+
+1. Provide the brief via exactly one of `--input <file>` / `--text "..."` / `--stdin`.
+2. Give a safe `--project-id` (no separators, not absolute).
+3. Read the outputs under `outputs/<project_id>/40_ark_work/`:
+   - `WORK_SUMMARY.md` — human overview (profile, state, counts).
+   - `NEXT_ACTION.md` — what to provide/approve next.
+   - `APPROVALS_REQUIRED.md` — unresolved approvals (nothing is granted).
+   - `CAPABILITY_PLAN.json` / `TOOLCHAIN_PLAN.json` — planned capabilities/steps (MCP steps
+     stay unresolved until Phase 8.3 discovery; no tool names are fabricated).
+4. Review the plan. Execution is a later, separately-gated phase.
+
+**Checklist:**
+- [ ] Run state is `PLANNED`, `WAITING_FOR_INFORMATION`, or `WAITING_FOR_APPROVAL` (never executing)
+- [ ] MCP steps show empty `tool_name` and `availability_verified=false`
+- [ ] `MCP_CONFIGURED_SERVERS_SNAPSHOT.json` has `live_discovery_performed=false`
+- [ ] No secrets in any artifact (content scan runs before publish)
+- [ ] Artifacts confined to `outputs/<project_id>/40_ark_work/`

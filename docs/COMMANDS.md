@@ -3281,3 +3281,34 @@ python tools/run_auth_demo_workflow.py --project-id my-demo --json
 - **Blocked**: personal account, production account, raw password via CLI, CAPTCHA bypass
 
 **Safety:** `approved_for_client_delivery=False`, `human_review_required=True` always enforced in `AuthDemoResult.__post_init__()`. All scenarios run in planning-only or blocked mode — no real credentials required.
+
+---
+
+## `work` — ARK universal work planning (planning-only) `[implemented]`
+
+Phase 8.1 entrypoint. Produces a planning-only work packet + capability/toolchain plans +
+approvals for a unit of work. No MCP calls, no network, no browser, no execution.
+
+```bash
+python main.py work --input path/to/brief.txt --project-id my-proj
+python main.py work --text "Audit our web app for accessibility" --project-id my-proj
+echo "..." | python main.py work --stdin --project-id my-proj
+```
+
+- Input sources are mutually exclusive: exactly one of `--input` (file) / `--text` / `--stdin`.
+- `--project-id` (required): safe name only — `[A-Za-z0-9._-]`, no path separators, not absolute.
+- `--source-platform` (optional): commercial platform hint (e.g. `upwork`), NOT an input type.
+- `--profile` (optional): capability-profile override (validated; preserves the inferred value).
+- `--json` (optional): redacted machine summary.
+
+**Artifacts** (under `outputs/<project_id>/40_ark_work/`): `INPUT_MAP.json`, `WORK_REQUEST.json`,
+`TASK_CLASSIFICATION.json`, `INTAKE_REPORT.json`, `WORK_PACKET.json`, `WORK_RUN_STATE.json`,
+`CAPABILITY_PLAN.json`, `TOOLCHAIN_PLAN.json`, `MCP_CONFIGURED_SERVERS_SNAPSHOT.json`,
+`WORK_SUMMARY.md`, `AGENT_TASKS.md`, `APPROVALS_REQUIRED.md`, `NEXT_ACTION.md`.
+
+**Exit codes:** `0` planning completed (including WAITING states) · `1` invalid input/config/internal
+· `2` safety block (secret content, forbidden/invalid project id, path escape).
+
+**Safety:** deterministic, no LLM; input redacted at the boundary; artifact content is secret-scanned
+before an atomic publish; MCP servers are candidates only (no discovery); run stays in `PLANNED`/
+`WAITING_*` and never enters execution.
