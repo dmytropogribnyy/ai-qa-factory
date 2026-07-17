@@ -1405,3 +1405,35 @@ explicit `schema_version`) without reusing client-work states; policy shape mode
 reference-only `config/mcp_servers.yaml` manifest (planning candidate, never verified
 runtime). New schemas are imported directly from their modules (Phase 8 convention; not
 re-exported in `core/schemas/__init__.py`). Remaining Phase 8.2 contracts stay planned.
+
+### Slice 1 hardening
+
+`InteractionBoundary` was hardened with deterministic fail-closed normalization: the
+mandatory approval classes (POTENTIAL_BUSINESS_SIDE_EFFECT, EXTERNAL_COMMUNICATION,
+FINANCIAL) can never vanish from both approval-required and blocked; lists are
+de-duplicated and a class can never be both permitted and restricted; permitting
+`REVERSIBLE_SESSION_WRITE` forces `cleanup_required`; `public_access_only` forces
+`authenticated_access_allowed=False`; any enabled side-effect flag requires a non-empty
+`written_authorization_ref` and keeps the matching action class approval-required.
+`DiscoverySourcePolicy` now rejects an unknown `provider_resolution_status` (no silent
+rewrite); `MarketPolicy` rejects `"none"` coexisting with a real outreach channel.
+
+## Phase 8.2 — Prospect Radar planning contracts (slice 2)
+
+Business & site profile contracts (planning only; no runtime, discovery, browser,
+network, MCP, crawler, provider, contact lookup, outreach, or database).
+
+| File | Classes | Note |
+|---|---|---|
+| `prospect_business.py` (new) | `BusinessContext`, `SiteProfile`, `BusinessFlowProfile` | observations only; explicit `unknown` defaults; reuses `Confidence` values + `SourceReference`; capability references validated against `ATOMIC_CAPABILITIES`; never claims ability to pay or that a page was tested |
+| `prospect_coverage.py` (new) | `CoverageArea`, `CoverageMap`, `SiteFingerprint` | QA coverage only (separate from commercial opportunity); `COVERED`/`PARTIAL` require an evidence/verification reference; fingerprints are opaque strings with secret/session inputs rejected and deterministic (sorted) inputs |
+
+**Reuse decisions (verified):** `SchemaMixin` serialization; `Confidence` vocabulary from
+`finding.py` (string-typed, not a new enum); `SourceReference` provenance;
+`InteractionActionClass` for planned flow risk; `ATOMIC_CAPABILITIES` for capability
+references; opaque-string fingerprints following the `WorkPacket.input_fingerprint`
+convention (no in-schema hashing/crawling). `CoverageMap` is a thin new projection rather
+than an extension of `scenario_execution_matrix` (kept intentionally decoupled — QA
+coverage vs. commercial opportunity stay separate). Remaining Phase 8.2 contracts
+(contact/identity, findings/disclosure, scoring/lifecycle, synthetic data, retention/
+suppression/storage-class, dashboard) stay planned.

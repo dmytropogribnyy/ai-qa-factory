@@ -11,11 +11,94 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 ## Implementation Session Update (2026-07-17, continued) — READ FIRST
 
 The human extended this Copilot session and authorized: committing the handoff files,
-pushing the documentation branch, creating an implementation branch, and implementing
-the **first Phase 8.2 contracts slice** (schema/planning only). All of that is done.
-Merge remained prohibited and was not performed.
+pushing the documentation branch, creating an implementation branch, implementing the
+**first Phase 8.2 contracts slice**, then (a further extension) **hardening slice 1** and
+implementing a **second contracts-only slice**. All of that is done (schema/planning
+only). Merge remained prohibited and was not performed.
 
-### Current active state
+### Latest state (Part A hardening + Part B slice 2)
+
+- **Active branch:** `phase/8.2-prospect-core-contracts`
+- **Active branch HEAD:** the tip of that branch (run `git log --oneline -8`).
+- **Base documentation branch:** `phase/8.2-prospect-radar-contracts` @ `6a25288`, pushed.
+- **origin/main:** `d467eba74f478a968415abfa5da39dd43812f973` (unchanged).
+- **Merge state:** neither branch merged.
+
+**Full commit chain (newest last):**
+`d467eba → f13b4f7 → b047ea8 → 6a25288 → bcc1b85 → 4144233 → 9280dfc → 74ecc98 → db772fb → <docs slice-2 tip>`
+
+| Commit | Subject |
+|---|---|
+| `bcc1b85` | feat: add Phase 8.2 prospect planning contracts (slice 1) |
+| `4144233` | docs: document Phase 8.2 prospect contract slice |
+| `9280dfc` | docs: note line-ending normalization in Phase 8.2 handoff |
+| `74ecc98` | fix: harden Phase 8.2 prospect contract invariants (Part A) |
+| `db772fb` | feat: add Phase 8.2 business and site profile contracts (slice 2) |
+| `<tip>` | docs: document Phase 8.2 business-profile contract slice |
+
+**Part A — five hardening fixes (all in `74ecc98`, `InteractionBoundary` +
+`DiscoverySourcePolicy` + `MarketPolicy`):**
+1. Mandatory approval classes (POTENTIAL_BUSINESS_SIDE_EFFECT / EXTERNAL_COMMUNICATION /
+   FINANCIAL) can never vanish from both approval-required and blocked — deterministically
+   restored to approval-required unless blocked.
+2. Permitting `REVERSIBLE_SESSION_WRITE` forces `cleanup_required=True`.
+3. `public_access_only` wins → `authenticated_access_allowed` forced False.
+4. `DiscoverySourcePolicy.provider_resolution_status` rejects unknown values with
+   `ValueError` (no silent rewrite; never an available/verified runtime state).
+5. Side-effect flags (authenticated access, real submission, account/order/booking/hold,
+   payment, file upload) require a non-empty `written_authorization_ref` (else `ValueError`)
+   and keep the matching action class approval-required; evasion switches stay off
+   regardless of authorization. Also: dedup of action-class lists; `"none"` cannot coexist
+   with a real outreach channel in `MarketPolicy`.
+
+**Part B — slice 2 (all in `db772fb`, planning/contracts only):**
+- `core/schemas/prospect_business.py` — `BusinessContext`, `SiteProfile`,
+  `BusinessFlowProfile`.
+- `core/schemas/prospect_coverage.py` — `CoverageArea`, `CoverageMap`, `SiteFingerprint`.
+- `tests/test_phase82_business_profiles.py` (43 tests).
+
+**Slice-2 reuse (verified):** `SchemaMixin`; `Confidence` values from `finding.py`
+(string-typed, not a new enum); `SourceReference` provenance; `InteractionActionClass` for
+planned flow risk; `ATOMIC_CAPABILITIES` for capability refs; opaque-string fingerprints
+(no in-schema hashing/crawling). `CoverageMap` was implemented as a thin new projection
+(not an extension of `scenario_execution_matrix`) to keep QA coverage and commercial
+opportunity decoupled — recorded in `REUSE_MAP_PHASE8.md`.
+
+**Slice-2 fail-closed invariants:** explicit `unknown` defaults; bounded confidence;
+`COVERED`/`PARTIAL` require an evidence/verification reference; blocked/partial never
+treated as complete; public vs authenticated surfaces kept separate; fingerprint inputs
+reject secret/session/volatile terms and are deterministic (sorted, de-duplicated);
+unknown enums/statuses fail closed; existing schemas unchanged.
+
+**Deferred (still planned Phase 8.2):** contact/identity, findings/disclosure,
+scoring/lifecycle, synthetic data, retention/suppression/storage-class, dashboard.
+
+### Validation (Part A + Part B)
+
+| Gate | Result |
+|---|---|
+| Targeted prospect contract tests (`test_phase82_prospect_contracts.py` + `test_phase82_business_profiles.py`) | **103 passed** (60 + 43) |
+| Full suite `pytest tests/ -q` | **3747 passed, 4 warnings** |
+| `ruff check .` | All checks passed |
+| `tools/docs_audit.py` | [PASS] |
+| `tools/agent_readiness_audit.py` | [PASS] |
+| `git diff --check` | clean |
+
+Test total progression: 3679 (slice 1) → 3704 (+25 hardening) → 3747 (+43 slice 2). The 4
+warnings are the same pre-existing `PytestCollectionWarning`s (unrelated).
+
+### Unresolved questions for Claude Code
+
+- Confirm `CoverageMap` as a thin new schema (not extending `scenario_execution_matrix`)
+  is the desired decoupling.
+- Confirm the `str`-typed `Confidence`/vocabulary approach (frozenset of enum values) is
+  acceptable vs. storing the `Confidence` enum directly.
+- Confirm the fail-closed *normalization* choice for `InteractionBoundary` (auto-restore /
+  auto-correct) vs. strict rejection is the preferred contract style.
+
+---
+
+### Original active state (slice 1, retained)
 
 - **Repository:** `dmytropogribnyy/ai-qa-factory`
 - **Active branch:** `phase/8.2-prospect-core-contracts` (implementation)
@@ -340,10 +423,11 @@ Claude Code must:
    tests/test_phase8_manifests.py tests/test_phase8_schemas.py -q` plus the full gate.
 6. **Withhold merge if any concern remains.** Only merge after explicit human authorization.
 
-Do not create every candidate schema at once. Do not start runtime. The next
-implementation slice (if approved) is the business-understanding group
-(`BusinessContext` / `SiteProfile` / `BusinessFlowProfile`) per
-`docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md` — **not** contact/identity/findings yet.
+Do not create every candidate schema at once. Do not start runtime. Slices 1 (campaign
+definition), 1-hardening, and 2 (business/site profiles) are complete. The next
+contracts-only slice (if approved) is the scoring/lifecycle group (`LeadScorecard`,
+`ProspectPriority`, `ProspectLifecycle`) — **not** contact/identity, disclosure, outreach,
+dashboard, or any execution runtime — per `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md`.
 
 ---
 

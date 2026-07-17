@@ -112,3 +112,25 @@ First contracts-only slice (planning only; no runtime). Reuse decisions actually
   `CAPABILITY_PROFILES` gains `prospect_qa_radar`.
 - **Still deferred:** contact/identity, findings/disclosure, scoring, synthetic data, site
   memory, dashboard — see `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md`.
+
+### Implemented in Phase 8.2 — slice 2 (business & site profile contracts)
+
+Second contracts-only slice (planning only; no runtime). Reuse decisions actually taken:
+
+- **REUSED as-is:** `SchemaMixin`; `SourceReference` (provenance for `BusinessContext` and
+  `SiteFingerprint`); `Confidence` *values* from `finding.py` (string-typed vocabulary, not
+  a new enum); `InteractionActionClass` (planned flow interaction class);
+  `ATOMIC_CAPABILITIES` (capability references in `BusinessFlowProfile` / `CoverageArea`).
+- **REUSED as pattern:** opaque-string fingerprints following `WorkPacket.input_fingerprint`
+  (no in-schema hashing, no crawling).
+- **NEW THIN domain models:** `BusinessContext`, `SiteProfile`, `BusinessFlowProfile`
+  (`core/schemas/prospect_business.py`); `CoverageArea`, `CoverageMap`, `SiteFingerprint`
+  (`core/schemas/prospect_coverage.py`).
+- **Reuse-decision correction:** the reuse analysis tentatively classified `CoverageMap` as
+  EXTEND of `scenario_execution_matrix`. Implementation kept it a **thin new projection**
+  instead — QA coverage and commercial opportunity must stay decoupled, and coupling to the
+  execution matrix would have blurred that. Recorded here as the verified decision.
+- **Fail-closed rules:** `COVERED`/`PARTIAL` require an evidence/verification reference;
+  fingerprint inputs reject secret/session/volatile terms; unknown enums/statuses raise.
+- **Still deferred:** contact/identity, findings/disclosure, scoring/lifecycle, synthetic
+  data, retention/suppression/storage-class, dashboard.

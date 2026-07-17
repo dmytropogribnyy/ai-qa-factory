@@ -226,7 +226,23 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.2.0 — Prospect Radar planning contracts, slice 1 (current)
+### v8.2.1 — Prospect Radar contracts: hardening + business/site profiles (current)
+
+- Hardened slice-1 `InteractionBoundary` with deterministic fail-closed normalization
+  (mandatory approval classes preserved; permitted never overlaps restricted;
+  reversible-write forces cleanup; public-only forces authenticated off; side-effect flags
+  require written authorization; evasion switches always off). `DiscoverySourcePolicy`
+  rejects unknown provider status; `MarketPolicy` rejects `"none"` + a real outreach channel.
+- New slice-2 planning-only contracts (schema/contracts only — **no runtime, discovery,
+  browser, network, MCP, crawler, provider, contact lookup, outreach, or database**):
+  `BusinessContext`, `SiteProfile`, `BusinessFlowProfile` (`core/schemas/prospect_business.py`)
+  and `CoverageArea`, `CoverageMap`, `SiteFingerprint` (`core/schemas/prospect_coverage.py`).
+- QA coverage stays separate from commercial opportunity; `COVERED`/`PARTIAL` require an
+  evidence/verification reference; fingerprints reject secret/session inputs and are
+  deterministic. Reuses `Confidence`, `SourceReference`, `InteractionActionClass`, and
+  `ATOMIC_CAPABILITIES` — no duplicate schemas. Remaining Phase 8.2 contracts stay planned.
+
+### v8.2.0 — Prospect Radar planning contracts, slice 1
 
 - New planning-only domain contracts (schema/contracts only — **no runtime, discovery,
   browser, network, or MCP**): `ProspectCampaign`, `CampaignTargetCriteria`, `MarketPolicy`,

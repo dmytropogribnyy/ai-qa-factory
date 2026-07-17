@@ -240,7 +240,7 @@ yet — those are the genuinely new domain surface.
 
 ### Coverage group
 
-#### CoverageMap — EXTEND EXISTING
+#### CoverageMap — EXTEND EXISTING → **implemented as NEW THIN (slice 2)**
 - **Precursor:** `scenario_execution_matrix.py`, `ClientAuditPlan`/`ModuleResult`
   (`client_audit.py`), `qa_strategy` TEST_LAYERS.
 - **Rationale:** a coverage projection over capabilities/flows already modeled elsewhere.
@@ -252,6 +252,12 @@ yet — those are the genuinely new domain surface.
 - **Dependencies:** `SchemaMixin`.
 - **Phase:** 8.2 (slice 3+).
 - **Duplicate risk:** medium — must not duplicate `scenario_execution_matrix`.
+- **IMPLEMENTED DECISION (slice 2, verified):** implemented as a **thin new schema**
+  (`CoverageArea` + `CoverageMap`) rather than extending `scenario_execution_matrix`.
+  Coupling to the execution matrix would have blurred the required separation between
+  **public QA coverage** and **commercial opportunity**. `capability_refs` validated
+  against `ATOMIC_CAPABILITIES`; `COVERED`/`PARTIAL` require an evidence/verification
+  reference (fail-closed, since Phase 8.2 executes nothing).
 
 ### Identity group
 

@@ -1999,6 +1999,21 @@ contracts-only slice is implemented on branch `phase/8.2-prospect-core-contracts
 `CampaignTargetCriteria`, `MarketPolicy`, `DiscoverySourcePolicy`), plus a planning-only
 `capabilities/profiles/prospect_qa_radar.yaml` and focused tests. Reuse decisions are
 recorded in `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md` and `docs/REUSE_MAP_PHASE8.md`.
+
+**Progress — slice 1 hardening `[implemented]`:** `InteractionBoundary` gained
+deterministic fail-closed normalization (mandatory approval classes preserved; permitted
+never overlaps restricted; reversible-write forces cleanup; public-only forces
+authenticated off; side-effect flags require written authorization; evasion switches stay
+off). `DiscoverySourcePolicy` rejects unknown provider status; `MarketPolicy` rejects
+`"none"` alongside a real outreach channel.
+
+**Progress — slice 2 `[implemented]` (business & site profile contracts):** adds
+`core/schemas/prospect_business.py` (`BusinessContext`, `SiteProfile`,
+`BusinessFlowProfile`) and `core/schemas/prospect_coverage.py` (`CoverageArea`,
+`CoverageMap`, `SiteFingerprint`) — planning only; QA coverage kept separate from
+commercial opportunity; `COVERED`/`PARTIAL` require evidence; fingerprints reject
+secret/session inputs.
+
 **Phase 8.2 as a whole remains `[planned]`** — the remaining candidate contracts
-(contact/identity, findings/disclosure, scoring, synthetic data, site memory, dashboard)
-are not implemented.
+(contact/identity, findings/disclosure, scoring/lifecycle, synthetic data,
+retention/suppression/storage-class, dashboard) are not implemented.
