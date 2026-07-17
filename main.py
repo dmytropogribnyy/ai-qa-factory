@@ -219,10 +219,33 @@ def main(argv: list[str] | None = None) -> int:
     work_cmd.add_argument("--json", action="store_true", dest="as_json",
                           help="Print a redacted machine summary")
 
+    # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
+    scout_cmd = subparsers.add_parser(
+        "scout", help="Prospect QA Scout v1.0 — bounded read-only local QA over public seeds"
+    )
+    scout_cmd.add_argument("action", choices=["run", "demo", "dashboard", "control", "smoke"])
+    scout_cmd.add_argument("--seeds", help="Comma-separated public URLs (run)")
+    scout_cmd.add_argument("--url", help="Single public URL (smoke)")
+    scout_cmd.add_argument("--campaign", default="adhoc")
+    scout_cmd.add_argument("--output", default="outputs")
+    scout_cmd.add_argument("--browser", choices=["static", "playwright"], default="static")
+    scout_cmd.add_argument("--max-sites", type=int, default=10, dest="max_sites")
+    scout_cmd.add_argument("--max-pages", type=int, default=5, dest="max_pages")
+    scout_cmd.add_argument("--concurrency", type=int, default=2)
+    scout_cmd.add_argument("--run-id", dest="run_id", default="")
+    scout_cmd.add_argument("--resume", action="store_true")
+    scout_cmd.add_argument("--port", type=int, default=8765, help="Dashboard port")
+    scout_cmd.add_argument("--signal", choices=["pause", "resume", "cancel", "kill"],
+                           help="Control signal (scout control)")
+
     args = parser.parse_args(argv)
 
     if args.mode == "work":
         return run_work(args)
+
+    if args.mode == "scout":
+        from core.scout.cli import run_scout_cli
+        return run_scout_cli(args)
 
 
     if args.mode == "batch-filter":

@@ -1960,7 +1960,7 @@ rollback + backup-recovery + fail-closed overwrite verified.
 
 ---
 
-## Phase 8.2 — ARK Planning Contracts + Prospect Radar Domain Contracts `[planned]`
+## Phase 8.2 — ARK Planning Contracts + Prospect Radar Domain Contracts `[implemented]`
 
 Planning / schema / contracts / governance only. Extends the existing planning layer with typed
 Prospect QA Radar domain contracts (see
@@ -2047,6 +2047,61 @@ separate; `OUTREACH_ELIGIBLE` requires independent verification + `CLIENT_SAFE`;
 readiness is computed (contact + suppression-check + revalidation + approval); no lookup,
 sending, evidence capture, or delivery runtime.
 
-**Phase 8.2 as a whole remains `[planned]`** — the remaining candidate contracts
-(contact records/provenance, findings/disclosure, synthetic data, storage-class,
-dashboard) are not implemented.
+**Phase 8.2 is `[implemented]` and merged to `main`** (contact/disclosure contracts
+completed and hardened; fail-closed nested parsing across the family; full contract
+journey test). Synthetic-data contracts and the dashboard *information architecture* were
+folded into the Phase 8.3 runtime rather than added as standalone planning schemas.
+
+---
+
+## Phase 8.3 — Local Prospect QA Scout v1.0 (bounded read-only runtime) `[implemented]`
+
+The first **runtime** ARK phase: a genuinely runnable local application
+(`AI QA Factory / ARK Prospect QA Scout v1.0 — local release`) that consumes the Phase 8.2
+contracts and runs a **bounded, read-only, local** QA vertical over a small set of explicit
+public seed URLs. Lives in `core/scout/`; entrypoint `python main.py scout ...`. Reuses
+existing evidence/report/state/safety components (see `docs/REUSE_MAP_PHASE8.md`).
+
+**Permitted runtime actions (default):** fetching **public** http(s) URLs the user explicitly
+supplies; navigation and following **public** links; opening menus/tabs/accordions/modals;
+public search/filters/pagination; viewport checks; console + failed-resource **observation**;
+**pre-submit** form-validation checks (never submitting); accessibility inspection; technical
+SEO inspection; bounded performance observations; screenshots + **sanitized** evidence; one
+primary public business flow explored **up to but not through** a side effect.
+
+**Blocked (fail-closed):** real form submission; contact-form sending; newsletter signup;
+account creation; login/credential use; OTP/email/SMS; bookings/reservations/slot holds;
+orders; payments; uploads; CAPTCHA interaction or solving; access-control bypass;
+stealth/fingerprint evasion; evasion proxy rotation; automatic outreach; automatic contact
+discovery/enrichment; destructive actions; cloud deployment. Broad/undirected discovery is
+blocked — only the explicit 1–10 seeds are used. `REVERSIBLE_SESSION_WRITE` is off by default
+and not required for v1.0 acceptance.
+
+**URL safety (fail-closed):** reject credentials-in-URL, `localhost`, loopback/private/
+link-local/reserved/multicast/unspecified IPs, non-http(s) schemes, unsafe ports, malformed
+hosts, and redirect/DNS results leading to any prohibited host.
+
+**Architecture note:** a pluggable browser backend keeps automated tests deterministic — a
+stdlib `StaticHttpBackend` drives the fixture E2E with no external network and no browser;
+an optional `PlaywrightBackend` (lazy import; `pip install playwright` documented) provides
+the live browser experience. Playwright is **not** a hard dependency and automated tests never
+require it or any external site.
+
+**Independent verification:** candidate findings pass a separate bounded reproduction pass
+(`UNVERIFIED → REPRODUCED → EVIDENCE_CAPTURED → SANITIZED → VERIFIED`); transient/unreproducible
+findings are rejected; only independently verified + sanitized evidence may become
+`CLIENT_SAFE`. **Scoring never authorizes outreach.**
+
+**Dashboard:** a localhost-only stdlib HTTP dashboard with health, overview/campaign/prospect/
+findings views, live activity, and start/pause/resume/cancel/**global-kill** controls;
+path-safe artifact serving only; no arbitrary filesystem access.
+
+**Acceptance criteria:** ruff clean; full pytest green (deterministic fixture E2E included, no
+external sites, no browser required); docs audit `[PASS]`; agent readiness `[PASS]`;
+`git diff --check` clean; the E2E proves campaign → URL-eligibility → profiling → browser
+checks → findings → evidence → verification → scoring → persistence → dashboard/API retrieval
+→ report export; the clean fixture yields no intentional defect findings; an unreproducible
+candidate is rejected; interrupted runs resume; global kill stops work; a CAPTCHA fixture
+creates manual-action state without any interaction; the sanitized report references only
+approved artifacts. No outreach/submission/account/booking/order/payment/CAPTCHA/evasion or
+other external side effect occurs.
