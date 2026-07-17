@@ -105,8 +105,27 @@ def cmd_doctor(args) -> int:
     print("Environment doctor:")
     for k, v in checks.items():
         print(f"  {k:18} {v}")
+    # Final Phase II readiness (safe: reports state, never enables sending).
+    if getattr(args, "db", None) and os.path.exists(args.db):
+        from core.scout.comms.repository import CommsRepository
+        db = MemoryDB(args.db)
+        comms = CommsRepository(db)
+        print("Communication readiness:")
+        print(f"  schema_version     {db.current_version()}   integrity_ok {db.integrity_ok()}")
+        print(f"  global_outreach    {comms.get_control('__global_outreach__')} "
+              f"(kill: {comms.get_control('__kill__')})")
+        print(f"  draft_revisions    {comms.count('draft_revisions')}   "
+              f"approvals {comms.count('approval_records')}   "
+              f"outbound {comms.count('outbound_messages')}")
+        db.close()
+    manifest = os.path.join("config", "mcp_servers.v2.yaml")
+    if os.path.exists(manifest):
+        from core.scout.integrations.mcp import audit, load_manifest
+        a = audit(load_manifest(manifest), factory_process=True)
+        print(f"MCP integrations: {a['total']} declared, valid={a['valid']}, "
+              f"discovery={a['discovery_source']} (all disabled by default; none live-accepted).")
     print("Deterministic pipeline needs neither a browser nor axe; both are optional for real "
-          "acceptance. Nothing here sends anything.")
+          "acceptance. Sending is DISABLED by default and CLI-gated. Nothing here sends anything.")
     return 0
 
 
