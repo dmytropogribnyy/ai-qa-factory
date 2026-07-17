@@ -1,7 +1,9 @@
 # Product Vision 2026 — ARK / Capability-Driven AI Work & Delivery Factory
 
-**Version:** 8.0.0 (foundation)
-**Status:** Planned architecture — Phase 8.0 lays documentation and schema foundation only.
+**Version:** 8.4.0 (discovery + commercial triage runtime)
+**Status:** Target architecture with a growing implemented local runtime — Phases 8.0–8.4 are
+implemented (8.2 contracts; 8.3/8.3.1/8.4 runtime). Phases 8.5–8.9 remain planned. See the
+three-part phase map below (target / implemented / remaining).
 **Supersedes scope of:** `docs/VISION.md` (which remains the canonical vision for the QA capability domain).
 
 ---
@@ -69,30 +71,62 @@ reporting, and delivery pack generation:
 2. **Prospect QA Radar / Super Scout** — campaign → discovery → eligibility → cheap triage
    → bounded QA/SEO analysis → evidence → independent verification → prospect scoring →
    contact intelligence → controlled disclosure → human-approved outreach draft → paid
-   audit opportunity. **Approved future-facing architecture; not implemented.** See
-   [docs/architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md).
+   audit opportunity. **Approved target architecture; a bounded local slice is now
+   implemented and running** (Prospect QA Scout v1.0.1 QA runtime + Phase 8.4 discovery /
+   commercial triage). Contact intelligence, disclosure, and outreach remain future-facing.
+   See [docs/architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md)
+   for the target and [docs/architecture/SCOUT_RUNTIME_V1.md](architecture/SCOUT_RUNTIME_V1.md)
+   for the implemented runtime.
 
 Prospect Radar is not a second QA product, not a replacement for the Client Work Factory,
 and not a separate evidence system — it consumes the existing capabilities.
 
-## Phase map
+## Phase map — target vs implemented vs remaining
+
+The phase map is split into three honest views: the **target architecture** (the durable
+intent), the **implemented current state** (what actually runs today), and the **remaining
+local roadmap** (the finite set of phases still to build). Historical intent is preserved.
+
+### Target architecture (durable intent)
+
+The end-state is the full Prospect QA Radar loop described in
+[docs/architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md):
+campaign → controlled discovery → eligibility → cheap commercial triage → bounded QA/SEO
+analysis → evidence → independent verification → prospect scoring → company/site memory →
+public contact intelligence → controlled disclosure → human-approved outreach → paid audit
+opportunity — all reusing one QA/evidence/verification/safety engine, local-first, with every
+write/financial/external-communication action approval-gated.
+
+### Implemented current state (runs today)
 
 | Phase | Scope | State |
 |---|---|---|
-| 8.0 | ARK documentation, schemas, manifests, and foundation tests | complete |
-| 8.1 | Deterministic planning-only `main.py work` workflow | complete |
-| 8.2 | ARK planning contracts and Prospect Radar domain contracts | planned |
-| 8.3 | Live MCP discovery, provider metadata, adapters, and policy engine | planned |
-| 8.4 | Bounded read-only execution pilots and thin local dashboard | planned |
-| 8.5 | Finding normalization, independent verification, scoring, contacts, and disclosure | planned |
-| 8.6 | Campaign persistence, site memory, rechecks, retention, review queues, and full local dashboard | planned |
-| 8.7 | Optional approval-gated outreach, authorized full E2E, and controlled remediation | planned |
+| 8.0 | ARK documentation, schemas, manifests, and foundation tests | **complete** |
+| 8.1 | Deterministic planning-only `main.py work` workflow | **complete** |
+| 8.2 | ARK planning contracts + Prospect Radar domain contracts (campaign, identity, business, governance/suppression, scoring, contact, disclosure) | **complete (contracts)** |
+| 8.3 | Prospect QA Scout v1.0 — bounded, read-only, local QA runtime over explicit seeds (`python main.py scout`) | **complete (runtime)** |
+| 8.3.1 | Scout v1.0.1 — acceptance hardening (working dashboard control, Playwright SSRF hardening, run-id isolation, real browser acceptance) | **complete (runtime)** |
+| 8.4 | Controlled discovery providers, campaign builder/matrix, candidate normalization/dedup/suppression, cheap commercial triage, and bounded promotion into the Scout runtime | **implemented (runtime)** |
 
-**Status:** Phase 8.0 and Phase 8.1 are complete. `main.py work` is implemented but
-planning-only; live MCP discovery and external execution remain unimplemented.
-`CapabilityRegistry` and `CapabilityPlanner` already exist as of Phase 8.1 — Phase 8.2 does
-not create them from zero; it extends the planning/contracts layer with typed Prospect Radar
-domain contracts and planning semantics.
+`main.py work` is implemented but planning-only. `CapabilityRegistry` / `CapabilityPlanner`
+exist as of Phase 8.1. The Scout QA runtime (8.3/8.3.1) and the discovery/triage runtime (8.4)
+are genuinely runnable locally; they are **not** cloud/SaaS, unrestricted discovery, contact
+enrichment, or outreach.
+
+### Remaining local roadmap (finite)
+
+| Phase | Scope | State |
+|---|---|---|
+| 8.5 | Adaptive/deep QA: axe accessibility, Lighthouse (or an honest existing performance equivalent), traces/video where justified, synthetic personas, bounded reversible-session actions with verified cleanup | planned |
+| 8.6 | Company/site memory: a transactional local database, rechecks/change detection, retention/storage manager, scheduler/queues, and the full operational dashboard | planned |
+| 8.7 | Public contact intelligence: suppression/contact provenance, disclosure manifests, audit-offer mapping, outreach **draft** generation, human review queues — **no automatic send** | planned |
+| 8.8 | Explicitly human-approved sending: reply/bounce/opt-out history, follow-up controls, CRM/commercial metrics — no inferred-contact sending, no bulk spam behavior | planned |
+| 8.9 | Full local E2E, CI, startup/installer, backups/crash recovery, an evaluation benchmark, and the final Prospect Radar v2.0 release | planned |
+
+**Status:** Phases 8.0–8.4 are implemented (8.2 as contracts; 8.3/8.3.1/8.4 as runtime).
+Contact discovery, disclosure manifests, and any outreach remain unimplemented and are gated to
+Phases 8.7–8.8 with human approval. No sending, contact enrichment, or external side effects
+exist in the current runtime.
 
 See `docs/UNIVERSAL_WORK_FACTORY.md` for the component architecture and
 `docs/REUSE_MAP_PHASE8.md` for the exact reuse decisions.

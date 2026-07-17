@@ -1,17 +1,26 @@
 # Prospect QA Radar / Super Scout
 ## Product & Architecture Specification v2.0
 
-> **Status:** Approved future-facing architecture specification
-> **Runtime status:** Not implemented
-> **Integration begins:** Phase 8.2 contracts and planning
-> **Execution begins:** Later explicitly approved phases
-> **Source of truth for:** Prospect QA Radar / Super Scout domain architecture
+> **Status:** Approved target architecture specification
+> **Runtime status:** Partially implemented — a bounded local slice runs today; the full
+> loop is not implemented.
+> **Implemented today:** Phase 8.2 domain contracts; Prospect QA Scout v1.0.1 — bounded,
+> read-only, local QA runtime (`python main.py scout`); Phase 8.4 — controlled discovery
+> providers (deterministic fixture + file import), campaign builder/matrix with budgets,
+> candidate normalization/dedup/suppression, cheap commercial triage, and bounded promotion
+> into the Scout QA runtime, plus discovery dashboard views.
+> **Not implemented (future-facing):** live third-party discovery at scale, browser execution
+> against every candidate, company/site transactional memory database, public contact
+> intelligence, disclosure manifests, automatic outreach, CAPTCHA solving, and authorized full
+> E2E. These begin no earlier than Phases 8.5–8.9.
+> **Source of truth for:** Prospect QA Radar / Super Scout domain architecture.
 >
-> This document describes approved target architecture. It does not assert that any
-> runtime (live discovery, crawling, browser execution, MCP discovery, contact
-> providers, automatic outreach, dashboard, persistent campaign database, CAPTCHA
-> solving, or authorized full E2E) already exists. Implementation status is governed
-> by `docs/PHASE_CONTRACTS.md`; the phase map lives in `docs/PRODUCT_VISION_2026.md`.
+> This document describes the approved **target** architecture. Where it describes discovery,
+> triage, scoring, or dashboards, treat it as the target; the **implemented** runtime is
+> described in [SCOUT_RUNTIME_V1.md](SCOUT_RUNTIME_V1.md) and bounded by
+> `docs/PHASE_CONTRACTS.md` (Phases 8.3–8.4). The phase map lives in
+> `docs/PRODUCT_VISION_2026.md`. Contact intelligence, disclosure, and outreach in this spec
+> are **not** implemented and remain gated to later, human-approved phases.
 
 **Статус:** утверждённая продуктовая концепция для включения в ARK / AI QA Factory
 **Дата:** 2026-07-16

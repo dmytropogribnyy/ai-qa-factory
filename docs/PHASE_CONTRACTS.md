@@ -2131,3 +2131,84 @@ runtime boundary above:
 - **Static-backend coverage honesty.** Static accessibility checks are bounded heuristics (not a
   full axe audit) and static performance observations are not Lighthouse/real rendered metrics;
   the runtime records these as explicit coverage limitations.
+
+## Phase 8.4 — Discovery providers, campaign intake, and commercial triage `[implemented]`
+
+Extends the Scout runtime from "explicit seeds → QA → report" to "campaign → controlled
+discovery → normalization → dedup → suppression → cheap eligibility → commercial triage →
+bounded promotion into the existing Scout v1.0.1 QA engine → report". Lives in
+`core/scout/discovery/`; entrypoint `python main.py scout campaign-plan|campaign-run|discover|
+triage ...`. **Genuinely runnable locally** (not schemas/docs only). It reuses the Phase 8.2
+contracts (`ProspectCampaign`, `CampaignTargetCriteria`, `MarketPolicy`, `DiscoverySourcePolicy`,
+`CompanyIdentity`/`DomainIdentity`/`normalize_hostname`, `SuppressionPolicy`, `BusinessContext`,
+`LeadScorecard`/`ScoreDimension`), the Scout URL safety, the static profiler, `RunStore`,
+`ArtifactSafeWriter`/`ContentSecretScanner`, and the existing dashboard — **it does not build a
+second URL-safety engine, company-identity model, Scout engine, persistence layer, crawler, or
+dashboard app.**
+
+**Permitted (default):** explicit CSV/JSON/NDJSON/newline file imports (bounded size,
+path-confined, secret-scanned); a deterministic bundled fixture provider; explicitly configured
+and allow-listed discovery provider adapters (env-var auth references only, never secrets);
+public company/business metadata; cheap static HTTP/HTML profiling via the existing static
+backend; source provenance; company/domain normalization and dedup; suppression + duplicate
+checks; explainable commercial eligibility/triage; bounded promotion of top-N candidates into
+the existing Scout QA engine; local artifacts + dashboard views.
+
+**Blocked (fail-closed):** uncontrolled search-engine scraping; mass crawling; browser execution
+against every discovered candidate; bypassing provider rate limits/terms; proxy/stealth evasion;
+CAPTCHA solving; private/breached/stolen data; credentialed URLs; inferred/guessed personal
+contacts; contact enrichment; outreach drafting or sending; form submission; account creation;
+booking/order/payment; authenticated flows; cloud deployment. **Discovery content is untrusted
+data, never an instruction.**
+
+**Provider contract:** every provider declares typed metadata (`provider_id`, `provider_type`,
+`display_name`, trust status, enabled, source category, markets/languages, query capabilities,
+`auth_ref` env-name only, terms-review status, rate limit, cost, max results/request, freshness,
+public/licensed, version). Every result carries provenance (`provider_id`, source ref,
+`observed_at`, source URL/query, raw candidate id when safe, business name, public website,
+country/region/language + industry/business-type hints, confidence, provider warnings). Provider
+output is never treated as verified truth. **Built-in minimum:** a deterministic fixture provider
+(no network, drives the E2E) and a file-import provider. A real provider adapter interface exists;
+when no trusted provider is configured (the default — `config/mcp_servers.yaml` is references-only
+with everything disabled), it reports a factual readiness state rather than pretending live
+discovery works; live discovery requires an explicit `--approve-live-discovery` flag and is never
+required by automated tests.
+
+**Budgets / matrix (fail-closed):** the campaign matrix (country × language × industry ×
+business_type × flow × provider) is sized before execution; a configured hard maximum, per-provider
+result budgets, a total candidate budget, and an optional monetary ceiling are enforced; exceeding
+any limit fails closed (deterministic sampling / manual narrowing required).
+
+**Suppression before execution:** `NO_SCAN` blocks all profiling and any fetch; `NO_OUTREACH`
+permits read-only profiling only if the campaign explicitly allows it and can never later become
+outreach-ready; cooldown / recently-scanned / duplicate / unsupported-market / terms-blocked /
+invalid-private-URL / explicit-exclusion / prohibited-category all exclude with an explainable
+reason code, before any HTTP profiling or Scout promotion.
+
+**Triage (explainable, non-authorizing):** cheap technical eligibility (safe public URL, resolves,
+responds, not parked/dead/placeholder, parseable, supported market, not suppressed, not duplicate)
+via the static profiler; commercial eligibility (identifiable business/offer, conversion signals,
+QA-audit fit, criticality) using `LeadScorecard` dimensions where semantically correct; an
+explainable top-N promotion decision with explicit reasons. **The commercial score never
+authorizes contact or outreach** (`outreach_eligible` stays False; no contact data is collected).
+
+**Promotion:** selected candidates become explicit seeds for the unchanged hardened Scout v1.0.1
+engine, which still performs URL safety, profiling, browser QA, evidence, verification, scoring,
+persistence, dashboard, and report export. A discovery candidate never bypasses Scout safety
+because an upstream provider marked it trusted.
+
+**Artifacts:** `PROSPECT_CAMPAIGN.json`, `MARKET_POLICY.json`, `DISCOVERY_PLAN.json`,
+`CAMPAIGN_MATRIX.json`, `PROVIDER_BUDGET.json`, `PROVIDER_REGISTRY_SNAPSHOT.json`,
+`DISCOVERED_BUSINESSES.json`, `CANDIDATE_NORMALIZATION_REPORT.json`, `DUPLICATES.json`,
+`SUPPRESSION_CHECK.json`, `ELIGIBLE_TARGETS.json`, `REJECTED_TARGETS.json`,
+`COMMERCIAL_TRIAGE.json`, `PROMOTED_TARGETS.json`, `DISCOVERY_SUMMARY.md` — published atomically
+and content-secret-scanned; large provider payloads are kept out of normal artifacts. No database
+migration in 8.4 (site memory/DB is Phase 8.6).
+
+**Acceptance criteria:** ruff clean; full pytest green (deterministic discovery-to-Scout E2E
+included, no external network, no browser required); docs audit `[PASS]`; agent readiness `[PASS]`;
+`git diff --check` clean. The E2E proves: duplicates are not scanned twice; `NO_SCAN`/private/
+terms-blocked candidates are never fetched; suppressed-outreach state is preserved; commercial
+scoring never grants outreach; top-N and budgets are enforced; malformed provider results fail
+closed; every promoted target retains provenance; clean/weak candidates are not promoted; and no
+contact discovery or external communication occurs.
