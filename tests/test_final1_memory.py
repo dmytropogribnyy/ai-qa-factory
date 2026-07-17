@@ -31,8 +31,9 @@ def test_fresh_database_migrates_to_current_version(tmp_path):
 
 def test_interrupted_migration_rolls_back(tmp_path):
     db = _fresh(tmp_path)
+    # Version 2 is the real schema-v2 migration; use a higher fake version to prove rollback.
     with pytest.raises(MigrationError):
-        db.migrate([(2, ["CREATE TABLE t2 (id INTEGER)", "THIS IS NOT VALID SQL"])])
+        db.migrate([(99, ["CREATE TABLE t2 (id INTEGER)", "THIS IS NOT VALID SQL"])])
     assert db.current_version() == SCHEMA_VERSION  # version unchanged
     with pytest.raises(sqlite3.OperationalError):
         db.query("SELECT * FROM t2")  # the partial migration was rolled back
