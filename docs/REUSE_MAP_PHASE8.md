@@ -186,6 +186,21 @@ branch). Contracts/planning only.
   independent verification + `CLIENT_SAFE` + minimal teaser; responsible-disclosure stays
   `INTERNAL_ONLY`; `DisclosureManifest` readiness is computed (never a trusted boolean) and
   the manifest sends nothing.
-- **DO NOT BUILD (still deferred):** synthetic data contracts; dashboard information
-  architecture; any discovery/contact-lookup/evidence-capture/revalidation/outreach/delivery
-  runtime.
+- **DO NOT BUILD (still deferred):** synthetic data contracts; broad discovery; contact-lookup/
+  enrichment runtime; outreach/delivery-sending runtime.
+
+### Implemented in Phase 8.3 — Prospect QA Scout v1.0 (bounded read-only runtime)
+
+The first runnable slice. See [architecture/SCOUT_RUNTIME_V1.md](architecture/SCOUT_RUNTIME_V1.md).
+
+- **REUSED as-is:** `core/orchestration/content_safety.py` (`ContentSecretScanner`,
+  `redact_intake_text`, `ArtifactSafeWriter`) for evidence sanitization + atomic secret-scanned
+  report publishing; `prospect_scoring.LeadScorecard`/`ScoreDimension` for scoring;
+  `prospect_campaign.ProspectCampaign` as optional provenance; Python stdlib `http.server` for
+  the dashboard (no new web dependency).
+- **NEW THIN runtime (`core/scout/`):** `url_safety`, `config`, `backends` (+ optional lazy
+  Playwright), `checks`, `findings`, `sanitize`, `verification`, `scoring`, `store`, `control`,
+  `engine`, `service`, `dashboard`, `report`, `cli`, `demo_site`.
+- **DID NOT BUILD:** a second QA/evidence/verifier/report engine, a separate secret scanner, a
+  universal crawler, automatic outreach, contact enrichment, or any CAPTCHA/proxy-evasion
+  capability.

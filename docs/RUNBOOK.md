@@ -2684,3 +2684,39 @@ Use `python main.py work` to turn a brief into a reviewable plan. It never execu
 - [ ] `MCP_CONFIGURED_SERVERS_SNAPSHOT.json` has `live_discovery_performed=false`
 - [ ] No secrets in any artifact (content scan runs before publish)
 - [ ] Artifacts confined to `outputs/<project_id>/40_ark_work/`
+
+---
+
+## Prospect QA Scout v1.0 (Phase 8.3 — bounded read-only local runtime)
+
+`python main.py scout` runs a bounded, read-only QA vertical over explicit public seeds. It
+never submits forms, logs in, sends outreach, or performs any external side effect.
+
+**Try it (no external network, no browser):**
+```bash
+python main.py scout demo
+```
+This runs the bundled demo site end to end and writes `outputs/scout/scout-demo/report/`.
+
+**Scan your own public sites:**
+```bash
+python main.py scout run --seeds "https://a.example/,https://b.example/" --campaign my-scan
+```
+
+**Watch/control a run:** in another terminal,
+```bash
+python main.py scout dashboard --run-id <run_id>     # http://127.0.0.1:8765
+python main.py scout control --signal pause --port 8765
+python main.py scout control --signal kill  --port 8765   # global kill stops all work
+```
+
+**Live browser (optional):** `pip install playwright && python -m playwright install chromium`,
+then add `--browser playwright`.
+
+**Checklist:**
+- [ ] Only explicit public http(s) seeds are used (localhost/private IPs rejected)
+- [ ] CAPTCHA / access-prohibition prospects are `MANUAL_ACTION_REQUIRED` (no interaction)
+- [ ] Every reported finding is `VERIFIED` (independently reproduced) and sanitized
+- [ ] No cookie/secret/credential appears in any artifact
+- [ ] Report + artifacts confined to `outputs/scout/<run_id>/`
+- [ ] The dashboard is reachable only on `127.0.0.1`; the global kill stops the run

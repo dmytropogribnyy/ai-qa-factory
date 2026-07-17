@@ -1,10 +1,10 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 8.2.0
+**Version:** 8.3.0
 
 **Updated:** 2026-07-17
 
-**Phase:** 8.1 complete; 8.2 Prospect Radar contracts — slices 1–4 + contact/storage/disclosure implemented (schema/contracts only), remaining contracts (synthetic data, dashboard) planned
+**Phase:** 8.1 + 8.2 complete; 8.3 Prospect QA Scout v1.0 (bounded read-only local runtime) implemented
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.
@@ -66,7 +66,8 @@ additive foundation (docs, schemas, manifests, tests); runtime is planned, not i
 | `AGENTS.md` | Cross-agent operating rules (repo root) | Yes | safety_rule_changed, agent_behavior_changed | current | Phase 8.0 |
 | `CLAUDE.md` | Claude Code project instructions (repo root) | Yes | safety_rule_changed, command_added | current | Phase 8.0 |
 | `docs/architecture/README.md` | Index of nested ARK architecture specifications | Yes | architecture_approved, phase_completed | current | Phase 8.2 |
-| `docs/architecture/PROSPECT_QA_RADAR_SPEC.md` | Prospect QA Radar / Super Scout product, architecture, discovery, QA/SEO, evidence, scoring, contact, disclosure, retention, recheck, and dashboard specification | Yes (Prospect Radar domain architecture) | architecture_approved, phase_completed, runtime_status_changed | planned / future-facing | Phase 8.2+; approved direction; does not represent implemented runtime |
+| `docs/architecture/PROSPECT_QA_RADAR_SPEC.md` | Prospect QA Radar / Super Scout product, architecture, discovery, QA/SEO, evidence, scoring, contact, disclosure, retention, recheck, and dashboard specification | Yes (Prospect Radar domain architecture) | architecture_approved, phase_completed, runtime_status_changed | current | Phase 8.2 contracts + Phase 8.3 Scout v1.0 runtime implement a bounded slice |
+| `docs/architecture/SCOUT_RUNTIME_V1.md` | Prospect QA Scout v1.0 runtime — component map, boundary, reuse decisions | Yes (Scout runtime) | phase_completed, runtime_status_changed | current | Phase 8.3; bounded read-only local runtime |
 
 ---
 

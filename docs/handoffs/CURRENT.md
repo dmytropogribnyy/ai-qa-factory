@@ -8,7 +8,38 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
-## Claude Code Finalization Session (2026-07-17) — READ FIRST (latest)
+## Phase 8.3 — Prospect QA Scout v1.0 (local runtime) — READ FIRST (latest)
+
+**Author:** Claude Code. **Branch:** `phase/8.3-scout-vertical-mvp` (created from `main@7a10485`).
+
+This session built the **first ARK runtime**: a genuinely runnable, bounded, read-only local
+`Prospect QA Scout v1.0` (`core/scout/`, `python main.py scout ...`). Contracts-only Phase 8.2
+stays intact and is reused, not rewritten.
+
+**Pipeline:** campaign + 1–10 explicit public seeds → fail-closed URL eligibility → bounded
+profiling + read-only checks → independent second-pass verification → sanitized evidence →
+non-authorizing scoring → durable atomic persistence/resume → localhost dashboard (global kill)
+→ report export.
+
+**Reuse:** `content_safety` (`ContentSecretScanner`, `redact_intake_text`, `ArtifactSafeWriter`)
+for sanitized + atomic report publishing; `LeadScorecard`/`ScoreDimension` for scoring;
+`ProspectCampaign` for provenance; stdlib `http.server` for the dashboard (no new dependency).
+A pluggable backend keeps tests deterministic (stdlib `StaticHttpBackend`; optional lazy
+`PlaywrightBackend`, never required by tests).
+
+**Safety:** no form submission/login/outreach/CAPTCHA/evasion/side effects; CAPTCHA + access
+prohibition → `MANUAL_ACTION_REQUIRED` (no interaction); only reproduced + sanitized findings are
+client-safe; scoring never authorizes outreach; dashboard is `127.0.0.1`-only with path-confined
+artifact serving and a global kill switch.
+
+**Validation:** full suite **4090 passed** (+74 Phase 8.3), 4 pre-existing warnings; ruff clean;
+docs audit + agent readiness PASS; `git diff --check` clean; deterministic fixture E2E green
+(`python main.py scout demo`). **Local release only** — no cloud/SaaS/unrestricted discovery/
+automated outreach/deployment. Merged to `main` with `--no-ff`; tagged per convention.
+
+---
+
+## Claude Code Finalization Session (2026-07-17) — READ FIRST (previous)
 
 **Author:** Claude Code. **Branch:** `phase/8.2-prospect-contact-disclosure-contracts`.
 **origin/main before this session:** `d467eba` (unchanged until the merge below).

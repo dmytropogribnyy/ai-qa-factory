@@ -219,14 +219,34 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 | [`docs/ARTIFACT_CONTRACTS.md`](docs/ARTIFACT_CONTRACTS.md) | Artifact paths, ownership, and delivery rules |
 | [`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md) | Agent operating rules and safety obligations |
 | [`docs/AGENT_HANDOFF_TEMPLATE.md`](docs/AGENT_HANDOFF_TEMPLATE.md) | Final phase report template |
-| [`docs/architecture/PROSPECT_QA_RADAR_SPEC.md`](docs/architecture/PROSPECT_QA_RADAR_SPEC.md) | Prospect QA Radar / Super Scout — **approved future-facing architecture; no runtime yet**, integration starts with Phase 8.2 contracts |
+| [`docs/architecture/PROSPECT_QA_RADAR_SPEC.md`](docs/architecture/PROSPECT_QA_RADAR_SPEC.md) | Prospect QA Radar / Super Scout — approved architecture; Phase 8.2 contracts + Phase 8.3 Scout v1.0 runtime implement a bounded read-only slice |
+| [`docs/architecture/SCOUT_RUNTIME_V1.md`](docs/architecture/SCOUT_RUNTIME_V1.md) | Prospect QA Scout v1.0 runtime — component map, runtime boundary, and reuse decisions |
 
 ---
 
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.2.3 — Prospect Radar contracts: contact, storage & controlled disclosure (current)
+### v8.3.0 — Prospect QA Scout v1.0 (local release, current)
+
+- **First ARK runtime**: `python main.py scout` runs a bounded, **read-only**, local QA vertical
+  over 1–10 explicit public seed URLs. New package `core/scout/`.
+- Pipeline: campaign → fail-closed URL eligibility (rejects localhost/private-IP/creds/unsafe
+  ports and DNS-rebinding) → bounded profiling → read-only checks (links, accessibility, SEO,
+  structured data, mobile, performance, pre-submit validation, business-flow, console) →
+  independent second-pass verification → sanitized evidence → non-authorizing scoring →
+  durable persistence/resume → localhost dashboard → report export.
+- Pluggable backend: stdlib `StaticHttpBackend` (offline-safe, drives the deterministic E2E)
+  and an optional lazy `PlaywrightBackend` (live browser; never required by tests).
+- Safety: CAPTCHA/access-prohibition → `MANUAL_ACTION_REQUIRED` (no interaction/bypass); only
+  independently reproduced + sanitized findings are client-safe; scoring never authorizes
+  outreach; report is content-secret-scanned before an atomic publish; dashboard is
+  `127.0.0.1`-only with path-confined artifact serving and a global kill switch.
+- One command: `python main.py scout demo` (bundled deterministic demo; no external network/
+  browser). 4090 tests total (+74 Phase 8.3). **Local release; no cloud/SaaS/unrestricted
+  discovery/automated outreach/production deployment.**
+
+### v8.2.3 — Prospect Radar contracts: contact, storage & controlled disclosure
 
 - Slice 3/4 hardening: hostname IP/label rejection + IDNA normalization; `ProspectLifecycle`
   history-integrity + approved-lineage (`APPROVED` requires actor + approval_ref); governance

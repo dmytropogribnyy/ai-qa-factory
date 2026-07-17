@@ -3312,3 +3312,47 @@ echo "..." | python main.py work --stdin --project-id my-proj
 **Safety:** deterministic, no LLM; input redacted at the boundary; artifact content is secret-scanned
 before an atomic publish; MCP servers are candidates only (no discovery); run stays in `PLANNED`/
 `WAITING_*` and never enters execution.
+
+---
+
+## `scout` — Prospect QA Scout v1.0 (bounded read-only local runtime) `[implemented]`
+
+Phase 8.3 runtime. Runs a bounded, **read-only**, local QA vertical over 1–10 explicit public
+seed URLs. It never submits forms, logs in, sends outreach, solves CAPTCHAs, evades access
+controls, or performs any external side effect.
+
+```bash
+# One command: deterministic bundled demo (no external network, no browser)
+python main.py scout demo
+
+# Run over your own public URLs, then export a report
+python main.py scout run --seeds "https://example.com/,https://example.org/" --campaign my-scan
+
+# One bounded public-site smoke
+python main.py scout smoke --url https://example.com/
+
+# Start the localhost dashboard for a run (Ctrl+C to stop)
+python main.py scout dashboard --run-id <run_id> --port 8765
+
+# Send a control signal to a running dashboard
+python main.py scout control --signal kill --port 8765   # or pause | resume | cancel
+
+# Resume an interrupted run
+python main.py scout run --seeds "..." --run-id <run_id> --resume
+```
+
+**Options:** `--seeds` (comma-separated public URLs) · `--url` (smoke) · `--campaign` ·
+`--output` (default `outputs`) · `--browser static|playwright` (default `static`; live browser
+needs `pip install playwright && python -m playwright install chromium`) · `--max-sites` ·
+`--max-pages` · `--concurrency` · `--run-id` · `--resume` · `--port` · `--signal`.
+
+**Artifacts:** `outputs/scout/<run_id>/` — `config.json`, `state.json`, `events.jsonl`,
+`prospects/<id>/{observation,findings,evidence,scorecard}.json`, and `report/` (CAMPAIGN_SUMMARY,
+PROSPECT_SHORTLIST, VERIFIED_FINDINGS, COVERAGE_AND_LIMITATIONS, SCORECARD_SUMMARY,
+EVIDENCE_INDEX.json, REPORT.json).
+
+**Safety:** fail-closed URL eligibility (rejects localhost/private-IP/creds/unsafe ports and
+DNS-rebinding); CAPTCHA/access-prohibition pages become `MANUAL_ACTION_REQUIRED` with no
+interaction; only independently reproduced + sanitized findings are client-safe; scoring never
+authorizes outreach; the report is content-secret-scanned before an atomic publish; the
+dashboard binds to `127.0.0.1` only and serves artifacts path-confined to the run directory.
