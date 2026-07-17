@@ -2032,6 +2032,21 @@ executed.
 — 12 independent visible dimensions; optional weighted total only from explicit validated
 weights; no automatic outreach eligibility; no hidden single-score model.
 
+**Progress — slice 3/4 hardening `[implemented]`:** hostname IP/label rejection + IDNA;
+`ProspectLifecycle` history-integrity + approved-lineage validation (`APPROVED` requires
+`actor`+`approval_ref`); governance ISO/cooldown/monitor rules + inert composed cleanup;
+scoring `math.isfinite` weight validation + outreach-eligibility gating.
+
+**Progress — child slice `[implemented]` (contact / storage / disclosure), branch
+`phase/8.2-prospect-contact-disclosure-contracts`:** adds
+`core/schemas/prospect_contact.py` (`ContactProvenance`, `ContactStatus`, `ContactRecord`,
+`ContactCollection`) and `core/schemas/prospect_disclosure.py` (`StorageClass`,
+`DisclosureLevel`, `DisclosureStage`, `DisclosureItem`, `FindingDisclosurePolicy`,
+`DisclosureManifest`). Public sources only; storage class vs. disclosure level kept
+separate; `OUTREACH_ELIGIBLE` requires independent verification + `CLIENT_SAFE`; manifest
+readiness is computed (contact + suppression-check + revalidation + approval); no lookup,
+sending, evidence capture, or delivery runtime.
+
 **Phase 8.2 as a whole remains `[planned]`** — the remaining candidate contracts
 (contact records/provenance, findings/disclosure, synthetic data, storage-class,
 dashboard) are not implemented.

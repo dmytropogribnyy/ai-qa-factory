@@ -1472,5 +1472,35 @@ engine — deletion is never executed). No filesystem, network, or scheduler run
 |---|---|---|
 | `prospect_scoring.py` (new) | `ScoreDimension`, `LeadScorecard`, `ProspectPriority` | 12 independent 0..100 dimensions kept visible; optional `weighted_total` only from explicit, validated, normalized weights (no hidden single score); priority A/B/C/D/REJECTED; `outreach_eligible` default False; `OpportunityFilterAgent` inspected as precursor only, not reused |
 
-Remaining Phase 8.2 contracts (contact records/provenance, findings/disclosure, synthetic
-data, storage-class, dashboard) stay planned. **Phase 8.2 as a whole remains planned.**
+### Slice 3/4 hardening
+
+Hostname normalization now rejects IP literals (`ipaddress`), invalid labels
+(leading/trailing hyphen, underscore), and IDNA-encodes international domains;
+`DomainIdentity` keeps `is_primary`⇔`relation="primary"` consistent; `CompanyIdentity`
+requires a name or a domain and de-duplicates brands/aliases case-insensitively.
+`ProspectLifecycle` now validates full **history integrity** (contiguity, `state_version`
+= transition count, status/previous consistency, no post-terminal transitions) and an
+**approved lineage** for `CONTACTED`; an `APPROVED` transition requires `actor` +
+`approval_ref`; late outreach snapshots cannot be forged. Governance: enabled suppression
+forces `manual_override_required`, normalizes domains, and validates ISO/COOLDOWN ordering;
+retention forces the composed `CleanupPolicy` inert (`enabled=False`); recheck forces
+pre-send revalidation, restricts full re-audit to `L4`, and forbids L0 change detection;
+`MONITOR_CHANGES_ONLY` permits only L0/L1. Scoring rejects bool/str/NaN/±Inf weights
+(`math.isfinite`) and gates outreach eligibility (REJECTED forbids; requires an
+`outreach_eligibility_ref`).
+
+## Phase 8.2 — Prospect Radar planning contracts (child slice: contact / storage / disclosure)
+
+Public business contact and controlled-disclosure contracts (planning only; no contact
+lookup, scraping, enrichment, sending, evidence capture, revalidation, or delivery runtime).
+
+| File | Classes | Note |
+|---|---|---|
+| `prospect_contact.py` (new) | `ContactProvenance`, `ContactStatus`, `ContactRecord`, `ContactCollection` | public sources only; reuses `SourceReference` + `Confidence` + `normalize_hostname`; deterministic email/phone/form normalization (no invented country code, no deliverability claim); inferred contacts can never be `VERIFIED`; named-person → manual review; only `VERIFIED` is an outreach candidate (computed); collection de-dups by (channel, normalized value) keeping the stricter status |
+| `prospect_disclosure.py` (new) | `StorageClass`, `DisclosureLevel`, `DisclosureStage`, `DisclosureItem`, `FindingDisclosurePolicy`, `DisclosureManifest` | storage class (handling) kept separate from disclosure level (permission); references only (no embedded payload/logs/secrets); `CLIENT_SAFE` requires sanitized + no PII/secrets; `OUTREACH_ELIGIBLE` requires independent verification + `CLIENT_SAFE` + minimal teaser; responsible-disclosure stays `INTERNAL_ONLY`; manifest **readiness is computed** from references (contact + suppression-check + revalidation + approval), never a trusted boolean; the manifest sends nothing |
+
+**Reuse decisions (verified):** `SchemaMixin`; `SourceReference` + `Confidence`;
+`normalize_hostname` (shared with identity/governance); provenance stored **nested** in
+`ContactRecord` (no separate provenance schema). Remaining Phase 8.2 contracts (synthetic
+data, dashboard information architecture) stay planned. **Phase 8.2 as a whole remains
+planned.**

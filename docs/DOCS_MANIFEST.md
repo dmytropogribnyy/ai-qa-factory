@@ -4,7 +4,7 @@
 
 **Updated:** 2026-07-17
 
-**Phase:** 8.1 complete; 8.2 Prospect Radar contracts — slices 1–4 (campaign, business/site, identity/lifecycle/governance, scoring) implemented, remaining contracts planned
+**Phase:** 8.1 complete; 8.2 Prospect Radar contracts — slices 1–4 + contact/storage/disclosure implemented (schema/contracts only), remaining contracts (synthetic data, dashboard) planned
 
 This file is the registry of all documentation tracked by the workbench.  
 Run `python tools/docs_audit.py` to verify that these docs are current.

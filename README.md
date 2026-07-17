@@ -226,7 +226,23 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.2.2 — Prospect Radar contracts: identity, lifecycle, governance & scoring (current)
+### v8.2.3 — Prospect Radar contracts: contact, storage & controlled disclosure (current)
+
+- Slice 3/4 hardening: hostname IP/label rejection + IDNA normalization; `ProspectLifecycle`
+  history-integrity + approved-lineage (`APPROVED` requires actor + approval_ref); governance
+  ISO/cooldown/monitor rules + inert composed `CleanupPolicy`; scoring `math.isfinite` weight
+  validation + outreach-eligibility gating.
+- New public-contact contracts (`prospect_contact.py`): `ContactProvenance`, `ContactStatus`,
+  `ContactRecord`, `ContactCollection` — public sources only; deterministic normalization with
+  no invented country code / no deliverability claim; inferred contacts can never be VERIFIED;
+  named-person → manual review; only VERIFIED is an outreach candidate; dedup keeps stricter status.
+- New controlled-disclosure contracts (`prospect_disclosure.py`): `StorageClass`,
+  `DisclosureLevel`, `DisclosureStage`, `DisclosureItem`, `FindingDisclosurePolicy`,
+  `DisclosureManifest` — storage vs. disclosure kept separate; `OUTREACH_ELIGIBLE` requires
+  independent verification + `CLIENT_SAFE`; manifest readiness is **computed** from references;
+  nothing is sent. Planning/contracts only. Remaining Phase 8.2 contracts stay planned.
+
+### v8.2.2 — Prospect Radar contracts: identity, lifecycle, governance & scoring
 
 - Slice-2 hardening: distinct `BUSINESS_TYPES`/`RESOURCE_TYPES`; `SiteProfile` surface
   de-dup + public/authenticated exclusivity; `BusinessFlowProfile` rejects `DESTRUCTIVE`;

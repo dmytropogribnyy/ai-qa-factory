@@ -8,6 +8,108 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
+## Implementation Session Update (2026-07-17, slice-3/4 hardening + contact/disclosure) — READ FIRST
+
+Two branches are now in play (neither merged):
+
+- **Core contracts branch** `phase/8.2-prospect-core-contracts` @ `ad58f45`
+  (`fix: harden Phase 8.2 identity lifecycle and scoring contracts`) — pushed.
+- **Child contact/disclosure branch** `phase/8.2-prospect-contact-disclosure-contracts`
+  (created from `ad58f45`) — tip is the docs commit for this slice (run `git log --oneline -6`).
+- **origin/main:** `d467eba74f478a968415abfa5da39dd43812f973` (unchanged).
+
+**New commits this session (newest last):**
+
+| Branch | Commit | Subject |
+|---|---|---|
+| core | `ad58f45` | fix: harden Phase 8.2 identity lifecycle and scoring contracts (Part A) |
+| child | `f24de8a` | feat: add Phase 8.2 public business contact contracts |
+| child | `2fa8c9f` | feat: add Phase 8.2 controlled disclosure contracts |
+| child | `<tip>` | docs: document Phase 8.2 contact and disclosure slice |
+
+**Part A — slice-3/4 hardening (`ad58f45`, core branch):**
+- `normalize_hostname`: rejects IPv4/IPv6 (`ipaddress`), invalid labels (leading/trailing
+  hyphen, underscore, empty), enforces length; IDNA-encodes international domains; single
+  documented `is_primary`⇔`relation="primary"` rule. `CompanyIdentity` requires a name or a
+  domain and de-dups brands/aliases case-insensitively.
+- `ProspectLifecycle`: full **history integrity** (contiguity, `state_version` = transition
+  count, status/previous consistency) + **approved lineage** for `CONTACTED`; `APPROVED`
+  transitions require `actor` + `approval_ref`; late outreach snapshots cannot be forged.
+- Governance: enabled suppression forces `manual_override_required`, normalizes domains,
+  validates ISO + COOLDOWN ordering; retention forces the composed `CleanupPolicy` inert
+  (`enabled=False`); recheck forces pre-send revalidation, restricts full re-audit to `L4`,
+  forbids L0 change detection; `MONITOR_CHANGES_ONLY` permits only L0/L1.
+- Scoring: rejects bool/str/NaN/±Inf weights (`math.isfinite`); `REJECTED` forbids outreach;
+  `outreach_eligible=True` requires `outreach_eligibility_ref`.
+
+**Child slice — contact / storage / disclosure:**
+- `prospect_contact.py` (`f24de8a`) — `ContactProvenance`, `ContactStatus`, `ContactRecord`,
+  `ContactCollection`. Public sources only; deterministic email/phone/form normalization
+  (no invented country code, no deliverability claim); inferred contacts never `VERIFIED`;
+  named-person → manual review; only `VERIFIED` is an outreach candidate (computed); dedup
+  keeps the stricter status and unions provenance.
+- `prospect_disclosure.py` (`2fa8c9f`) — `StorageClass`, `DisclosureLevel`, `DisclosureStage`,
+  `DisclosureItem`, `FindingDisclosurePolicy`, `DisclosureManifest`. Storage (handling) kept
+  separate from disclosure level (permission); references only; `CLIENT_SAFE` requires
+  sanitized + no PII/secrets; `OUTREACH_ELIGIBLE` requires independent verification +
+  `CLIENT_SAFE` + minimal teaser; responsible-disclosure stays `INTERNAL_ONLY`; manifest
+  readiness is **computed** (contact + suppression-check + revalidation + approval); sends nothing.
+- `docs/ARTIFACT_CONTRACTS.md` maps these to planned `CONTACTS.json` / `DISCLOSURE_MANIFEST.json`
+  etc. (none generated at runtime); provenance is nested, not a separate artifact.
+
+**Reuse decisions taken:** `SchemaMixin`; `SourceReference` + `Confidence`;
+`normalize_hostname` (shared). `ContactProvenance` nested in `ContactRecord` (no separate
+schema). `DisclosureManifest` implemented as a **fresh computed-readiness** schema, **not** an
+extension of `ClientDeliveryManifest` (recorded in the reuse analysis). `StorageClass`
+implemented (was deferred), kept separate from `DisclosureLevel`.
+
+### Validation (this session)
+
+| Gate | Result |
+|---|---|
+| Targeted prospect tests (6 modules) | **303 passed** (60 + 64 + 94 + 30 + 29 + 26) |
+| Full suite `pytest tests/ -q` | **3947 passed, 4 warnings** |
+| `ruff check .` | All checks passed |
+| `tools/docs_audit.py` | [PASS] (see final gate) |
+| `tools/agent_readiness_audit.py` | [PASS] (see final gate) |
+| `git diff --check` | clean |
+
+Test progression this session: 3850 → 3947 (+97: +42 hardening, +29 contacts, +26 disclosure).
+The 4 warnings are the same pre-existing `PytestCollectionWarning`s (unrelated).
+
+### Deferred (still planned Phase 8.2)
+
+Synthetic data contracts; dashboard information architecture; and all discovery, contact
+lookup, evidence capture, revalidation, outreach, delivery, and execution runtime.
+
+### Unresolved questions for Claude Code
+
+- Confirm `DisclosureManifest` as a fresh computed-readiness schema (vs. extending
+  `ClientDeliveryManifest`) is the desired direction.
+- Confirm the two-branch layout (core hardening + child contact/disclosure) is acceptable, or
+  whether the child branch should be rebased/re-parented before review (note: no rebase was
+  performed).
+- Confirm hostname policy (IDNA + reject single-label/IP) and the phone normalization that
+  never invents a country code match the intended contact model.
+
+### Next Claude Code review step
+
+1. Verify Git state: core branch `phase/8.2-prospect-core-contracts` @ `ad58f45`; child
+   branch `phase/8.2-prospect-contact-disclosure-contracts` (tip = contact/disclosure docs
+   commit); base `6a25288`; `origin/main` `d467eba`; neither merged.
+2. Review the child-branch diff `ad58f45..HEAD` (contacts + disclosure) and the core-branch
+   hardening diff `d66f8f6..ad58f45` — schema/contracts only, no runtime.
+3. Challenge: `DisclosureManifest` not reusing `ClientDeliveryManifest`; contact VERIFIED
+   gating; storage-vs-disclosure separation; computed readiness (not forgeable via `from_dict`).
+4. Inspect fail-closed defaults: inferred≠verified, named-person manual review, suppression
+   never outreach-eligible, `OUTREACH_ELIGIBLE` requires verified+CLIENT_SAFE, responsible
+   disclosure INTERNAL_ONLY, lifecycle approved lineage.
+5. Rerun the six `test_phase82_*` modules plus the full gate.
+6. Withhold merge until explicit human authorization. The next contracts-only slice (if
+   approved) is synthetic data / dashboard IA — still no runtime.
+
+---
+
 ## Implementation Session Update (2026-07-17, slices 2H/3/4) — READ FIRST
 
 This session hardened slice 2 and added two more contracts-only slices (identity/lifecycle/

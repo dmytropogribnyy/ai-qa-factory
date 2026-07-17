@@ -360,6 +360,17 @@ yet — those are the genuinely new domain surface.
 - **Dependencies:** `SchemaMixin`, `DeliveryArtifact`, `SecretScanResult`.
 - **Phase:** 8.2 (slice 5).
 - **Duplicate risk:** medium — must not clone `ClientDeliveryManifest`.
+- **IMPLEMENTED DECISION (child slice, verified):** implemented as a **fresh thin schema**
+  in `core/schemas/prospect_disclosure.py` (`DisclosureManifest` + `DisclosureItem` +
+  `FindingDisclosurePolicy`), **not** an extension of `ClientDeliveryManifest`. A disclosure
+  manifest is a *readiness/eligibility* projection (computed from references), not a delivery
+  package: it references findings/evidence by id and **computes** readiness (contact +
+  suppression-check + revalidation + approval) rather than trusting an
+  `approved_for_disclosure` boolean. It embeds no `DeliveryArtifact`/`SecretScanResult`;
+  PII/secret exposure is prevented via per-item flags + `StorageClass`/`DisclosureLevel`
+  separation. `ContactProvenance` (item 297) was implemented **nested** inside
+  `ContactRecord` reusing `SourceReference`; `StorageClass` (item 461) was implemented in the
+  disclosure module as a handling axis kept separate from disclosure level.
 
 ### Scoring & lifecycle group
 

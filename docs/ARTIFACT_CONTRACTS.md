@@ -960,3 +960,32 @@ duplicate schemas must not be finalized before the Phase 8.2 reuse review. Curre
 
 Ownership and exact directory namespace will be fixed during Phase 8.2 contract work; these are
 planned names only, marked to avoid duplicate future schemas.
+
+### Contact / storage / disclosure contracts (slice implemented; artifacts still planned)
+
+The contact and disclosure **contracts** are implemented as planning-only schemas (no
+artifacts are generated at runtime). These schemas back the planned artifacts above:
+
+| Planned artifact | Backing contract (implemented) |
+|---|---|
+| `CONTACTS.json` | `core/schemas/prospect_contact.py` — `ContactCollection` / `ContactRecord` |
+| `CONTACT_PROVENANCE` (nested, not a separate file) | `ContactProvenance` (embedded in each `ContactRecord`) |
+| `DISCLOSURE_MANIFEST.json` | `core/schemas/prospect_disclosure.py` — `DisclosureManifest` (+ `DisclosureItem`, `FindingDisclosurePolicy`) |
+| `SUPPRESSION_CHECK.json` | referenced by id (`suppression_check_ref`); suppression policy in `prospect_governance.py::SuppressionPolicy` |
+| `PRE_SEND_REVALIDATION.json` | referenced by id (`pre_send_revalidation_ref`); not generated in Phase 8.2 |
+| `OUTREACH_EVIDENCE_SUMMARY_<id>.md` | referenced by `DisclosureItem.evidence_refs`; must be `CLIENT_SAFE` storage |
+
+**Contact provenance** is stored **nested inside** `ContactRecord.provenance` (a list of
+`ContactProvenance`), not as a separate top-level artifact — this reuses `SourceReference`
+and avoids a duplicate provenance schema.
+
+**Two orthogonal axes (never conflated):**
+- **Storage class** (handling): `RAW_INTERNAL → SANITIZED_INTERNAL / VERIFIED_INTERNAL →
+  CLIENT_SAFE`. `RAW_INTERNAL` is never outreach-safe; `CLIENT_SAFE` requires sanitized
+  content with no PII/secrets.
+- **Disclosure level** (permission): `INTERNAL_ONLY`, `OUTREACH_ELIGIBLE`,
+  `QUALIFICATION_ELIGIBLE`, `PAID_DELIVERY_ONLY`. `OUTREACH_ELIGIBLE` requires independent
+  verification **and** `CLIENT_SAFE` storage.
+
+No contact lookup, evidence capture, revalidation, outreach, or delivery is performed by any
+schema; a `DisclosureManifest` only references inputs and computes readiness.

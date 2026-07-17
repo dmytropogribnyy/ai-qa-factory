@@ -162,3 +162,30 @@ Second contracts-only slice (planning only; no runtime). Reuse decisions actuall
   only from explicit, validated, normalized weights (no hidden single score); no automatic
   outreach eligibility; access complexity / public coverage / remediation fit stay
   independent (never auto-derived from one another).
+
+### Implemented in Phase 8.2 — child slice (contact / storage / disclosure)
+
+On branch `phase/8.2-prospect-contact-disclosure-contracts` (child of the hardened core
+branch). Contracts/planning only.
+
+- **REUSED as-is:** `SchemaMixin`; `SourceReference` + `Confidence`; `normalize_hostname`
+  from `prospect_identity.py` (shared canonical hostname logic for email domains and
+  suppression domains).
+- **NEW THIN domain models:** `ContactProvenance`, `ContactStatus`, `ContactRecord`,
+  `ContactCollection` (`core/schemas/prospect_contact.py`); `StorageClass`,
+  `DisclosureLevel`, `DisclosureStage`, `DisclosureItem`, `FindingDisclosurePolicy`,
+  `DisclosureManifest` (`core/schemas/prospect_disclosure.py`).
+- **Reuse-decision correction:** `ContactProvenance` is stored **nested** inside
+  `ContactRecord` (a list) rather than as a separate top-level artifact/schema — it reuses
+  `SourceReference` and avoids a duplicate provenance model. `StorageClass` (deferred in the
+  earlier analysis) is implemented here as a disclosure-handling axis, kept strictly
+  separate from `DisclosureLevel`.
+- **Fail-closed rules:** public sources only (no private/stolen category); inferred contacts
+  can never be `VERIFIED`; named-person → manual review; only `VERIFIED` is an outreach
+  candidate; `CLIENT_SAFE` requires sanitized + no PII/secrets; `OUTREACH_ELIGIBLE` requires
+  independent verification + `CLIENT_SAFE` + minimal teaser; responsible-disclosure stays
+  `INTERNAL_ONLY`; `DisclosureManifest` readiness is computed (never a trusted boolean) and
+  the manifest sends nothing.
+- **DO NOT BUILD (still deferred):** synthetic data contracts; dashboard information
+  architecture; any discovery/contact-lookup/evidence-capture/revalidation/outreach/delivery
+  runtime.
