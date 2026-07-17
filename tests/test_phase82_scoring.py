@@ -155,3 +155,58 @@ class TestLeadScorecard:
         a.notes.append("x")
         assert b.dimensions == []
         assert b.notes == []
+
+
+class TestScoringHardening:
+    """A4: adversarial weight validation and outreach-eligibility gating."""
+
+    @staticmethod
+    def _card(weights):
+        return LeadScorecard(
+            dimensions=[ScoreDimension(name="market_fit", value=50)],
+            weights=weights,
+        )
+
+    def test_bool_weight_rejected(self):
+        with pytest.raises(ValueError):
+            self._card({"market_fit": True})
+
+    def test_string_weight_rejected(self):
+        with pytest.raises(ValueError):
+            self._card({"market_fit": "1.0"})
+
+    def test_nan_weight_rejected(self):
+        with pytest.raises(ValueError):
+            self._card({"market_fit": float("nan")})
+
+    def test_positive_infinity_weight_rejected(self):
+        with pytest.raises(ValueError):
+            self._card({"market_fit": float("inf")})
+
+    def test_negative_infinity_weight_rejected(self):
+        with pytest.raises(ValueError):
+            self._card({"market_fit": float("-inf")})
+
+    def test_rejected_priority_forbids_outreach(self):
+        with pytest.raises(ValueError):
+            LeadScorecard(
+                priority="REJECTED",
+                outreach_eligible=True,
+                outreach_eligibility_ref="DISC-1",
+            )
+
+    def test_outreach_requires_eligibility_ref(self):
+        with pytest.raises(ValueError):
+            LeadScorecard(priority="A", outreach_eligible=True)
+
+    def test_outreach_with_ref_round_trip(self):
+        s = LeadScorecard(
+            priority="A",
+            outreach_eligible=True,
+            outreach_eligibility_ref="DISC-2026-1",
+            dimensions=[ScoreDimension(name="outreach_value", value=90)],
+        )
+        restored = LeadScorecard.from_dict(s.to_dict())
+        assert restored.to_dict() == s.to_dict()
+        assert restored.outreach_eligible is True
+        assert restored.outreach_eligibility_ref == "DISC-2026-1"

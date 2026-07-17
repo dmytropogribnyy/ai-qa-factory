@@ -20,6 +20,7 @@ from typing import Any, Dict, List
 
 from core.schemas.base import SchemaMixin
 from core.schemas.cleanup import CleanupPolicy
+from core.schemas.prospect_identity import normalize_hostname
 from core.schemas.prospect_interaction import PROSPECT_CONTRACT_SCHEMA_VERSION
 
 SUPPRESSION_MODES = frozenset({
@@ -39,6 +40,31 @@ _SCANNING_RECHECK_LEVELS = frozenset({"L1", "L2", "L3", "L4"})
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _valid_iso(value: str) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        datetime.fromisoformat(value)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _to_dt(value: str) -> datetime:
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _iso_after(later: str, earlier: str) -> bool:
+    """True when `later` is strictly after `earlier` (naive values treated as UTC)."""
+    try:
+        return _to_dt(later) > _to_dt(earlier)
+    except (ValueError, TypeError):
+        return True  # already ISO-validated; skip strict ordering if incomparable
 
 
 def _dedup(seq: List[str]) -> List[str]:
@@ -75,11 +101,28 @@ class SuppressionPolicy(SchemaMixin):
     def __post_init__(self) -> None:
         if self.mode not in SUPPRESSION_MODES:
             raise ValueError(f"Unknown suppression mode: {self.mode!r}")
-        self.applies_to_domains = _dedup(self.applies_to_domains)
-        if self.enabled and not self.reason.strip():
-            raise ValueError("enabled suppression requires a non-empty reason")
-        if self.enabled and self.mode == "COOLDOWN" and not self.expires_at.strip():
-            raise ValueError("COOLDOWN suppression requires an expiry/review date")
+        # Normalize + de-duplicate domains via the canonical hostname helper (fail closed).
+        self.applies_to_domains = _dedup(
+            [normalize_hostname(d) for d in self.applies_to_domains]
+        )
+        if self.created_at and not _valid_iso(self.created_at):
+            raise ValueError(f"created_at must be valid ISO: {self.created_at!r}")
+        if self.expires_at and not _valid_iso(self.expires_at):
+            raise ValueError(f"expires_at must be valid ISO: {self.expires_at!r}")
+        if self.enabled:
+            # Enabled suppression always requires manual override and a reason.
+            self.manual_override_required = True
+            if not self.reason.strip():
+                raise ValueError("enabled suppression requires a non-empty reason")
+            if self.mode == "COOLDOWN":
+                if not self.expires_at.strip():
+                    raise ValueError(
+                        "COOLDOWN suppression requires an expiry/review date"
+                    )
+                if not _iso_after(self.expires_at, self.created_at):
+                    raise ValueError(
+                        "COOLDOWN expiry must be later than created_at"
+                    )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SuppressionPolicy":
@@ -121,9 +164,14 @@ class ProspectRetentionPolicy(SchemaMixin):
                 raise ValueError(f"{name} cannot be negative")
         if self.archive_state not in RETENTION_ARCHIVE_STATES:
             raise ValueError(f"Unknown archive_state: {self.archive_state!r}")
+        if self.cleanup_policy.retention_days < 0:
+            raise ValueError("cleanup_policy.retention_days cannot be negative")
         # Fail-closed safety invariants that prospect retention can never weaken:
-        # dry-run stays required; git-tracked files and client outputs stay preserved;
-        # suppression + identity metadata survive evidence deletion.
+        # the composed cleanup stays inert (no runtime); dry-run stays required; git-tracked
+        # files and client outputs stay preserved; suppression + identity metadata survive
+        # evidence deletion. Evidence retention (`evidence_retention_days`) is a separate,
+        # typically shorter window than the generic `CleanupPolicy.retention_days`.
+        self.cleanup_policy.enabled = False
         self.cleanup_policy.dry_run_required = True
         self.cleanup_policy.preserve_git_tracked_files = True
         self.cleanup_policy.preserve_client_outputs = True
@@ -190,6 +238,16 @@ class RecheckPolicy(SchemaMixin):
         for name in ("cooldown_days", "evidence_max_age_days"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} cannot be negative")
+        if self.next_recheck_at and not _valid_iso(self.next_recheck_at):
+            raise ValueError(f"next_recheck_at must be valid ISO: {self.next_recheck_at!r}")
+        # Pre-send revalidation can never be disabled through this contract.
+        self.pre_send_revalidation_required = True
+        # A full re-audit is only meaningful at the highest level.
+        if self.full_reaudit_allowed and self.level != "L4":
+            raise ValueError("full_reaudit_allowed is only valid for level L4")
+        # L0 is a history check only: it cannot require active change detection.
+        if self.level == "L0" and self.change_detection_required:
+            raise ValueError("L0 (history check) cannot require active change detection")
 
     @property
     def is_active_scan(self) -> bool:
@@ -226,6 +284,16 @@ class ProspectGovernancePlan(SchemaMixin):
         ):
             raise ValueError(
                 "NO_SCAN suppression cannot coexist with an active automatic recheck"
+            )
+        # MONITOR_CHANGES_ONLY permits only history / cheap change detection (L0/L1).
+        if (
+            self.suppression.enabled
+            and self.suppression.mode == "MONITOR_CHANGES_ONLY"
+            and self.recheck.enabled
+            and self.recheck.level in {"L2", "L3", "L4"}
+        ):
+            raise ValueError(
+                "MONITOR_CHANGES_ONLY allows only L0/L1 recheck, not L2–L4"
             )
 
     def to_dict(self) -> Dict[str, Any]:

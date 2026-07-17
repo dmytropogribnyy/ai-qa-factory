@@ -19,6 +19,7 @@ capacity; remediation fit never lowers audit value automatically.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -95,6 +96,7 @@ class LeadScorecard(SchemaMixin):
     weights: Dict[str, float] = field(default_factory=dict)
     weighted_total: Optional[float] = None
     outreach_eligible: bool = False
+    outreach_eligibility_ref: str = ""
     rationale: List[str] = field(default_factory=list)
     risk_notes: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
@@ -109,6 +111,15 @@ class LeadScorecard(SchemaMixin):
             self._validate_and_compute_weights()
         else:
             self.weighted_total = None
+        # Outreach eligibility is never derived from scores. A REJECTED prospect can
+        # never be outreach-eligible, and eligibility requires an external decision ref
+        # (recorded here; the reference does not perform outreach).
+        if self.priority == "REJECTED" and self.outreach_eligible:
+            raise ValueError("a REJECTED prospect cannot be outreach_eligible")
+        if self.outreach_eligible and not self.outreach_eligibility_ref.strip():
+            raise ValueError(
+                "outreach_eligible=True requires a non-empty outreach_eligibility_ref"
+            )
 
     def _validate_and_compute_weights(self) -> None:
         dim_by_name = {d.name: d for d in self.dimensions}
@@ -118,6 +129,12 @@ class LeadScorecard(SchemaMixin):
                 raise ValueError(f"weight for unknown dimension: {name!r}")
             if name not in dim_by_name:
                 raise ValueError(f"weight for a dimension not present in scorecard: {name!r}")
+            if isinstance(weight, bool):
+                raise ValueError(f"weight must be numeric, not bool: {name}")
+            if not isinstance(weight, (int, float)):
+                raise ValueError(f"weight must be numeric: {name}={weight!r}")
+            if not math.isfinite(weight):
+                raise ValueError(f"weight must be finite (no NaN/Infinity): {name}={weight}")
             if weight < 0:
                 raise ValueError(f"weight cannot be negative: {name}={weight}")
             total += weight
@@ -138,6 +155,7 @@ class LeadScorecard(SchemaMixin):
             "weights": dict(self.weights),
             "weighted_total": self.weighted_total,
             "outreach_eligible": self.outreach_eligible,
+            "outreach_eligibility_ref": self.outreach_eligibility_ref,
             "rationale": list(self.rationale),
             "risk_notes": list(self.risk_notes),
             "notes": list(self.notes),
@@ -147,7 +165,8 @@ class LeadScorecard(SchemaMixin):
     def from_dict(cls, data: Dict[str, Any]) -> "LeadScorecard":
         known = {
             "schema_version", "prospect_id", "priority", "weights", "weighted_total",
-            "outreach_eligible", "rationale", "risk_notes", "notes",
+            "outreach_eligible", "outreach_eligibility_ref", "rationale", "risk_notes",
+            "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
         dims = data.get("dimensions") or []

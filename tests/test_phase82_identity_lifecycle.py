@@ -19,6 +19,7 @@ from core.schemas.prospect_lifecycle import (
     PROSPECT_STATE_SET,
     TERMINAL_STATES,
     ProspectLifecycle,
+    ProspectTransition,
     is_transition_allowed,
 )
 from core.schemas.prospect_governance import (
@@ -102,9 +103,11 @@ class TestCompanyIdentity:
 
     def test_brand_and_alias_dedup(self):
         c = CompanyIdentity(
-            brand_names=["Acme", "Acme"],
-            aliases=["ACME Corp", "ACME Corp"],
+            canonical_name="Acme",
+            brand_names=["Acme", "acme", "Acme"],
+            aliases=["ACME Corp", "acme corp"],
         )
+        # Case-insensitive dedup preserving first display spelling.
         assert c.brand_names == ["Acme"]
         assert c.aliases == ["ACME Corp"]
 
@@ -127,12 +130,12 @@ class TestCompanyIdentity:
         assert isinstance(restored.sources[0], SourceReference)
 
     def test_identity_has_no_contact_or_score_fields(self):
-        keys = set(CompanyIdentity().to_dict().keys())
+        keys = set(CompanyIdentity(canonical_name="Acme").to_dict().keys())
         assert not (keys & {"email", "phone", "contacts", "lead_score", "priority"})
 
     def test_no_shared_default_mutation(self):
-        a = CompanyIdentity()
-        b = CompanyIdentity()
+        a = CompanyIdentity(canonical_name="Acme")
+        b = CompanyIdentity(canonical_name="Acme")
         a.brand_names.append("X")
         a.domains.append(DomainIdentity(hostname="x.com"))
         assert b.brand_names == []
@@ -168,8 +171,9 @@ class TestProspectLifecycle:
         lc = ProspectLifecycle(status="DRAFT_READY")
         with pytest.raises(ValueError):
             lc.apply_transition("CONTACTED")
-        # APPROVED -> CONTACTED is allowed.
-        lc2 = ProspectLifecycle(status="APPROVED")
+        # A proper approved chain reaches CONTACTED.
+        lc2 = ProspectLifecycle(status="DRAFT_READY")
+        lc2.apply_transition("APPROVED", actor="human", approval_ref="SOW-1")
         lc2.apply_transition("CONTACTED")
         assert lc2.status == "CONTACTED"
 
@@ -301,7 +305,7 @@ class TestRecheckPolicy:
         assert RecheckPolicy(enabled=True, level="L0").is_active_scan is False
         assert RecheckPolicy(enabled=False, level="L4").is_active_scan is False
         assert RecheckPolicy(
-            enabled=True, level="L0", change_detection_required=True
+            enabled=True, level="L1", change_detection_required=True
         ).is_active_scan is True
 
     def test_round_trip(self):
@@ -349,3 +353,193 @@ class TestBackwardsCompatibility:
         from core.schemas.work_run_state import WorkRunState
         assert CleanupPolicy().dry_run_required is True
         assert WorkRunState().status == "RECEIVED"
+
+
+class TestSlice3Hardening:
+    """Adversarial hardening tests (Part A: A1 identity, A2 lifecycle, A3 governance)."""
+
+    _ISO = "2026-07-17T00:00:00+00:00"
+
+    # ---- A1: hostname / identity ----
+    @pytest.mark.parametrize("bad", [
+        "1.2.3.4",
+        "255.255.255.255",
+        "2001:db8::1",
+        "::1",
+        "exa_mple.com",
+        "-bad.com",
+        "bad-.com",
+        "a..b.com",
+    ])
+    def test_hostname_ip_and_invalid_labels_rejected(self, bad):
+        with pytest.raises(ValueError):
+            DomainIdentity(hostname=bad)
+
+    def test_idna_international_domain_normalized(self):
+        d = DomainIdentity(hostname="münchen.example")
+        assert d.hostname.startswith("xn--")
+        assert d.hostname.isascii()
+
+    def test_relation_primary_and_is_primary_consistent(self):
+        a = DomainIdentity(hostname="a.com", is_primary=True)
+        assert a.relation == "primary"
+        b = DomainIdentity(hostname="b.com", relation="primary")
+        assert b.is_primary is True
+
+    def test_company_requires_name_or_domain(self):
+        with pytest.raises(ValueError):
+            CompanyIdentity()  # no name, no domains
+        assert CompanyIdentity(canonical_name="Acme").canonical_name == "Acme"
+        assert len(CompanyIdentity(domains=[DomainIdentity(hostname="a.com")]).domains) == 1
+
+    def test_blank_brand_rejected(self):
+        with pytest.raises(ValueError):
+            CompanyIdentity(canonical_name="Acme", brand_names=["  "])
+
+    # ---- A2: lifecycle history integrity ----
+    @staticmethod
+    def _contacted_lifecycle():
+        lc = ProspectLifecycle(status="DRAFT_READY")
+        lc.apply_transition("APPROVED", actor="human", approval_ref="SOW-1")
+        lc.apply_transition("CONTACTED")
+        return lc
+
+    def test_valid_approved_chain_round_trip(self):
+        lc = self._contacted_lifecycle()
+        assert lc.status == "CONTACTED"
+        restored = ProspectLifecycle.from_dict(lc.to_dict())
+        assert restored.to_dict() == lc.to_dict()
+
+    def test_apply_approved_requires_actor_and_ref(self):
+        lc = ProspectLifecycle(status="DRAFT_READY")
+        with pytest.raises(ValueError):
+            lc.apply_transition("APPROVED", actor="", approval_ref="SOW-1")
+        with pytest.raises(ValueError):
+            lc.apply_transition("APPROVED", actor="human", approval_ref="")
+
+    def test_forged_state_version_rejected(self):
+        data = self._contacted_lifecycle().to_dict()
+        data["state_version"] = 99
+        with pytest.raises(ValueError):
+            ProspectLifecycle.from_dict(data)
+
+    def test_non_contiguous_history_rejected(self):
+        data = {
+            "prospect_id": "p", "schema_version": "8.2.0", "state_version": 2,
+            "status": "QUICK_SCANNED", "previous_status": "ELIGIBLE",
+            "history": [
+                {"from_state": "DISCOVERED", "to_state": "ELIGIBLE", "reason": "",
+                 "actor": "", "approval_ref": "", "at": self._ISO},
+                {"from_state": "QUALIFIED", "to_state": "QUICK_SCANNED", "reason": "",
+                 "actor": "", "approval_ref": "", "at": self._ISO},
+            ],
+            "updated_at": self._ISO, "notes": [],
+        }
+        with pytest.raises(ValueError):
+            ProspectLifecycle.from_dict(data)
+
+    def test_status_mismatch_with_history_rejected(self):
+        data = self._contacted_lifecycle().to_dict()
+        data["status"] = "REPLIED"  # history ends at CONTACTED
+        with pytest.raises(ValueError):
+            ProspectLifecycle.from_dict(data)
+
+    def test_fake_contacted_snapshot_rejected(self):
+        with pytest.raises(ValueError):
+            ProspectLifecycle(status="CONTACTED")  # empty history, no lineage
+
+    def test_fake_approved_snapshot_rejected(self):
+        with pytest.raises(ValueError):
+            ProspectLifecycle(status="APPROVED")
+
+    def test_contacted_without_approved_lineage_rejected(self):
+        data = {
+            "prospect_id": "p", "schema_version": "8.2.0", "state_version": 1,
+            "status": "CONTACTED", "previous_status": "COOLDOWN",
+            "history": [
+                {"from_state": "COOLDOWN", "to_state": "CONTACTED", "reason": "",
+                 "actor": "", "approval_ref": "", "at": self._ISO},
+            ],
+            "updated_at": self._ISO, "notes": [],
+        }
+        with pytest.raises(ValueError):
+            ProspectLifecycle.from_dict(data)
+
+    def test_transition_bad_timestamp_rejected(self):
+        with pytest.raises(ValueError):
+            ProspectTransition(from_state="DISCOVERED", to_state="ELIGIBLE", at="nope")
+
+    def test_transition_same_state_rejected(self):
+        with pytest.raises(ValueError):
+            ProspectTransition(from_state="ELIGIBLE", to_state="ELIGIBLE", at=self._ISO)
+
+    # ---- A3: governance ----
+    def test_enabled_suppression_forces_manual_override(self):
+        s = SuppressionPolicy(
+            enabled=True, reason="opt-out", manual_override_required=False
+        )
+        assert s.manual_override_required is True
+
+    def test_suppression_domains_normalized_and_deduped(self):
+        s = SuppressionPolicy(applies_to_domains=["Example.COM.", "example.com"])
+        assert s.applies_to_domains == ["example.com"]
+
+    def test_suppression_invalid_iso_rejected(self):
+        with pytest.raises(ValueError):
+            SuppressionPolicy(created_at="not-a-date")
+
+    def test_cooldown_expiry_must_be_after_creation(self):
+        with pytest.raises(ValueError):
+            SuppressionPolicy(
+                enabled=True, mode="COOLDOWN", reason="rate",
+                created_at="2026-07-17T00:00:00+00:00",
+                expires_at="2020-01-01T00:00:00+00:00",
+            )
+
+    def test_retention_forces_cleanup_inert(self):
+        from core.schemas.cleanup import CleanupPolicy
+        r = ProspectRetentionPolicy(
+            cleanup_policy=CleanupPolicy(enabled=True, dry_run_required=False)
+        )
+        assert r.cleanup_policy.enabled is False
+        assert r.cleanup_policy.dry_run_required is True
+
+    def test_retention_negative_cleanup_days_rejected(self):
+        from core.schemas.cleanup import CleanupPolicy
+        with pytest.raises(ValueError):
+            ProspectRetentionPolicy(cleanup_policy=CleanupPolicy(retention_days=-1))
+
+    def test_recheck_pre_send_cannot_be_disabled(self):
+        r = RecheckPolicy(pre_send_revalidation_required=False)
+        assert r.pre_send_revalidation_required is True
+
+    def test_full_reaudit_only_l4(self):
+        with pytest.raises(ValueError):
+            RecheckPolicy(level="L2", full_reaudit_allowed=True)
+        assert RecheckPolicy(level="L4", full_reaudit_allowed=True).full_reaudit_allowed is True
+
+    def test_l0_cannot_require_change_detection(self):
+        with pytest.raises(ValueError):
+            RecheckPolicy(level="L0", change_detection_required=True)
+
+    def test_recheck_bad_next_recheck_at_rejected(self):
+        with pytest.raises(ValueError):
+            RecheckPolicy(next_recheck_at="soon")
+
+    def test_monitor_changes_only_rejects_l2_plus(self):
+        with pytest.raises(ValueError):
+            ProspectGovernancePlan(
+                suppression=SuppressionPolicy(
+                    enabled=True, mode="MONITOR_CHANGES_ONLY", reason="watch"
+                ),
+                recheck=RecheckPolicy(enabled=True, level="L3"),
+            )
+
+    def test_monitor_changes_only_allows_l1(self):
+        plan = ProspectGovernancePlan(
+            suppression=SuppressionPolicy(
+                enabled=True, mode="MONITOR_CHANGES_ONLY", reason="watch"
+            ),
+            recheck=RecheckPolicy(enabled=True, level="L1"),
+        )
+        assert plan.recheck.level == "L1"

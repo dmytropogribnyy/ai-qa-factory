@@ -65,6 +65,12 @@ TERMINAL_STATES = frozenset({"ARCHIVED", "REJECTED", "DUPLICATE"})
 # States from which reaching CONTACTED is permitted (human-approved provenance).
 _CONTACTED_ALLOWED_FROM = frozenset({"APPROVED", "COOLDOWN"})
 
+# States that cannot appear as an empty-history planning snapshot: they require a
+# verifiable approved lineage (an APPROVED transition carries actor + approval_ref).
+_SNAPSHOT_FORBIDDEN_STATES = frozenset({
+    "APPROVED", "CONTACTED", "REPLIED", "PAID_AUDIT",
+})
+
 # Deterministic allowed forward/control transitions (documented; validation only).
 ALLOWED_TRANSITIONS: Dict[str, Tuple[str, ...]] = {
     "DISCOVERED": ("ELIGIBLE", "REJECTED", "DUPLICATE", "SUPPRESSED", "MANUAL_REVIEW_REQUIRED"),
@@ -97,6 +103,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _valid_iso(value: str) -> bool:
+    """Whether value is a non-empty parseable ISO 8601 date/datetime."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        datetime.fromisoformat(value)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def is_transition_allowed(from_state: str, to_state: str) -> bool:
     """Whether from_state → to_state is a permitted lifecycle transition."""
     return to_state in ALLOWED_TRANSITIONS.get(from_state, ())
@@ -110,7 +127,30 @@ class ProspectTransition(SchemaMixin):
     to_state: str = ""
     reason: str = ""
     actor: str = ""                             # e.g. "cli", "claude", "human"
+    approval_ref: str = ""                       # provenance for an APPROVED transition
     at: str = field(default_factory=_now_iso)
+
+    def __post_init__(self) -> None:
+        if self.from_state not in PROSPECT_STATE_SET:
+            raise ValueError(f"Unknown transition from_state: {self.from_state!r}")
+        if self.to_state not in PROSPECT_STATE_SET:
+            raise ValueError(f"Unknown transition to_state: {self.to_state!r}")
+        if self.from_state == self.to_state:
+            raise ValueError("a transition cannot have equal from_state and to_state")
+        if not is_transition_allowed(self.from_state, self.to_state):
+            raise ValueError(
+                f"invalid transition {self.from_state!r} -> {self.to_state!r}"
+            )
+        if not _valid_iso(self.at):
+            raise ValueError(f"transition timestamp must be valid ISO: {self.at!r}")
+        # An APPROVED transition records (does not perform) human approval provenance.
+        if self.to_state == "APPROVED":
+            if not self.actor.strip():
+                raise ValueError("an APPROVED transition requires a non-empty actor")
+            if not self.approval_ref.strip():
+                raise ValueError(
+                    "an APPROVED transition requires a non-empty approval_ref"
+                )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProspectTransition":
@@ -135,6 +175,48 @@ class ProspectLifecycle(SchemaMixin):
             raise ValueError(f"Unknown prospect state: {self.status!r}")
         if self.previous_status and self.previous_status not in PROSPECT_STATE_SET:
             raise ValueError(f"Unknown previous prospect state: {self.previous_status!r}")
+        if self.state_version < 0:
+            raise ValueError("state_version cannot be negative")
+        if not _valid_iso(self.updated_at):
+            raise ValueError(f"updated_at must be valid ISO: {self.updated_at!r}")
+        self._validate_history_integrity()
+
+    def _validate_history_integrity(self) -> None:
+        # state_version is the count of recorded transitions (forged counts fail).
+        if self.state_version != len(self.history):
+            raise ValueError(
+                "state_version must equal the number of recorded transitions"
+            )
+        if not self.history:
+            # Empty-history planning snapshot.
+            if self.previous_status:
+                raise ValueError("empty-history snapshot cannot have a previous_status")
+            if self.status in _SNAPSHOT_FORBIDDEN_STATES:
+                raise ValueError(
+                    f"state {self.status!r} cannot be an empty-history snapshot without "
+                    "a verifiable approved lineage"
+                )
+            return
+        # Contiguity: each transition begins where the previous ended.
+        for i in range(1, len(self.history)):
+            if self.history[i - 1].to_state != self.history[i].from_state:
+                raise ValueError("non-contiguous transition history")
+        last = self.history[-1]
+        if last.to_state != self.status:
+            raise ValueError("final history to_state must match current status")
+        if self.previous_status != last.from_state:
+            raise ValueError(
+                "previous_status must match the final transition's from_state"
+            )
+        # Approved lineage: any CONTACTED must be preceded by an APPROVED transition
+        # (whose ProspectTransition validation already required actor + approval_ref).
+        to_states = [h.to_state for h in self.history]
+        if "CONTACTED" in to_states:
+            first_contacted = to_states.index("CONTACTED")
+            if "APPROVED" not in to_states[:first_contacted]:
+                raise ValueError(
+                    "CONTACTED requires a prior APPROVED transition in history"
+                )
 
     @property
     def is_terminal(self) -> bool:
@@ -144,7 +226,7 @@ class ProspectLifecycle(SchemaMixin):
         return is_transition_allowed(self.status, to_state)
 
     def apply_transition(
-        self, to_state: str, reason: str = "", actor: str = ""
+        self, to_state: str, reason: str = "", actor: str = "", approval_ref: str = ""
     ) -> "ProspectLifecycle":
         """Validate and record a transition (mutates + returns self). No side effects."""
         if to_state not in PROSPECT_STATE_SET:
@@ -158,9 +240,20 @@ class ProspectLifecycle(SchemaMixin):
             raise ValueError(
                 "CONTACTED requires an APPROVED (human-reviewed) prior state"
             )
+        if to_state == "APPROVED":
+            if not actor.strip():
+                raise ValueError("an APPROVED transition requires a non-empty actor")
+            if not approval_ref.strip():
+                raise ValueError(
+                    "an APPROVED transition requires a non-empty approval_ref"
+                )
         self.history.append(
             ProspectTransition(
-                from_state=self.status, to_state=to_state, reason=reason, actor=actor
+                from_state=self.status,
+                to_state=to_state,
+                reason=reason,
+                actor=actor,
+                approval_ref=approval_ref,
             )
         )
         self.previous_status = self.status
