@@ -30,7 +30,7 @@ from core.scout.discovery.candidate import (
 from core.scout.discovery.config import DiscoveryCampaignConfig
 from core.scout.discovery.matrix import build_matrix
 from core.scout.discovery.normalize import normalize_candidates
-from core.scout.discovery.providers import DiscoveryError, ProviderRegistry
+from core.scout.discovery.providers import DiscoveryCandidate, DiscoveryError, ProviderRegistry
 from core.scout.discovery.suppression import apply_suppression
 from core.scout.discovery.triage import TriageContext, assess_commercial, assess_technical
 from core.scout.engine import ScoutEngine
@@ -93,6 +93,12 @@ class DiscoveryEngine:
 
     def run(self) -> Dict[str, Any]:
         cfg = self.config
+        # Fail closed on campaign-directory reuse (no stale-artifact mixing). The bundled demo
+        # resets its own confined dir first; fresh runs get a unique campaign id.
+        if self.store.exists():
+            raise DiscoveryError(
+                f"campaign {cfg.campaign_id!r} already exists; refusing to overwrite it "
+                "(use a fresh campaign id, or reset the campaign directory explicitly)")
         plan = self.plan()
         state: Dict[str, Any] = {
             "campaign_id": cfg.campaign_id, "status": RUN_RUNNING,
@@ -179,6 +185,12 @@ class DiscoveryEngine:
             for cand in results:
                 if self._budget["results"] >= cfg.max_candidates:
                     break
+                # Fail closed on provider result type confusion: a provider that returns a
+                # non-DiscoveryCandidate is skipped and recorded, never crashing the run.
+                if not isinstance(cand, DiscoveryCandidate):
+                    self._event("provider_bad_result", provider=cell["provider_id"],
+                                got=type(cand).__name__)
+                    continue
                 out.append(cand)
                 self._budget["results"] += 1
         return out

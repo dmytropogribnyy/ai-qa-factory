@@ -80,7 +80,17 @@ class CandidateRecord:
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
 
+    _LIST_FIELDS = ("source_provenance", "technical_reasons", "commercial_reasons", "reason_codes")
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CandidateRecord":
         known = set(cls().__dict__.keys())
-        return cls(**{k: v for k, v in data.items() if k in known})
+        kwargs = {k: v for k, v in data.items() if k in known}
+        # Fail closed on malformed list fields — the dashboard/report iterate them, so a
+        # non-list (e.g. a string or null) must never slip through as a valid record.
+        for name in cls._LIST_FIELDS:
+            if name in kwargs and not isinstance(kwargs[name], list):
+                kwargs[name] = []
+        if "commercial_scorecard" in kwargs and not isinstance(kwargs["commercial_scorecard"], dict):
+            kwargs["commercial_scorecard"] = {}
+        return cls(**kwargs)
