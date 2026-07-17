@@ -23,7 +23,7 @@ from core.scout.control import RunControl
 from core.scout.findings import ScoutFinding
 from core.scout.sanitize import Sanitizer
 from core.scout.scoring import build_scorecard
-from core.scout.store import RunStore
+from core.scout.store import RunStore, StoreError
 from core.scout.url_safety import dedupe_eligible
 from core.scout.verification import IndependentVerifier
 
@@ -72,6 +72,7 @@ class ScoutEngine:
     # ------------------------------------------------------------------
     def run(self) -> Dict:
         cfg = self.config
+        self._guard_run_preconditions()
         self.store.write_config(cfg.to_dict())
         state = self._load_or_init_state()
         state["status"] = RUN_RUNNING
@@ -214,6 +215,35 @@ class ScoutEngine:
                 "reached_form": bool(nxt.forms), "stopped_before_side_effect": True}
 
     # ------------------------------------------------------------------
+    def _guard_run_preconditions(self) -> None:
+        """Fail closed on run-id reuse and resume/config mismatch (no stale-artifact mixing).
+
+        - A fresh run must never silently reuse an existing run directory.
+        - Resume requires that run to already exist AND its immutable config to match, so a
+          changed campaign/seeds/budget cannot resume (and pollute) a different run.
+        """
+        from core.scout.config import ScoutRunConfig
+        cfg = self.config
+        if cfg.resume:
+            if not self.store.exists():
+                raise StoreError(
+                    f"resume requested but no existing run found for run_id "
+                    f"{self.store.root.name!r}")
+            try:
+                prior = ScoutRunConfig.from_dict(self.store.load_config())
+            except StoreError:
+                raise
+            except Exception as exc:  # a corrupt/incompatible prior config fails closed
+                raise StoreError(f"cannot resume: prior config is unreadable ({exc})") from exc
+            if prior.material_signature() != cfg.material_signature():
+                raise StoreError(
+                    "cannot resume: the run configuration (campaign/seeds/budgets) differs "
+                    "from the original run; start a fresh run instead")
+        elif self.store.exists():
+            raise StoreError(
+                f"run_id {self.store.root.name!r} already exists; refusing to overwrite it. "
+                "Use --resume to continue it, or choose a new run id")
+
     def _load_or_init_state(self) -> Dict:
         if self.config.resume and self.store.exists():
             state = self.store.load_state()

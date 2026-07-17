@@ -50,6 +50,19 @@ class RunStore:
     def exists(self) -> bool:
         return (self.root / "state.json").exists()
 
+    def reset(self) -> None:
+        """Delete this run directory (path-confined) for an explicit safe replacement.
+
+        Only ever removes ``<output_dir>/scout/<run_id>/`` — never anything outside it (the
+        constructor already guarantees the root is confined). Used by the deterministic demo,
+        which intentionally reuses a fixed run id; normal fresh scans never reuse a run id.
+        """
+        import shutil
+        if self.root == self.output_dir or self.output_dir not in self.root.parents:
+            raise StoreError("refusing to reset a directory outside the run tree")
+        if self.root.exists():
+            shutil.rmtree(self.root)
+
     # --- config (immutable once written) ----------------------------------
     def write_config(self, config: Dict[str, Any]) -> None:
         path = self._confine("config.json")
