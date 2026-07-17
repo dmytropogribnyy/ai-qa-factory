@@ -38,3 +38,7 @@ def pytest_configure(config: object) -> None:
         "markers",
         "playwright_acceptance: real local Chromium acceptance for the Scout browser backend",
     )
+    config.addinivalue_line(
+        "markers",
+        "final1_browser_acceptance: real local Chromium + axe + performance + reversible acceptance",
+    )
