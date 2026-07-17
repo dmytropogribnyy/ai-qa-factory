@@ -1384,3 +1384,123 @@ replace — `ProjectStatus`; sensitive MCP fields are reference-only (env-var na
 
 All additive with safe defaults; existing round-trips preserved. Runtime lives in the new
 `core/orchestration/` package (deterministic, planning-only).
+
+## Phase 8.2 — Prospect Radar planning contracts (slice 1)
+
+First contracts-only slice of the Prospect QA Radar / Super Scout domain (planning only;
+no runtime, discovery, browser, network, or MCP). See
+[architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md) and the
+reuse analysis in `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md`.
+
+| File | Classes | Note |
+|---|---|---|
+| `prospect_interaction.py` (new) | `InteractionActionClass`, `InteractionBoundary` | typed form of the planned action classes in `APPROVAL_MODEL.md`; fail-closed defaults; CAPTCHA-bypass / access-control / proxy-stealth evasion cannot be enabled through the contract |
+| `prospect_campaign.py` (new) | `ProspectCampaign`, `CampaignTargetCriteria`, `MarketPolicy`, `DiscoverySourcePolicy` | campaign header + policies; reuses `SourceReference`; `read_only=True` discovery; market policy never auto-approves outreach |
+
+**Reuse decisions (verified):** serialization via `SchemaMixin` (unknown keys ignored →
+additive-safe); origin/owner via existing `SourceReference` (no new provenance model);
+lifecycle/versioning mirrors the `WorkRunState` pattern (uuid id, UTC ISO timestamps,
+explicit `schema_version`) without reusing client-work states; policy shape modeled on
+`ToolExecutionPolicy` / `IntegrationPolicy`; `DiscoverySourcePolicy` mirrors the
+reference-only `config/mcp_servers.yaml` manifest (planning candidate, never verified
+runtime). New schemas are imported directly from their modules (Phase 8 convention; not
+re-exported in `core/schemas/__init__.py`). Remaining Phase 8.2 contracts stay planned.
+
+### Slice 1 hardening
+
+`InteractionBoundary` was hardened with deterministic fail-closed normalization: the
+mandatory approval classes (POTENTIAL_BUSINESS_SIDE_EFFECT, EXTERNAL_COMMUNICATION,
+FINANCIAL) can never vanish from both approval-required and blocked; lists are
+de-duplicated and a class can never be both permitted and restricted; permitting
+`REVERSIBLE_SESSION_WRITE` forces `cleanup_required`; `public_access_only` forces
+`authenticated_access_allowed=False`; any enabled side-effect flag requires a non-empty
+`written_authorization_ref` and keeps the matching action class approval-required.
+`DiscoverySourcePolicy` now rejects an unknown `provider_resolution_status` (no silent
+rewrite); `MarketPolicy` rejects `"none"` coexisting with a real outreach channel.
+
+## Phase 8.2 — Prospect Radar planning contracts (slice 2)
+
+Business & site profile contracts (planning only; no runtime, discovery, browser,
+network, MCP, crawler, provider, contact lookup, outreach, or database).
+
+| File | Classes | Note |
+|---|---|---|
+| `prospect_business.py` (new) | `BusinessContext`, `SiteProfile`, `BusinessFlowProfile` | observations only; explicit `unknown` defaults; reuses `Confidence` values + `SourceReference`; capability references validated against `ATOMIC_CAPABILITIES`; never claims ability to pay or that a page was tested |
+| `prospect_coverage.py` (new) | `CoverageArea`, `CoverageMap`, `SiteFingerprint` | QA coverage only (separate from commercial opportunity); `COVERED`/`PARTIAL` require an evidence/verification reference; fingerprints are opaque strings with secret/session inputs rejected and deterministic (sorted) inputs |
+
+**Reuse decisions (verified):** `SchemaMixin` serialization; `Confidence` vocabulary from
+`finding.py` (string-typed, not a new enum); `SourceReference` provenance;
+`InteractionActionClass` for planned flow risk; `ATOMIC_CAPABILITIES` for capability
+references; opaque-string fingerprints following the `WorkPacket.input_fingerprint`
+convention (no in-schema hashing/crawling). `CoverageMap` is a thin new projection rather
+than an extension of `scenario_execution_matrix` (kept intentionally decoupled — QA
+coverage vs. commercial opportunity stay separate). Remaining Phase 8.2 contracts
+(contact/identity, findings/disclosure, scoring/lifecycle, synthetic data, retention/
+suppression/storage-class, dashboard) stay planned.
+
+### Slice 2 hardening
+
+`BusinessContext.business_type` and `SiteProfile.resource_type` now use **distinct**
+vocabularies (`BUSINESS_TYPES` vs. `RESOURCE_TYPES`; older values kept for backward
+compatibility). `SiteProfile` de-duplicates surfaces, forbids a route in both public and
+authenticated lists, and forbids `public_open` with authenticated surfaces.
+`BusinessFlowProfile.planned_interaction_action_class` rejects `DESTRUCTIVE`.
+`SiteFingerprint` adds `fingerprint_algorithm` (`sha256`) and requires fingerprint values
+to be valid lowercase hex digests of the right length (rejecting raw URLs/secrets/prose;
+empty allowed). `CoverageArea` requires a non-empty `area`, rejects blank evidence refs,
+and de-duplicates capability/evidence refs.
+
+## Phase 8.2 — Prospect Radar planning contracts (slice 3: identity / lifecycle / governance)
+
+Identity, lifecycle, and governance contracts (planning only; no DNS, network, scheduler,
+filesystem deletion, contact lookup, or outreach).
+
+| File | Classes | Note |
+|---|---|---|
+| `prospect_identity.py` (new) | `DomainIdentity`, `CompanyIdentity` | bare-hostname normalization (no URL/credentials/port; ≥2 labels; lowercase, trailing-dot stripped); one company, many domains, ≤1 primary, hostname-unique; identity separate from contacts/scoring/outreach |
+| `prospect_lifecycle.py` (new) | `ProspectTransition`, `ProspectLifecycle` (+ `PROSPECT_STATES`, `ALLOWED_TRANSITIONS`, `TERMINAL_STATES`) | prospect-specific states mirroring the `WorkRunState` shape (not its states); deterministic transition map; `CONTACTED` requires approved lineage; `APPROVED`≠sent; `PAID_AUDIT`≠payment |
+| `prospect_governance.py` (new) | `SuppressionPolicy`, `ProspectRetentionPolicy`, `RecheckPolicy`, `ProspectGovernancePlan` | suppression modes (`NO_OUTREACH`/`NO_SCAN`/`COOLDOWN`/`MONITOR_CHANGES_ONLY`); retention **composes `CleanupPolicy`** and forces dry-run/preserve-git/preserve-client + suppression/identity preservation; recheck L0–L4 with pre-send revalidation default-on; `NO_SCAN` conflicts with an active recheck |
+
+**Reuse decisions (verified):** `SchemaMixin`; `SourceReference`; `Confidence` values;
+`WorkRunState`/`StateTransition` *shape* for the lifecycle (parallel vocabulary, not reused
+states); **`CleanupPolicy` composed** by `ProspectRetentionPolicy` (no competing cleanup
+engine — deletion is never executed). No filesystem, network, or scheduler runtime.
+
+## Phase 8.2 — Prospect Radar planning contracts (slice 4: scoring foundation)
+
+| File | Classes | Note |
+|---|---|---|
+| `prospect_scoring.py` (new) | `ScoreDimension`, `LeadScorecard`, `ProspectPriority` | 12 independent 0..100 dimensions kept visible; optional `weighted_total` only from explicit, validated, normalized weights (no hidden single score); priority A/B/C/D/REJECTED; `outreach_eligible` default False; `OpportunityFilterAgent` inspected as precursor only, not reused |
+
+### Slice 3/4 hardening
+
+Hostname normalization now rejects IP literals (`ipaddress`), invalid labels
+(leading/trailing hyphen, underscore), and IDNA-encodes international domains;
+`DomainIdentity` keeps `is_primary`⇔`relation="primary"` consistent; `CompanyIdentity`
+requires a name or a domain and de-duplicates brands/aliases case-insensitively.
+`ProspectLifecycle` now validates full **history integrity** (contiguity, `state_version`
+= transition count, status/previous consistency, no post-terminal transitions) and an
+**approved lineage** for `CONTACTED`; an `APPROVED` transition requires `actor` +
+`approval_ref`; late outreach snapshots cannot be forged. Governance: enabled suppression
+forces `manual_override_required`, normalizes domains, and validates ISO/COOLDOWN ordering;
+retention forces the composed `CleanupPolicy` inert (`enabled=False`); recheck forces
+pre-send revalidation, restricts full re-audit to `L4`, and forbids L0 change detection;
+`MONITOR_CHANGES_ONLY` permits only L0/L1. Scoring rejects bool/str/NaN/±Inf weights
+(`math.isfinite`) and gates outreach eligibility (REJECTED forbids; requires an
+`outreach_eligibility_ref`).
+
+## Phase 8.2 — Prospect Radar planning contracts (child slice: contact / storage / disclosure)
+
+Public business contact and controlled-disclosure contracts (planning only; no contact
+lookup, scraping, enrichment, sending, evidence capture, revalidation, or delivery runtime).
+
+| File | Classes | Note |
+|---|---|---|
+| `prospect_contact.py` (new) | `ContactProvenance`, `ContactStatus`, `ContactRecord`, `ContactCollection` | public sources only; reuses `SourceReference` + `Confidence` + `normalize_hostname`; deterministic email/phone/form normalization (no invented country code, no deliverability claim); inferred contacts can never be `VERIFIED`; named-person → manual review; only `VERIFIED` is an outreach candidate (computed); collection de-dups by (channel, normalized value) keeping the stricter status |
+| `prospect_disclosure.py` (new) | `StorageClass`, `DisclosureLevel`, `DisclosureStage`, `DisclosureItem`, `FindingDisclosurePolicy`, `DisclosureManifest` | storage class (handling) kept separate from disclosure level (permission); references only (no embedded payload/logs/secrets); `CLIENT_SAFE` requires sanitized + no PII/secrets; `OUTREACH_ELIGIBLE` requires independent verification + `CLIENT_SAFE` + minimal teaser; responsible-disclosure stays `INTERNAL_ONLY`; manifest **readiness is computed** from references (contact + suppression-check + revalidation + approval), never a trusted boolean; the manifest sends nothing |
+
+**Reuse decisions (verified):** `SchemaMixin`; `SourceReference` + `Confidence`;
+`normalize_hostname` (shared with identity/governance); provenance stored **nested** in
+`ContactRecord` (no separate provenance schema). Remaining Phase 8.2 contracts (synthetic
+data, dashboard information architecture) stay planned. **Phase 8.2 as a whole remains
+planned.**

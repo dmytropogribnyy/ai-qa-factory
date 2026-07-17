@@ -59,6 +59,133 @@ See the table in `docs/UNIVERSAL_WORK_FACTORY.md`. Highlights:
 
 - `capabilities/atomic_capabilities.yaml` — 17 atomic capabilities with class, approval
   default, candidate backends, and candidate MCP servers.
-- `capabilities/profiles/*.yaml` — 8 profiles referencing atomic capabilities.
+- `capabilities/profiles/*.yaml` — 9 profiles referencing atomic capabilities (the 9th,
+  `prospect_qa_radar`, was added in Phase 8.2 slice 1 and is planning-only).
 - `config/mcp_servers.yaml` — redacted, versioned MCP server manifest (plugin-style; new
   server = new YAML block).
+
+---
+
+## Prospect QA Radar / Super Scout — reuse decisions (future-facing, Phase 8.2+)
+
+The second ARK contour must consume existing capabilities, not rebuild them. See
+[architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md). Nothing here
+is implemented; each candidate below requires reuse analysis before any model is added.
+
+**REUSE (as-is):** existing browser and test runners; Playwright framework; API testing
+capabilities; accessibility pipeline; Lighthouse/performance pipeline; passive security/privacy
+checks; evidence manager; evidence intelligence; quality gate; test oracle; client delivery
+pack; content redaction; credential safety; approval model; `WorkRunState` patterns; capability
+registry; capability planner; opportunity/prescreen components where they genuinely fit.
+
+**EXTEND:** capability profiles; capability planning; artifact contracts; evidence claims;
+lifecycle/state semantics; policy model; scoring model; verification adapters;
+delivery/disclosure projections; storage/retention governance.
+
+**NEW, THIN, DOMAIN-SPECIFIC:** campaign planning; business eligibility; business-flow
+classification; company identity resolution; contact provenance; contact/suppression lifecycle;
+site memory; recheck planning; evidence disclosure policy; prospect prioritization;
+audit-offer mapping; dashboard read models/projections.
+
+**DO NOT BUILD:** a second QA engine; a second evidence engine; a second verifier; a second
+report generator; a separate secret scanner; a universal crawler from scratch when established
+providers/adapters suffice; automatic outreach in the MVP; an anti-bot/CAPTCHA bypass engine;
+mass proxy-evasion infrastructure.
+
+### Implemented in Phase 8.2 — slice 1 (campaign definition contracts)
+
+First contracts-only slice (planning only; no runtime). Reuse decisions actually taken:
+
+- **REUSED as-is:** `SchemaMixin` (serialization, additive-safe unknown-key handling);
+  `SourceReference` (campaign origin/owner — no new provenance model).
+- **REUSED as pattern:** `WorkRunState` (uuid id / UTC ISO timestamps / explicit version,
+  without reusing client-work states); `ToolExecutionPolicy` / `IntegrationPolicy`
+  (conservative `read_only` / approval-default policy shape); `config/mcp_servers.yaml`
+  reference-only manifest (a discovery source is a planning candidate, never verified
+  runtime); the documented `APPROVAL_MODEL.md` action classes (typed as
+  `InteractionActionClass`).
+- **NEW THIN domain models:** `ProspectCampaign`, `CampaignTargetCriteria`, `MarketPolicy`,
+  `DiscoverySourcePolicy`, `InteractionBoundary` (fail-closed) in
+  `core/schemas/prospect_campaign.py` + `core/schemas/prospect_interaction.py`.
+- **EXTENDED (data):** `capabilities/profiles/prospect_qa_radar.yaml` (planning-only,
+  reuses existing atomic capabilities, records the rest as `planned_capability_gaps`);
+  `CAPABILITY_PROFILES` gains `prospect_qa_radar`.
+- **Still deferred:** contact/identity, findings/disclosure, scoring, synthetic data, site
+  memory, dashboard — see `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md`.
+
+### Implemented in Phase 8.2 — slice 2 (business & site profile contracts)
+
+Second contracts-only slice (planning only; no runtime). Reuse decisions actually taken:
+
+- **REUSED as-is:** `SchemaMixin`; `SourceReference` (provenance for `BusinessContext` and
+  `SiteFingerprint`); `Confidence` *values* from `finding.py` (string-typed vocabulary, not
+  a new enum); `InteractionActionClass` (planned flow interaction class);
+  `ATOMIC_CAPABILITIES` (capability references in `BusinessFlowProfile` / `CoverageArea`).
+- **REUSED as pattern:** opaque-string fingerprints following `WorkPacket.input_fingerprint`
+  (no in-schema hashing, no crawling).
+- **NEW THIN domain models:** `BusinessContext`, `SiteProfile`, `BusinessFlowProfile`
+  (`core/schemas/prospect_business.py`); `CoverageArea`, `CoverageMap`, `SiteFingerprint`
+  (`core/schemas/prospect_coverage.py`).
+- **Reuse-decision correction:** the reuse analysis tentatively classified `CoverageMap` as
+  EXTEND of `scenario_execution_matrix`. Implementation kept it a **thin new projection**
+  instead — QA coverage and commercial opportunity must stay decoupled, and coupling to the
+  execution matrix would have blurred that. Recorded here as the verified decision.
+- **Fail-closed rules:** `COVERED`/`PARTIAL` require an evidence/verification reference;
+  fingerprint inputs reject secret/session/volatile terms; unknown enums/statuses raise.
+- **Still deferred:** contact/identity, findings/disclosure, scoring/lifecycle, synthetic
+  data, retention/suppression/storage-class, dashboard.
+
+### Implemented in Phase 8.2 — slice 3 (identity / lifecycle / governance)
+
+- **REUSED as-is:** `SchemaMixin`; `SourceReference` (identity provenance); `Confidence`
+  values; `CleanupPolicy` (**composed** by `ProspectRetentionPolicy` — no competing cleanup
+  engine; retention forces dry-run / preserve-git / preserve-client and preserves
+  suppression + identity metadata; deletion is never executed).
+- **REUSED as pattern:** `WorkRunState` / `StateTransition` shape for `ProspectLifecycle`
+  (a parallel prospect vocabulary + deterministic transition map, not a reuse of the
+  client-work states).
+- **NEW THIN domain models:** `DomainIdentity`, `CompanyIdentity`
+  (`core/schemas/prospect_identity.py`); `ProspectTransition`, `ProspectLifecycle`
+  (`core/schemas/prospect_lifecycle.py`); `SuppressionPolicy`, `ProspectRetentionPolicy`,
+  `RecheckPolicy`, `ProspectGovernancePlan` (`core/schemas/prospect_governance.py`).
+- **Fail-closed rules:** hostname normalization rejects URLs/credentials/ports/single-label;
+  ≤ 1 primary domain and hostname-unique; `CONTACTED` requires approved lineage; suppression
+  requires a reason (COOLDOWN requires expiry); negative durations rejected; `NO_SCAN`
+  suppression cannot coexist with an active recheck.
+
+### Implemented in Phase 8.2 — slice 4 (scoring foundation)
+
+- **INSPECTED precursor, NOT reused:** `agents/opportunity_filter.py` (runtime heuristic).
+  `prospect_scoring.py` is a pure data contract instead.
+- **NEW THIN domain models:** `ScoreDimension`, `LeadScorecard`, `ProspectPriority`.
+- **Fail-closed rules:** 12 independent visible dimensions (0..100); optional weighted total
+  only from explicit, validated, normalized weights (no hidden single score); no automatic
+  outreach eligibility; access complexity / public coverage / remediation fit stay
+  independent (never auto-derived from one another).
+
+### Implemented in Phase 8.2 — child slice (contact / storage / disclosure)
+
+On branch `phase/8.2-prospect-contact-disclosure-contracts` (child of the hardened core
+branch). Contracts/planning only.
+
+- **REUSED as-is:** `SchemaMixin`; `SourceReference` + `Confidence`; `normalize_hostname`
+  from `prospect_identity.py` (shared canonical hostname logic for email domains and
+  suppression domains).
+- **NEW THIN domain models:** `ContactProvenance`, `ContactStatus`, `ContactRecord`,
+  `ContactCollection` (`core/schemas/prospect_contact.py`); `StorageClass`,
+  `DisclosureLevel`, `DisclosureStage`, `DisclosureItem`, `FindingDisclosurePolicy`,
+  `DisclosureManifest` (`core/schemas/prospect_disclosure.py`).
+- **Reuse-decision correction:** `ContactProvenance` is stored **nested** inside
+  `ContactRecord` (a list) rather than as a separate top-level artifact/schema — it reuses
+  `SourceReference` and avoids a duplicate provenance model. `StorageClass` (deferred in the
+  earlier analysis) is implemented here as a disclosure-handling axis, kept strictly
+  separate from `DisclosureLevel`.
+- **Fail-closed rules:** public sources only (no private/stolen category); inferred contacts
+  can never be `VERIFIED`; named-person → manual review; only `VERIFIED` is an outreach
+  candidate; `CLIENT_SAFE` requires sanitized + no PII/secrets; `OUTREACH_ELIGIBLE` requires
+  independent verification + `CLIENT_SAFE` + minimal teaser; responsible-disclosure stays
+  `INTERNAL_ONLY`; `DisclosureManifest` readiness is computed (never a trusted boolean) and
+  the manifest sends nothing.
+- **DO NOT BUILD (still deferred):** synthetic data contracts; dashboard information
+  architecture; any discovery/contact-lookup/evidence-capture/revalidation/outreach/delivery
+  runtime.

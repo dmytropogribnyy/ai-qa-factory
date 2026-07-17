@@ -1954,3 +1954,99 @@ task execution; external communication; runner replacement; delivery approval; e
 `[PASS]`; agent readiness `[PASS]`; deterministic byte-identical artifacts under fixed
 clock/ids; guards prove no LLM/network/subprocess/MCP calls; content secret scan + atomic
 rollback + backup-recovery + fail-closed overwrite verified.
+
+**Status:** Phase 8.1 is **complete** (merged to main). Baseline: 3635 total tests, 72 Phase
+8.1 tests. `CapabilityRegistry` and `CapabilityPlanner` already exist as of Phase 8.1.
+
+---
+
+## Phase 8.2 — ARK Planning Contracts + Prospect Radar Domain Contracts `[planned]`
+
+Planning / schema / contracts / governance only. Extends the existing planning layer with typed
+Prospect QA Radar domain contracts (see
+[../docs/architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md)). It
+does **not** create `CapabilityRegistry`/`CapabilityPlanner` from zero — those exist.
+
+**Allowed actions:** typed domain contracts + planning semantics + artifact contracts +
+capability/profile extensions + governance docs. Every candidate schema below requires an
+explicit **reuse analysis** first — do not blindly implement all of them.
+
+**Candidate domain contracts** (reuse-first, not a build list): `ProspectCampaign`,
+`CampaignTargetCriteria`, `MarketPolicy`, `DiscoverySourcePolicy`, `BusinessContext`,
+`SiteProfile`, `BusinessFlowProfile`, `InteractionBoundary`, `InteractionActionClass`,
+`SyntheticPersona`, `SyntheticDataPolicy`, `CoverageMap`, `CompanyIdentity`, `DomainIdentity`,
+`ContactRecord`, `ContactProvenance`, `ContactStatus`, `FindingDisclosurePolicy`,
+`DisclosureManifest`, `LeadScorecard`, `ProspectPriority`, `ProspectLifecycle`, `RecheckPolicy`,
+`SiteFingerprint`, `RetentionPolicy`, `SuppressionPolicy`, `StorageClass`; dashboard information
+architecture; planned artifact contracts; Prospect Radar capability/profile extensions.
+
+**Explicitly blocked from Phase 8.2:** live discovery; live crawling; browser execution;
+Playwright execution; MCP discovery/invocation; network calls; provider installation; public
+contact lookup runtime; email sending; external communication; automatic outreach; CAPTCHA
+solving or bypass; stealth/fingerprint evasion; residential proxy rotation; real form
+submission; account creation; order creation; booking or slot hold; payment; file upload;
+authenticated/private access; dashboard background workers; autonomous remediation; deployment.
+
+**Acceptance criteria:** planning/schema/governance artifacts only; ruff clean; full pytest
+green; docs audit `[PASS]`; agent readiness `[PASS]`; no runtime added; no new runnable command;
+reuse analysis documented before any new schema.
+
+**Progress — slice 1 `[implemented]` (campaign definition contracts):** the first
+contracts-only slice is implemented on branch `phase/8.2-prospect-core-contracts`
+(schema/planning only; no runtime, discovery, browser, network, or MCP). It adds
+`core/schemas/prospect_interaction.py` (`InteractionActionClass`, fail-closed
+`InteractionBoundary`) and `core/schemas/prospect_campaign.py` (`ProspectCampaign`,
+`CampaignTargetCriteria`, `MarketPolicy`, `DiscoverySourcePolicy`), plus a planning-only
+`capabilities/profiles/prospect_qa_radar.yaml` and focused tests. Reuse decisions are
+recorded in `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md` and `docs/REUSE_MAP_PHASE8.md`.
+
+**Progress — slice 1 hardening `[implemented]`:** `InteractionBoundary` gained
+deterministic fail-closed normalization (mandatory approval classes preserved; permitted
+never overlaps restricted; reversible-write forces cleanup; public-only forces
+authenticated off; side-effect flags require written authorization; evasion switches stay
+off). `DiscoverySourcePolicy` rejects unknown provider status; `MarketPolicy` rejects
+`"none"` alongside a real outreach channel.
+
+**Progress — slice 2 `[implemented]` (business & site profile contracts):** adds
+`core/schemas/prospect_business.py` (`BusinessContext`, `SiteProfile`,
+`BusinessFlowProfile`) and `core/schemas/prospect_coverage.py` (`CoverageArea`,
+`CoverageMap`, `SiteFingerprint`) — planning only; QA coverage kept separate from
+commercial opportunity; `COVERED`/`PARTIAL` require evidence; fingerprints reject
+secret/session inputs.
+
+**Progress — slice 2 hardening `[implemented]`:** distinct `BUSINESS_TYPES` vs.
+`RESOURCE_TYPES`; `SiteProfile` surface de-dup + public/authenticated exclusivity +
+`public_open` rule; `BusinessFlowProfile` rejects `DESTRUCTIVE`; `SiteFingerprint` requires
+valid `sha256` hex digests; `CoverageArea` non-empty area + non-blank evidence + ref dedup.
+
+**Progress — slice 3 `[implemented]` (identity / lifecycle / governance):** adds
+`core/schemas/prospect_identity.py` (`DomainIdentity`, `CompanyIdentity`),
+`core/schemas/prospect_lifecycle.py` (`ProspectTransition`, `ProspectLifecycle` + state
+machine), and `core/schemas/prospect_governance.py` (`SuppressionPolicy`,
+`ProspectRetentionPolicy` composing `CleanupPolicy`, `RecheckPolicy`,
+`ProspectGovernancePlan`). No DNS/network/scheduler/filesystem runtime; deletion never
+executed.
+
+**Progress — slice 4 `[implemented]` (scoring foundation):** adds
+`core/schemas/prospect_scoring.py` (`ScoreDimension`, `LeadScorecard`, `ProspectPriority`)
+— 12 independent visible dimensions; optional weighted total only from explicit validated
+weights; no automatic outreach eligibility; no hidden single-score model.
+
+**Progress — slice 3/4 hardening `[implemented]`:** hostname IP/label rejection + IDNA;
+`ProspectLifecycle` history-integrity + approved-lineage validation (`APPROVED` requires
+`actor`+`approval_ref`); governance ISO/cooldown/monitor rules + inert composed cleanup;
+scoring `math.isfinite` weight validation + outreach-eligibility gating.
+
+**Progress — child slice `[implemented]` (contact / storage / disclosure), branch
+`phase/8.2-prospect-contact-disclosure-contracts`:** adds
+`core/schemas/prospect_contact.py` (`ContactProvenance`, `ContactStatus`, `ContactRecord`,
+`ContactCollection`) and `core/schemas/prospect_disclosure.py` (`StorageClass`,
+`DisclosureLevel`, `DisclosureStage`, `DisclosureItem`, `FindingDisclosurePolicy`,
+`DisclosureManifest`). Public sources only; storage class vs. disclosure level kept
+separate; `OUTREACH_ELIGIBLE` requires independent verification + `CLIENT_SAFE`; manifest
+readiness is computed (contact + suppression-check + revalidation + approval); no lookup,
+sending, evidence capture, or delivery runtime.
+
+**Phase 8.2 as a whole remains `[planned]`** — the remaining candidate contracts
+(contact records/provenance, findings/disclosure, synthetic data, storage-class,
+dashboard) are not implemented.

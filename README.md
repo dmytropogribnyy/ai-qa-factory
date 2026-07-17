@@ -219,13 +219,77 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 | [`docs/ARTIFACT_CONTRACTS.md`](docs/ARTIFACT_CONTRACTS.md) | Artifact paths, ownership, and delivery rules |
 | [`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md) | Agent operating rules and safety obligations |
 | [`docs/AGENT_HANDOFF_TEMPLATE.md`](docs/AGENT_HANDOFF_TEMPLATE.md) | Final phase report template |
+| [`docs/architecture/PROSPECT_QA_RADAR_SPEC.md`](docs/architecture/PROSPECT_QA_RADAR_SPEC.md) | Prospect QA Radar / Super Scout — **approved future-facing architecture; no runtime yet**, integration starts with Phase 8.2 contracts |
 
 ---
 
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.1.0 — ARK planning-only work entrypoint (current)
+### v8.2.3 — Prospect Radar contracts: contact, storage & controlled disclosure (current)
+
+- Slice 3/4 hardening: hostname IP/label rejection + IDNA normalization; `ProspectLifecycle`
+  history-integrity + approved-lineage (`APPROVED` requires actor + approval_ref); governance
+  ISO/cooldown/monitor rules + inert composed `CleanupPolicy`; scoring `math.isfinite` weight
+  validation + outreach-eligibility gating.
+- New public-contact contracts (`prospect_contact.py`): `ContactProvenance`, `ContactStatus`,
+  `ContactRecord`, `ContactCollection` — public sources only; deterministic normalization with
+  no invented country code / no deliverability claim; inferred contacts can never be VERIFIED;
+  named-person → manual review; only VERIFIED is an outreach candidate; dedup keeps stricter status.
+- New controlled-disclosure contracts (`prospect_disclosure.py`): `StorageClass`,
+  `DisclosureLevel`, `DisclosureStage`, `DisclosureItem`, `FindingDisclosurePolicy`,
+  `DisclosureManifest` — storage vs. disclosure kept separate; `OUTREACH_ELIGIBLE` requires
+  independent verification + `CLIENT_SAFE`; manifest readiness is **computed** from references;
+  nothing is sent. Planning/contracts only. Remaining Phase 8.2 contracts stay planned.
+
+### v8.2.2 — Prospect Radar contracts: identity, lifecycle, governance & scoring
+
+- Slice-2 hardening: distinct `BUSINESS_TYPES`/`RESOURCE_TYPES`; `SiteProfile` surface
+  de-dup + public/authenticated exclusivity; `BusinessFlowProfile` rejects `DESTRUCTIVE`;
+  `SiteFingerprint` requires valid `sha256` hex digests; `CoverageArea` hygiene.
+- Slice 3 (identity/lifecycle/governance, planning-only): `DomainIdentity`,
+  `CompanyIdentity` (`prospect_identity.py`); `ProspectLifecycle` + deterministic transition
+  map (`prospect_lifecycle.py`); `SuppressionPolicy`, `ProspectRetentionPolicy` (composing
+  the existing `CleanupPolicy`), `RecheckPolicy`, `ProspectGovernancePlan`
+  (`prospect_governance.py`). No DNS/network/scheduler/filesystem runtime; deletion never
+  executed; `CONTACTED` requires approved lineage.
+- Slice 4 (scoring foundation): `ScoreDimension`, `LeadScorecard`, `ProspectPriority`
+  (`prospect_scoring.py`) — 12 independent visible dimensions, optional weighted total only
+  from explicit validated weights, no automatic outreach eligibility, no hidden single score.
+- Reuses `SchemaMixin`, `SourceReference`, `Confidence`, `WorkRunState` shape, and
+  `CleanupPolicy` — no duplicate engines. Remaining Phase 8.2 contracts stay planned.
+
+### v8.2.1 — Prospect Radar contracts: hardening + business/site profiles
+
+- Hardened slice-1 `InteractionBoundary` with deterministic fail-closed normalization
+  (mandatory approval classes preserved; permitted never overlaps restricted;
+  reversible-write forces cleanup; public-only forces authenticated off; side-effect flags
+  require written authorization; evasion switches always off). `DiscoverySourcePolicy`
+  rejects unknown provider status; `MarketPolicy` rejects `"none"` + a real outreach channel.
+- New slice-2 planning-only contracts (schema/contracts only — **no runtime, discovery,
+  browser, network, MCP, crawler, provider, contact lookup, outreach, or database**):
+  `BusinessContext`, `SiteProfile`, `BusinessFlowProfile` (`core/schemas/prospect_business.py`)
+  and `CoverageArea`, `CoverageMap`, `SiteFingerprint` (`core/schemas/prospect_coverage.py`).
+- QA coverage stays separate from commercial opportunity; `COVERED`/`PARTIAL` require an
+  evidence/verification reference; fingerprints reject secret/session inputs and are
+  deterministic. Reuses `Confidence`, `SourceReference`, `InteractionActionClass`, and
+  `ATOMIC_CAPABILITIES` — no duplicate schemas. Remaining Phase 8.2 contracts stay planned.
+
+### v8.2.0 — Prospect Radar planning contracts, slice 1
+
+- New planning-only domain contracts (schema/contracts only — **no runtime, discovery,
+  browser, network, or MCP**): `ProspectCampaign`, `CampaignTargetCriteria`, `MarketPolicy`,
+  `DiscoverySourcePolicy` (`core/schemas/prospect_campaign.py`) and `InteractionActionClass`
+  + fail-closed `InteractionBoundary` (`core/schemas/prospect_interaction.py`).
+- Fail-closed defaults: only `READ_ONLY` permitted; destructive blocked; financial /
+  external-communication approval-gated; CAPTCHA-bypass and access-control / proxy-stealth
+  evasion cannot be enabled through the contract; market policy never auto-approves outreach.
+- New planning-only capability profile `prospect_qa_radar` (9 profiles total; reuses
+  existing atomic capabilities, records the rest as planned gaps).
+- Reuses `SchemaMixin`, `SourceReference`, and the `WorkRunState` / `ToolExecutionPolicy`
+  patterns — no duplicate schemas. Remaining Phase 8.2 contracts stay planned.
+
+### v8.1.0 — ARK planning-only work entrypoint
 
 - New command `python main.py work` (planning-only): turns a brief into a reviewable plan.
   **No LLM in the core path, no MCP calls, no network, no browser, no execution.**

@@ -41,6 +41,9 @@ ATOMIC_CAPABILITIES = frozenset({
 CAPABILITY_PROFILES = frozenset({
     "research_only", "code_project", "web_app_audit", "api_project",
     "data_project", "automation_project", "mvp_launch_audit", "technical_writing",
+    # Phase 8.2: Prospect QA Radar planning profile (planning-only; reuses existing
+    # atomic capabilities and records missing ones as planned gaps).
+    "prospect_qa_radar",
 })
 
 

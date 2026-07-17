@@ -107,9 +107,9 @@ class TestAtomicCapabilities:
 # ---------------------------------------------------------------------------
 
 class TestCapabilityProfiles:
-    def test_eight_profiles(self):
+    def test_expected_profile_count(self):
         files = sorted(PROFILES_DIR.glob("*.yaml"))
-        assert len(files) == 8
+        assert len(files) == 9
 
     def test_profiles_reference_known_capabilities(self):
         atomic_names = set(ATOMIC_CAPABILITIES)
@@ -122,3 +122,15 @@ class TestCapabilityProfiles:
     def test_profile_names_match_registry(self):
         names = {_load(f)["name"] for f in PROFILES_DIR.glob("*.yaml")}
         assert names == set(CAPABILITY_PROFILES)
+
+    def test_prospect_profile_is_planning_only(self):
+        prof = _load(PROFILES_DIR / "prospect_qa_radar.yaml")
+        assert prof["name"] == "prospect_qa_radar"
+        assert prof["default_policy"] == "planning_only"
+        # Reuses only known atomic capabilities; records the rest as planned gaps.
+        for cap in prof.get("capabilities", []):
+            assert cap in set(ATOMIC_CAPABILITIES), f"unknown capability {cap}"
+        for gap in prof.get("planned_capability_gaps", []):
+            assert gap not in set(ATOMIC_CAPABILITIES), (
+                f"{gap} is already atomic — do not record it as a gap"
+            )
