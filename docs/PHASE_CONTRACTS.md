@@ -2292,3 +2292,108 @@ manual contact-form copy hand-off) through an approved provider; reply/bounce/op
 follow-up controls and cadences; CRM/commercial metrics; startup/installer packaging; an evaluation
 benchmark; and the final Prospect QA Radar v2.0 release. No sending, provider send-call, or
 external-communication worker exists before Final Phase II.
+
+## Final Phase II — Approved Communication & Product Completion `[implemented]`
+
+The second and final functional phase. It completes the local product from "pre-send draft +
+human review queue" to "immutable draft revision → explicit human approval → immediate pre-send
+revalidation → controlled provider send → immutable send history → delivery/bounce/reply/opt-out
+events → human-approved follow-ups → commercial metrics", releasing **Prospect QA Radar v2.0.0**.
+The remaining roadmap is now functionally complete: only a verification-only Final Independent
+Acceptance pass remains (review/test/fix confirmed defects; may issue v2.0.1; **may not** add
+another product layer). Reuses the Phase 8.2 contracts, the Final Phase I memory/pipeline/outreach,
+`RunStore`, and `ArtifactSafeWriter`.
+
+**Inputs.** A completed Final Phase I pre-send campaign (findings, evidence, verified public
+contacts, disclosure manifests, drafts, review queue) in the SQLite memory; per-campaign/channel
+policy and outreach controls; an explicitly configured outbound provider (optional).
+
+**Outputs.** Immutable draft revisions; single-use expiring approval records; pre-send
+revalidation records; outbound messages + send attempts + provider results; normalized
+delivery/reply/bounce/opt-out events; follow-up plans (each individually approved); commercial
+funnel events + metrics; outreach control state; and the registered artifacts below.
+
+**State machines (enforced by repository + DB constraints, not arbitrary updates).**
+Draft revision: `DRAFT → PENDING_REVIEW → APPROVED → RESERVED_FOR_SEND → CONSUMED`
+(terminal: `REJECTED / EXPIRED / SUPERSEDED / INVALIDATED`). Approval:
+`PENDING → APPROVED → CONSUMED` (terminal: `REJECTED / EXPIRED / REVOKED / INVALIDATED`).
+Outbound message: `PREPARED → RESERVED → PROVIDER_CALL_IN_PROGRESS → ACCEPTED`; provider-driven:
+`DELIVERED / BOUNCED / REPLIED / OPTED_OUT`; failure: `FAILED_DEFINITE / OUTCOME_UNKNOWN /
+CANCELLED`. No transition skipping; terminal states are historical/append-only; an ambiguous
+timeout becomes `OUTCOME_UNKNOWN` and is **never auto-retried**; `ACCEPTED ≠ DELIVERED`,
+`DELIVERED ≠ REPLIED`; opt-out/bounce/complaint immediately block future sends.
+
+**Allowed actions.** Individually, explicitly, currently human-approved sending of one message at
+a time through a configured provider, only after a transactional pre-send revalidation from
+authoritative persisted truth passes; normalized inbound event processing (local import + optional
+signed provider webhook/polling, localhost-only, signature-verified, bounded/sanitized);
+human-approved follow-up preparation; local commercial metrics.
+
+**Permanently blocked (fail-closed).** Inferred/guessed-contact sending; bulk-send / "approve all"
+/ comma-list send; automatic contact-form submission; LinkedIn/browser message automation; CAPTCHA
+or access-control bypass; bought/breached/private/stolen contact data; hidden background sending;
+automatic security-pressure outreach; sending without a current approval; sending after
+opt-out/bounce/complaint; automatic retry after an ambiguous provider outcome; a responsible-
+disclosure finding entering ordinary sales outreach; cloud/public deployment.
+
+**Approval requirements.** Approval is explicit, individual, single-use, and expiring, and binds
+to exactly one draft revision + recipient snapshot + channel + subject/body hash + disclosure
+hash + finding/evidence snapshot hash + contact-provenance snapshot hash + suppression/policy
+snapshot hash. It is invalidated by any material change (body/subject/recipient/contact/finding/
+evidence/disclosure/suppression/opt-out/policy/provider) or expiry. Editing creates a new
+immutable revision; the approved revision is never mutated in place. Reviewer identity may not be
+empty. There is no bulk-approval control.
+
+**Provider requirements.** A narrow provider interface with typed metadata (id/version, channel,
+readiness, env-var credential reference only, idempotency support, sandbox support, rate limits).
+Built-in: a mandatory `DeterministicLocalSinkProvider` (no network; writes sanitized envelopes to
+a confined local sink; drives the full E2E; **never** live-accepted) and a sandbox provider; plus
+at least one real adapter path (env-ref credentials only, no committed secrets, no arbitrary-SMTP
+fallback, fails clearly when unconfigured, never required by deterministic tests). Readiness
+states: `fixture-tested / adapter-ready / configured / sandbox-accepted / live-accepted` — never
+describe adapter-ready/configured as live-accepted.
+
+**Idempotency (honest guarantee).** One send reservation per idempotency key (provider + approved
+revision + recipient snapshot + channel); provider idempotency used when supported; **at-most-once
+automatic provider invocation per approval**; ambiguous outcomes require manual reconciliation.
+Exactly-once external delivery is **not** claimed.
+
+**Controls (disabled by default).** Global disable-outreach (default off = sending disabled),
+per-campaign/provider/channel disable, pause, global kill, recipient/domain suppression, daily +
+campaign ceilings, cooldown, country/channel policy, and a live-recipient allowlist — checked at
+approval, revalidation, reservation, and immediately before the provider call. A kill/disable
+added after approval but before the provider call blocks the send.
+
+**Required artifacts (registered, atomic, bounded, sanitized, hashed, secret-scanned, honest about
+fixture/sandbox/live).** `DRAFT_REVISION_<id>.json`, `APPROVAL_RECORD_<id>.json`,
+`PRE_SEND_REVALIDATION_<id>.json`, `OUTBOUND_MESSAGE_<id>.json`, `SEND_ATTEMPT_<id>.json`,
+`PROVIDER_RESULT_<id>.json`, `DELIVERY_EVENT_<id>.json`, `REPLY_EVENT_<id>.json`,
+`OPT_OUT_EVENT_<id>.json`, `FOLLOWUP_PLAN_<id>.json`, `COMMERCIAL_METRICS.json`,
+`OUTREACH_CONTROL_STATE.json`, `PROVIDER_REGISTRY_SNAPSHOT.json`, `FINAL_PRODUCT_HEALTH.json`,
+`FINAL_E2E_REPORT.md`, `BENCHMARK_REPORT.json`.
+
+**Acceptance criteria.** ruff clean; full pytest green (complete deterministic local-sink v2 E2E
+included; no external network/message in the default suite); docs audit `[PASS]`; agent readiness
+`[PASS]`; `git diff --check` clean. Schema v2 migrates a real v1.9.0 database preserving history
+and suppression. The deterministic E2E proves (local sink only): inferred/unreviewed-named/
+suppressed/expired-contact cannot send; stale/resolved-finding and expired-evidence cannot send;
+malformed/fabricated reference cannot send; draft/recipient edit invalidates approval; approval
+replay fails; duplicate command/restart/queue-replay cannot send twice; ambiguous outcome never
+retries; opt-out/hard-bounce/reply block follow-up; responsible-disclosure findings never enter
+sales outreach; global kill blocks a pending send; no form/LinkedIn/contact-form automation; no
+secret leaks; backup/restore preserves send history + suppression; dashboard matches DB truth.
+Mandatory benchmark targets = 0 for duplicate-send / stale-finding / suppressed-or-opted-out /
+inferred-contact / unapproved sends / side-effects outside the local sink.
+
+**Release status.** `AI QA Factory / ARK Prospect QA Radar v2.0.0 — complete local, human-approved
+prospect qualification and communication product` (tag `scout-v2.0.0`). It may claim controlled
+discovery/triage/QA/evidence/memory/rechecks/contacts/disclosure, immutable human approval,
+controlled provider sending, reply/bounce/opt-out history, human-approved follow-ups, local
+commercial metrics, deterministic full E2E, and CI when actually green. It must **not** claim
+autonomous/bulk outreach, unrestricted crawling, inferred-contact sending, cloud/SaaS, production
+deployment, guaranteed revenue, guaranteed delivery, accessibility certification, or exactly-once
+external delivery.
+
+**Final Independent Acceptance boundary.** Verification only — review, test, reproduce, fix
+confirmed defects, issue v2.0.1 if needed. It may **not** add another functional phase or product
+layer.
