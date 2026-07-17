@@ -110,6 +110,11 @@ test).
   desired shape before more prospect schemas depend on it.
 - Adding `prospect_qa_radar` touched the pinned profile-set assertions in two Phase 8
   tests; verify those edits are acceptable and not masking drift.
+- **Large diff on three handoff/instruction files is expected:** `docs/handoffs/CURRENT.md`,
+  `docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md`, and `.github/copilot-instructions.md` were
+  created CRLF in the first session and normalized to LF here (repo convention is LF).
+  Relative to `6a25288` they appear fully rewritten, but the only substantive content
+  change is in `CURRENT.md`; the other two changed line endings only.
 
 ---
 
