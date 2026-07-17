@@ -3368,3 +3368,45 @@ fail-closes (HTTP 409) for a read-only/attached run rather than pretending succe
 audit) and static performance observations are not Lighthouse/real rendered metrics — the run
 records these as explicit coverage limitations. The optional Playwright backend adds real
 console/resource/timing observation.
+
+### Discovery + commercial triage (Phase 8.4)
+
+```bash
+# Deterministic bundled discovery -> Scout demo (no external network, no browser)
+python main.py scout campaign-demo
+
+# Show the provider registry readiness snapshot (metadata only; no secrets)
+python main.py scout providers --import my_targets.csv
+
+# Dry-run: build + validate the campaign, matrix, and budgets (nothing fetched/promoted)
+python main.py scout campaign-plan --import my_targets.csv --countries US --languages en
+
+# Run discovery over a local file import, then promote the top-N into the Scout QA engine
+python main.py scout campaign-run --import my_targets.csv --campaign my-scan \
+  --countries US --languages en --min-commercial 40 --max-promoted 5
+
+# View a finished campaign read-only on the dashboard
+python main.py scout dashboard --run-id <campaign_id> --port 8765   # /api/campaign, /api/candidates
+```
+
+**Discovery options:** `--import <csv|json|ndjson|txt>` · `--countries` · `--languages` ·
+`--industries` · `--business-types` · `--keywords` · `--campaign-id` · `--min-commercial` (0..100)
+· `--max-promoted` (bounded promotion) · `--per-provider-budget` · `--matrix-max` (fails closed
+above this) · `--cost-ceiling` (USD; 0 disables) · `--sample` (narrow an over-limit matrix) ·
+`--approve-live-discovery` (opt-in; only a configured trusted provider executes live; never
+required by tests).
+
+**Discovery artifacts:** `outputs/scout/<campaign_id>/report/` — `PROSPECT_CAMPAIGN.json`,
+`MARKET_POLICY.json`, `DISCOVERY_PLAN.json`, `CAMPAIGN_MATRIX.json`, `PROVIDER_BUDGET.json`,
+`PROVIDER_REGISTRY_SNAPSHOT.json`, `DISCOVERED_BUSINESSES.json`,
+`CANDIDATE_NORMALIZATION_REPORT.json`, `DUPLICATES.json`, `SUPPRESSION_CHECK.json`,
+`ELIGIBLE_TARGETS.json`, `REJECTED_TARGETS.json`, `COMMERCIAL_TRIAGE.json`,
+`PROMOTED_TARGETS.json`, `DISCOVERY_SUMMARY.md`. Promoted candidates become seeds for the
+existing Scout engine under `outputs/scout/<campaign_id>-promo-NN/`.
+
+**Discovery safety:** providers are gated by trust + terms + explicit live approval (terms-blocked
+never executes); discovery content is untrusted data; duplicates, `NO_SCAN`-suppressed, and
+invalid/private URLs are never fetched; budgets and the campaign matrix fail closed; the commercial
+score never collects contacts or authorizes outreach; and a promoted candidate never bypasses
+Scout URL safety. **No contact discovery, outreach, form submission, account, order, or payment
+occurs.**

@@ -204,3 +204,23 @@ The first runnable slice. See [architecture/SCOUT_RUNTIME_V1.md](architecture/SC
 - **DID NOT BUILD:** a second QA/evidence/verifier/report engine, a separate secret scanner, a
   universal crawler, automatic outreach, contact enrichment, or any CAPTCHA/proxy-evasion
   capability.
+
+### Implemented in Phase 8.4 — discovery + commercial triage (`core/scout/discovery/`)
+
+Extends the runtime from explicit seeds to campaign-driven discovery + qualification.
+
+- **REUSED as-is:** `prospect_campaign.ProspectCampaign` / `CampaignTargetCriteria` /
+  `MarketPolicy` / `DiscoverySourcePolicy` (campaign definition + validation);
+  `prospect_identity.CompanyIdentity` / `DomainIdentity` / `normalize_hostname` (domain
+  normalization + dedup); `prospect_governance.SuppressionPolicy` (NO_SCAN/NO_OUTREACH/COOLDOWN);
+  `prospect_business.BusinessContext` vocabularies; `prospect_scoring.LeadScorecard` /
+  `ScoreDimension` (explainable commercial triage); `SourceReference` (provenance); the Scout
+  `url_safety` + static `backends` profiler; `RunStore` (+ new `save_artifact`/`load_artifact`);
+  `ArtifactSafeWriter` (atomic secret-scanned publish); the existing `ScoutEngine` (promotion);
+  and the existing `dashboard`/`service` (campaign views).
+- **NEW THIN runtime (`core/scout/discovery/`):** `providers` (metadata/candidate/registry +
+  fixture/file-import/adapter-ready providers), `candidate`, `config`, `matrix`, `normalize`,
+  `suppression`, `triage`, `engine`, `report`, `cli`, `fixtures`.
+- **DID NOT BUILD:** a second URL-safety engine, company-identity model, Scout QA engine,
+  persistence layer, crawler, or dashboard app; no contact discovery/enrichment; no outreach
+  drafting or sending; no transactional site-memory database (that is Phase 8.6).

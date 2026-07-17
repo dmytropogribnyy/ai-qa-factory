@@ -2687,7 +2687,7 @@ Use `python main.py work` to turn a brief into a reviewable plan. It never execu
 
 ---
 
-## Prospect QA Scout v1.0.1 (Phase 8.3 / 8.3.1 — bounded read-only local runtime)
+## Prospect QA Scout v1.1.0 (Phase 8.3 / 8.3.1 / 8.4 — bounded read-only local runtime)
 
 `python main.py scout` runs a bounded, read-only QA vertical over explicit public seeds. It
 never submits forms, logs in, sends outreach, or performs any external side effect.
@@ -2718,6 +2718,23 @@ controls are disabled and `/api/control` returns HTTP 409 (it never fakes succes
 **Live browser (optional):** `pip install playwright && python -m playwright install chromium`,
 then add `--browser playwright`. Run the real-browser acceptance with
 `python -m pytest -m playwright_acceptance -q`.
+
+**Discovery + commercial triage (Phase 8.4):**
+```bash
+python main.py scout campaign-demo                       # bundled deterministic discovery -> QA
+python main.py scout campaign-run --import targets.csv \ # discover from a file, promote top-N
+  --campaign my-scan --countries US --languages en --min-commercial 40 --max-promoted 5
+python main.py scout dashboard --run-id <campaign_id>    # read-only campaign/candidate views
+```
+Discovery finds and qualifies candidate businesses, then promotes only the top-N into the same
+read-only Scout QA engine. It never collects contacts, drafts, or sends outreach.
+
+**Discovery checklist:**
+- [ ] Only explicit imports / allow-listed providers are used (terms-blocked never executes)
+- [ ] Duplicates, `NO_SCAN`-suppressed, and invalid/private URLs are never fetched
+- [ ] The campaign matrix and budgets fail closed when limits are exceeded
+- [ ] The commercial score is explainable and never authorizes contact or outreach
+- [ ] Promoted candidates run the real Scout engine (URL safety re-validated) with provenance
 
 **Checklist:**
 - [ ] Only explicit public http(s) seeds are used (localhost/private IPs rejected)
