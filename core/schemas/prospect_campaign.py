@@ -185,11 +185,14 @@ class DiscoverySourcePolicy(SchemaMixin):
         ):
             if value < 0:
                 raise ValueError(f"{name} cannot be negative, got {value}")
-        # Fail-closed planning invariants: discovery is read-only, and a source can
-        # never be rehydrated as verified/available runtime in this phase.
+        # Fail-closed planning invariants: discovery is always read-only in Phase 8.2,
+        # and an unknown provider-resolution status is rejected (never silently rewritten
+        # and never an available/verified runtime state).
         self.read_only = True
         if self.provider_resolution_status not in PROVIDER_RESOLUTION_STATUSES:
-            self.provider_resolution_status = "unresolved"
+            raise ValueError(
+                f"Unknown provider_resolution_status: {self.provider_resolution_status!r}"
+            )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DiscoverySourcePolicy":
@@ -237,6 +240,15 @@ class MarketPolicy(SchemaMixin):
         )
         if self.legal_review_status not in LEGAL_REVIEW_STATUSES:
             raise ValueError(f"Unknown legal_review_status: {self.legal_review_status!r}")
+        # "none" is a sentinel meaning "no outreach" and cannot coexist with a real
+        # outreach channel (fail closed rather than accept an ambiguous policy).
+        if "none" in self.allowed_outreach_channels and any(
+            ch != "none" for ch in self.allowed_outreach_channels
+        ):
+            raise ValueError(
+                "'none' cannot coexist with a real outreach channel in "
+                "allowed_outreach_channels"
+            )
         # Policy may never imply automatic outreach approval: any real outreach channel
         # keeps manual review mandatory. respect_robots cannot be disabled here.
         if any(ch != "none" for ch in self.allowed_outreach_channels):

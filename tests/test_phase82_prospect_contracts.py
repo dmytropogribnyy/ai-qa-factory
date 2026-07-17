@@ -150,6 +150,13 @@ class TestMarketPolicy:
         m = MarketPolicy(respect_robots=False)
         assert m.respect_robots is True
 
+    def test_none_cannot_coexist_with_real_channel(self):
+        with pytest.raises(ValueError):
+            MarketPolicy(allowed_outreach_channels=["none", "email"])
+        # A real channel alone is fine (still approval-gated).
+        m = MarketPolicy(allowed_outreach_channels=["email"])
+        assert m.manual_review_required is True
+
 
 class TestDiscoverySourcePolicy:
     def test_disabled_and_read_only_by_default(self):
@@ -164,9 +171,13 @@ class TestDiscoverySourcePolicy:
         assert d.read_only is True
         assert d.provider_resolution_status in {"unresolved", "candidate", "planned_gap"}
 
-    def test_unknown_status_forced_to_unresolved(self):
-        d = DiscoverySourcePolicy(provider_resolution_status="available")
-        assert d.provider_resolution_status == "unresolved"
+    def test_unknown_status_rejected(self):
+        # Hardened: an unknown provider status must fail closed (no silent rewrite,
+        # and never an available/verified runtime state).
+        with pytest.raises(ValueError):
+            DiscoverySourcePolicy(provider_resolution_status="available")
+        with pytest.raises(ValueError):
+            DiscoverySourcePolicy(provider_resolution_status="verified")
 
     def test_unknown_category_rejected(self):
         with pytest.raises(ValueError):
@@ -266,7 +277,176 @@ class TestInteractionBoundary:
         assert restored.captcha_bypass_allowed is False
 
 
-class TestBackwardsCompatibility:
+class TestInteractionBoundaryHardening:
+    """Hardening invariants (Part A) for InteractionBoundary."""
+
+    # --- 1. Mandatory approval classes ---
+    def test_empty_approval_list_restores_mandatory_classes(self):
+        b = InteractionBoundary(approval_required_action_classes=[])
+        for cls in (
+            "POTENTIAL_BUSINESS_SIDE_EFFECT",
+            "EXTERNAL_COMMUNICATION",
+            "FINANCIAL",
+        ):
+            assert cls in b.approval_required_action_classes
+
+    def test_mandatory_restoration_is_deterministic(self):
+        a = InteractionBoundary(approval_required_action_classes=[])
+        b = InteractionBoundary(approval_required_action_classes=[])
+        assert a.approval_required_action_classes == b.approval_required_action_classes
+
+    def test_partial_approval_list_completed(self):
+        b = InteractionBoundary(approval_required_action_classes=["FINANCIAL"])
+        assert "POTENTIAL_BUSINESS_SIDE_EFFECT" in b.approval_required_action_classes
+        assert "EXTERNAL_COMMUNICATION" in b.approval_required_action_classes
+        assert "FINANCIAL" in b.approval_required_action_classes
+
+    def test_mandatory_class_may_be_blocked_instead(self):
+        # A mandatory approval class can disappear from approval ONLY if it is blocked
+        # (which is stricter). It must never vanish from both.
+        b = InteractionBoundary(
+            approval_required_action_classes=[],
+            blocked_action_classes=["FINANCIAL"],
+        )
+        assert "FINANCIAL" in b.blocked_action_classes
+        assert "FINANCIAL" not in b.approval_required_action_classes
+        assert "FINANCIAL" not in b.permitted_action_classes
+
+    def test_duplicate_class_values_deduped(self):
+        b = InteractionBoundary(
+            approval_required_action_classes=["FINANCIAL", "FINANCIAL"],
+            blocked_action_classes=["DESTRUCTIVE", "DESTRUCTIVE"],
+        )
+        assert b.approval_required_action_classes.count("FINANCIAL") == 1
+        assert b.blocked_action_classes.count("DESTRUCTIVE") == 1
+
+    def test_conflicting_lists_resolved_blocked_wins(self):
+        # A class listed as permitted + approval + blocked ends up only blocked.
+        b = InteractionBoundary(
+            permitted_action_classes=["READ_ONLY", "FINANCIAL"],
+            approval_required_action_classes=["FINANCIAL"],
+            blocked_action_classes=["FINANCIAL"],
+        )
+        assert "FINANCIAL" not in b.permitted_action_classes
+        assert "FINANCIAL" not in b.approval_required_action_classes
+        assert "FINANCIAL" in b.blocked_action_classes
+
+    def test_no_class_both_permitted_and_restricted(self):
+        b = InteractionBoundary(
+            permitted_action_classes=[
+                "READ_ONLY", "POTENTIAL_BUSINESS_SIDE_EFFECT", "EXTERNAL_COMMUNICATION",
+            ],
+        )
+        restricted = set(b.approval_required_action_classes) | set(b.blocked_action_classes)
+        assert not (set(b.permitted_action_classes) & restricted)
+
+    def test_round_trip_stable_after_mandatory_normalization(self):
+        b = InteractionBoundary(approval_required_action_classes=[])
+        d = b.to_dict()
+        assert InteractionBoundary.from_dict(d).to_dict() == d
+
+    # --- 2. Reversible session write requires cleanup ---
+    def test_reversible_write_forces_cleanup(self):
+        b = InteractionBoundary(
+            permitted_action_classes=["READ_ONLY", "REVERSIBLE_SESSION_WRITE"],
+            cleanup_required=False,
+        )
+        assert "REVERSIBLE_SESSION_WRITE" in b.permitted_action_classes
+        assert b.cleanup_required is True
+
+    def test_no_reversible_write_leaves_cleanup_choice(self):
+        b = InteractionBoundary(cleanup_required=True)
+        assert b.cleanup_required is True
+
+    # --- 3. Public vs authenticated ---
+    def test_public_only_forces_authenticated_off(self):
+        b = InteractionBoundary(
+            public_access_only=True,
+            authenticated_access_allowed=True,
+            written_authorization_ref="AUTH-123",
+        )
+        assert b.authenticated_access_allowed is False
+
+    def test_public_only_forces_authenticated_off_on_rehydration(self):
+        data = InteractionBoundary().to_dict()
+        data["public_access_only"] = True
+        data["authenticated_access_allowed"] = True
+        data["written_authorization_ref"] = "AUTH-123"
+        restored = InteractionBoundary.from_dict(data)
+        assert restored.authenticated_access_allowed is False
+
+    # --- 5. Side-effect flags require written authorization ---
+    @pytest.mark.parametrize("flag", [
+        "authenticated_access_allowed",
+        "real_submission_allowed",
+        "account_creation_allowed",
+        "order_creation_allowed",
+        "booking_or_hold_allowed",
+        "payment_allowed",
+        "file_upload_allowed",
+    ])
+    def test_side_effect_flag_requires_written_authorization(self, flag):
+        kwargs = {flag: True, "public_access_only": False}
+        with pytest.raises(ValueError):
+            InteractionBoundary(**kwargs)
+
+    def test_payment_keeps_financial_approval_required(self):
+        b = InteractionBoundary(
+            payment_allowed=True,
+            public_access_only=False,
+            written_authorization_ref="AUTH-9",
+        )
+        assert "FINANCIAL" in b.approval_required_action_classes
+        assert "FINANCIAL" not in b.permitted_action_classes
+
+    def test_submission_keeps_external_comm_approval_required(self):
+        b = InteractionBoundary(
+            real_submission_allowed=True,
+            public_access_only=False,
+            written_authorization_ref="AUTH-9",
+        )
+        assert "EXTERNAL_COMMUNICATION" in b.approval_required_action_classes
+
+    def test_order_keeps_business_side_effect_approval_required(self):
+        b = InteractionBoundary(
+            order_creation_allowed=True,
+            public_access_only=False,
+            written_authorization_ref="AUTH-9",
+        )
+        assert "POTENTIAL_BUSINESS_SIDE_EFFECT" in b.approval_required_action_classes
+
+    def test_evasion_impossible_even_with_authorization(self):
+        b = InteractionBoundary(
+            payment_allowed=True,
+            public_access_only=False,
+            written_authorization_ref="AUTH-9",
+            captcha_bypass_allowed=True,
+            access_control_evasion_allowed=True,
+            proxy_or_stealth_evasion_allowed=True,
+        )
+        assert b.captcha_bypass_allowed is False
+        assert b.access_control_evasion_allowed is False
+        assert b.proxy_or_stealth_evasion_allowed is False
+
+    def test_valid_authorized_planning_example(self):
+        # A coherent, authorized, still-fail-closed planning boundary round-trips.
+        b = InteractionBoundary(
+            permitted_action_classes=["READ_ONLY", "REVERSIBLE_SESSION_WRITE"],
+            public_access_only=False,
+            authenticated_access_allowed=True,
+            real_submission_allowed=True,
+            payment_allowed=True,
+            written_authorization_ref="SOW-2026-07-17",
+        )
+        assert b.cleanup_required is True
+        assert b.authenticated_access_allowed is True
+        assert "FINANCIAL" in b.approval_required_action_classes
+        assert "EXTERNAL_COMMUNICATION" in b.approval_required_action_classes
+        assert b.captcha_bypass_allowed is False
+        assert InteractionBoundary.from_dict(b.to_dict()).to_dict() == b.to_dict()
+
+
+
     def test_unknown_keys_ignored(self):
         # Additive-safe: an artifact with a future field still rehydrates.
         data = ProspectCampaign(name="x").to_dict()
