@@ -2105,3 +2105,29 @@ candidate is rejected; interrupted runs resume; global kill stops work; a CAPTCH
 creates manual-action state without any interaction; the sanitized report references only
 approved artifacts. No outreach/submission/account/booking/order/payment/CAPTCHA/evasion or
 other external side effect occurs.
+
+### Phase 8.3.1 — Scout v1.0.1 hardening `[implemented]`
+
+An independent-acceptance pass that closes post-release review findings without changing the
+runtime boundary above:
+
+- **Dashboard/control is one owned execution path.** `scout dashboard --seeds` starts a run
+  owned by a single `ScoutService` (worker + control together); pause/resume/cancel/global-kill
+  genuinely drive it and the report is built when it finishes. `--run-id` attaches READ-ONLY.
+  `/api/control` fail-closes with **HTTP 409** for a read-only/attached/idle run (no fake
+  success) and **400** for an unknown action; a same-origin CSRF guard is applied. **No HTTP
+  start/scan endpoint is introduced** — starting a run is CLI-owned.
+- **Playwright SSRF hardening.** Every navigation/redirect/subresource is intercepted and
+  re-validated; the final URL is re-validated before content is read; rendered HTML is
+  byte-bounded; event arrays are capped; screenshots are basename-only and confined; the
+  browser always closes on error. Redirect/DNS-rebinding protection now holds on **both**
+  backends (static: per-hop manual re-validation; playwright: route interception + final-URL
+  re-validation).
+- **Run isolation.** Fresh scans get a unique run id (timestamp + entropy); the engine fails
+  closed on run-id reuse and on a `--resume` config that does not match the original run.
+- **Concurrency** is fail-closed to `1` (sequential runtime; parallel execution deferred).
+- **Real browser acceptance.** A marked `playwright_acceptance` test launches real headless
+  Chromium against an allow-listed local fixture (skipped unless playwright + Chromium present).
+- **Static-backend coverage honesty.** Static accessibility checks are bounded heuristics (not a
+  full axe audit) and static performance observations are not Lighthouse/real rendered metrics;
+  the runtime records these as explicit coverage limitations.

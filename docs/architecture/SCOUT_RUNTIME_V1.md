@@ -1,8 +1,9 @@
-# Prospect QA Scout v1.0 — Runtime Architecture
+# Prospect QA Scout v1.0.1 — Runtime Architecture
 
-**Status:** Implemented (Phase 8.3). Local, bounded, read-only runtime.
+**Status:** Implemented (Phase 8.3; hardened in 8.3.1). Local, bounded, read-only runtime.
 **Scope:** the first runnable slice of the [Prospect QA Radar spec](PROSPECT_QA_RADAR_SPEC.md).
-It is **not** cloud/SaaS, not unrestricted discovery, not automated outreach, not a deployment.
+It is **not** cloud/SaaS, not unrestricted discovery, not automated outreach, not a deployment,
+not full accessibility certification, and not Lighthouse-level performance.
 
 ## Pipeline
 
@@ -41,9 +42,16 @@ A pluggable `BrowserBackend` keeps automated tests deterministic:
 
 - **`StaticHttpBackend`** — stdlib `urllib` + `html.parser`; no JavaScript, no browser; follows
   redirects manually and re-validates every hop; drops unsafe response headers. Drives the
-  deterministic fixture E2E (no external network, no browser).
+  deterministic fixture E2E (no external network, no browser). Its accessibility checks are
+  bounded heuristics (not a full axe audit) and it records no real navigation timing (not
+  Lighthouse) — both are surfaced as explicit coverage limitations.
 - **`PlaywrightBackend`** — optional, lazily imported (`pip install playwright`); adds console
-  errors, failed resources, timing, and a screenshot. **Never required by tests.**
+  errors, failed resources, timing, and a screenshot. **Never required by the ordinary suite.**
+  It intercepts every request (`page.route`) and re-validates it against the URL policy, so
+  redirects/navigations/subresources to loopback/private/link-local/reserved addresses or
+  unsupported schemes are aborted; the final URL is re-validated before content is read; rendered
+  HTML is byte-bounded; and the browser always closes on error. A marked `playwright_acceptance`
+  test exercises the real Chromium path against an allow-listed local fixture.
 
 ## Runtime reuse map
 
@@ -68,6 +76,12 @@ any anti-bot/CAPTCHA/proxy-evasion capability.
   `outreach_eligible`.
 - Evidence is a sanitized public fact sheet — no response body, cookies, tokens, or credentials.
 - Persistence is atomic and path-confined; corruption fails closed; completed stages are
-  immutable on resume.
+  immutable on resume. A fresh scan gets a unique run id (timestamp + entropy); the engine fails
+  closed on run-id reuse and on a `--resume` whose config does not match the original run, so no
+  stale artifacts mix into a new run.
 - The dashboard binds to `127.0.0.1` only, serves artifacts path-confined to the run directory,
-  and exposes a global kill that stops future work and interrupts the active loop.
+  and exposes a global kill that stops future work and interrupts the active loop. Controls act
+  on a run OWNED by the `ScoutService` (`scout dashboard --seeds`); a READ-ONLY attached run
+  (`--run-id`) hides controls and its `/api/control` fail-closes with HTTP 409 (no fake success),
+  guarded by a same-origin check. No HTTP start/scan endpoint is exposed — starting is CLI-owned.
+- Concurrency is fail-closed to `1` (sequential runtime; parallel execution is deferred).

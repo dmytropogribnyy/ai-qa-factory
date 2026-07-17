@@ -82,7 +82,7 @@ python -m venv .venv
 # source .venv/bin/activate     # macOS/Linux
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest -q             # 3351 tests, mock mode, no API keys needed
+python -m pytest -q             # full suite, mock mode, no API keys needed
 python main.py system-health
 python tools/docs_audit.py      # verify documentation is current
 python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
@@ -197,7 +197,9 @@ See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
 .venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
 ```
 
-Expected: **2893 passed** (all phases through 6.1 — schema foundations, classification, blueprint, strategy, scaffold validation, toolchain, execution readiness, evidence, reporting, delivery preview, scenario evaluation, browser execution, credential safety, demo auth execution, scenario execution matrix, task source integration, API smoke, Google/GitHub OAuth, mobile viewport, visual regression, E2E pipeline runner, DB smoke, AI intelligence core, desktop browser execution CLI, API contract importer, CI/CD builder, client delivery pack, golden delivery, accessibility smoke, performance smoke, passive security, quality audit delivery workflow, flaky test analyzer, MCP server adapter, MCP demo workflow validation, one-command client audit workflow)
+Expected: **all tests pass** in mock mode (no API keys consumed). Exact per-release totals
+live in the versioned release notes under [`docs/releases/`](docs/releases/) and the current
+handoff, not inline here, so this instruction never drifts as the suite grows.
 
 ---
 
@@ -227,7 +229,25 @@ Expected: **2893 passed** (all phases through 6.1 — schema foundations, classi
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v8.3.0 — Prospect QA Scout v1.0 (local release, current)
+### v8.3.1 — Prospect QA Scout v1.0.1 (hardened local release, current)
+
+- **Dashboard controls now really work**: `scout dashboard --seeds` starts a run owned by one
+  `ScoutService`, so pause/resume/cancel/global-kill genuinely drive it and the report is built
+  when it finishes; `--run-id` attaches read-only. `/api/control` fail-closes with HTTP 409 on a
+  read-only/attached run instead of returning fake success (plus a same-origin CSRF guard).
+- **Playwright SSRF hardening**: every navigation/redirect/subresource is intercepted and
+  re-validated against the URL policy (loopback/private/link-local/reserved/unsupported-scheme
+  blocked), the final URL is re-validated before content is read, rendered HTML is byte-bounded,
+  and the browser always closes on error. A real local Chromium acceptance test now proves the
+  live path against an allow-listed local fixture (marker `playwright_acceptance`).
+- **Run isolation**: fresh scans get a unique run id (timestamp + entropy); the engine fails
+  closed on run-id reuse and on a resume whose config does not match — no stale-artifact mixing.
+- **Honest concurrency**: sequential-only runtime; `concurrency` fails closed unless `1`.
+- Docs corrected for truthfulness (no brittle inline test totals; static accessibility/performance
+  are bounded heuristics, not axe/Lighthouse). **Local release; no cloud/SaaS/unrestricted
+  discovery/automated outreach/production deployment.**
+
+### v8.3.0 — Prospect QA Scout v1.0 (local release)
 
 - **First ARK runtime**: `python main.py scout` runs a bounded, **read-only**, local QA vertical
   over 1–10 explicit public seed URLs. New package `core/scout/`.

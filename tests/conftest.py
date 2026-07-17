@@ -31,3 +31,10 @@ def pytest_configure(config: object) -> None:
     warnings.filterwarnings("ignore", message=".*botocore.*")
     warnings.filterwarnings("ignore", message=".*boto3.*")
     warnings.filterwarnings("ignore", message=".*sagemaker.*", category=UserWarning)
+
+    # Real-browser Scout acceptance (Phase 8.3.1). Skipped automatically unless the optional
+    # playwright package + a Chromium build are available; keeps the ordinary suite deterministic.
+    config.addinivalue_line(
+        "markers",
+        "playwright_acceptance: real local Chromium acceptance for the Scout browser backend",
+    )

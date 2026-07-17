@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List
 
 from core.orchestration.content_safety import ArtifactSafeWriter
+from core.scout import SCOUT_PRODUCT_NAME, SCOUT_VERSION
 from core.scout.store import RunStore
 
 
@@ -65,8 +66,8 @@ def build_report(store: RunStore, clock: Callable[[], str] = _now) -> Dict[str, 
                                   -r["verified_defects"]))
 
     report_json = {
-        "product": "AI QA Factory / ARK Prospect QA Scout",
-        "version": "1.0.0",
+        "product": SCOUT_PRODUCT_NAME,
+        "version": SCOUT_VERSION,
         "run_id": state.get("run_id"),
         "run_status": state.get("status"),
         "generated_at": generated_at,

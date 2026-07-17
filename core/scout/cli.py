@@ -17,7 +17,7 @@ import urllib.request
 from typing import List, Optional
 
 from core.scout import SCOUT_PRODUCT_NAME, SCOUT_VERSION
-from core.scout.config import ScoutRunConfig, make_run_id
+from core.scout.config import ScoutRunConfig, fresh_run_id
 from core.scout.engine import ScoutEngine
 from core.scout.report import build_report
 from core.scout.service import ScoutService
@@ -51,9 +51,16 @@ def cmd_run(args) -> int:
     if not seeds:
         print("ERROR: --seeds is required (comma-separated public URLs)", file=sys.stderr)
         return 1
+    if args.resume and not args.run_id:
+        print("ERROR: --resume requires an explicit --run-id (the run to continue)",
+              file=sys.stderr)
+        return 1
     try:
         cfg = _run_config(args, seeds)
-        cfg.run_id = cfg.run_id or make_run_id(cfg.campaign_name, seeds, "run")
+        # Fresh runs get a unique id (timestamp + entropy) so two identical scans never
+        # collide; resume targets an explicit existing run id. The engine fails closed if a
+        # fresh id already exists or a resume config does not match.
+        cfg.run_id = cfg.run_id or fresh_run_id(cfg.campaign_name)
         store = RunStore(cfg.output_dir, cfg.run_id)
         state = ScoutEngine(cfg, store).run()
         summary = build_report(store)
@@ -80,9 +87,13 @@ def cmd_demo(args) -> int:
         seeds = [f"{base}/{name}/index.html" for name in scenarios]
         cfg = _run_config(args, seeds, allowed_local_hosts={host}, resolve_dns=False)
         cfg.campaign_name = "scout-demo"
+        cfg.resume = False
         cfg.run_id = args.run_id or "scout-demo"
         try:
             store = RunStore(cfg.output_dir, cfg.run_id)
+            # The demo deterministically reuses a fixed run id; reset its (confined) run
+            # directory first so re-running is clean and does not hit the fresh-run guard.
+            store.reset()
             state = ScoutEngine(cfg, store).run()
             summary = build_report(store)
         except Exception as exc:
@@ -94,12 +105,37 @@ def cmd_demo(args) -> int:
 
 
 def cmd_dashboard(args) -> int:
+    """Serve the localhost dashboard.
+
+    With ``--seeds`` the dashboard OWNS an active run (start under a single ScoutService),
+    so pause/resume/cancel/kill really affect it and the report is built when it finishes.
+    With ``--run-id`` (and no seeds) it attaches READ-ONLY to an existing run; controls are
+    unavailable (the HTTP API fail-closes with 409) and hidden in the UI.
+    """
     from core.scout.dashboard import start_dashboard
+    seeds = _split_seeds(args.seeds)
     service = ScoutService(args.output)
-    if args.run_id:
-        service.attach(args.run_id)
+    mode = "idle"
+    try:
+        if seeds:
+            cfg = _run_config(args, seeds)
+            cfg.run_id = cfg.run_id or fresh_run_id(cfg.campaign_name)
+            run_id = service.start(cfg)
+            mode = "ACTIVE"
+        elif args.run_id:
+            service.attach(args.run_id)
+            run_id = args.run_id
+            mode = "READ-ONLY ATTACHED"
+        else:
+            print("ERROR: dashboard needs --seeds (start an active run) or --run-id "
+                  "(attach read-only to an existing run)", file=sys.stderr)
+            return 1
+    except Exception as exc:
+        print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
     server, url = start_dashboard(service, port=args.port)
     print(f"Scout dashboard: {url}  (Ctrl+C to stop)")
+    print(f"  mode: {mode}   run: {run_id}")
     print(f"  health: {url}/health   status: {url}/api/status")
     try:
         import time

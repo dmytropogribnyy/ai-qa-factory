@@ -39,7 +39,9 @@ class ScoutRunConfig:
     max_pages_per_site: int = 5
     request_timeout_s: float = 15.0
     max_response_bytes: int = 3_000_000
-    concurrency: int = 2
+    # v1.0.x runs strictly sequentially. Parallel execution is deferred, so the only
+    # honest value is 1; anything else fails closed rather than silently no-op.
+    concurrency: int = 1
     check_families: List[str] = field(default_factory=lambda: sorted(CHECK_FAMILIES))
     browser_mode: str = "static"
     output_dir: str = "outputs"
@@ -57,10 +59,15 @@ class ScoutRunConfig:
         for name, value, lo, hi in (
             ("max_sites", self.max_sites, 1, MAX_SEEDS),
             ("max_pages_per_site", self.max_pages_per_site, 1, 50),
-            ("concurrency", self.concurrency, 1, 8),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or not (lo <= value <= hi):
                 raise ScoutConfigError(f"{name} must be an int in [{lo},{hi}], got {value!r}")
+        # Concurrency is honest about the runtime: v1.0.x is sequential only.
+        if isinstance(self.concurrency, bool) or not isinstance(self.concurrency, int) \
+                or self.concurrency != 1:
+            raise ScoutConfigError(
+                "concurrency must be 1 in v1.0.x; parallel execution is deferred "
+                f"(got {self.concurrency!r})")
         if not isinstance(self.request_timeout_s, (int, float)) or not (1 <= self.request_timeout_s <= 120):
             raise ScoutConfigError("request_timeout_s must be within [1,120]")
         if isinstance(self.max_response_bytes, bool) or not isinstance(self.max_response_bytes, int) \
@@ -78,6 +85,27 @@ class ScoutRunConfig:
 
     def url_policy(self) -> UrlPolicy:
         return UrlPolicy(allowed_local_hosts=self.allowed_local_hosts, resolve_dns=self.resolve_dns)
+
+    def material_signature(self) -> Dict[str, Any]:
+        """The immutable subset that must match to resume a run.
+
+        Excludes volatile/identity-only fields (``resume``, ``run_id``, ``output_dir``,
+        ``scout_version``). Seed order is significant — prospect ids are index-based, so a
+        reordered seed list is a different run and must not resume the old one.
+        """
+        return {
+            "campaign_name": self.campaign_name,
+            "seeds": list(self.seeds),
+            "max_sites": self.max_sites,
+            "max_pages_per_site": self.max_pages_per_site,
+            "request_timeout_s": self.request_timeout_s,
+            "max_response_bytes": self.max_response_bytes,
+            "concurrency": self.concurrency,
+            "check_families": list(self.check_families),
+            "browser_mode": self.browser_mode,
+            "allowed_local_hosts": sorted(self.allowed_local_hosts),
+            "resolve_dns": self.resolve_dns,
+        }
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -111,10 +139,29 @@ class ScoutRunConfig:
         return cls(**kwargs)
 
 
+def _campaign_slug(campaign_name: str) -> str:
+    return "".join(c if c.isalnum() else "-" for c in campaign_name.lower()).strip("-")[:24] or "run"
+
+
 def make_run_id(campaign_name: str, seeds: List[str], clock_iso: str) -> str:
-    """Deterministic run id from campaign + normalized seeds + a provided timestamp."""
+    """Deterministic run id from campaign + normalized seeds + a provided timestamp.
+
+    Deterministic by design (same inputs → same id); used only where a stable, explicit id is
+    wanted (e.g. the bundled demo). Fresh scans must use :func:`fresh_run_id`, which is unique.
+    """
     import hashlib
     payload = campaign_name + "\x00" + "\x00".join(sorted(seeds)) + "\x00" + clock_iso
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
-    slug = "".join(c if c.isalnum() else "-" for c in campaign_name.lower()).strip("-")[:24] or "run"
-    return f"{slug}-{digest}"
+    return f"{_campaign_slug(campaign_name)}-{digest}"
+
+
+def fresh_run_id(campaign_name: str) -> str:
+    """A unique run id for a fresh scan: UTC timestamp + cryptographic entropy.
+
+    Two fresh runs of the same campaign and seeds get distinct ids, so a normal run never
+    reuses (and never silently mixes into) an existing run directory.
+    """
+    import secrets
+    from datetime import datetime, timezone
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{_campaign_slug(campaign_name)}-{stamp}-{secrets.token_hex(4)}"

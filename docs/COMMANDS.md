@@ -3315,44 +3315,56 @@ before an atomic publish; MCP servers are candidates only (no discovery); run st
 
 ---
 
-## `scout` — Prospect QA Scout v1.0 (bounded read-only local runtime) `[implemented]`
+## `scout` — Prospect QA Scout v1.0.1 (bounded read-only local runtime) `[implemented]`
 
-Phase 8.3 runtime. Runs a bounded, **read-only**, local QA vertical over 1–10 explicit public
-seed URLs. It never submits forms, logs in, sends outreach, solves CAPTCHAs, evades access
-controls, or performs any external side effect.
+Phase 8.3 runtime (hardened in 8.3.1). Runs a bounded, **read-only**, local QA vertical over
+1–10 explicit public seed URLs. It never submits forms, logs in, sends outreach, solves
+CAPTCHAs, evades access controls, or performs any external side effect.
 
 ```bash
 # One command: deterministic bundled demo (no external network, no browser)
 python main.py scout demo
 
-# Run over your own public URLs, then export a report
+# Run over your own public URLs, then export a report (fresh unique run id each time)
 python main.py scout run --seeds "https://example.com/,https://example.org/" --campaign my-scan
 
 # One bounded public-site smoke
 python main.py scout smoke --url https://example.com/
 
-# Start the localhost dashboard for a run (Ctrl+C to stop)
+# Dashboard that OWNS an active run (pause/resume/cancel/kill really drive it):
+python main.py scout dashboard --seeds "https://example.com/" --campaign my-scan --port 8765
+
+# Dashboard attached READ-ONLY to an existing run (controls disabled; /api/control -> 409):
 python main.py scout dashboard --run-id <run_id> --port 8765
 
-# Send a control signal to a running dashboard
+# Send a control signal to an active (owned) dashboard run
 python main.py scout control --signal kill --port 8765   # or pause | resume | cancel
 
-# Resume an interrupted run
+# Resume an interrupted run (requires the explicit run id; config must match)
 python main.py scout run --seeds "..." --run-id <run_id> --resume
 ```
 
-**Options:** `--seeds` (comma-separated public URLs) · `--url` (smoke) · `--campaign` ·
-`--output` (default `outputs`) · `--browser static|playwright` (default `static`; live browser
-needs `pip install playwright && python -m playwright install chromium`) · `--max-sites` ·
-`--max-pages` · `--concurrency` · `--run-id` · `--resume` · `--port` · `--signal`.
+**Options:** `--seeds` (comma-separated public URLs; also starts an active dashboard run) ·
+`--url` (smoke) · `--campaign` · `--output` (default `outputs`) · `--browser static|playwright`
+(default `static`; live browser needs `pip install playwright && python -m playwright install
+chromium`) · `--max-sites` · `--max-pages` · `--concurrency` (must be `1`; parallel execution is
+deferred) · `--run-id` · `--resume` (requires `--run-id`) · `--port` · `--signal`.
 
 **Artifacts:** `outputs/scout/<run_id>/` — `config.json`, `state.json`, `events.jsonl`,
 `prospects/<id>/{observation,findings,evidence,scorecard}.json`, and `report/` (CAMPAIGN_SUMMARY,
 PROSPECT_SHORTLIST, VERIFIED_FINDINGS, COVERAGE_AND_LIMITATIONS, SCORECARD_SUMMARY,
 EVIDENCE_INDEX.json, REPORT.json).
 
-**Safety:** fail-closed URL eligibility (rejects localhost/private-IP/creds/unsafe ports and
-DNS-rebinding); CAPTCHA/access-prohibition pages become `MANUAL_ACTION_REQUIRED` with no
-interaction; only independently reproduced + sanitized findings are client-safe; scoring never
-authorizes outreach; the report is content-secret-scanned before an atomic publish; the
-dashboard binds to `127.0.0.1` only and serves artifacts path-confined to the run directory.
+**Safety:** fail-closed URL eligibility on **both** backends (rejects localhost/private-IP/creds/
+unsafe ports and DNS-rebinding; the static backend re-validates every redirect hop, the
+Playwright backend intercepts and re-validates every navigation/redirect/subresource and the
+final URL); CAPTCHA/access-prohibition pages become `MANUAL_ACTION_REQUIRED` with no interaction;
+only independently reproduced + sanitized findings are client-safe; scoring never authorizes
+outreach; the report is content-secret-scanned before an atomic publish; the dashboard binds to
+`127.0.0.1` only, serves artifacts path-confined to the run directory, and its `/api/control`
+fail-closes (HTTP 409) for a read-only/attached run rather than pretending success.
+
+**Static-backend coverage:** static accessibility checks are bounded heuristics (not a full axe
+audit) and static performance observations are not Lighthouse/real rendered metrics — the run
+records these as explicit coverage limitations. The optional Playwright backend adds real
+console/resource/timing observation.

@@ -17,6 +17,8 @@ from core.scout.service import ScoutService
 from core.scout.store import StoreError
 
 _CONTENT_TYPES = {".json": "application/json", ".png": "image/png", ".md": "text/markdown"}
+# Defensive cap on how much a single artifact response may return (our artifacts are small).
+_MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
 
 
 def _make_handler(service: ScoutService):
@@ -77,13 +79,26 @@ def _make_handler(service: ScoutService):
             parsed = urlsplit(self.path)
             if parsed.path != "/api/control":
                 return self._json(404, {"error": "not found"})
+            if not self._origin_ok():
+                return self._json(403, {"error": "cross-origin control requests are refused"})
             action = (parse_qs(parsed.query).get("action") or [""])[0]
-            fn = {"pause": service.pause, "resume": service.resume,
-                  "cancel": service.cancel, "kill": service.kill}.get(action)
-            if fn is None:
-                return self._json(400, {"error": f"unknown action: {action!r}"})
-            fn()
-            return self._json(200, {"ok": True, "action": action, "status": service.status()})
+            ok, status, message = service.control(action)
+            return self._json(status, {"ok": ok, "action": action, "message": message,
+                                       "status": service.status()})
+
+        def _origin_ok(self) -> bool:
+            """Reject browser-originated cross-origin control POSTs (lightweight CSRF guard).
+
+            Browsers always attach Origin on cross-origin fetch; the CLI control command sends
+            none, so a missing Origin is allowed while a foreign one is refused. The dashboard
+            is localhost-only and never exposes an HTTP start/scan endpoint.
+            """
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True
+            host = self.headers.get("Host", "")
+            allowed = {f"http://{host}", f"https://{host}"}
+            return origin in allowed
 
         # --- data ---
         def _prospect(self, pid: str):
@@ -109,6 +124,8 @@ def _make_handler(service: ScoutService):
                 return self._json(403, {"error": "path not allowed"})
             if not target.exists() or not target.is_file():
                 return self._json(404, {"error": "not found"})
+            if target.stat().st_size > _MAX_ARTIFACT_BYTES:
+                return self._json(413, {"error": "artifact too large to serve"})
             ctype = next((v for k, v in _CONTENT_TYPES.items() if target.name.endswith(k)),
                          "application/octet-stream")
             data = target.read_bytes()
@@ -124,32 +141,44 @@ def _make_handler(service: ScoutService):
             status = service.status()
             st = status.get("state", {})
             prospects = st.get("prospects", {})
+            controllable = bool(status.get("controllable"))
+            mode = status.get("mode", "IDLE")
             rows = []
             for pid, p in sorted(prospects.items()):
+                epid = _esc(pid)
                 rows.append(
-                    f"<tr><td>{pid}</td><td>{_esc(p.get('url', ''))}</td>"
-                    f"<td>{p.get('status', '')}</td><td>{p.get('priority', '')}</td>"
-                    f"<td>{p.get('verified_defects', 0)}</td>"
-                    f"<td><a href='/api/prospect?id={pid}'>details</a></td></tr>"
+                    f"<tr><td>{epid}</td><td>{_esc(p.get('url', ''))}</td>"
+                    f"<td>{_esc(p.get('status', ''))}</td><td>{_esc(p.get('priority', ''))}</td>"
+                    f"<td>{_esc(p.get('verified_defects', 0))}</td>"
+                    f"<td><a href='/api/prospect?id={_esc(pid)}'>details</a></td></tr>"
                 )
             manual = [pid for pid, p in prospects.items() if p.get("status") == "MANUAL_ACTION_REQUIRED"]
+            if controllable:
+                controls = (
+                    '<button onclick="ctl(\'pause\')">Pause</button>'
+                    '<button onclick="ctl(\'resume\')">Resume</button>'
+                    '<button onclick="ctl(\'cancel\')">Cancel</button>'
+                    '<button onclick="ctl(\'kill\')" style="color:#a00">GLOBAL KILL</button>'
+                )
+            else:
+                controls = ("<em>Controls unavailable — this run is "
+                            f"<strong>{_esc(mode)}</strong> (read-only).</em>")
             return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <title>{SCOUT_PRODUCT_NAME} v{SCOUT_VERSION}</title>
 <style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:1000px}}
 table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:6px;text-align:left}}
-button{{margin-right:.5rem;padding:.4rem .8rem}}code{{background:#f4f4f4;padding:2px 4px}}</style></head>
+button{{margin-right:.5rem;padding:.4rem .8rem}}code{{background:#f4f4f4;padding:2px 4px}}
+.mode{{padding:2px 8px;border-radius:4px;background:#eef;font-weight:bold}}</style></head>
 <body><h1>{SCOUT_PRODUCT_NAME} <small>v{SCOUT_VERSION}</small></h1>
-<p>Run <code>{_esc(status.get('run_id', ''))}</code> — status
-<strong>{_esc(st.get('status', 'n/a'))}</strong> — running: {status.get('running')}</p>
-<p>Controls:
-<button onclick="ctl('pause')">Pause</button><button onclick="ctl('resume')">Resume</button>
-<button onclick="ctl('cancel')">Cancel</button>
-<button onclick="ctl('kill')" style="color:#a00">GLOBAL KILL</button></p>
+<p>Run <code>{_esc(status.get('run_id', ''))}</code> — mode <span class=mode>{_esc(mode)}</span>
+— status <strong>{_esc(st.get('status', 'n/a'))}</strong> — running: {_esc(status.get('running'))}</p>
+<p>Controls: {controls}</p>
 <p>Manual-action prospects: {len(manual)} — Live: <a href="/api/events">events</a>,
 <a href="/api/status">status</a>, <a href="/health">health</a></p>
 <h2>Prospects</h2><table><tr><th>id</th><th>url</th><th>status</th><th>priority</th>
 <th>defects</th><th></th></tr>{''.join(rows) or '<tr><td colspan=6>none yet</td></tr>'}</table>
-<script>function ctl(a){{fetch('/api/control?action='+a,{{method:'POST'}}).then(()=>location.reload())}}</script>
+<script>function ctl(a){{fetch('/api/control?action='+a,{{method:'POST'}})
+.then(r=>r.json()).then(j=>{{if(!j.ok)alert('control refused: '+j.message);location.reload()}})}}</script>
 </body></html>"""
 
     return _Handler

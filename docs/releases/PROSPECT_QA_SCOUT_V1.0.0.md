@@ -5,6 +5,12 @@
 An honest **local** release. This is **not** cloud, SaaS, unrestricted discovery, automated
 outreach, or a production deployment.
 
+> **Erratum (v1.0.1):** in v1.0.0 the dashboard's pause/resume/cancel/kill controls were not
+> fully wired to an active run — `scout dashboard` only attached read-only, so control POSTs
+> could report success without affecting a worker, and the Playwright backend validated only
+> the initial URL. Both are corrected in [v1.0.1](PROSPECT_QA_SCOUT_V1.0.1.md). The capability
+> list below describes the intended design; treat v1.0.1 as the accurate runtime.
+
 ## What it is
 
 A genuinely runnable, bounded, **read-only** local QA vertical over 1–10 explicit public seed
