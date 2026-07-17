@@ -1,0 +1,317 @@
+# ARK MCP Server Manifest v2 — Final Phase II integration audit (references only).
+#
+# SAFETY CONTRACT (non-negotiable, unchanged from v1):
+# - References ONLY. No tokens/keys/cookies/secret URLs are ever stored here.
+# - `auth_ref` is an ENVIRONMENT VARIABLE NAME, never a value.
+# - `enabled: false` for EVERY server (disabled by default). Nothing is invoked from this file.
+# - A manifest entry is NOT a working integration. Readiness is honest:
+#   declared_in_manifest < health_checked < tools_discovered < configured < sandbox_accepted < live_accepted.
+# - Read-only by default; write/external-communication/financial tools are approval-gated.
+# - `integration_class` marks WHO may use it. `developer_agent_only` servers are available to the
+#   VS Code / Claude agent ONLY, never to the standalone Factory process. Assuming otherwise is a
+#   confirmed adversarial defect (see tests).
+# - The primary host is Windows; VS Code MCP sandboxing is NOT the security boundary. Tool
+#   allowlists, read-only defaults, env-secret references, version pinning, process isolation, and
+#   domain/filesystem allowlists are the boundary.
+#
+# integration_class: developer_agent_only | optional_factory_runtime | external_communication |
+#                    deployment_only | post_v2_candidate
+
+version: 2
+schema_version: "2.0"
+default_enabled: false
+default_mode: read_only
+
+servers:
+  - id: context7
+    publisher: Upstash
+    source: "https://github.com/upstash/context7-mcp"
+    version_policy: pinned
+    transport: stdio
+    auth_ref: ""
+    enabled: false
+    integration_class: developer_agent_only
+    capability_classes: [read]
+    toolsets: [resolve-library-id, query-docs]
+    fs_roots: []
+    network_domains: ["context7.com"]
+    readiness: declared_in_manifest
+    cost: free
+    terms_review: not_reviewed
+    telemetry: unknown
+    available_to_factory_process: false
+    fallback_runner: "internal docs lookup"
+    approval_required: false
+
+  - id: playwright_mcp
+    publisher: Microsoft
+    source: "https://github.com/microsoft/playwright-mcp"
+    version_policy: pinned
+    transport: stdio
+    auth_ref: ""
+    enabled: false
+    integration_class: developer_agent_only
+    capability_classes: [read, write]
+    toolsets: [browser_navigate, browser_snapshot, browser_click]
+    fs_roots: []
+    network_domains: ["*"]
+    readiness: declared_in_manifest
+    cost: free
+    terms_review: not_reviewed
+    telemetry: unknown
+    available_to_factory_process: false
+    fallback_runner: "deterministic Scout Playwright/CLI runtime (core/scout/pipeline/browser_qa.py)"
+    approval_required: true
+    notes: "Agent-side exploratory/diagnostic only. Does NOT replace the deterministic Scout runtime."
+
+  - id: chrome_devtools_mcp
+    publisher: Google
+    source: "https://github.com/ChromeDevTools/chrome-devtools-mcp"
+    version_policy: pinned
+    transport: stdio
+    auth_ref: ""
+    enabled: false
+    integration_class: developer_agent_only
+    capability_classes: [read]
+    toolsets: [list_network_requests, performance_start_trace, take_snapshot]
+    fs_roots: []
+    network_domains: ["*"]
+    readiness: declared_in_manifest
+    cost: free
+    terms_review: not_reviewed
+    telemetry: unknown
+    available_to_factory_process: false
+    fallback_runner: "Scout chrome_perf_observation (Playwright)"
+    approval_required: false
+
+  - id: github_mcp
+    publisher: GitHub
+    source: "https://github.com/github/github-mcp-server"
+    version_policy: pinned
+    transport: http
+    auth_ref: GITHUB_MCP_PAT
+    enabled: false
+    integration_class: developer_agent_only
+    capability_classes: [read, write]
+    toolsets: [repos, pull_requests, actions, code_security]
+    fs_roots: []
+    network_domains: ["api.github.com"]
+    readiness: declared_in_manifest
+    cost: free
+    terms_review: not_reviewed
+    telemetry: github
+    available_to_factory_process: false
+    fallback_runner: "gh CLI (developer-driven)"
+    approval_required: true
+    default_toolset_mode: read_only
+    notes: "Priority: repos/pull_requests/actions/code_security READ-ONLY by default; writes approval-gated."
+
+  - id: postman_mcp
+    publisher: Postman
+    source: "https://github.com/postmanlabs/postman-mcp-server"
+    version_policy: pinned
+    transport: http
+    auth_ref: POSTMAN_API_KEY
+    enabled: false
+    integration_class: post_v2_candidate
+    capability_classes: [read, write]
+    toolsets: [minimal, code]
+    fs_roots: []
+    network_domains: ["api.getpostman.com"]
+    readiness: declared_in_manifest
+    cost: freemium
+    terms_review: not_reviewed
+    telemetry: postman
+    available_to_factory_process: false
+    fallback_runner: "core/api_contract_importer.py"
+    approval_required: true
+    notes: "minimal + code toolsets first; collections/spec/context; writes approval-gated."
+
+  - id: sentry_mcp
+    publisher: Sentry
+    source: "https://github.com/getsentry/sentry-mcp"
+    version_policy: pinned
+    transport: http
+    auth_ref: SENTRY_AUTH_TOKEN
+    enabled: false
+    integration_class: post_v2_candidate
+    capability_classes: [read]
+    toolsets: [issues, traces, performance]
+    fs_roots: []
+    network_domains: ["sentry.io"]
+    readiness: declared_in_manifest
+    cost: freemium
+    terms_review: not_reviewed
+    telemetry: sentry
+    available_to_factory_process: false
+    fallback_runner: "none"
+    approval_required: true
+    notes: "Human-in-the-loop analysis only; no autonomous issue mutation."
+
+  - id: browserstack_mcp
+    publisher: BrowserStack
+    source: "https://github.com/browserstack/mcp-server"
+    version_policy: pinned
+    transport: http
+    auth_ref: BROWSERSTACK_ACCESS_KEY
+    enabled: false
+    integration_class: post_v2_candidate
+    capability_classes: [read, write]
+    toolsets: [live, automate]
+    fs_roots: []
+    network_domains: ["api.browserstack.com"]
+    readiness: declared_in_manifest
+    cost: paid
+    terms_review: not_reviewed
+    telemetry: browserstack
+    available_to_factory_process: false
+    fallback_runner: "local Chromium (Playwright)"
+    approval_required: true
+    cost_budget_required: true
+    notes: "Optional PAID real browser/device acceptance. Strict execution + cost budgets."
+
+  - id: atlassian_rovo_mcp
+    publisher: Atlassian
+    source: "https://www.atlassian.com/platform/remote-mcp-server"
+    version_policy: remote
+    transport: http
+    auth_ref: ATLASSIAN_OAUTH_REF
+    enabled: false
+    integration_class: post_v2_candidate
+    capability_classes: [read, write]
+    toolsets: [jira, confluence, compass]
+    fs_roots: []
+    network_domains: ["api.atlassian.com"]
+    readiness: declared_in_manifest
+    cost: freemium
+    terms_review: not_reviewed
+    telemetry: atlassian
+    available_to_factory_process: false
+    fallback_runner: "none"
+    approval_required: true
+    notes: "Jira/Confluence/Compass context; writes + ticket creation approval-gated."
+
+  - id: resend
+    publisher: Resend
+    source: "https://github.com/resend/resend-mcp"
+    version_policy: pinned
+    transport: http
+    auth_ref: RESEND_API_KEY
+    enabled: false
+    integration_class: external_communication
+    capability_classes: [read, external_communication]
+    toolsets: [send-email]
+    fs_roots: []
+    network_domains: ["api.resend.com"]
+    readiness: declared_in_manifest
+    cost: freemium
+    terms_review: not_reviewed
+    telemetry: resend
+    available_to_factory_process: false
+    fallback_runner: "Final Phase II RealEmailAdapter (core/scout/comms/providers.py)"
+    approval_required: true
+    notes: "Sending ONLY through the Final Phase II immutable-approval + revalidation gates. Never a direct send path."
+
+  - id: gmail
+    publisher: Google
+    source: "claude.ai connector (Google Workspace)"
+    version_policy: remote
+    transport: http
+    auth_ref: GMAIL_OAUTH_REF
+    enabled: false
+    integration_class: external_communication
+    capability_classes: [read, external_communication]
+    toolsets: [create_draft, search_threads]
+    fs_roots: []
+    network_domains: ["gmail.googleapis.com"]
+    readiness: declared_in_manifest
+    cost: free
+    terms_review: not_reviewed
+    telemetry: google
+    available_to_factory_process: false
+    fallback_runner: "Final Phase II approval gates"
+    approval_required: true
+    notes: "Agent-only OAuth. NOT available to the Factory process. Sending only through FP II gates."
+
+  - id: google_drive
+    publisher: Google
+    source: "claude.ai connector (Google Workspace)"
+    version_policy: remote
+    transport: http
+    auth_ref: GDRIVE_OAUTH_REF
+    enabled: false
+    integration_class: post_v2_candidate
+    capability_classes: [read]
+    toolsets: [search_files, read_file_content]
+    fs_roots: []
+    network_domains: ["www.googleapis.com"]
+    readiness: declared_in_manifest
+    cost: free
+    terms_review: not_reviewed
+    telemetry: google
+    available_to_factory_process: false
+    fallback_runner: "local file import"
+    approval_required: true
+
+  - id: cloudflare
+    publisher: Cloudflare
+    source: "https://github.com/cloudflare/mcp-server-cloudflare"
+    version_policy: remote
+    transport: http
+    auth_ref: CLOUDFLARE_API_TOKEN
+    enabled: false
+    integration_class: deployment_only
+    capability_classes: [read, write]
+    toolsets: [workers, observability, bindings]
+    fs_roots: []
+    network_domains: ["api.cloudflare.com"]
+    readiness: declared_in_manifest
+    cost: freemium
+    terms_review: not_reviewed
+    telemetry: cloudflare
+    available_to_factory_process: false
+    fallback_runner: "none (local product; no cloud deployment in v2.0)"
+    approval_required: true
+    notes: "Deployment only. No cloud/public deployment in v2.0."
+
+  - id: supabase
+    publisher: Supabase
+    source: "https://github.com/supabase-community/supabase-mcp"
+    version_policy: remote
+    transport: http
+    auth_ref: SUPABASE_ACCESS_TOKEN
+    enabled: false
+    integration_class: post_v2_candidate
+    capability_classes: [read, write]
+    toolsets: [database, docs]
+    fs_roots: []
+    network_domains: ["api.supabase.com"]
+    readiness: declared_in_manifest
+    cost: freemium
+    terms_review: not_reviewed
+    telemetry: supabase
+    available_to_factory_process: false
+    fallback_runner: "local SQLite company/site memory (core/scout/memory/)"
+    approval_required: true
+    notes: "Scout uses local SQLite; a hosted DB is a post-v2 candidate only."
+
+  - id: stripe
+    publisher: Stripe
+    source: "https://github.com/stripe/agent-toolkit"
+    version_policy: pinned
+    transport: http
+    auth_ref: STRIPE_API_KEY
+    enabled: false
+    integration_class: post_v2_candidate
+    capability_classes: [read, financial]
+    toolsets: [read_only_resources]
+    fs_roots: []
+    network_domains: ["api.stripe.com"]
+    readiness: declared_in_manifest
+    cost: per_transaction
+    terms_review: not_reviewed
+    telemetry: stripe
+    available_to_factory_process: false
+    fallback_runner: "manual commercial events (source=manual)"
+    approval_required: true
+    notes: "FINANCIAL. Never invoked by the product. Commercial revenue is manual/trusted-integration only."

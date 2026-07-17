@@ -115,8 +115,34 @@ def _has(pkg: str) -> bool:
     return importlib.util.find_spec(pkg) is not None
 
 
+def cmd_mcp_audit(args) -> int:
+    import json
+    import os
+    from pathlib import Path
+
+    from core.scout.integrations.mcp import audit, discovery_snapshot, gap_report, load_manifest
+    manifest = os.path.join("config", "mcp_servers.v2.yaml")
+    if not os.path.exists(manifest):
+        print(f"ERROR: manifest not found: {manifest}", file=sys.stderr)
+        return 1
+    entries = load_manifest(manifest)
+    out = Path(args.output or "outputs") / "mcp"
+    out.mkdir(parents=True, exist_ok=True)
+    snaps = {"MCP_DISCOVERY_SNAPSHOT.json": discovery_snapshot(entries),
+             "MCP_HEALTH_AND_READINESS.json": audit(entries, factory_process=True),
+             "MCP_CAPABILITY_GAP_REPORT.json": gap_report(entries)}
+    for name, data in snaps.items():
+        (out / name).write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    health = snaps["MCP_HEALTH_AND_READINESS.json"]
+    print(f"MCP audit: {health['total']} servers declared, valid={health['valid']}, "
+          f"discovery_source={health['discovery_source']}")
+    print(f"  All disabled by default; none live-accepted. Snapshots -> {out}")
+    return 0
+
+
 def run_presend_cli(args) -> int:
     return {
         "presend-demo": cmd_presend_demo, "db-status": cmd_db_status, "db-backup": cmd_db_backup,
         "db-restore": cmd_db_restore, "review-list": cmd_review_list, "doctor": cmd_doctor,
+        "mcp-audit": cmd_mcp_audit,
     }[args.action](args)

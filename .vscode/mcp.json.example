@@ -1,0 +1,34 @@
+// EXAMPLE ONLY — copy to .vscode/mcp.json to use, then enable individual servers deliberately.
+// This file is NOT loaded by VS Code (the `.example` suffix). Every server is DISABLED here.
+// Credentials are environment-variable references (${env:NAME}) — never paste secret values.
+// The primary host is Windows; VS Code MCP sandboxing is NOT the security boundary. Keep servers
+// disabled by default, prefer read-only toolsets, and pin versions. A configured server here is
+// developer-agent-only — it is NOT available to the standalone Factory process.
+{
+  "servers": {
+    // Read-only docs lookup (no credential). Enable by removing "disabled".
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@1"],
+      "disabled": true
+    },
+    // GitHub — READ-ONLY toolsets by default; writes are approval-gated. Requires a PAT env ref.
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${env:GITHUB_MCP_PAT}" },
+      "disabled": true
+    },
+    // Playwright MCP — agent-side exploration only; does NOT replace the deterministic Scout runtime.
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "disabled": true
+    }
+    // Resend/Gmail (external communication), Stripe (financial), BrowserStack (paid), Cloudflare/
+    // Supabase (deployment) are intentionally omitted from this starter example — add them only
+    // deliberately, with approval gates, and never as an automatic send/financial path.
+  }
+}

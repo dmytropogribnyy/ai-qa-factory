@@ -227,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         "run", "demo", "dashboard", "control", "smoke",
         "campaign-demo", "campaign-plan", "campaign-run", "providers",
         "presend-demo", "db-status", "db-backup", "db-restore", "review-list", "doctor",
-        "radar-demo", "send", "outreach-control", "comms-status"])
+        "radar-demo", "send", "outreach-control", "comms-status", "mcp-audit"])
     scout_cmd.add_argument("--seeds", help="Comma-separated public URLs (run; or dashboard "
                                            "to start an active run)")
     scout_cmd.add_argument("--url", help="Single public URL (smoke)")
