@@ -24,6 +24,7 @@ def _public_provenance(**kw):
         source_category="public_website",
         extraction_method="published_link",
         observed_at=_ISO,
+        evidence_ref="EV-1",
         confidence="high",
         publicly_published_for_contact=True,
     )
@@ -44,6 +45,7 @@ class TestContactProvenance:
         p = _public_provenance()
         assert p.is_public_verified_source is True
         assert p.is_inferred is False
+        assert p.counts_for_verification is True
 
     def test_inferred_marked(self):
         p = _inferred_provenance()
@@ -61,6 +63,25 @@ class TestContactProvenance:
     def test_bad_observed_at_rejected(self):
         with pytest.raises(ValueError):
             ContactProvenance(observed_at="yesterday")
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            {"publicly_published_for_contact": False},
+            {"observed_at": ""},
+            {"evidence_ref": ""},
+            {"terms_review_status": "reviewed_blocked"},
+            {"extraction_method": "inferred_pattern"},
+        ],
+    )
+    def test_incomplete_or_blocked_provenance_cannot_verify(self, override):
+        assert _public_provenance(**override).counts_for_verification is False
+
+    def test_malformed_nested_source_fails_closed(self):
+        data = _public_provenance().to_dict()
+        data["source"] = "not-an-object"
+        with pytest.raises(ValueError, match="source"):
+            ContactProvenance.from_dict(data)
 
     def test_round_trip(self):
         p = _public_provenance()
@@ -101,10 +122,43 @@ class TestContactRecord:
         c2 = ContactRecord(channel="phone", value="+49 30 1234567")
         assert c2.normalized_value.startswith("+49")
 
+    @pytest.mark.parametrize("value", ["---", "1234", "1" * 16])
+    def test_phone_rejects_meaningless_or_implausible_values(self, value):
+        with pytest.raises(ValueError):
+            ContactRecord(channel="phone", value=value)
+
     def test_contact_form_must_be_reference(self):
         assert ContactRecord(channel="contact_form", value="/contact").normalized_value == "/contact"
         with pytest.raises(ValueError):
             ContactRecord(channel="contact_form", value="call us maybe")
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "//evil.example/contact",
+            "https://user:pass@example.com/contact",
+            "https://localhost/contact",
+            "https://127.0.0.1/contact",
+            "https://10.0.0.1/contact",
+            "https://example.com:8443/contact",
+            "https://example.com/contact#section",
+            "/contact#section",
+            "/contact?access_token=secret",
+            "/contact\\unsafe",
+        ],
+    )
+    def test_contact_form_rejects_unsafe_targets(self, value):
+        with pytest.raises(ValueError):
+            ContactRecord(channel="contact_form", value=value)
+
+    def test_contact_form_normalization_is_deterministic(self):
+        assert (
+            ContactRecord(
+                channel="contact_form",
+                value="HTTPS://EXAMPLE.COM/contact?topic=sales",
+            ).normalized_value
+            == "https://example.com/contact?topic=sales"
+        )
 
     def test_inferred_email_cannot_be_verified(self):
         with pytest.raises(ValueError):
@@ -133,6 +187,9 @@ class TestContactRecord:
             provenance=[_public_provenance()],
             last_verified_at=_ISO,
         )
+        # VERIFIED alone is not an outreach candidate — a suppression-check ref is needed.
+        assert c.is_outreach_candidate is False
+        c.suppression_check_ref = "SUP-1"
         assert c.is_outreach_candidate is True
 
     def test_named_person_requires_manual_review(self):
@@ -143,6 +200,20 @@ class TestContactRecord:
             manual_review_required=False,
         )
         assert c.manual_review_required is True
+
+    def test_named_person_review_reference_required_for_outreach_candidate(self):
+        c = ContactRecord(
+            channel="email",
+            value="jane.doe@example.com",
+            data_subject_category="named_person",
+            status="VERIFIED",
+            provenance=[_public_provenance()],
+            last_verified_at=_ISO,
+            suppression_check_ref="SUP-1",
+        )
+        assert c.is_outreach_candidate is False
+        c.manual_review_ref = "REVIEW-1"
+        assert c.is_outreach_candidate is True
 
     def test_role_based_distinct_from_named(self):
         role = ContactRecord(channel="email", value="info@example.com",
@@ -173,6 +244,14 @@ class TestContactRecord:
         restored = ContactRecord.from_dict(c.to_dict())
         assert restored.to_dict() == c.to_dict()
         assert isinstance(restored.provenance[0], ContactProvenance)
+
+    def test_malformed_provenance_entry_fails_closed(self):
+        data = ContactRecord(
+            channel="email", value="info@example.com"
+        ).to_dict()
+        data["provenance"] = ["not-an-object"]
+        with pytest.raises(ValueError, match="provenance"):
+            ContactRecord.from_dict(data)
 
     def test_no_shared_default_mutation(self):
         a = ContactRecord(channel="email", value="a@example.com")
@@ -212,6 +291,38 @@ class TestContactCollection:
         ])
         assert len(col.contacts) == 1
         assert len(col.contacts[0].provenance) == 2
+
+    def test_merge_does_not_mutate_or_alias_original_contacts(self):
+        first = ContactRecord(
+            channel="email",
+            value="info@example.com",
+            provenance=[_public_provenance()],
+            manual_review_required=False,
+        )
+        second = ContactRecord(
+            channel="email",
+            value="INFO@example.com",
+            status="DO_NOT_CONTACT",
+            provenance=[_inferred_provenance()],
+            manual_review_required=True,
+            manual_review_ref="REVIEW-1",
+        )
+        first_before = first.to_dict()
+        second_before = second.to_dict()
+
+        collection = ContactCollection(contacts=[first, second])
+
+        assert first.to_dict() == first_before
+        assert second.to_dict() == second_before
+        assert collection.contacts[0] is not first
+        assert collection.contacts[0] is not second
+        assert collection.contacts[0].status == "DO_NOT_CONTACT"
+        assert collection.contacts[0].manual_review_required is True
+        assert collection.contacts[0].manual_review_ref == "REVIEW-1"
+
+    def test_malformed_contact_entry_fails_closed(self):
+        with pytest.raises(ValueError, match="contacts"):
+            ContactCollection.from_dict({"contacts": ["not-an-object"]})
 
     def test_distinct_channels_not_merged(self):
         col = ContactCollection(contacts=[

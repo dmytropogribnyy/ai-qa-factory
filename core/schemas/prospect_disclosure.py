@@ -61,6 +61,14 @@ _VALID_STAGES = frozenset(s.value for s in DisclosureStage)
 DISCLOSURE_ROLES = frozenset({"primary", "support"})
 REPRODUCTION_DETAIL_LEVELS = frozenset({"none", "minimal", "partial", "full"})
 
+# Canonical hard ceilings for disclosure item counts (safety limits, not configuration).
+_CANONICAL_CEILINGS = {
+    "outreach_max_primary": 1,
+    "outreach_max_support": 1,
+    "outreach_max_total": 2,
+    "qualification_max_total": 3,
+}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -76,14 +84,33 @@ def _valid_iso(value: str) -> bool:
         return False
 
 
-def _dedup(seq: List[str]) -> List[str]:
+def _parse_iso(value: str, field_name: str) -> datetime:
+    if not _valid_iso(value):
+        raise ValueError(f"{field_name} must be valid ISO: {value!r}")
+    return datetime.fromisoformat(value)
+
+
+def _dedup_refs(seq: List[str]) -> List[str]:
+    if not isinstance(seq, list):
+        raise ValueError("evidence_refs must be a list of strings")
     seen: set[str] = set()
     out: List[str] = []
     for item in seq:
-        if item not in seen:
-            seen.add(item)
-            out.append(item)
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("evidence_refs entries must be non-empty strings")
+        normalized = item.strip()
+        if normalized not in seen:
+            seen.add(normalized)
+            out.append(normalized)
     return out
+
+
+def _require_dict(entry: Any, field_name: str) -> Dict[str, Any]:
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"{field_name} must be an object, got {type(entry).__name__}"
+        )
+    return entry
 
 
 @dataclass
@@ -110,6 +137,9 @@ class DisclosureItem(SchemaMixin):
     notes: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.finding_ref, str):
+            raise ValueError("DisclosureItem.finding_ref must be a string")
+        self.finding_ref = self.finding_ref.strip()
         if not self.finding_ref.strip():
             raise ValueError("DisclosureItem.finding_ref must be non-empty")
         if self.disclosure_level not in _VALID_LEVELS:
@@ -122,10 +152,7 @@ class DisclosureItem(SchemaMixin):
             raise ValueError(
                 f"Unknown reproduction_detail_level: {self.reproduction_detail_level!r}"
             )
-        self.evidence_refs = _dedup(self.evidence_refs)
-        for ref in self.evidence_refs:
-            if not ref.strip():
-                raise ValueError("evidence_refs entries must be non-empty")
+        self.evidence_refs = _dedup_refs(self.evidence_refs)
         # CLIENT_SAFE storage requires sanitized content without PII or secrets.
         if self.storage_class == "CLIENT_SAFE" and (
             not self.sanitized or self.contains_pii or self.contains_secrets
@@ -138,13 +165,31 @@ class DisclosureItem(SchemaMixin):
             raise ValueError(
                 "responsible_disclosure_flag material must be INTERNAL_ONLY"
             )
-        # OUTREACH_ELIGIBLE requires independent verification, CLIENT_SAFE storage, and a
-        # minimal teaser (no root cause, no full logs, at most minimal reproduction).
+        # OUTREACH_ELIGIBLE requires independent verification, CLIENT_SAFE storage, a
+        # business-impact summary, at least one evidence reference, and a minimal teaser
+        # (no root cause, no full logs, at most minimal reproduction).
         if self.disclosure_level == "OUTREACH_ELIGIBLE":
             if not self.independently_verified:
                 raise ValueError("OUTREACH_ELIGIBLE requires independently_verified")
             if self.storage_class != "CLIENT_SAFE":
                 raise ValueError("OUTREACH_ELIGIBLE requires CLIENT_SAFE storage")
+            if self.contains_pii or self.contains_secrets:
+                raise ValueError("OUTREACH_ELIGIBLE cannot contain PII or secrets")
+            if (
+                not isinstance(self.business_impact_summary, str)
+                or not self.business_impact_summary.strip()
+            ):
+                raise ValueError(
+                    "OUTREACH_ELIGIBLE requires a non-empty business_impact_summary"
+                )
+            if not any(r.strip() for r in self.evidence_refs):
+                raise ValueError(
+                    "OUTREACH_ELIGIBLE requires at least one evidence reference"
+                )
+            if self.responsible_disclosure_flag:
+                raise ValueError(
+                    "OUTREACH_ELIGIBLE cannot carry a responsible_disclosure_flag"
+                )
             if self.root_cause_included or self.full_logs_included:
                 raise ValueError(
                     "OUTREACH_ELIGIBLE cannot include root cause or full logs"
@@ -185,8 +230,18 @@ class FindingDisclosurePolicy(SchemaMixin):
             "outreach_max_primary", "outreach_max_support", "outreach_max_total",
             "qualification_max_total",
         ):
-            if getattr(self, name) < 0:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{name} must be an integer")
+            if value < 0:
                 raise ValueError(f"{name} cannot be negative")
+        # Canonical hard ceilings are safety limits, not user-expandable configuration.
+        # A caller may configure stricter (lower) limits, but may never raise above these.
+        for name, ceiling in _CANONICAL_CEILINGS.items():
+            if getattr(self, name) > ceiling:
+                raise ValueError(
+                    f"{name}={getattr(self, name)} exceeds the canonical ceiling {ceiling}"
+                )
         # These safety toggles are fail-closed and cannot be enabled through this contract.
         self.allow_raw_logs_in_outreach = False
         self.allow_root_cause_in_outreach = False
@@ -196,20 +251,65 @@ class FindingDisclosurePolicy(SchemaMixin):
     def blockers_for(self, stage: str, items: List["DisclosureItem"]) -> List[str]:
         """Return a list of disclosure-policy blockers for the given stage + items."""
         blockers: List[str] = []
+        if not isinstance(items, list) or not all(
+            isinstance(item, DisclosureItem) for item in items
+        ):
+            return ["disclosure items are malformed"]
+        outreach_max_primary = _effective_limit(
+            self.outreach_max_primary, "outreach_max_primary"
+        )
+        outreach_max_support = _effective_limit(
+            self.outreach_max_support, "outreach_max_support"
+        )
+        outreach_max_total = _effective_limit(
+            self.outreach_max_total, "outreach_max_total"
+        )
+        qualification_max_total = _effective_limit(
+            self.qualification_max_total, "qualification_max_total"
+        )
         primary = sum(1 for i in items if i.role == "primary")
         support = sum(1 for i in items if i.role == "support")
         if stage == "OUTREACH":
-            if primary > self.outreach_max_primary:
+            if not items:
+                blockers.append("outreach requires at least one finding")
+            if primary != 1:
+                blockers.append("outreach requires exactly one primary finding")
+            if primary > outreach_max_primary:
                 blockers.append("too many primary findings for outreach")
-            if support > self.outreach_max_support:
+            if support > outreach_max_support:
                 blockers.append("too many supporting findings for outreach")
-            if len(items) > self.outreach_max_total:
+            if len(items) > outreach_max_total:
                 blockers.append("too many total findings for outreach")
             for item in items:
+                if (
+                    not isinstance(item.finding_ref, str)
+                    or not item.finding_ref.strip()
+                ):
+                    blockers.append("outreach item has an empty finding reference")
                 if item.disclosure_level != "OUTREACH_ELIGIBLE":
                     blockers.append(f"item {item.finding_ref!r} is not OUTREACH_ELIGIBLE")
                 if item.storage_class != "CLIENT_SAFE":
                     blockers.append(f"item {item.finding_ref!r} is not CLIENT_SAFE")
+                if not item.sanitized:
+                    blockers.append(f"item {item.finding_ref!r} is not sanitized")
+                if not item.independently_verified:
+                    blockers.append(
+                        f"item {item.finding_ref!r} is not independently verified"
+                    )
+                if (
+                    not isinstance(item.business_impact_summary, str)
+                    or not item.business_impact_summary.strip()
+                ):
+                    blockers.append(
+                        f"item {item.finding_ref!r} has no business impact summary"
+                    )
+                if not isinstance(item.evidence_refs, list) or not item.evidence_refs or any(
+                    not isinstance(ref, str) or not ref.strip()
+                    for ref in item.evidence_refs
+                ):
+                    blockers.append(
+                        f"item {item.finding_ref!r} has no valid evidence reference"
+                    )
                 if item.contains_pii or item.contains_secrets:
                     blockers.append(f"item {item.finding_ref!r} contains PII/secrets")
                 if item.full_logs_included or item.root_cause_included:
@@ -218,8 +318,14 @@ class FindingDisclosurePolicy(SchemaMixin):
                     blockers.append(
                         f"item {item.finding_ref!r} is responsible-disclosure blocked"
                     )
+                if item.reproduction_detail_level not in ("none", "minimal"):
+                    blockers.append(
+                        f"item {item.finding_ref!r} has excessive reproduction detail"
+                    )
         elif stage == "QUALIFICATION":
-            if len(items) > self.qualification_max_total:
+            if not items:
+                blockers.append("qualification requires at least one finding")
+            if len(items) > qualification_max_total:
                 blockers.append("too many findings for qualification")
             for item in items:
                 if item.disclosure_level not in (
@@ -275,15 +381,43 @@ class DisclosureManifest(SchemaMixin):
     def __post_init__(self) -> None:
         if self.stage not in _VALID_STAGES:
             raise ValueError(f"Unknown disclosure stage: {self.stage!r}")
-        if self.generated_at and not _valid_iso(self.generated_at):
-            raise ValueError(f"generated_at must be valid ISO: {self.generated_at!r}")
-        if self.expires_at and not _valid_iso(self.expires_at):
-            raise ValueError(f"expires_at must be valid ISO: {self.expires_at!r}")
+        if not isinstance(self.items, list) or not all(
+            isinstance(item, DisclosureItem) for item in self.items
+        ):
+            raise ValueError("items must be a list of DisclosureItem objects")
+        if not isinstance(self.policy, FindingDisclosurePolicy):
+            raise ValueError("policy must be a FindingDisclosurePolicy object")
+        finding_refs = [item.finding_ref for item in self.items]
+        if len(finding_refs) != len(set(finding_refs)):
+            raise ValueError("duplicate finding_ref entries are not allowed")
+        generated = _parse_iso(self.generated_at, "generated_at")
+        if self.expires_at:
+            expires = _parse_iso(self.expires_at, "expires_at")
+            try:
+                expires_after_generated = expires > generated
+            except TypeError as exc:
+                raise ValueError(
+                    "generated_at and expires_at must use compatible ISO timezones"
+                ) from exc
+            if not expires_after_generated:
+                raise ValueError("expires_at must be later than generated_at")
 
     @property
     def blockers(self) -> List[str]:
         """Computed eligibility blockers for the manifest's stage (never sends anything)."""
+        if not isinstance(self.items, list) or not all(
+            isinstance(item, DisclosureItem) for item in self.items
+        ):
+            return ["disclosure items are malformed"]
+        if not isinstance(self.policy, FindingDisclosurePolicy):
+            return ["disclosure policy is malformed"]
+        finding_refs = [item.finding_ref for item in self.items]
+        duplicate_refs = {
+            ref for ref in finding_refs if finding_refs.count(ref) > 1
+        }
         blockers = list(self.policy.blockers_for(self.stage, self.items))
+        if duplicate_refs:
+            blockers.append("duplicate finding_ref entries are not allowed")
         if self.stage == "OUTREACH":
             if not self.contact_ref.strip():
                 blockers.append("missing verified/public contact reference")
@@ -329,12 +463,24 @@ class DisclosureManifest(SchemaMixin):
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
         items = data.get("items") or []
+        if not isinstance(items, list):
+            raise ValueError("items must be a list of objects")
         kwargs["items"] = [
-            DisclosureItem.from_dict(i) for i in items if isinstance(i, dict)
+            DisclosureItem.from_dict(_require_dict(item, "items entry"))
+            for item in items
         ]
-        policy = data.get("policy")
-        kwargs["policy"] = (
-            FindingDisclosurePolicy.from_dict(policy) if isinstance(policy, dict)
-            else FindingDisclosurePolicy()
-        )
+        if "policy" in data:
+            kwargs["policy"] = FindingDisclosurePolicy.from_dict(
+                _require_dict(data["policy"], "policy")
+            )
+        else:
+            kwargs["policy"] = FindingDisclosurePolicy()
         return cls(**kwargs)
+
+
+def _effective_limit(value: Any, field_name: str) -> int:
+    """Apply the immutable safety ceiling even if a live policy object was mutated."""
+    ceiling = _CANONICAL_CEILINGS[field_name]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return min(value, ceiling)

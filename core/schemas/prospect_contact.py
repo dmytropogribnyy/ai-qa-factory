@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from core.schemas.base import SchemaMixin
@@ -144,6 +145,18 @@ def _reject_secret_value(value: str) -> None:
             raise ValueError(f"contact value contains a forbidden secret term: {term!r}")
 
 
+# Conservative phone digit bounds (E.164 caps a subscriber number at 15 digits).
+_MIN_PHONE_DIGITS = 5
+_MAX_PHONE_DIGITS = 15
+
+
+def _require_dict(entry: Any, field_name: str) -> Dict[str, Any]:
+    """Fail closed: a malformed non-dict nested entry is rejected, never silently dropped."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"{field_name} entries must be objects, got {type(entry).__name__}")
+    return entry
+
+
 def _normalize_email(value: str) -> str:
     v = value.strip()
     if v.count("@") != 1:
@@ -160,17 +173,58 @@ def _normalize_phone(value: str) -> str:
     digits = re.sub(r"\D", "", v)
     if not digits:
         raise ValueError(f"phone has no digits: {value!r}")
+    # Conservative bounds — reject implausibly short/long numbers (E.164 caps at 15).
+    if len(digits) < _MIN_PHONE_DIGITS:
+        raise ValueError(f"phone has too few digits: {value!r}")
+    if len(digits) > _MAX_PHONE_DIGITS:
+        raise ValueError(f"phone has too many digits: {value!r}")
     # Conservative: preserve an explicit leading '+', never invent a country code.
+    # Normalization does not claim validity or reachability.
     return ("+" if has_plus else "") + digits
 
 
 def _normalize_contact_form(value: str) -> str:
     v = value.strip()
-    if not (v.startswith("http://") or v.startswith("https://") or v.startswith("/")):
+    if not v:
+        raise ValueError("contact_form reference must be non-empty")
+    if "\\" in v or any(ord(char) < 32 for char in v):
         raise ValueError(
-            f"contact_form must be a public URL or path reference: {value!r}"
+            f"contact_form reference contains an unsafe path character: {value!r}"
         )
-    return v
+    # Protocol-relative references (//host/path) are rejected.
+    if v.startswith("//"):
+        raise ValueError(
+            f"protocol-relative contact_form reference not allowed: {value!r}"
+        )
+    parts = urlsplit(v)
+    if parts.fragment:
+        raise ValueError(f"contact_form fragments are not allowed: {value!r}")
+    # Relative path with exactly one leading slash is allowed.
+    if v.startswith("/"):
+        if parts.scheme or parts.netloc:
+            raise ValueError(f"malformed relative contact_form reference: {value!r}")
+        query = f"?{parts.query}" if parts.query else ""
+        return f"{parts.path}{query}"
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(
+            f"contact_form must be an http(s) URL or a '/'-path: {value!r}"
+        )
+    if "@" in parts.netloc or parts.username or parts.password:
+        raise ValueError(f"contact_form must not contain credentials: {value!r}")
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError(f"contact_form has an invalid port: {value!r}") from exc
+    if port is not None:
+        raise ValueError(f"contact_form must not specify a port: {value!r}")
+    host = parts.hostname
+    if not host:
+        raise ValueError(f"contact_form has no host: {value!r}")
+    # normalize_hostname rejects IPs, localhost, single-label, and malformed hosts.
+    norm_host = normalize_hostname(host)
+    path = parts.path or "/"
+    query = f"?{parts.query}" if parts.query else ""
+    return f"{parts.scheme}://{norm_host}{path}{query}"
 
 
 def _normalize_value(channel: str, value: str) -> str:
@@ -199,6 +253,8 @@ class ContactProvenance(SchemaMixin):
     notes: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.source, SourceReference):
+            raise ValueError("source must be a SourceReference object")
         if self.source_category not in CONTACT_SOURCE_CATEGORIES:
             raise ValueError(f"Unknown contact source_category: {self.source_category!r}")
         if self.extraction_method not in EXTRACTION_METHODS:
@@ -207,6 +263,12 @@ class ContactProvenance(SchemaMixin):
             raise ValueError(f"Unknown confidence: {self.confidence!r}")
         if self.terms_review_status not in TERMS_REVIEW_STATUSES:
             raise ValueError(f"Unknown terms_review_status: {self.terms_review_status!r}")
+        if not isinstance(self.observed_at, str):
+            raise ValueError("observed_at must be a string")
+        if not isinstance(self.evidence_ref, str):
+            raise ValueError("evidence_ref must be a string")
+        if not isinstance(self.publicly_published_for_contact, bool):
+            raise ValueError("publicly_published_for_contact must be a boolean")
         if self.observed_at and not _valid_iso(self.observed_at):
             raise ValueError(f"observed_at must be valid ISO: {self.observed_at!r}")
 
@@ -220,6 +282,24 @@ class ContactProvenance(SchemaMixin):
     @property
     def is_public_verified_source(self) -> bool:
         return self.source_category in _NON_INFERRED_SOURCES and not self.is_inferred
+
+    @property
+    def counts_for_verification(self) -> bool:
+        """Whether this provenance may support VERIFIED status (fail-closed).
+
+        Requires a non-inferred public/manual source that was visibly published for
+        contact, with a valid observation timestamp, a non-empty evidence reference, and
+        terms review that is not blocked. A plausible format or provider label alone can
+        never qualify.
+        """
+        return (
+            self.is_public_verified_source
+            and self.publicly_published_for_contact
+            and _valid_iso(self.observed_at)
+            and isinstance(self.evidence_ref, str)
+            and bool(self.evidence_ref.strip())
+            and self.terms_review_status != "reviewed_blocked"
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -242,11 +322,12 @@ class ContactProvenance(SchemaMixin):
             "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
-        source = data.get("source")
-        kwargs["source"] = (
-            SourceReference.from_dict(source) if isinstance(source, dict)
-            else SourceReference()
-        )
+        if "source" in data:
+            kwargs["source"] = SourceReference.from_dict(
+                _require_dict(data["source"], "source")
+            )
+        else:
+            kwargs["source"] = SourceReference()
         return cls(**kwargs)
 
 
@@ -270,6 +351,7 @@ class ContactRecord(SchemaMixin):
     last_verified_at: str = ""
     suppression_check_ref: str = ""
     manual_review_required: bool = False
+    manual_review_ref: str = ""
     notes: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -281,9 +363,25 @@ class ContactRecord(SchemaMixin):
             )
         if self.status not in _VALID_STATUSES:
             raise ValueError(f"Unknown contact status: {self.status!r}")
+        if not isinstance(self.value, str):
+            raise ValueError("contact value must be a string")
+        for field_name in (
+            "first_observed_at",
+            "last_verified_at",
+            "suppression_check_ref",
+            "manual_review_ref",
+        ):
+            if not isinstance(getattr(self, field_name), str):
+                raise ValueError(f"{field_name} must be a string")
+        if not isinstance(self.manual_review_required, bool):
+            raise ValueError("manual_review_required must be a boolean")
         if not self.value.strip():
             raise ValueError("contact value must be non-empty")
         _reject_secret_value(self.value)
+        if not isinstance(self.provenance, list) or not all(
+            isinstance(p, ContactProvenance) for p in self.provenance
+        ):
+            raise ValueError("provenance must be a list of ContactProvenance objects")
         # Deterministic normalization (recomputed; does not claim deliverability).
         self.normalized_value = _normalize_value(self.channel, self.value)
         for ts_name in ("first_observed_at", "last_verified_at"):
@@ -295,9 +393,11 @@ class ContactRecord(SchemaMixin):
             self.manual_review_required = True
         # VERIFIED requires a real public/manual verified provenance + a verification time.
         if self.status == "VERIFIED":
-            if not any(p.is_public_verified_source for p in self.provenance):
+            if not any(p.counts_for_verification for p in self.provenance):
                 raise ValueError(
-                    "VERIFIED requires at least one public/manual verified provenance"
+                    "VERIFIED requires at least one fully-qualified public verified "
+                    "provenance (non-inferred, published-for-contact, timestamped, "
+                    "evidenced, terms not blocked)"
                 )
             if not self.last_verified_at.strip():
                 raise ValueError("VERIFIED requires a non-empty last_verified_at")
@@ -308,9 +408,36 @@ class ContactRecord(SchemaMixin):
         return bool(self.provenance) and all(p.is_inferred for p in self.provenance)
 
     @property
+    def has_verified_provenance(self) -> bool:
+        return any(p.counts_for_verification for p in self.provenance)
+
+    @property
+    def named_person_review_complete(self) -> bool:
+        """Named-person contacts require a recorded reviewed decision; others are exempt."""
+        if self.data_subject_category != "named_person":
+            return True
+        return isinstance(self.manual_review_ref, str) and bool(
+            self.manual_review_ref.strip()
+        )
+
+    @property
     def is_outreach_candidate(self) -> bool:
-        """Fail-closed: only VERIFIED contacts are outreach candidates (computed, not stored)."""
-        return self.status == "VERIFIED"
+        """Fail-closed contract indicator (does NOT authorize or perform outreach).
+
+        Requires VERIFIED status backed by a fully-qualified public verified provenance, a
+        valid verification timestamp, not inferred-only, no suppression/DNC state, a
+        completed named-person review (when applicable), and a suppression-check reference.
+        """
+        return (
+            self.status == "VERIFIED"
+            and not self.is_inferred_only
+            and self.has_verified_provenance
+            and _valid_iso(self.last_verified_at)
+            and self.status not in ("SUPPRESSED", "DO_NOT_CONTACT")
+            and self.named_person_review_complete
+            and isinstance(self.suppression_check_ref, str)
+            and bool(self.suppression_check_ref.strip())
+        )
 
     def dedup_key(self) -> tuple[str, str]:
         return (self.channel, self.normalized_value)
@@ -333,6 +460,7 @@ class ContactRecord(SchemaMixin):
             "last_verified_at": self.last_verified_at,
             "suppression_check_ref": self.suppression_check_ref,
             "manual_review_required": self.manual_review_required,
+            "manual_review_ref": self.manual_review_ref,
             "notes": list(self.notes),
         }
 
@@ -342,13 +470,11 @@ class ContactRecord(SchemaMixin):
             "contact_id", "schema_version", "company_ref", "domain_ref", "channel",
             "value", "display_name", "role_title", "data_subject_category", "status",
             "first_observed_at", "last_verified_at", "suppression_check_ref",
-            "manual_review_required", "notes",
+            "manual_review_required", "manual_review_ref", "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
         prov = data.get("provenance") or []
-        kwargs["provenance"] = [
-            ContactProvenance.from_dict(p) for p in prov if isinstance(p, dict)
-        ]
+        kwargs["provenance"] = [ContactProvenance.from_dict(_require_dict(p, "provenance")) for p in prov]
         return cls(**kwargs)
 
 
@@ -367,7 +493,13 @@ class ContactCollection(SchemaMixin):
 
     def __post_init__(self) -> None:
         merged: Dict[tuple[str, str], ContactRecord] = {}
-        for contact in self.contacts:
+        if not isinstance(self.contacts, list) or not all(
+            isinstance(contact, ContactRecord) for contact in self.contacts
+        ):
+            raise ValueError("contacts must be a list of ContactRecord objects")
+        for original in self.contacts:
+            # Own a defensive copy so de-duplication never mutates caller-owned records.
+            contact = ContactRecord.from_dict(original.to_dict())
             key = contact.dedup_key()
             if key not in merged:
                 merged[key] = contact
@@ -389,21 +521,42 @@ class ContactCollection(SchemaMixin):
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
         contacts = data.get("contacts") or []
         kwargs["contacts"] = [
-            ContactRecord.from_dict(c) for c in contacts if isinstance(c, dict)
+            ContactRecord.from_dict(_require_dict(c, "contacts")) for c in contacts
         ]
         return cls(**kwargs)
 
 
 def _merge_contacts(a: ContactRecord, b: ContactRecord) -> ContactRecord:
-    """Merge two same-key contacts: stricter status wins; provenance unioned."""
+    """Return a merged copy: stricter status wins and caller-owned inputs stay untouched."""
     keep = a if _STATUS_STRICTNESS[a.status] >= _STATUS_STRICTNESS[b.status] else b
     other = b if keep is a else a
-    merged_prov = list(keep.provenance)
+    merged = ContactRecord.from_dict(keep.to_dict())
+    merged_prov = list(merged.provenance)
     for prov in other.provenance:
         if prov not in merged_prov:
-            merged_prov.append(prov)
-    keep.provenance = merged_prov
-    keep.manual_review_required = (
+            merged_prov.append(ContactProvenance.from_dict(prov.to_dict()))
+    merged.provenance = merged_prov
+    merged.manual_review_required = (
         a.manual_review_required or b.manual_review_required
     )
-    return keep
+    if not merged.manual_review_ref.strip():
+        merged.manual_review_ref = (
+            a.manual_review_ref.strip() or b.manual_review_ref.strip()
+        )
+    if not merged.suppression_check_ref.strip():
+        merged.suppression_check_ref = (
+            a.suppression_check_ref.strip() or b.suppression_check_ref.strip()
+        )
+    merged.notes = _dedup_strings([*a.notes, *b.notes])
+    return merged
+
+
+def _dedup_strings(values: List[str]) -> List[str]:
+    """Preserve first-seen order while returning a detached deterministic list."""
+    seen: set[str] = set()
+    result: List[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
