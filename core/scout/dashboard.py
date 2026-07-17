@@ -77,6 +77,8 @@ def _make_handler(service: ScoutService):
                     "PROVIDER_REGISTRY_SNAPSHOT.json") or []})
             if path == "/api/presend":
                 return self._json(200, self._presend_summary())
+            if path == "/api/comms":
+                return self._json(200, self._comms_summary())
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
@@ -247,9 +249,49 @@ Review items: {s['review_items']} — APIs: <a href="/api/presend">presend</a>,
 {rrows or '<tr><td colspan=2>none</td></tr>'}</table>
 </body></html>"""
 
+        def _comms_summary(self):
+            health = self._read_report("FINAL_PRODUCT_HEALTH.json") or {}
+            metrics = self._read_report("COMMERCIAL_METRICS.json") or {}
+            controls = self._read_report("OUTREACH_CONTROL_STATE.json") or {}
+            return {"outreach_global": controls.get("global", "DISABLED"),
+                    "outreach_kill": controls.get("kill", "RUNNING"),
+                    "send_status": health.get("send_status"), "metrics": metrics,
+                    "any_real_send": health.get("any_real_send", False),
+                    "has_send_button": False}  # sending is CLI-gated; no dashboard send button
+
+        def _comms_html(self) -> str:
+            s = self._comms_summary()
+            m = s.get("metrics", {})
+            enabled = s["outreach_global"] == "ENABLED" and s["outreach_kill"] != "KILLED"
+            banner = ("<span style='color:#a00'>OUTREACH ENABLED</span>" if enabled
+                      else "<span style='color:#070'>OUTREACH DISABLED (default)</span>")
+            return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
+<title>{SCOUT_PRODUCT_NAME} — Communication</title>
+<style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:1000px}}
+table{{border-collapse:collapse}}td,th{{border:1px solid #ccc;padding:6px}}
+.banner{{padding:.6rem;border:1px solid #999;border-radius:4px;font-weight:bold}}</style></head>
+<body><h1>{SCOUT_PRODUCT_NAME} <small>communication</small></h1>
+<p class=banner>Global outreach: {banner} · kill: {_esc(s['outreach_kill'])}</p>
+<p><strong>There is no send button here.</strong> Sending is performed only via the gated
+<code>scout send</code> CLI (dry-run by default; live requires explicit approval, a reviewer, and
+an exact recipient confirmation). Nothing is sent from this dashboard, and no real external message
+was sent (any_real_send={_esc(s['any_real_send'])}).</p>
+<h2>Commercial funnel</h2><table>
+<tr><th>verified</th><th>approved</th><th>accepted</th><th>delivered</th><th>replies</th>
+<th>revenue</th><th>dup-sends</th></tr>
+<tr><td>{_esc(m.get('verified_prospects', 0))}</td><td>{_esc(m.get('approved_drafts', 0))}</td>
+<td>{_esc(m.get('sends_accepted', 0))}</td><td>{_esc(m.get('delivered', 0))}</td>
+<td>{_esc(m.get('replies', 0))}</td><td>{_esc(m.get('revenue', 0))}</td>
+<td>{_esc(m.get('duplicate_send_incidents', 0))}</td></tr></table>
+<p>APIs: <a href="/api/comms">comms</a>,
+<a href="/artifact?path=report/FINAL_E2E_REPORT.md">final report</a></p>
+</body></html>"""
+
         def _overview_html(self) -> str:
             status = service.status()
             st = status.get("state", {})
+            if self._read_report("FINAL_PRODUCT_HEALTH.json") is not None:
+                return self._comms_html()
             if self._read_report("NORMALIZED_FINDINGS.json") is not None:
                 return self._presend_html()
             if isinstance(st.get("candidates"), list):

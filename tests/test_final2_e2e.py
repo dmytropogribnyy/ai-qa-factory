@@ -47,6 +47,29 @@ def test_benchmark_meets_zero_incident_targets(tmp_path):
     assert report["scenarios"]["responsible_disclosure"] == "blocked_at_build"
 
 
+def test_dashboard_comms_view_has_no_send_button(tmp_path):
+    import json
+    import urllib.request
+
+    from core.scout.dashboard import start_dashboard
+    from core.scout.service import ScoutService
+    from core.scout.store import RunStore
+    summary = run_radar_demo(str(tmp_path))
+    RunStore(str(tmp_path), summary["campaign_id"])  # ensure report exists
+    service = ScoutService(str(tmp_path))
+    service.attach(summary["campaign_id"])
+    server, url = start_dashboard(service)
+    try:
+        with urllib.request.urlopen(url + "/api/comms", timeout=5) as r:
+            data = json.loads(r.read())
+            assert data["has_send_button"] is False and data["any_real_send"] is False
+        with urllib.request.urlopen(url + "/", timeout=5) as r:
+            html = r.read().decode("utf-8")
+        assert "no send button" in html.lower() and "scout send" in html
+    finally:
+        server.shutdown()
+
+
 def test_backup_restart_restore_preserves_send_history(tmp_path):
     summary = run_radar_demo(str(tmp_path))
     from core.scout.store import RunStore
