@@ -21,7 +21,10 @@ from typing import Any, Dict, List
 from core.schemas.base import SchemaMixin
 from core.schemas.cleanup import CleanupPolicy
 from core.schemas.prospect_identity import normalize_hostname
-from core.schemas.prospect_interaction import PROSPECT_CONTRACT_SCHEMA_VERSION
+from core.schemas.prospect_interaction import (
+    PROSPECT_CONTRACT_SCHEMA_VERSION,
+    optional_object,
+)
 
 SUPPRESSION_MODES = frozenset({
     "NO_OUTREACH",
@@ -309,18 +312,20 @@ class ProspectGovernancePlan(SchemaMixin):
     def from_dict(cls, data: Dict[str, Any]) -> "ProspectGovernancePlan":
         known = {"schema_version", "notes"}
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
-        supp = data.get("suppression")
+        # Fail closed: a present-but-malformed policy must never silently become a
+        # permissive default (e.g. a corrupted suppression policy must not disable
+        # suppression). Absent keys still fall back to the conservative default.
+        supp = optional_object(data, "suppression", "suppression")
         kwargs["suppression"] = (
-            SuppressionPolicy.from_dict(supp) if isinstance(supp, dict)
-            else SuppressionPolicy()
+            SuppressionPolicy.from_dict(supp) if supp is not None else SuppressionPolicy()
         )
-        rech = data.get("recheck")
+        rech = optional_object(data, "recheck", "recheck")
         kwargs["recheck"] = (
-            RecheckPolicy.from_dict(rech) if isinstance(rech, dict) else RecheckPolicy()
+            RecheckPolicy.from_dict(rech) if rech is not None else RecheckPolicy()
         )
-        ret = data.get("retention")
+        ret = optional_object(data, "retention", "retention")
         kwargs["retention"] = (
-            ProspectRetentionPolicy.from_dict(ret) if isinstance(ret, dict)
+            ProspectRetentionPolicy.from_dict(ret) if ret is not None
             else ProspectRetentionPolicy()
         )
         return cls(**kwargs)

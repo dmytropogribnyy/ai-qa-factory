@@ -82,6 +82,39 @@ def _dedup(seq: List[str]) -> List[str]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Fail-closed nested-value helpers (shared across the Phase 8.2 prospect family).
+#
+# A malformed nested value must never be silently dropped or silently coerced to a
+# permissive default. Absent keys still fall back to a conservative default (additive
+# safe), but a present-but-wrong-type value fails closed with a ValueError.
+# ---------------------------------------------------------------------------
+
+def require_object(entry: Any, field_name: str) -> Dict[str, Any]:
+    """Fail closed: a present nested value must be an object (dict)."""
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"{field_name} must be an object, got {type(entry).__name__}"
+        )
+    return entry
+
+
+def require_object_list(seq: Any, field_name: str) -> List[Dict[str, Any]]:
+    """Fail closed: a nested list must be a list whose entries are all objects."""
+    if seq is None:
+        return []
+    if not isinstance(seq, list):
+        raise ValueError(f"{field_name} must be a list of objects")
+    return [require_object(item, field_name) for item in seq]
+
+
+def optional_object(data: Dict[str, Any], key: str, field_name: str) -> "Dict[str, Any] | None":
+    """Absent/None → None (caller uses its default); present-but-not-a-dict → fail closed."""
+    if key not in data or data[key] is None:
+        return None
+    return require_object(data[key], field_name)
+
+
 @dataclass
 class InteractionBoundary(SchemaMixin):
     """Fail-closed boundary describing what a future execution phase may attempt.

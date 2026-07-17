@@ -33,6 +33,8 @@ from core.schemas.source_reference import SourceReference
 from core.schemas.prospect_interaction import (
     PROSPECT_CONTRACT_SCHEMA_VERSION,
     InteractionBoundary,
+    optional_object,
+    require_object_list,
 )
 
 # Planning-only campaign states. No execution/delivery states are modeled here —
@@ -312,28 +314,28 @@ class ProspectCampaign(SchemaMixin):
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
 
-        source = data.get("source")
+        # Fail closed: present-but-malformed nested values raise; absent keys use the
+        # conservative default (the InteractionBoundary default is maximally restrictive).
+        source = optional_object(data, "source", "source")
         kwargs["source"] = (
-            SourceReference.from_dict(source) if isinstance(source, dict)
-            else SourceReference()
+            SourceReference.from_dict(source) if source is not None else SourceReference()
         )
-        criteria = data.get("target_criteria")
+        criteria = optional_object(data, "target_criteria", "target_criteria")
         kwargs["target_criteria"] = (
-            CampaignTargetCriteria.from_dict(criteria) if isinstance(criteria, dict)
+            CampaignTargetCriteria.from_dict(criteria) if criteria is not None
             else CampaignTargetCriteria()
         )
-        market = data.get("market_policy")
+        market = optional_object(data, "market_policy", "market_policy")
         kwargs["market_policy"] = (
-            MarketPolicy.from_dict(market) if isinstance(market, dict)
-            else MarketPolicy()
+            MarketPolicy.from_dict(market) if market is not None else MarketPolicy()
         )
-        sources = data.get("discovery_sources") or []
         kwargs["discovery_sources"] = [
-            DiscoverySourcePolicy.from_dict(s) for s in sources if isinstance(s, dict)
+            DiscoverySourcePolicy.from_dict(s)
+            for s in require_object_list(data.get("discovery_sources"), "discovery_sources")
         ]
-        boundary = data.get("interaction_boundary")
+        boundary = optional_object(data, "interaction_boundary", "interaction_boundary")
         kwargs["interaction_boundary"] = (
-            InteractionBoundary.from_dict(boundary) if isinstance(boundary, dict)
+            InteractionBoundary.from_dict(boundary) if boundary is not None
             else InteractionBoundary()
         )
         return cls(**kwargs)

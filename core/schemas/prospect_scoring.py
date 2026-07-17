@@ -25,7 +25,10 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from core.schemas.base import SchemaMixin
-from core.schemas.prospect_interaction import PROSPECT_CONTRACT_SCHEMA_VERSION
+from core.schemas.prospect_interaction import (
+    PROSPECT_CONTRACT_SCHEMA_VERSION,
+    require_object_list,
+)
 
 # The independent score dimensions. Each is scored 0..100 on its own axis.
 SCORE_DIMENSIONS = frozenset({
@@ -169,8 +172,8 @@ class LeadScorecard(SchemaMixin):
             "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
-        dims = data.get("dimensions") or []
         kwargs["dimensions"] = [
-            ScoreDimension.from_dict(d) for d in dims if isinstance(d, dict)
+            ScoreDimension.from_dict(d)
+            for d in require_object_list(data.get("dimensions"), "dimensions")
         ]
         return cls(**kwargs)

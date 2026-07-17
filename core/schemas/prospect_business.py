@@ -32,6 +32,7 @@ from core.schemas.source_reference import SourceReference
 from core.schemas.prospect_interaction import (
     PROSPECT_CONTRACT_SCHEMA_VERSION,
     InteractionActionClass,
+    require_object_list,
 )
 
 # Reused confidence vocabulary (values of the existing Confidence enum).
@@ -180,9 +181,9 @@ class BusinessContext(SchemaMixin):
             "primary_flows", "secondary_flows", "confidence", "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
-        sources = data.get("sources") or []
         kwargs["sources"] = [
-            SourceReference.from_dict(s) for s in sources if isinstance(s, dict)
+            SourceReference.from_dict(s)
+            for s in require_object_list(data.get("sources"), "sources")
         ]
         return cls(**kwargs)
 

@@ -28,7 +28,10 @@ from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
 from core.schemas.base import SchemaMixin
-from core.schemas.prospect_interaction import PROSPECT_CONTRACT_SCHEMA_VERSION
+from core.schemas.prospect_interaction import (
+    PROSPECT_CONTRACT_SCHEMA_VERSION,
+    require_object_list,
+)
 
 # Canonical prospect lifecycle states (normal progression + control states).
 PROSPECT_STATES: Tuple[str, ...] = (
@@ -281,8 +284,8 @@ class ProspectLifecycle(SchemaMixin):
             "previous_status", "updated_at", "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
-        history = data.get("history") or []
         kwargs["history"] = [
-            ProspectTransition.from_dict(h) for h in history if isinstance(h, dict)
+            ProspectTransition.from_dict(h)
+            for h in require_object_list(data.get("history"), "history")
         ]
         return cls(**kwargs)

@@ -33,7 +33,10 @@ from typing import Any, Dict, List
 from core.schemas.base import SchemaMixin
 from core.schemas.capability import ATOMIC_CAPABILITIES
 from core.schemas.source_reference import SourceReference
-from core.schemas.prospect_interaction import PROSPECT_CONTRACT_SCHEMA_VERSION
+from core.schemas.prospect_interaction import (
+    PROSPECT_CONTRACT_SCHEMA_VERSION,
+    require_object_list,
+)
 
 COVERAGE_STATUSES = frozenset({
     "PLANNED",
@@ -177,9 +180,9 @@ class CoverageMap(SchemaMixin):
     def from_dict(cls, data: Dict[str, Any]) -> "CoverageMap":
         known = {"schema_version", "subject_ref", "notes"}
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
-        areas = data.get("areas") or []
         kwargs["areas"] = [
-            CoverageArea.from_dict(a) for a in areas if isinstance(a, dict)
+            CoverageArea.from_dict(a)
+            for a in require_object_list(data.get("areas"), "areas")
         ]
         return cls(**kwargs)
 
@@ -263,8 +266,8 @@ class SiteFingerprint(SchemaMixin):
             "previous_fingerprint_ref", "comparison_status", "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
-        refs = data.get("source_refs") or []
         kwargs["source_refs"] = [
-            SourceReference.from_dict(r) for r in refs if isinstance(r, dict)
+            SourceReference.from_dict(r)
+            for r in require_object_list(data.get("source_refs"), "source_refs")
         ]
         return cls(**kwargs)

@@ -24,7 +24,10 @@ from uuid import uuid4
 from core.schemas.base import SchemaMixin
 from core.schemas.finding import Confidence
 from core.schemas.source_reference import SourceReference
-from core.schemas.prospect_interaction import PROSPECT_CONTRACT_SCHEMA_VERSION
+from core.schemas.prospect_interaction import (
+    PROSPECT_CONTRACT_SCHEMA_VERSION,
+    require_object_list,
+)
 
 CONFIDENCE_LEVELS = frozenset(c.value for c in Confidence)
 
@@ -167,9 +170,9 @@ class DomainIdentity(SchemaMixin):
     def from_dict(cls, data: Dict[str, Any]) -> "DomainIdentity":
         known = {"domain_id", "hostname", "relation", "is_primary", "confidence", "notes"}
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
-        sources = data.get("sources") or []
         kwargs["sources"] = [
-            SourceReference.from_dict(s) for s in sources if isinstance(s, dict)
+            SourceReference.from_dict(s)
+            for s in require_object_list(data.get("sources"), "sources")
         ]
         return cls(**kwargs)
 
@@ -239,12 +242,12 @@ class CompanyIdentity(SchemaMixin):
             "brand_names", "aliases", "confidence", "notes",
         }
         kwargs: Dict[str, Any] = {k: v for k, v in data.items() if k in known}
-        domains = data.get("domains") or []
         kwargs["domains"] = [
-            DomainIdentity.from_dict(d) for d in domains if isinstance(d, dict)
+            DomainIdentity.from_dict(d)
+            for d in require_object_list(data.get("domains"), "domains")
         ]
-        sources = data.get("sources") or []
         kwargs["sources"] = [
-            SourceReference.from_dict(s) for s in sources if isinstance(s, dict)
+            SourceReference.from_dict(s)
+            for s in require_object_list(data.get("sources"), "sources")
         ]
         return cls(**kwargs)
