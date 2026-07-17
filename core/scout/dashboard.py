@@ -67,6 +67,14 @@ def _make_handler(service: ScoutService):
                 return self._json(200, self._prospect(pid))
             if path == "/api/events":
                 return self._json(200, {"events": service.recent_events(200)})
+            if path == "/api/campaign":
+                return self._json(200, self._campaign_summary())
+            if path == "/api/candidates":
+                st = service.status().get("state", {})
+                return self._json(200, {"candidates": st.get("candidates", [])})
+            if path == "/api/providers":
+                return self._json(200, {"providers": self._read_report(
+                    "PROVIDER_REGISTRY_SNAPSHOT.json") or []})
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
@@ -137,9 +145,72 @@ def _make_handler(service: ScoutService):
             if self.command != "HEAD":
                 self.wfile.write(data)
 
+        def _campaign_summary(self):
+            st = service.status().get("state", {})
+            matrix = st.get("matrix", {})
+            return {"campaign_id": st.get("campaign_id"), "status": st.get("status"),
+                    "counts": st.get("counts", {}), "budget": st.get("budget", {}),
+                    "matrix": {k: matrix.get(k) for k in
+                               ("full_size", "planned_provider_calls", "sampled")}}
+
+        def _read_report(self, name: str):
+            store = service.store
+            if store is None:
+                return None
+            try:
+                target = store._confine("report", name)
+            except StoreError:
+                return None
+            if not target.exists():
+                return None
+            try:
+                return json.loads(target.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                return None
+
+        def _campaign_html(self, status, st) -> str:
+            counts = st.get("counts", {})
+            budget = st.get("budget", {})
+            rows = []
+            for c in st.get("candidates", []):
+                rows.append(
+                    "<tr>"
+                    f"<td>{_esc(c.get('business_name', ''))}</td>"
+                    f"<td>{_esc(c.get('normalized_url') or c.get('public_url', ''))}</td>"
+                    f"<td>{_esc(c.get('duplicate_status', ''))}</td>"
+                    f"<td>{_esc(c.get('suppression_status', ''))}</td>"
+                    f"<td>{_esc(c.get('eligibility_status', ''))}</td>"
+                    f"<td>{_esc(c.get('commercial_status', ''))}</td>"
+                    f"<td>{_esc(c.get('commercial_score', 0))}</td>"
+                    f"<td>{_esc(c.get('promotion_decision', ''))}</td>"
+                    f"<td>{_esc(c.get('promoted_scout_run', ''))}</td></tr>")
+            return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
+<title>{SCOUT_PRODUCT_NAME} — Discovery</title>
+<style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:1200px}}
+table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:5px;text-align:left;font-size:13px}}
+code{{background:#f4f4f4;padding:2px 4px}}</style></head>
+<body><h1>{SCOUT_PRODUCT_NAME} <small>discovery</small></h1>
+<p>Campaign <code>{_esc(st.get('campaign_id', ''))}</code> — status
+<strong>{_esc(st.get('status', 'n/a'))}</strong> (read-only view)</p>
+<p>Candidates: {_esc(counts.get('candidates', 0))} · unique {_esc(counts.get('unique', 0))} ·
+duplicates {_esc(counts.get('duplicates', 0))} · uncertain {_esc(counts.get('uncertain_identity', 0))} ·
+suppressed {_esc(counts.get('suppressed', 0))} (NO_SCAN {_esc(counts.get('no_scan', 0))}) ·
+technical_ok {_esc(counts.get('technical_ok', 0))} · eligible {_esc(counts.get('commercial_eligible', 0))} ·
+promoted {_esc(counts.get('promoted', 0))} · held {_esc(counts.get('held_for_review', 0))}</p>
+<p>Budget: provider_calls {_esc(budget.get('provider_calls', 0))} · results {_esc(budget.get('results', 0))} ·
+cost ${_esc(budget.get('cost_usd', 0))} — APIs: <a href="/api/campaign">campaign</a>,
+<a href="/api/candidates">candidates</a>, <a href="/api/providers">providers</a></p>
+<h2>Discovered candidates</h2><table><tr><th>business</th><th>url</th><th>dedup</th>
+<th>suppression</th><th>technical</th><th>commercial</th><th>score</th><th>promotion</th>
+<th>scout run</th></tr>{''.join(rows) or '<tr><td colspan=9>none</td></tr>'}</table>
+<p><em>Read-only discovery. No contact was collected; no outreach/form/order/payment occurred.</em></p>
+</body></html>"""
+
         def _overview_html(self) -> str:
             status = service.status()
             st = status.get("state", {})
+            if isinstance(st.get("candidates"), list):
+                return self._campaign_html(status, st)
             prospects = st.get("prospects", {})
             controllable = bool(status.get("controllable"))
             mode = status.get("mode", "IDLE")
