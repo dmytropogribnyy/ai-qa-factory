@@ -175,6 +175,7 @@ def _print_summary(state, summary) -> None:
 _DISCOVERY_ACTIONS = frozenset({"campaign-demo", "campaign-plan", "campaign-run", "providers"})
 _PRESEND_ACTIONS = frozenset({"presend-demo", "db-status", "db-backup", "db-restore",
                               "review-list", "doctor"})
+_COMMS_ACTIONS = frozenset({"radar-demo", "send", "outreach-control", "comms-status"})
 
 
 def run_scout_cli(args) -> int:
@@ -184,6 +185,9 @@ def run_scout_cli(args) -> int:
     if args.action in _PRESEND_ACTIONS:
         from core.scout.pipeline.cli import run_presend_cli
         return run_presend_cli(args)
+    if args.action in _COMMS_ACTIONS:
+        from core.scout.comms.cli import run_comms_cli
+        return run_comms_cli(args)
     return {
         "run": cmd_run, "demo": cmd_demo, "dashboard": cmd_dashboard,
         "control": cmd_control, "smoke": cmd_smoke,
