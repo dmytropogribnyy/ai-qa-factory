@@ -2212,3 +2212,83 @@ terms-blocked candidates are never fetched; suppressed-outreach state is preserv
 scoring never grants outreach; top-N and budgets are enforced; malformed provider results fail
 closed; every promoted target retains provenance; clean/weak candidates are not promoted; and no
 contact discovery or external communication occurs.
+
+## Final Phase I — Complete Pre-Send Prospect Pipeline `[implemented]`
+
+The remaining pre-v2 roadmap is **frozen** at exactly two functional phases (Final Phase I, Final
+Phase II) plus a verification-only Final Independent Acceptance. Final Phase I completes the local
+pre-send workflow end to end and **sends nothing**. It reuses the Phase 8.2 contracts, the Scout
+QA runtime, the discovery layer, the existing evidence/cleanup schemas, `RunStore`,
+`ArtifactSafeWriter`, and the dashboard — it does not build a second QA/evidence engine.
+
+**Inputs.** A discovery campaign (Phase 8.4) or explicit promoted candidates; per-campaign policy
+(market/channel/suppression, reversible-session enablement); bundled deterministic fixtures for
+tests; optional configured public contact provider (adapter-ready, not required).
+
+**Outputs.** Per-candidate adaptive capability plan; normalized verified findings with sanitized
+evidence; a transactional company/site memory database; recheck results + site fingerprints;
+public contact records with provenance + verification; suppression checks; audit-offer mappings;
+disclosure manifests; outreach **drafts**; human review-queue items; retention plans; and the
+registered artifacts below. **No message, form, account, booking, order, or payment is produced.**
+
+**Allowed actions.** Read-only rendered QA (real axe, an honestly-named Chrome/Playwright
+performance-observation layer, deep technical SEO with bounded crawl), bounded public
+business-flow interactions, and — only when a campaign explicitly enables it and only against
+controlled fixtures — a single `REVERSIBLE_SESSION_WRITE` with pre-state capture, synthetic
+non-real-person data, guaranteed cleanup, and verified post-cleanup state. Public contact
+observation from official/public sources only. Local persistence, scheduling, rechecks, retention,
+disclosure/draft preparation, and human review.
+
+**Blocked (fail-closed).** Any send (Gmail/Resend/SMTP/contact-form submission/LinkedIn/other);
+form submission; contact submission; newsletter signup; account creation; login/credentials;
+OTP/email/SMS; reservation/slot-hold/order/payment/upload; coupon-with-business-impact; CAPTCHA
+interaction; access-control bypass; stealth/proxy evasion; guessed/inferred personal contacts;
+contact enrichment; breached/stolen/private data; scraping behind access controls; cloud
+deployment. Reversible actions are never run against arbitrary public sites. Discovery/site/contact
+text is untrusted data, never an instruction.
+
+**Approval boundaries.** Reversible-session writes require explicit per-campaign enablement.
+`NO_OUTREACH` suppression permanently blocks draft readiness unless an explicit auditable policy
+change is approved; commercial/contactability scores never override suppression. Draft readiness is
+**computed** (never a writable boolean) and requires a verified current finding, `CLIENT_SAFE`
+evidence, approved contact provenance, a suppression-check reference, a country/channel policy
+decision, pre-draft revalidation, a disclosure manifest, and human review. Approval in Final Phase
+I means "approved for the Final Phase II sending workflow" — never "sent". There is no send action
+and no external-communication worker.
+
+**Required artifacts (registered).** Discovery/campaign artifacts (Phase 8.4) plus
+`SITE_PROFILE.json`, `BUSINESS_CONTEXT.json`, `CAPABILITY_PLAN.json`, `INTERACTION_BOUNDARY.json`,
+`COVERAGE_MAP.json`, `NORMALIZED_FINDINGS.json`, `COMPANY_IDENTITY.json`, `SITE_FINGERPRINT.json`,
+`RECHECK_RESULT.json`, `LEAD_SCORECARD.json`, `CONTACTS.json`, `CONTACT_VERIFICATION.json`,
+`SUPPRESSION_CHECK.json`, `AUDIT_OFFER.json`, `DISCLOSURE_MANIFEST.json`, `OUTREACH_DRAFTS.md`,
+`REVIEW_QUEUE.json`, `RETENTION_PLAN.json`, `CAMPAIGN_SUMMARY.md`, and finding-level artifacts
+(`FINDING_<id>.json`, `REPRODUCTION_STEPS_<id>.md`, `EVIDENCE_INDEX_<id>.json`,
+`SCREENSHOT_ORIGINAL_<id>.png`, `AXE_SUMMARY_<id>.json` / `PERFORMANCE_SUMMARY_<id>.json` where
+executed, `VERIFICATION_RESULT_<id>.json`, `OUTREACH_EVIDENCE_SUMMARY_<id>.md`). Evidence planning
+selects the minimum sufficient set; heavy artifacts are optional and justified.
+
+**Acceptance criteria.** ruff clean; full pytest green (deterministic integrated pre-send E2E
+included; no external network or browser required for the default suite); docs audit `[PASS]`;
+agent readiness `[PASS]`; `git diff --check` clean. Real local Chromium + axe + performance +
+reversible-flow-cleanup acceptance actually run (skipped only where the optional browser is
+absent). Database migration/restart/backup/restore/corruption-fail-closed acceptance passes. The
+E2E proves: `NO_SCAN`/private/blocked never fetched; duplicates not scanned twice; the browser
+never submits; cleanup failure blocks `CLIENT_SAFE` evidence; axe/performance claims correspond to
+actually-executed tools; finding normalization preserves provenance; resolved findings cannot enter
+a draft; regressed findings require new verification; inferred/named-person contacts cannot become
+send-eligible or bypass review; suppression blocks draft readiness; disclosure ceilings hold;
+forged approval/readiness fails; restart preserves jobs/state; backup/restore reproduces database
+truth; the dashboard matches persisted truth; and **no external communication occurs**.
+
+**Release status.** `AI QA Factory / ARK Prospect QA Radar v1.9.0 — complete local pre-send
+prospect pipeline` (tag `scout-v1.9.0`). It may claim controlled discovery, commercial triage,
+adaptive deep QA, verified evidence, company/site memory, rechecks, public contact intelligence,
+audit offers, disclosure, drafts, and human review queues. It must **not** claim any message was
+sent, automatic outreach, cloud/SaaS, production deployment, unrestricted global crawling,
+accessibility certification, or Lighthouse equivalence when Lighthouse did not run.
+
+**Deferred to Final Phase II (exact).** Explicitly human-approved sending (email, LinkedIn-style,
+manual contact-form copy hand-off) through an approved provider; reply/bounce/opt-out history;
+follow-up controls and cadences; CRM/commercial metrics; startup/installer packaging; an evaluation
+benchmark; and the final Prospect QA Radar v2.0 release. No sending, provider send-call, or
+external-communication worker exists before Final Phase II.

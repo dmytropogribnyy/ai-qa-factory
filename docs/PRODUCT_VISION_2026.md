@@ -1,8 +1,9 @@
 # Product Vision 2026 — ARK / Capability-Driven AI Work & Delivery Factory
 
-**Version:** 8.4.0 (discovery + commercial triage runtime)
-**Status:** Target architecture with a growing implemented local runtime — Phases 8.0–8.4 are
-implemented (8.2 contracts; 8.3/8.3.1/8.4 runtime). Phases 8.5–8.9 remain planned. See the
+**Version:** 1.9.0 (complete local pre-send prospect pipeline)
+**Status:** Target architecture with a large implemented local runtime — Phases 8.0–8.4 and
+**Final Phase I** are implemented. The remaining roadmap is frozen at exactly two functional
+phases (Final Phase I — done; Final Phase II — planned) plus a verification-only pass. See the
 three-part phase map below (target / implemented / remaining).
 **Supersedes scope of:** `docs/VISION.md` (which remains the canonical vision for the QA capability domain).
 
@@ -113,20 +114,36 @@ exist as of Phase 8.1. The Scout QA runtime (8.3/8.3.1) and the discovery/triage
 are genuinely runnable locally; they are **not** cloud/SaaS, unrestricted discovery, contact
 enrichment, or outreach.
 
-### Remaining local roadmap (finite)
+### Remaining local roadmap (frozen — exactly two functional phases)
+
+The remaining pre-v2 roadmap is finite and closed. It contains **exactly two** functional phases
+followed by a verification-only pass. No further pre-v2 functional phase (no "Phase 8.10", no new
+mega-phase) may be added; non-blocking enhancements are recorded only in
+[`docs/POST_V2_BACKLOG.md`](POST_V2_BACKLOG.md).
 
 | Phase | Scope | State |
 |---|---|---|
-| 8.5 | Adaptive/deep QA: axe accessibility, Lighthouse (or an honest existing performance equivalent), traces/video where justified, synthetic personas, bounded reversible-session actions with verified cleanup | planned |
-| 8.6 | Company/site memory: a transactional local database, rechecks/change detection, retention/storage manager, scheduler/queues, and the full operational dashboard | planned |
-| 8.7 | Public contact intelligence: suppression/contact provenance, disclosure manifests, audit-offer mapping, outreach **draft** generation, human review queues — **no automatic send** | planned |
-| 8.8 | Explicitly human-approved sending: reply/bounce/opt-out history, follow-up controls, CRM/commercial metrics — no inferred-contact sending, no bulk spam behavior | planned |
-| 8.9 | Full local E2E, CI, startup/installer, backups/crash recovery, an evaluation benchmark, and the final Prospect Radar v2.0 release | planned |
+| **Final Phase I** — Complete Pre-Send Prospect Pipeline | Adaptive deep QA (real axe + real performance mode + deep technical SEO + safe bounded business-flow QA with verified reversible-session cleanup); evidence center + finding normalization + lifecycle; transactional SQLite company/site memory (migrations, backup/restore, corruption fail-closed, import); scheduler + durable queues; rechecks + site fingerprints + retention/storage; public contact intelligence + suppression governance; audit-offer mapping; controlled disclosure + outreach **draft** generation + human review queues; full local dashboard. **Nothing is sent.** | implemented (runtime) |
+| **Final Phase II** — Approved Communication & Product Completion | Explicitly human-approved sending; reply/bounce/opt-out history; follow-up controls; CRM/commercial metrics; startup/installer; evaluation benchmark; final Prospect QA Radar v2.0 release. No inferred-contact sending; no bulk spam behavior. | planned |
+| **Final Independent Acceptance** | Verification and confirmed-defect fixes only — **may not** introduce another functional phase. | planned |
 
-**Status:** Phases 8.0–8.4 are implemented (8.2 as contracts; 8.3/8.3.1/8.4 as runtime).
-Contact discovery, disclosure manifests, and any outreach remain unimplemented and are gated to
-Phases 8.7–8.8 with human approval. No sending, contact enrichment, or external side effects
-exist in the current runtime.
+**Status:** Phases 8.0–8.4 and **Final Phase I** are implemented (8.2 as contracts; 8.3/8.3.1/8.4
++ Final Phase I as runtime). Final Phase I prepares the complete pre-send workflow up to a human
+review queue but **sends nothing** — no Gmail/Resend/SMTP/contact-form/LinkedIn or any external
+communication executes. Sending is gated to Final Phase II with explicit human approval.
+
+### Historical remaining-roadmap mapping (superseded)
+
+The earlier five-step remaining map is preserved for continuity. Its scope is now folded into the
+two frozen phases above:
+
+| Historical | Superseded by |
+|---|---|
+| 8.5 adaptive/deep QA, axe, performance, reversible-session actions | Final Phase I |
+| 8.6 company/site memory, DB, rechecks, retention, scheduler, full dashboard | Final Phase I |
+| 8.7 public contact intelligence, disclosure, audit-offer, outreach draft, review queues | Final Phase I |
+| 8.8 approved sending, reply/opt-out history, follow-ups, CRM metrics | Final Phase II |
+| 8.9 full E2E, CI, installer, backups, benchmark, v2.0 release | split: E2E/backups → Final Phase I; installer/benchmark/v2.0 → Final Phase II |
 
 See `docs/UNIVERSAL_WORK_FACTORY.md` for the component architecture and
 `docs/REUSE_MAP_PHASE8.md` for the exact reuse decisions.
