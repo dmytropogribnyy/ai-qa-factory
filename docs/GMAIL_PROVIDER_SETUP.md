@@ -10,6 +10,14 @@ currently approved by a human. Nothing in this document enables autonomous or bu
 > A ChatGPT/Claude Gmail connector is **not** a Factory credential. It does not expose its OAuth
 > tokens to this standalone local process, and connector sessions are never reused.
 
+> **v2.0.2 operator-path hotfix:** the Gmail adapter is now wired into the public
+> `scout send --provider gmail_personal` command through the production runtime provider registry,
+> and a provider **preflight** runs before any approval is consumed — an unconfigured/unauthorized/
+> wrong-account/insufficient-scope Gmail provider produces a clean `BLOCKED` with nothing reserved and
+> zero provider calls. OAuth account verification is **fail-closed** (a verified id-token claim, never
+> an invented identity). OAuth still **remains unconfigured until you perform the local setup below**;
+> nothing here is live-accepted and no real message has been sent.
+
 ## What the adapter is
 
 - A real Gmail API adapter — not browser automation, SMTP, or an app password. It builds an

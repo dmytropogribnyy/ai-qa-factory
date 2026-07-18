@@ -1,6 +1,6 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 2.0.1
+**Version:** 2.0.2
 
 **Updated:** 2026-07-17
 
