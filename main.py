@@ -139,6 +139,67 @@ def run_work(args) -> int:
     return 0
 
 
+def run_analyze_job(args) -> int:
+    """v3.0.0 — analyze a potential client (Upwork/direct) job: read-only planning + a human-readable
+    feasibility verdict. NEVER starts implementation. Exit: 0 ok, 1 invalid, 2 safety block."""
+    import sys as _sys
+
+    from core.config import get_settings
+    try:
+        if getattr(args, "stdin", False):
+            raw = _sys.stdin.read()
+        elif getattr(args, "text", None) is not None:
+            raw = args.text
+        else:
+            raw = read_input(args.input)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=_sys.stderr)
+        return 1
+    raw = (raw or "").strip()
+    if not raw:
+        print("ERROR: empty input", file=_sys.stderr)
+        return 1
+    if len(raw.encode("utf-8")) > _WORK_MAX_INPUT_BYTES:
+        print(f"ERROR: input exceeds {_WORK_MAX_INPUT_BYTES} bytes", file=_sys.stderr)
+        return 1
+
+    from core.orchestration.content_safety import redact_intake_text
+    from core.orchestration.providers import ClockProvider, IdProvider, generate_project_id
+    generated = args.project_id is None
+    project_id = (generate_project_id(redact_intake_text(raw).text, IdProvider())
+                  if generated else args.project_id)
+    if not _valid_project_id(project_id):
+        print("ERROR: invalid project id (use [A-Za-z0-9._-], no separators)", file=_sys.stderr)
+        return 2
+    try:
+        out_dir = Path(get_settings().output_dir).resolve()
+        from core.orchestration.client_work import ClientWorkService
+        res = ClientWorkService(ClockProvider(), IdProvider(), output_dir=str(out_dir)).analyze(
+            raw, project_id=project_id, source_platform=args.source_platform,
+            profile_override=args.profile, fresh_only=generated)
+    except Exception as exc:
+        print(f"BLOCKED/ERROR: {exc}", file=_sys.stderr)
+        return 2
+    r = res.feasibility
+    print(f"=== Feasibility: {r.verdict}  (confidence {r.confidence}, risk {r.risk_level}) ===")
+    print(f"Project: {res.project_id}   Profile: {res.profile or '(unresolved)'}")
+    print(f"Intent: {r.client_intent}")
+    print(f"Technical fit: {r.technical_fit}")
+    print(f"Effort: {r.estimated_effort}   Pricing: {r.pricing_guidance}")
+    if r.client_questions:
+        print("Questions for the client:")
+        for q in r.client_questions:
+            print(f"  - {q}")
+    if r.reasons_to_reject:
+        print("Honest reasons this may not fit:")
+        for x in r.reasons_to_reject:
+            print(f"  - {x}")
+    print(f"Workspace: {res.workspace_dir}")
+    print("Analysis only - nothing executed. Review FEASIBILITY_SUMMARY.md / PROPOSAL_DRAFT.md, "
+          "then approve to proceed.")
+    return 0
+
+
 def require_real_llm_guard(settings, require_real_llm: bool, allow_mock: bool = False) -> None:
     if require_real_llm and settings.is_mock and not allow_mock:
         raise RuntimeError(
@@ -218,6 +279,20 @@ def main(argv: list[str] | None = None) -> int:
     work_cmd.add_argument("--profile", help="Optional capability-profile override")
     work_cmd.add_argument("--json", action="store_true", dest="as_json",
                           help="Print a redacted machine summary")
+
+    # v3.0.0 — analyze a potential client job (read-only planning + feasibility verdict; never executes)
+    analyze_cmd = subparsers.add_parser(
+        "analyze-job",
+        help="Analyze a potential Upwork/direct client job: feasibility verdict + questions + proposal "
+             "(read-only; nothing is executed)")
+    analyze_src = analyze_cmd.add_mutually_exclusive_group(required=True)
+    analyze_src.add_argument("--input", "-i", help="Path to the job brief file")
+    analyze_src.add_argument("--text", help="Literal job brief text")
+    analyze_src.add_argument("--stdin", action="store_true", help="Read the brief from stdin")
+    analyze_cmd.add_argument("--project-id", help="Project id (safe name; generated when omitted)")
+    analyze_cmd.add_argument("--source-platform", default="unknown",
+                             help="Commercial source platform (e.g. upwork, direct)")
+    analyze_cmd.add_argument("--profile", help="Optional capability-profile override")
 
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
     scout_cmd = subparsers.add_parser(
@@ -312,6 +387,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "work":
         return run_work(args)
+
+    if args.mode == "analyze-job":
+        return run_analyze_job(args)
 
     if args.mode == "scout":
         from core.scout.cli import run_scout_cli
