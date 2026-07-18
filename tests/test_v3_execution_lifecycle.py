@@ -34,7 +34,9 @@ def _run_lifecycle(tmp_path, pid, executor):
     state, outcome = svc.execute(pid, executor)
     assert state.status in ("VERIFYING", "BLOCKED")
     state, result = svc.validate(pid, executor)
+    assert state.status in ("READY_FOR_REVIEW", "REPAIR_REQUIRED")
     if result.passed:
+        svc.review(pid, reviewer="operator", approved=True, note="looks good")  # explicit review gate
         svc.prepare_delivery(pid)
     return svc, result
 
@@ -74,6 +76,7 @@ def test_scenario_c_bug_fix_fails_before_passes_after(tmp_path):
     assert (ws / "fixture_repo" / "calc.py").read_text(encoding="utf-8").strip().endswith("return a + b")
     state, result = svc.validate("c", BugFixFixtureExecutor())     # passing after
     assert result.passed and result.tests_passed == 1
+    svc.review("c", reviewer="operator", approved=True)
     svc.prepare_delivery("c")
     assert json.loads((ws / "TEST_RESULTS.json").read_text(encoding="utf-8"))["passed"] is True
 
@@ -103,6 +106,7 @@ def test_lifecycle_resumes_after_restart(tmp_path):
     svc.approve("r", reviewer="operator")
     svc.execute("r", PlaywrightFrameworkFixtureExecutor())
     svc.validate("r", PlaywrightFrameworkFixtureExecutor())
+    svc.review("r", reviewer="operator", approved=True)
     svc.prepare_delivery("r")
     # A brand-new service instance (new process / new Claude session) reads the persisted state.
     resumed = WorkExecutionService(FixedClock(), SequentialIds(), output_dir=str(tmp_path)).resume("r")

@@ -57,8 +57,46 @@ class WorkExecutionService:
         self._scanner = ContentSecretScanner()
 
     # --- workspace + safe persistence ------------------------------------------------------------
+    @staticmethod
+    def _safe_pid(pid: str) -> str:
+        if not pid or "/" in pid or "\\" in pid or ".." in pid or os.path.isabs(pid):
+            raise WorkExecutionError(f"unsafe project id: {pid!r}")
+        return pid
+
     def _ws(self, pid: str) -> Path:
-        return self._out / pid / _ARK
+        return self._out / self._safe_pid(pid) / _ARK
+
+    def _confine(self, ws: Path, rel: str) -> Path:
+        """Resolve ``rel`` under the workspace, refusing any path that escapes it (traversal-safe)."""
+        target = (ws / rel).resolve()
+        wsr = ws.resolve()
+        if target != wsr and wsr not in target.parents:
+            raise WorkExecutionError(f"artifact path escapes the workspace: {rel!r}")
+        return target
+
+    @staticmethod
+    def _hash_file(path: Path) -> str:
+        import hashlib
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    @staticmethod
+    def _artifact_files(outcome: Dict[str, Any]) -> List[str]:
+        arts = [a.get("filename") for a in outcome.get("artifacts", [])]
+        evs = [e.get("relative_path") for e in outcome.get("evidence", [])]
+        return sorted({p for p in (arts + evs) if p})
+
+    def _hash_map(self, pid: str, rels: List[str]) -> Dict[str, str]:
+        ws = self._ws(pid)
+        out: Dict[str, str] = {}
+        for rel in rels:
+            target = self._confine(ws, rel)   # refuses traversal even from a malicious executor
+            if target.is_file():
+                out[rel] = self._hash_file(target)
+        return out
 
     def _read_json(self, path: Path) -> Dict[str, Any]:
         try:
@@ -125,13 +163,18 @@ class WorkExecutionService:
         state = self._sm.transition(state, "EXECUTING", "execution started", eid)
         self._save_state(pid, state)                      # persist BEFORE running the executor
         outcome = executor.execute(self._context(pid))
+        outcome_dict = outcome.to_dict()
         self._write(self._ws(pid) / "EXECUTION_PROGRESS.json", json.dumps({
             "executor": eid, "is_acceptance_fixture": bool(getattr(executor, "is_acceptance_fixture",
                                                                    False)),
-            "at": self._clock.now_iso(), "outcome": outcome.to_dict()}, indent=2, sort_keys=True))
+            "at": self._clock.now_iso(), "outcome": outcome_dict}, indent=2, sort_keys=True))
         self._write(self._ws(pid) / "EVIDENCE_INDEX.json", json.dumps({
             "evidence": [e.to_dict() for e in outcome.evidence],
             "count": len(outcome.evidence)}, indent=2, sort_keys=True))
+        # Content-hash every produced artifact + evidence file (confined) so a later change is detectable.
+        hashes = self._hash_map(pid, self._artifact_files(outcome_dict))
+        self._write(self._ws(pid) / "ARTIFACT_HASHES.json",
+                    json.dumps({"at": self._clock.now_iso(), "hashes": hashes}, indent=2, sort_keys=True))
         to = "BLOCKED" if outcome.blockers else "VERIFYING"
         state = self._sm.transition(state, to, "execution produced artifacts", eid)
         self._save_state(pid, state)
@@ -146,13 +189,36 @@ class WorkExecutionService:
         self._write(self._ws(pid) / "TEST_RESULTS.json",
                     json.dumps(result.to_dict(), indent=2, sort_keys=True))
         if result.passed:
+            # Snapshot the exact artifact hashes that were validated, so any later change is caught
+            # before delivery. Validation stops at READY_FOR_REVIEW - delivery needs explicit review.
+            prog = self._read_json(self._ws(pid) / "EXECUTION_PROGRESS.json")
+            validated = self._hash_map(pid, self._artifact_files(prog.get("outcome", {})))
+            self._write(self._ws(pid) / "VALIDATED_ARTIFACTS.json", json.dumps(
+                {"at": self._clock.now_iso(), "hashes": validated}, indent=2, sort_keys=True))
             state = self._sm.transition(state, "READY_FOR_REVIEW", "validation passed", eid)
-            state = self._sm.transition(state, "READY_FOR_DELIVERY", "review complete", "cli")
         else:
             state = self._sm.transition(state, "REPAIR_REQUIRED",
                                         f"validation failed: {len(result.failures)} failure(s)", eid)
         self._save_state(pid, state)
         return state, result
+
+    def review(self, pid: str, reviewer: str, approved: bool = True, note: str = "") -> WorkRunState:
+        """Explicit operator review gate. Only an approved review advances READY_FOR_REVIEW ->
+        READY_FOR_DELIVERY; a rejected review sends it back to REPAIR_REQUIRED."""
+        if not reviewer.strip():
+            raise WorkExecutionError("reviewer identity is required to review")
+        state = self._load_state(pid)
+        if state.status != "READY_FOR_REVIEW":
+            raise WorkExecutionError(f"cannot review from state {state.status} (validate first)")
+        decision = "approved" if approved else "rejected"
+        self._write(self._ws(pid) / "REVIEW.json", json.dumps(
+            {"reviewer": reviewer, "approved": bool(approved), "note": note,
+             "at": self._clock.now_iso()}, indent=2, sort_keys=True))
+        target = "READY_FOR_DELIVERY" if approved else "REPAIR_REQUIRED"
+        state = self._sm.transition(state, target, f"review {decision} by {reviewer}: {note}"[:200],
+                                    reviewer)
+        self._save_state(pid, state)
+        return state
 
     def prepare_delivery(self, pid: str) -> Dict[str, Any]:
         state = self._load_state(pid)
@@ -162,19 +228,52 @@ class WorkExecutionService:
         tr = self._read_json(self._ws(pid) / "TEST_RESULTS.json")
         fr = self._read_json(self._ws(pid) / "FEASIBILITY_REPORT.json")
         prog = self._read_json(self._ws(pid) / "EXECUTION_PROGRESS.json")
+        review = self._read_json(self._ws(pid) / "REVIEW.json")
+        files = self._artifact_files(prog.get("outcome", {}))
+
+        # Detect any change to the produced artifacts since they were validated.
+        validated = self._read_json(self._ws(pid) / "VALIDATED_ARTIFACTS.json").get("hashes", {})
+        current = self._hash_map(pid, files)
+        changed = sorted(k for k in set(validated) | set(current) if validated.get(k) != current.get(k))
+        if changed:
+            raise WorkExecutionError(
+                f"artifacts changed after validation ({', '.join(changed[:5])}"
+                f"{'...' if len(changed) > 5 else ''}); re-validate before delivery")
+        # Scan the actual delivery contents for secrets (not just the control JSON we write).
+        leaked = self._scan_delivery(pid, files)
+        if leaked:
+            raise WorkExecutionError(f"refusing to deliver: secret-like content in {leaked[0]}")
+
         artifacts = [a.get("filename") for a in prog.get("outcome", {}).get("artifacts", [])]
         manifest = {"project_id": pid, "generated_at": self._clock.now_iso(),
                     "deliverables": fr.get("expected_deliverables", []),
                     "produced_artifacts": artifacts, "evidence_count": ev.get("count", 0),
                     "validation_passed": bool(tr.get("passed")), "tests_run": tr.get("tests_run", 0),
-                    "approved_for_delivery": True,
-                    "note": "validation passed; delivery package prepared (not yet sent to client)"}
+                    "reviewed_by": review.get("reviewer", ""), "review_approved": bool(review.get("approved")),
+                    "artifact_hashes": current, "approved_for_delivery": True,
+                    "note": "validated + operator-reviewed; delivery package prepared (not yet sent)"}
         self._write(self._ws(pid) / "WORK_DELIVERY_MANIFEST.json",
                     json.dumps(manifest, indent=2, sort_keys=True))
         self._write(self._ws(pid) / "DELIVERY_REPORT.md", self._delivery_md(pid, fr, tr, artifacts,
                                                                             ev.get("count", 0)))
         self._write(self._ws(pid) / "CLIENT_MESSAGE.md", self._client_message_md(pid, fr))
         return manifest
+
+    def _scan_delivery(self, pid: str, files: List[str]) -> List[str]:
+        """Return the relative paths whose actual content looks secret-like (delivery-content scan)."""
+        ws = self._ws(pid)
+        leaked: List[str] = []
+        for rel in files:
+            target = self._confine(ws, rel)
+            if not target.is_file() or target.stat().st_size > 2_000_000:
+                continue
+            try:
+                text = target.read_text(encoding="utf-8", errors="strict")
+            except (OSError, UnicodeDecodeError):
+                continue   # binary/unreadable evidence (e.g. screenshots) is not text-scanned
+            if self._scanner.scan_text(Path(rel).name, text):
+                leaked.append(rel)
+        return leaked
 
     def mark_delivered(self, pid: str, note: str = "") -> WorkRunState:
         state = self._load_state(pid)
