@@ -87,6 +87,12 @@ def _make_handler(service: ScoutService):
                 return self._json(200, self._projects_snapshot())
             if path == "/projects":
                 return self._html(200, self._projects_html())
+            if path == "/api/results":
+                return self._json(200, self._results_snapshot())
+            if path == "/results":
+                return self._html(200, self._results_html())
+            if path == "/company":
+                return self._html(200, self._company_html((q.get("id") or [""])[0]))
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
@@ -257,6 +263,120 @@ Review items: {s['review_items']} — APIs: <a href="/api/presend">presend</a>,
 {rrows or '<tr><td colspan=2>none</td></tr>'}</table>
 </body></html>"""
 
+        def _memory_db_path(self):
+            store = service.store
+            if store is None:
+                return None
+            p = store.root / "memory.db"
+            return p if p.exists() else None
+
+        def _results_snapshot(self):
+            path = self._memory_db_path()
+            if path is None:
+                return {"companies": [], "count": 0, "note": "no memory database for this run"}
+            from core.scout.memory.db import MemoryDB
+            db = MemoryDB(str(path))
+            try:
+                out = []
+                for c in db.query("SELECT company_id, canonical_name, primary_domain FROM companies "
+                                  "ORDER BY company_id"):
+                    cid = c["company_id"]
+                    contacts = db.query("SELECT normalized_value, status FROM contacts WHERE company_id=?",
+                                        (cid,))
+                    n = db.query("SELECT COUNT(*) AS n FROM findings WHERE company_id=?", (cid,))[0]["n"]
+                    out.append({"company_id": cid, "name": c["canonical_name"],
+                                "domain": c["primary_domain"], "findings": n,
+                                "contact": (contacts[0]["normalized_value"] if contacts else ""),
+                                "contact_status": (contacts[0]["status"] if contacts else "")})
+                return {"companies": out, "count": len(out)}
+            finally:
+                db.close()
+
+        def _company_detail(self, cid: str):
+            path = self._memory_db_path()
+            if path is None or not cid:
+                return None
+            from core.scout.memory.db import MemoryDB
+            db = MemoryDB(str(path))
+            try:
+                crow = db.query("SELECT * FROM companies WHERE company_id=?", (cid,))
+                if not crow:
+                    return None
+                findings = [dict(r) for r in db.query(
+                    "SELECT finding_id, capability, severity, title, verification_state, "
+                    "lifecycle_state, client_safe FROM findings WHERE company_id=?", (cid,))]
+                contacts = db.query("SELECT * FROM contacts WHERE company_id=?", (cid,))
+                contact = dict(contacts[0]) if contacts else {}
+                prov = {}
+                if contact:
+                    prow = db.query("SELECT source_category, source_url, publicly_published_for_contact, "
+                                    "terms_review_status, last_verified_at FROM contact_provenance "
+                                    "WHERE contact_id=? AND state='ACTIVE' ORDER BY created_at DESC "
+                                    "LIMIT 1", (contact["contact_id"],))
+                    prov = dict(prow[0]) if prow else {}
+                drow = db.query("SELECT subject, body FROM draft_revisions WHERE company_id=? "
+                                "ORDER BY revision_number DESC LIMIT 1", (cid,))
+                draft = dict(drow[0]) if drow else {}
+                return {"company": dict(crow[0]), "findings": findings, "contact": contact,
+                        "provenance": prov, "draft": draft}
+            finally:
+                db.close()
+
+        def _results_html(self) -> str:
+            snap = self._results_snapshot()
+            rows = "".join(
+                f"<tr><td><a href='/company?id={_esc(c['company_id'])}'>{_esc(c['name'] or c['company_id'])}</a></td>"
+                f"<td>{_esc(c['domain'])}</td><td>{_esc(c['contact'])}</td>"
+                f"<td>{_esc(c['contact_status'])}</td><td>{_esc(c['findings'])}</td></tr>"
+                for c in snap.get("companies", []))
+            return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
+<title>{SCOUT_PRODUCT_NAME} — Results</title>
+<style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:1100px}}
+table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:6px;font-size:13px;text-align:left}}</style></head>
+<body><h1>{SCOUT_PRODUCT_NAME} <small>results</small></h1>
+<p><a href="/">&larr; Home</a> · <a href="/projects">projects</a></p>
+<table><tr><th>company</th><th>domain</th><th>public contact</th><th>contact state</th>
+<th>findings</th></tr>{rows or '<tr><td colspan=5>no companies yet</td></tr>'}</table>
+<p><em>Read-only. No outreach is sent from here.</em> API: <a href="/api/results">/api/results</a></p>
+</body></html>"""
+
+        def _company_html(self, cid: str) -> str:
+            d = self._company_detail(cid)
+            if d is None:
+                return ("<!doctype html><meta charset=utf-8><p>Unknown company or no data.</p>"
+                        "<p><a href='/results'>&larr; Results</a></p>")
+            frows = "".join(
+                f"<tr><td>{_esc(f['capability'])}</td><td>{_esc(f['severity'])}</td>"
+                f"<td>{_esc(f['title'])}</td><td>{_esc(f['verification_state'])}</td>"
+                f"<td>{_esc(f['client_safe'])}</td></tr>" for f in d["findings"])
+            contact = d["contact"]
+            prov = d["provenance"]
+            draft = d["draft"]
+            recip = contact.get("normalized_value", "")
+            compose = _gmail_compose_url(recip, draft.get("subject", ""), draft.get("body", ""))
+            gmail_action = (f"<a href='{_esc(compose)}' target='_blank' rel='noopener'>Open in Gmail</a>"
+                            if recip and draft else "<em>no draft/contact yet</em>")
+            return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
+<title>{SCOUT_PRODUCT_NAME} — {_esc(cid)}</title>
+<style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:900px}}
+table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:6px;font-size:13px;text-align:left}}
+pre{{background:#f6f6f6;padding:.6rem;white-space:pre-wrap}}</style></head>
+<body><h1>{_esc(d['company'].get('canonical_name') or cid)}</h1>
+<p><a href="/results">&larr; Results</a> — domain {_esc(d['company'].get('primary_domain'))}</p>
+<h2>Findings</h2><table><tr><th>capability</th><th>severity</th><th>title</th>
+<th>verification</th><th>client-safe</th></tr>{frows or '<tr><td colspan=5>none</td></tr>'}</table>
+<h2>Public contact + provenance</h2>
+<p>Contact: <code>{_esc(recip)}</code> ({_esc(contact.get('status'))}) ·
+source: {_esc(prov.get('source_category'))} · published:
+{_esc(prov.get('publicly_published_for_contact'))} · terms: {_esc(prov.get('terms_review_status'))} ·
+verified: {_esc(prov.get('last_verified_at'))}<br>source URL: {_esc(prov.get('source_url'))}</p>
+<h2>Draft (editable in Gmail; nothing is sent from here)</h2>
+<p><strong>Subject:</strong> {_esc(draft.get('subject', '(none)'))}</p>
+<pre>{_esc(draft.get('body', '(no draft)'))}</pre>
+<p>Action: {gmail_action} — then send manually in Gmail and mark the company contacted.
+Live API send stays the optional, one-at-a-time <code>scout send</code> CLI path.</p>
+</body></html>"""
+
         def _projects_snapshot(self):
             from core.orchestration.project_index import ProjectIndex
             return ProjectIndex(service.output_dir).snapshot()
@@ -391,7 +511,7 @@ button{{margin-right:.5rem;padding:.4rem .8rem}}code{{background:#f4f4f4;padding
 <p>Controls: {controls}</p>
 <p>Manual-action prospects: {len(manual)} — Live: <a href="/api/events">events</a>,
 <a href="/api/status">status</a>, <a href="/health">health</a> · Operator:
-<a href="/projects">projects</a>, <a href="/tools">tool readiness</a></p>
+<a href="/results">results</a>, <a href="/projects">projects</a>, <a href="/tools">tool readiness</a></p>
 <h2>Prospects</h2><table><tr><th>id</th><th>url</th><th>status</th><th>priority</th>
 <th>defects</th><th></th></tr>{''.join(rows) or '<tr><td colspan=6>none yet</td></tr>'}</table>
 <script>function ctl(a){{fetch('/api/control?action='+a,{{method:'POST'}})
@@ -404,6 +524,14 @@ button{{margin-right:.5rem;padding:.4rem .8rem}}code{{background:#f4f4f4;padding
 def _esc(s: str) -> str:
     return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;"))
+
+
+def _gmail_compose_url(to: str, subject: str, body: str) -> str:
+    """A Gmail compose (draft) deep link — opens Gmail with the fields pre-filled. It NEVER sends;
+    the operator reviews/edits and clicks Send manually."""
+    from urllib.parse import quote
+    return ("https://mail.google.com/mail/?view=cm&fs=1"
+            f"&to={quote(to)}&su={quote(subject)}&body={quote(body)}")
 
 
 def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 0
