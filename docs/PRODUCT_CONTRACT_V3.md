@@ -44,6 +44,27 @@ gate, and one delivery format. See [architecture/UNIFIED_PRODUCT_REUSE_MAP.md](a
 | Honest tool/MCP readiness — internal runners bind to a real **production** module + callable adapter + bounded health check (never a test file); the API runner is fixture-tested against a parsed OpenAPI, the Playwright runner is health-checked with browser runtime reported separately, nothing is "live-accepted"; MCP tools stay "declared" | real | `tests/test_v3_tool_broker.py`, `tests/test_v3_internal_bindings.py` |
 | Ownership-safe Windows dashboard stop — the dashboard writes a PID + start-time + command-identity + port + repo record; `stop-local` refuses unless it proves the process is this dashboard, and never kills by port/name alone | real | `tests/test_v3_windows_stop_ownership.py` (Windows-hosted) |
 
+## Operator Dashboard (v3.1, candidate)
+
+One local dashboard (`core/scout/dashboard.py`, extended — not a second app) is the Administrator/
+Operator front door over the same core. `python main.py dashboard` serves a localhost Overview inbox,
+a Work list + project detail (Summary/Plan/Results/Delivery) with a Claude Code handoff (Open in VS
+Code, Copy Work Order), the mandatory Scout module (home/campaigns/results/company with the preserved
+start + Pause/Resume/Stop Safely/Cancel), honest Tools readiness, Activity, and Settings. It reads
+persisted state through read-only DTOs (`core/dashboard/`) with polling + a manual Refresh, and
+performs mutations only through guarded `/api/work/*` endpoints that call the same
+`WorkExecutionService`/`ClientWorkService` the CLI uses — **never a command or argv over HTTP**
+(record-execution and validate stay Claude Code handoffs). It embeds no chat/editor/terminal, keeps
+Upwork intake manual (no API), and sends nothing. See
+[DASHBOARD_OPERATOR_GUIDE.md](DASHBOARD_OPERATOR_GUIDE.md) and
+[architecture/DASHBOARD_V31_REUSE_MAP.md](architecture/DASHBOARD_V31_REUSE_MAP.md); a later
+presentation-only refinement is scoped in [LOVABLE_DESIGN_BRIEF.md](LOVABLE_DESIGN_BRIEF.md).
+
+Delivery recovery (v3.1 M0.1): `reopen-delivery` from `DELIVERY_PREPARED` archives the prepared
+manifest as audit history and returns to `READY_FOR_DELIVERY` (drafts/metadata only) or
+`REPAIR_REQUIRED` (validated content changed). The exact delivery package now includes the delivery
+report + client message, each hashed (M0.2).
+
 ## Planned (not runtime)
 
 Discovery-based campaign creation UI (countries/languages/industries), parallel scanning

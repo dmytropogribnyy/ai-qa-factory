@@ -54,6 +54,7 @@ python main.py client-work record-execution  --project-id <id> --artifacts src/a
 python main.py client-work validate          --project-id <id> --validation-argv-json '["python","-m","pytest","-q"]'
 python main.py client-work review            --project-id <id> --reviewer <you>   # explicit gate (or --reject -> REPAIR_REQUIRED)
 python main.py client-work prepare-delivery  --project-id <id>                    # -> DELIVERY_PREPARED (verifies hashes + scans, builds the exact manifest)
+python main.py client-work reopen-delivery   --project-id <id> --reviewer <you> --reason "<why>"   # recover a prepared delivery
 python main.py client-work mark-delivered    --project-id <id>                    # you send it yourself first; this records that + re-verifies the package
 python main.py client-work resume            --project-id <id>                    # reload persisted state after a restart
 ```
