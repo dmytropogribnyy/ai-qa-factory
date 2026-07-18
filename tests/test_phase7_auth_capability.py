@@ -30,6 +30,10 @@ from core.schemas.auth_capability import (
     AuthReadiness,
 )
 
+# Repository root, derived from this file's location so the CLI subprocess runs
+# from the project root on any machine/OS (never a hardcoded absolute path).
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -617,8 +621,8 @@ class TestWriteArtifacts:
 class TestCLIBlockedFlags:
     def _run_cli(self, extra_args: list[str]) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, "tools/plan_auth_capability.py"] + extra_args,
-            capture_output=True, text=True, cwd="d:\\1QA AI\\ai-qa-factory",
+            [sys.executable, str(_REPO_ROOT / "tools" / "plan_auth_capability.py")] + extra_args,
+            capture_output=True, text=True, cwd=str(_REPO_ROOT),
         )
 
     def test_blocked_password_flag(self) -> None:
