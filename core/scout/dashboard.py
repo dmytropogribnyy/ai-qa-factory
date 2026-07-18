@@ -847,17 +847,23 @@ function startCampaign(){{
                 return _page("Project not found", "/work",
                              '<h1>Project not found</h1><p><a href="/work">&larr; Work</a></p>')
             h = d["header"]
+            # The project id is a safe name ([A-Za-z0-9._-]); embed it in single-quoted JS so the
+            # onclick attribute (double-quoted) is never broken and nothing can be injected.
+            safe_pid = "".join(c for c in pid if c.isalnum() or c in "._-")
             actbtns = []
             for a in d["allowed_actions"]:
                 cls = "btn primary" if a.get("primary") else "btn"
                 if a["kind"] == "http_mutation":
-                    extra = "{project_id:" + json.dumps(pid) + "}"
+                    act = a["endpoint"].split("/")[-1]
                     if a.get("fields"):
-                        extra = ("Object.assign({project_id:" + json.dumps(pid) + "},"
-                                 "promptFields(" + json.dumps(a["fields"]) + "))")
+                        fields_js = "[" + ",".join("'" + f + "'" for f in a["fields"]) + "]"
+                        extra = ("Object.assign({project_id:'" + safe_pid + "'},promptFields("
+                                 + fields_js + "))")
+                    else:
+                        extra = "{project_id:'" + safe_pid + "'}"
                     conf = ("if(!confirm('" + _esc(a["label"]) + "?'))return;" if a.get("confirm") else "")
-                    actbtns.append(f'<button class="{cls}" onclick="{conf}wact('
-                                   f'{json.dumps(a["endpoint"].split("/")[-1])},{extra})">{_esc(a["label"])}</button>')
+                    onclick = conf + "wact('" + act + "'," + extra + ")"
+                    actbtns.append(f'<button class="{cls}" onclick="{onclick}">{_esc(a["label"])}</button>')
                 elif a["id"] == "open_vscode":
                     actbtns.append(f'<a class="{cls}" href="vscode://file/{_esc(d["workspace_path"])}">'
                                    f'{_esc(a["label"])}</a>')
@@ -1092,9 +1098,9 @@ def _esc(s: str) -> str:
 # --- v3.1 design system (local CSS tokens; no external assets) ---------------------------------
 _TOKENS_CSS = """
 :root{
- --bg:#f6f7f9; --surface:#fff; --surface-2:#f0f2f5; --border:#d7dbe0; --text:#1a1d21;
- --muted:#5b6570; --primary:#1f6feb; --primary-ink:#fff; --ok:#1a7f37; --attention:#9a6700;
- --danger:#b42318; --focus:#1f6feb;
+ --bg:#f6f7f9; --surface:#fff; --surface-2:#eef1f4; --border:#d7dbe0; --text:#1a1d21;
+ --muted:#4d565f; --primary:#1257c9; --primary-ink:#fff; --ok:#136c33; --attention:#7a5000;
+ --danger:#a11208; --focus:#1257c9;
  --radius:8px; --pad:16px; --gap:12px; --maxw:1200px; --row:40px;
  --font:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
 }
@@ -1111,7 +1117,7 @@ main{max-width:var(--maxw);margin:0 auto;padding:var(--pad)}
 h1{font-size:22px;margin:.2rem 0 1rem} h2{font-size:16px;margin:1.4rem 0 .6rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);margin-bottom:var(--gap)}
 .muted{color:var(--muted)} .row{display:flex;gap:var(--gap);flex-wrap:wrap;align-items:center}
-table{border-collapse:collapse;width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+table{display:block;overflow-x:auto;max-width:100%;border-collapse:collapse;width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
 caption{text-align:left;color:var(--muted);padding:6px 2px;font-size:13px}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;height:var(--row)}
 th{background:var(--surface-2);color:var(--muted);font-weight:600}
