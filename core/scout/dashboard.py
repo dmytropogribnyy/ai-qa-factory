@@ -406,8 +406,11 @@ table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding
         def _company_html(self, cid: str) -> str:
             d = self._company_detail(cid)
             if d is None:
-                return ("<!doctype html><meta charset=utf-8><p>Unknown company or no data.</p>"
-                        "<p><a href='/results'>&larr; Results</a></p>")
+                return (f"<!doctype html><html lang=en><head><meta charset=utf-8>"
+                        f"<title>{SCOUT_PRODUCT_NAME} — company not found</title></head>"
+                        "<body><main><h1>Company not found</h1>"
+                        "<p>Unknown company id, or no company data for this run yet.</p>"
+                        "<p><a href='/results'>&larr; Back to results</a></p></main></body></html>")
             frows = "".join(
                 f"<tr><td>{_esc(f['capability'])}</td><td>{_esc(f['severity'])}</td>"
                 f"<td>{_esc(f['title'])}</td><td>{_esc(f['verification_state'])}</td>"
