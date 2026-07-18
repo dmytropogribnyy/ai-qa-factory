@@ -58,6 +58,9 @@ outputs/*
 !outputs/.gitkeep
 outputs_dry/
 
+# ── CI test reports (JUnit) ───────────────────────────────────────────────────
+reports/
+
 # ── Memory: runtime state (project runs, client data, learned patterns) ───────
 # pricing_book.yaml is source — keep it. Everything else is runtime.
 memory/projects/

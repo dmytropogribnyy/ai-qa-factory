@@ -1,8 +1,10 @@
 name: CI
 
-# Deterministic + browser acceptance for AI QA Factory / ARK Prospect QA Radar.
-# CI never sends an external message, never uses live provider credentials, never contacts a real
-# third-party target, and publishes no secrets. All sending in tests uses the confined local sink.
+# Deterministic + browser + provider-contract acceptance for AI QA Factory / ARK Prospect QA Radar.
+# CI NEVER sends an external message, never uses live provider credentials (no Gmail/Resend secrets),
+# never contacts a real third-party target, and publishes no secrets. Every real provider adapter
+# refuses external calls because PROSPECT_RADAR_EXTERNAL_SEND_DISABLED=1 is set for all jobs; all
+# sending in tests uses the confined local sink or an injected fake transport.
 
 on:
   push:
@@ -14,6 +16,11 @@ on:
 permissions:
   contents: read
 
+env:
+  LLM_MODE: mock
+  MODEL_PROFILE: mock
+  PROSPECT_RADAR_EXTERNAL_SEND_DISABLED: "1"
+
 jobs:
   core-deterministic:
     runs-on: ubuntu-latest
@@ -22,30 +29,36 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install core dependencies
+          cache: pip
+      - name: Install core dependencies (requirements.txt only — no browser, no Google libs)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Ruff
         run: python -m ruff check .
-      - name: Full deterministic tests (browser acceptance auto-skips without playwright/axe)
-        env:
-          LLM_MODE: mock
-          MODEL_PROFILE: mock
-        run: python -m pytest tests/ -q
+      - name: Full deterministic tests (browser-free, network-free, no external email)
+        run: python -m pytest tests/ -q -ra --junitxml=reports/junit-core.xml
       - name: Docs audit
         run: python tools/docs_audit.py --no-write
       - name: Agent readiness audit
         run: python tools/agent_readiness_audit.py
       - name: Whitespace check
         run: git diff --check
-      - name: Scout + discovery + pre-send + radar demos (no network, nothing sent)
+      - name: Scout + discovery + pre-send + radar demos + audits (no network, nothing sent)
         run: |
           python main.py scout demo
           python main.py scout campaign-demo
           python main.py scout presend-demo
           python main.py scout radar-demo
           python main.py scout mcp-audit --output outputs
+          python main.py scout provider-status
+      - name: Upload bounded test report (no secrets)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-core
+          path: reports/junit-core.xml
+          if-no-files-found: ignore
 
   browser-acceptance:
     runs-on: ubuntu-latest
@@ -54,6 +67,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
       - name: Install core + optional browser/axe dependencies
         run: |
           python -m pip install --upgrade pip
@@ -61,28 +75,36 @@ jobs:
           pip install playwright axe-core-python
           python -m playwright install --with-deps chromium
       - name: Real local Playwright + axe + performance acceptance (local fixtures only)
-        env:
-          LLM_MODE: mock
-          MODEL_PROFILE: mock
         run: |
           python -m pytest -m playwright_acceptance -q
           python -m pytest -m final1_browser_acceptance -q
 
   provider-contract:
-    # Fake adapters + local sink only. No live credentials, no real recipient, no external message.
+    # LocalSinkProvider + fake Gmail/Resend transports + OAuth config parsing with fixture creds only.
+    # No real credential, no external recipient, no live endpoint, no Google client library.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
       - name: Install core dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Communication + MCP contract tests (local sink / fake adapters)
-        env:
-          LLM_MODE: mock
-          MODEL_PROFILE: mock
-        run: python -m pytest tests/test_final2_send.py tests/test_final2_e2e.py
-          tests/test_final2_mcp_integration.py tests/test_final2_events.py -q
+      - name: Communication + provider contract tests (local sink / fake transports)
+        run: >-
+          python -m pytest -q --junitxml=reports/junit-provider.xml
+          tests/test_final2_send.py tests/test_final2_e2e.py tests/test_final2_mcp_integration.py
+          tests/test_final2_events.py tests/test_final2_event_trust.py tests/test_final2_provenance.py
+          tests/test_final2_references.py tests/test_final2_review.py tests/test_final2_state_machines.py
+          tests/test_final2_attempts_and_race.py tests/test_final2_gmail.py tests/test_final2_resend.py
+          tests/test_final2_limits.py tests/test_final2_cli.py tests/test_final2_migration.py
+      - name: Upload bounded provider report (no secrets)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-provider
+          path: reports/junit-provider.xml
+          if-no-files-found: ignore
