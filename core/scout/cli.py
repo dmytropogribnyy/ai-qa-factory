@@ -135,6 +135,7 @@ def cmd_dashboard(args) -> int:
         print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     server, url = start_dashboard(service, port=args.port)
+    bound_port = server.server_address[1]
     print(f"Scout dashboard: {url}  (Ctrl+C to stop)")
     print(f"  mode: {mode}   run: {run_id}")
     print(f"  health: {url}/health   status: {url}/api/status")
@@ -145,6 +146,9 @@ def cmd_dashboard(args) -> int:
     except KeyboardInterrupt:
         server.shutdown()
         print("dashboard stopped")
+    finally:
+        from core.scout.dashboard import remove_ownership_record
+        remove_ownership_record(args.output, bound_port)
     return 0
 
 

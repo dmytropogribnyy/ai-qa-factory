@@ -31,6 +31,18 @@ def test_operator_scripts_are_hardened():
         assert "ValidateRange(1, 65535)" in text, name  # the port argument is range-validated
 
 
+def test_stop_local_is_ownership_safe_not_name_and_port():
+    # v3.0.2 M7: stop-local must prove ownership via the record (PID + start time + command
+    # identity + port) and must NOT kill a process by name + port alone.
+    text = (_REPO / "scripts" / "stop-local.ps1").read_text(encoding="utf-8")
+    assert "ownership-$Port.json" in text                    # reads the ownership record
+    assert "StartTime" in text                               # validates process start time
+    assert "command_marker" in text and "CommandLine" in text  # validates command identity
+    assert "Get-NetTCPConnection" in text                    # ties the record to the real listener
+    assert 'ProcessName -like "python' not in text           # never kills by process name
+    assert "Refusing" in text                                # refuses when ownership is unproven
+
+
 def test_setup_does_not_install_optional_gmail_or_start_scans():
     setup = (_REPO / "scripts" / "setup-local.ps1").read_text(encoding="utf-8")
     assert "requirements-gmail" not in setup            # optional Gmail deps are not installed
