@@ -19,6 +19,7 @@ from core.scout.comms.providers import (
     ProviderError,
     ProviderRegistry,
     ProviderTimeout,
+    SendEnvelope,
 )
 from core.scout.comms.repository import (
     ATT_ACCEPTED,
@@ -36,7 +37,7 @@ from core.scout.comms.repository import (
     R_CONSUMED,
 )
 from core.scout.comms.revalidation import RevalidationResult, revalidate
-from core.scout.comms.snapshots import canonical_hash
+from core.scout.comms.snapshots import body_hash, canonical_hash, recipient_snapshot
 from core.scout.memory.repository import MemoryRepository
 
 # Send outcomes (CLI exit-status classes).
@@ -143,6 +144,34 @@ class SendService:
                            recipient=reval.recipient_value, revalidation=reval.artifact,
                            note="cancelled before provider call (control race); 0 provider calls")
 
+    def _build_envelope(self, provider, provider_id: str, message_id: str, key: str,
+                        rev: Dict[str, Any]):
+        """Load the EXACT approved recipient/subject/body and verify it against the approval binding
+        immediately before the provider call. Returns (envelope | None, blockers)."""
+        blockers: List[str] = []
+        contact = self.mem.get_contact(rev["contact_id"])
+        if contact is None:
+            return None, ["contact_missing_at_send"]
+        recipient = contact["normalized_value"]
+        if body_hash(rev["subject"], rev["body"]) != rev["body_hash"]:
+            blockers.append("body_hash_mismatch")
+        if canonical_hash(recipient_snapshot(contact)) != rev["recipient_hash"]:
+            blockers.append("recipient_hash_mismatch")
+        if getattr(provider.metadata, "channel", "email") != rev["channel"]:
+            blockers.append("provider_channel_mismatch")
+        if blockers:
+            return None, sorted(set(blockers))
+        from_email, from_name = "", ""
+        sender = getattr(provider, "sender", None)
+        if callable(sender):
+            from_email, from_name = sender()
+        env = SendEnvelope(recipient=recipient, subject=rev["subject"], body=rev["body"],
+                           channel=rev["channel"], revision_id=rev["revision_id"],
+                           message_id=message_id, idempotency_key=key,
+                           correlation_id=f"corr-{message_id}", from_email=from_email,
+                           from_name=from_name)
+        return env, []
+
     def _invoke_provider(self, message_id: str, provider_id: str, campaign_id: str,
                          rev: Dict[str, Any], reval: RevalidationResult, now: str) -> SendOutcome:
         provider = self.providers.get(provider_id)
@@ -161,6 +190,11 @@ class SendService:
         if blockers:
             return self._precall_cancel(message_id, provider_id, sorted(set(blockers)), key, now, reval)
 
+        # --- Build the EXACT approved payload and verify it against the approval binding ----------
+        envelope, verify_blockers = self._build_envelope(provider, provider_id, message_id, key, rev)
+        if verify_blockers:
+            return self._precall_cancel(message_id, provider_id, verify_blockers, key, now, reval)
+
         # --- Atomically move RESERVED -> PROVIDER_CALL_IN_PROGRESS, then invoke EXACTLY once -------
         self.comms.transition_message(message_id, M_IN_PROGRESS, now)
         attempt_id = f"att-{message_id}"
@@ -170,8 +204,6 @@ class SendService:
         self.comms.add_attempt({"attempt_id": attempt_id, "message_id": message_id,
                                 "provider": provider_id, "request_hash": request_hash,
                                 "idempotency_key": key, "attempt_number": 1, "started_at": now})
-        envelope = {"channel": rev["channel"], "recipient_ref": rev["contact_id"],
-                    "subject": rev["subject"], "body_hash": rev["body_hash"], "idempotency_key": key}
         try:
             result = provider.send(envelope)          # exactly one provider call
         except ProviderTimeout as exc:

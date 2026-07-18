@@ -18,9 +18,37 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from core.scout.comms.snapshots import body_hash as _body_hash
+from core.scout.comms.snapshots import canonical_hash
+
 # Send result outcomes.
 ACCEPTED, FAILED_DEFINITE, OUTCOME_UNKNOWN = "ACCEPTED", "FAILED_DEFINITE", "OUTCOME_UNKNOWN"
 _ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+
+
+@dataclass
+class SendEnvelope:
+    """The EXACT approved payload handed to a provider in memory. The recipient/subject/body are
+    the authoritative approved values; a provider that must not see plaintext (the local sink)
+    stores only ``sanitized()``. Never logged or published in plaintext."""
+    recipient: str
+    subject: str
+    body: str
+    channel: str
+    revision_id: str
+    message_id: str
+    idempotency_key: str
+    correlation_id: str = ""
+    from_email: str = ""
+    from_name: str = ""
+
+    def sanitized(self) -> Dict[str, Any]:
+        """A bounded, secret-free view: hashes instead of the plaintext recipient/body."""
+        return {"channel": self.channel, "recipient_hash": canonical_hash(self.recipient),
+                "subject_hash": canonical_hash(self.subject), "body_hash": _body_hash(
+                    self.subject, self.body), "revision_id": self.revision_id,
+                "message_id": self.message_id, "idempotency_key": self.idempotency_key,
+                "correlation_id": self.correlation_id}
 
 
 class ProviderError(Exception):
@@ -81,17 +109,18 @@ class DeterministicLocalSinkProvider:
         self._raise_timeout = raise_timeout
         self.scripted_events = list(scripted_events or [])
 
-    def send(self, envelope: Dict[str, Any]) -> SendResult:
+    def sender(self) -> tuple:
+        return ("qa@local.sink", "QA Radar (local sink)")
+
+    def send(self, envelope: SendEnvelope) -> SendResult:
         if self._raise_timeout:
             raise ProviderTimeout("simulated ambiguous timeout")
         self._sink.mkdir(parents=True, exist_ok=True)
         # Filesystem-safe id (the idempotency key is 'sha256:<hex>' — strip the colon).
-        raw = envelope.get("idempotency_key", "x").replace("sha256:", "").replace(":", "")
+        raw = (envelope.idempotency_key or "x").replace("sha256:", "").replace(":", "")
         mid = "local-" + (raw or "x")[:24]
-        # Store only a sanitized envelope — no secrets, bounded.
-        safe = {"to_channel": envelope.get("channel"), "recipient_ref": envelope.get("recipient_ref"),
-                "subject": envelope.get("subject", "")[:200], "body_hash": envelope.get("body_hash"),
-                "provider_message_id": mid, "idempotency_key": envelope.get("idempotency_key")}
+        # Store ONLY the sanitized envelope — no plaintext recipient/body, bounded.
+        safe = {**envelope.sanitized(), "provider_message_id": mid}
         (self._sink / f"{mid}.json").write_text(json.dumps(safe, indent=2, sort_keys=True),
                                                 encoding="utf-8")
         return SendResult(outcome=self._outcome, provider_message_id=mid,
@@ -109,9 +138,9 @@ class SandboxProvider:
         self.metadata = ProviderMetadata(provider_id=provider_id, readiness="sandbox-accepted",
                                          sandbox_support=True, terms_review_status="reviewed_ok")
 
-    def send(self, envelope: Dict[str, Any]) -> SendResult:
+    def send(self, envelope: SendEnvelope) -> SendResult:
         return SendResult(outcome=ACCEPTED, provider_message_id="sandbox-" +
-                          envelope.get("idempotency_key", "x")[:24],
+                          (envelope.idempotency_key or "x")[:24],
                           provider_id=self.metadata.provider_id, detail={"sandbox": True})
 
     def readiness(self) -> Dict[str, Any]:
@@ -132,7 +161,7 @@ class RealEmailAdapter:
     def configured(self) -> bool:
         return bool(self.metadata.auth_ref) and self._cred_present(self.metadata.auth_ref)
 
-    def send(self, envelope: Dict[str, Any]) -> SendResult:
+    def send(self, envelope: SendEnvelope) -> SendResult:
         if not self.configured:
             raise ProviderError(f"provider {self.metadata.provider_id!r} is not configured "
                                 "(no credential); no fallback is used")

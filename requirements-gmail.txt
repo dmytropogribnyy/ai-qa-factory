@@ -1,0 +1,14 @@
+# Optional Gmail API provider dependencies (Final Independent Acceptance, v2.0.1).
+#
+# These are NOT required by the deterministic core, its tests, or CI — the Gmail adapter's MIME
+# construction, base64url encoding, exact-payload handling, error classification, and the CI
+# external-send guard are all exercised with a fake transport and the standard library only.
+# Install these locally ONLY when performing real OAuth authorization or a controlled live send:
+#     pip install -r requirements-gmail.txt
+#
+# Credentials (the OAuth client config and token store) are supplied locally by the user and are
+# never committed. See docs/GMAIL_PROVIDER_SETUP.md.
+
+google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.130.0
