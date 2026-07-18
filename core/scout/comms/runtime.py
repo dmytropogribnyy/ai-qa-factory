@@ -14,7 +14,7 @@ import os
 from typing import Any, Callable, Dict, Optional
 
 from core.scout.comms.gmail import GmailProvider, gmail_config_from_env, real_gmail_transport
-from core.scout.comms.gmail_oauth import build_token_provider, gmail_status
+from core.scout.comms.gmail_oauth import build_token_provider, gmail_status, prove_current_identity
 from core.scout.comms.providers import DeterministicLocalSinkProvider, ProviderRegistry
 
 
@@ -23,6 +23,7 @@ def build_runtime_provider_registry(
     gmail_transport: Optional[Callable[[str, str], Dict[str, Any]]] = None,
     gmail_token_provider: Optional[Callable[[], str]] = None,
     gmail_status_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+    gmail_identity_prover: Optional[Callable[[], str]] = None,
     include_resend: bool = True,
 ) -> ProviderRegistry:
     reg = ProviderRegistry()
@@ -34,7 +35,8 @@ def build_runtime_provider_registry(
         expected_account=cfg["expected_account"],
         transport=gmail_transport or real_gmail_transport,
         token_provider=gmail_token_provider or build_token_provider(cfg["token_json"]),
-        status_provider=gmail_status_provider or (lambda: gmail_status(cfg))))
+        status_provider=gmail_status_provider or (lambda: gmail_status(cfg)),
+        identity_prover=gmail_identity_prover or (lambda: prove_current_identity(cfg))))
 
     # Resend is optional/secondary and never on the critical path — register only when a verified
     # darrowcode.com sender is configured; a misconfiguration must not break the runtime registry.

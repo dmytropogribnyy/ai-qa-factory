@@ -39,6 +39,23 @@ FORBIDDEN_GMAIL_SCOPES = frozenset({
 GMAIL_PROVIDER_ID = "gmail_personal"
 EXPECTED_ACCOUNT_DEFAULT = "dipptrue@gmail.com"
 EXTERNAL_SEND_DISABLED_ENV = "PROSPECT_RADAR_EXTERNAL_SEND_DISABLED"
+# Google normalizes the short "email" scope to this canonical form; either is acceptable.
+_EMAIL_SCOPES = frozenset({"email", "https://www.googleapis.com/auth/userinfo.email"})
+
+
+def gmail_scope_blockers(granted) -> list:
+    """Scope policy: required gmail.send + openid + email (or its canonical form); no forbidden scope."""
+    scopes = set(granted or [])
+    blockers = []
+    if GMAIL_SEND_SCOPE not in scopes:
+        blockers.append("missing_send_scope")
+    if "openid" not in scopes:
+        blockers.append("missing_openid_scope")
+    if not (scopes & _EMAIL_SCOPES):
+        blockers.append("missing_email_scope")
+    if scopes & FORBIDDEN_GMAIL_SCOPES:
+        blockers.append("forbidden_scope")
+    return blockers
 
 
 class GmailError(ProviderError):
@@ -122,6 +139,7 @@ class GmailProvider:
                  transport: Callable[[str, str], Dict[str, Any]],
                  token_provider: Callable[[], str],
                  status_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+                 identity_prover: Optional[Callable[[], str]] = None,
                  readiness: str = "adapter-ready") -> None:
         self.metadata = ProviderMetadata(provider_id=GMAIL_PROVIDER_ID, channel="email",
                                          readiness=readiness, auth_ref="GMAIL_OAUTH_TOKEN_JSON",
@@ -132,31 +150,41 @@ class GmailProvider:
         self._transport = transport
         self._token_provider = token_provider
         self._status_provider = status_provider
+        # Authoritative live identity proof (official Google verifier in production; a fake verifier
+        # is injected in deterministic tests). Returns the proven email or raises.
+        self._identity_prover = identity_prover
 
     def sender(self) -> tuple:
         return (self._from_email, self._from_name)
 
     def preflight(self) -> list:
-        """Readiness check WITHOUT any network call — proves the operator can send live before the
-        send service consumes an approval. Unconfigured/unauthorized/wrong-account/insufficient-scope
-        all block. With no status provider (deterministic transport-only tests) it is treated ready."""
-        if self._status_provider is None:
+        """Readiness + AUTHORITATIVE identity proof before the send service consumes an approval.
+        Unconfigured/unauthorized/insufficient-scope block via the offline status; the account is
+        proven cryptographically via the injected identity prover (never a decoded-claim shortcut).
+        With neither a status nor an identity provider (transport-only tests) it is treated ready."""
+        if self._status_provider is None and self._identity_prover is None:
             return []
-        s = self._status_provider() or {}
-        blockers = []
-        if not s.get("client_config_present"):
-            blockers.append("gmail_oauth_client_not_configured")
-        elif not s.get("token_present"):
-            blockers.append("gmail_not_authorized")
-        elif not s.get("refreshable"):
-            blockers.append("gmail_token_not_refreshable")
-        scopes = set(s.get("scopes", []))
-        if GMAIL_SEND_SCOPE not in scopes:
-            blockers.append("gmail_missing_send_scope")
-        if scopes & FORBIDDEN_GMAIL_SCOPES:
-            blockers.append("gmail_forbidden_scope")
-        if not s.get("expected_account_match"):
-            blockers.append("gmail_account_not_verified")
+        blockers: list = []
+        if self._status_provider is not None:
+            s = self._status_provider() or {}
+            if not s.get("client_config_present"):
+                blockers.append("gmail_oauth_client_not_configured")
+            elif not s.get("token_present"):
+                blockers.append("gmail_not_authorized")
+            elif not s.get("refreshable"):
+                blockers.append("gmail_token_not_refreshable")
+            blockers.extend("gmail_" + b for b in gmail_scope_blockers(s.get("scopes", [])))
+        # The account is proven by an authoritative live verification, never a decoded id-token claim.
+        if self._identity_prover is not None:
+            try:
+                proven = self._identity_prover()
+            except Exception:  # noqa: BLE001 - any verification failure is fail-closed
+                proven = ""
+            if proven != self._expected_account:
+                blockers.append("gmail_identity_unverified")
+        elif not blockers:
+            # Status is wired but no authoritative identity proof is available for a live send.
+            blockers.append("gmail_identity_unverified")
         return sorted(set(blockers))
 
     def send(self, envelope: SendEnvelope) -> SendResult:
