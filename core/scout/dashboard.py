@@ -13,8 +13,10 @@ token is required. It can only launch the existing bounded, read-only Scout engi
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
@@ -118,15 +120,25 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
         def do_POST(self):
             parsed = urlsplit(self.path)
             if parsed.path == "/api/control":
-                if not self._origin_ok():
-                    return self._json(403, {"error": "cross-origin control requests are refused"})
-                action = (parse_qs(parsed.query).get("action") or [""])[0]
-                ok, status, message = service.control(action)
-                return self._json(status, {"ok": ok, "action": action, "message": message,
-                                           "status": service.status()})
+                return self._control(parsed)
             if parsed.path == "/api/campaign/start":
                 return self._campaign_start()
             return self._json(404, {"error": "not found"})
+
+        def _control(self, parsed):
+            """Apply a run control signal — behind the SAME guards as start: loopback Host +
+            Origin + CSRF. Drain any body first so an early rejection never breaks the pipe."""
+            self._read_json_body()   # optional body; also captures a body CSRF token
+            if not self._host_is_loopback():
+                return self._json(403, {"ok": False, "error": "non-loopback Host header refused"})
+            if not self._origin_ok():
+                return self._json(403, {"ok": False, "error": "cross-origin control requests are refused"})
+            if not self._csrf_ok():
+                return self._json(403, {"ok": False, "error": "missing or invalid CSRF token"})
+            action = (parse_qs(parsed.query).get("action") or [""])[0]
+            ok, status, message = service.control(action)
+            return self._json(status, {"ok": ok, "action": action, "message": message,
+                                       "status": service.status()})
 
         # --- guarded campaign start (v3.0.0 M4b) -----------------------------------------------
         def _campaign_start(self):
@@ -587,8 +599,8 @@ button{{margin-right:.5rem;padding:.4rem .8rem}}code{{background:#f4f4f4;padding
 <th>defects</th><th></th></tr>{''.join(rows) or '<tr><td colspan=6>none yet</td></tr>'}</table>
 {start_panel}
 <script>const CSRF={json.dumps(csrf_token)};
-function ctl(a){{fetch('/api/control?action='+a,{{method:'POST'}})
-.then(r=>r.json()).then(j=>{{if(!j.ok)alert('control refused: '+j.message);location.reload()}})}}
+function ctl(a){{fetch('/api/control?action='+a,{{method:'POST',headers:{{'X-Scout-CSRF':CSRF}}}})
+.then(r=>r.json()).then(j=>{{if(!j.ok)alert('control refused: '+(j.message||j.error));location.reload()}})}}
 function startCampaign(){{
  var seeds=(document.getElementById('seeds').value||'').split(/[\\n,]+/).map(s=>s.trim()).filter(Boolean);
  if(!seeds.length){{alert('enter at least one public https URL');return;}}
@@ -652,6 +664,33 @@ def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 
     server.scout_csrf_token = token          # type: ignore[attr-defined]
     server.scout_launcher = launcher         # type: ignore[attr-defined]
     bound_host, bound_port = server.server_address[0], server.server_address[1]
+    # Publish the CSRF token to a local, per-port file so the loopback CLI control command can
+    # authenticate. It lives under the (gitignored) output dir; a cross-origin page cannot read it.
+    _publish_csrf_token(getattr(service, "output_dir", "outputs"), bound_port, token)
     import threading
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, f"http://{bound_host}:{bound_port}"
+
+
+def csrf_token_path(output_dir: str, port: int) -> Path:
+    return Path(output_dir) / "scout" / "_dashboard" / f"csrf-{int(port)}.token"
+
+
+def _publish_csrf_token(output_dir: str, port: int, token: str) -> None:
+    try:
+        path = csrf_token_path(output_dir, port)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(token, encoding="utf-8")
+        try:                                   # best-effort restrictive perms (POSIX; no-op on Windows)
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass   # publishing is best-effort; the dashboard UI still works via the in-page token
+
+
+def read_csrf_token(output_dir: str, port: int) -> Optional[str]:
+    try:
+        return csrf_token_path(output_dir, port).read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None

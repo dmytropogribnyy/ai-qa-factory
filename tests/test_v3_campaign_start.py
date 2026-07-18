@@ -144,6 +144,38 @@ def test_restart_recovery_is_idempotent_via_persisted_registry(tmp_path):
     assert not svc2.started_configs  # the new process did NOT start a second campaign
 
 
+def test_stale_starting_record_retries_and_is_not_false_success(tmp_path):
+    # Crash between persist(STARTING) and start(): a STARTING record with no campaign behind it.
+    launcher, svc = _launcher(tmp_path)
+    launcher._persist("k", {"idempotency_key": "k", "run_id": "ghost-run", "status": "STARTING",
+                            "requested_at": "t0"})
+    r = launcher.start(_req(key="k"))
+    assert r.ok and r.status == 202 and not r.idempotent   # retried, never a false idempotent success
+    assert r.run_id != "ghost-run" and len(svc.started_configs) == 1
+
+
+def test_rejected_record_retries_not_reports_success(tmp_path):
+    launcher, svc = _launcher(tmp_path)
+    launcher._persist("k", {"idempotency_key": "k", "run_id": "x", "status": "REJECTED", "error": "no"})
+    r = launcher.start(_req(key="k"))
+    assert r.ok and r.status == 202 and not r.idempotent and len(svc.started_configs) == 1
+
+
+def test_failed_starter_is_recorded_and_replay_retries(tmp_path):
+    def boom(_cfg):
+        raise ValueError("starter blew up")
+
+    launcher, _svc = _launcher(tmp_path, starter=boom)
+    r1 = launcher.start(_req(key="k"))
+    assert not r1.ok and r1.status == 500                  # failed start is honest, not swallowed
+    rec = json.loads(next((tmp_path / "registry").glob("*.json")).read_text(encoding="utf-8"))
+    assert rec["status"] == "FAILED"
+    # A replay with a working starter (same registry) must ACTUALLY start, not read the failure.
+    launcher2, svc2 = _launcher(tmp_path, service=_FakeService(str(tmp_path)))
+    r2 = launcher2.start(_req(key="k"))
+    assert r2.ok and r2.status == 202 and not r2.idempotent and len(svc2.started_configs) == 1
+
+
 def test_request_cannot_widen_local_allowlist(tmp_path):
     # A malicious body trying to allow-list localhost must be ignored (no SSRF bypass).
     launcher, svc = _launcher(tmp_path, allow_fixture=False)
@@ -267,5 +299,76 @@ def test_http_csrf_endpoint_exposes_token(tmp_path):
     try:
         status, body = _http(server, "GET", "/api/csrf")
         assert status == 200 and body["csrf_token"] == "test-csrf-token"
+    finally:
+        server.shutdown()
+
+
+# --------------------------------------------------------------------------- /api/control guards
+
+def test_http_control_requires_csrf(tmp_path):
+    server, svc = _serve(tmp_path)
+    try:
+        status, body = _http(server, "POST", "/api/control?action=pause")
+        assert status == 403 and "CSRF" in (body.get("error") or "")
+        assert not svc.controls
+    finally:
+        server.shutdown()
+
+
+def test_http_control_non_loopback_host_refused(tmp_path):
+    # DNS-rebinding defense: a rebound request carries a non-loopback Host and must be refused.
+    server, svc = _serve(tmp_path)
+    try:
+        status, body = _http(server, "POST", "/api/control?action=kill", host_header="attacker.example",
+                             headers={"X-Scout-CSRF": "test-csrf-token"})
+        assert status == 403 and "loopback" in (body.get("error") or "")
+        assert not svc.controls
+    finally:
+        server.shutdown()
+
+
+def test_http_control_cross_origin_refused(tmp_path):
+    server, svc = _serve(tmp_path)
+    try:
+        status, body = _http(server, "POST", "/api/control?action=kill",
+                             headers={"X-Scout-CSRF": "test-csrf-token",
+                                      "Origin": "http://attacker.example"})
+        assert status == 403 and "cross-origin" in (body.get("error") or "")
+        assert not svc.controls
+    finally:
+        server.shutdown()
+
+
+def test_http_control_ok_with_csrf(tmp_path):
+    server, svc = _serve(tmp_path)
+    try:
+        status, body = _http(server, "POST", "/api/control?action=pause",
+                             headers={"X-Scout-CSRF": "test-csrf-token"})
+        assert status == 200 and body["ok"] and svc.controls == ["pause"]
+    finally:
+        server.shutdown()
+
+
+def test_start_and_control_share_dns_rebinding_defense(tmp_path):
+    # Both state-changing endpoints reject a non-loopback Host even with a valid token.
+    server, svc = _serve(tmp_path)
+    try:
+        h = {"X-Scout-CSRF": "test-csrf-token"}
+        s1, _ = _http(server, "POST", "/api/campaign/start", host_header="rebind.example",
+                      headers=h, body=_req())
+        s2, _ = _http(server, "POST", "/api/control?action=kill", host_header="rebind.example",
+                      headers=h)
+        assert s1 == 403 and s2 == 403 and not svc.started_configs and not svc.controls
+    finally:
+        server.shutdown()
+
+
+def test_csrf_token_published_for_cli(tmp_path):
+    from core.scout.dashboard import read_csrf_token
+    server, svc = _serve(tmp_path)
+    try:
+        port = server.server_address[1]
+        assert read_csrf_token(str(tmp_path), port) == "test-csrf-token"
+        assert read_csrf_token(str(tmp_path), port + 1) is None   # per-port file
     finally:
         server.shutdown()
