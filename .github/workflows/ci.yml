@@ -68,16 +68,31 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install core + optional browser/axe dependencies
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install core + optional browser/axe dependencies (Python Chromium for scenario B)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install playwright axe-core-python
           python -m playwright install --with-deps chromium
-      - name: Real local Playwright + axe + performance acceptance (local fixtures only)
+      - name: Provision the generated framework's runtime (npm @playwright/test + Chromium)
+        run: |
+          mkdir -p .pw-runtime
+          cd .pw-runtime
+          npm init -y
+          npm install "@playwright/test@^1.44.0"
+          ./node_modules/.bin/playwright install --with-deps chromium
+      - name: "Real browser acceptance: Chromium+axe (B) + real playwright test on generated TS framework (A); zero skips"
+        env:
+          PLAYWRIGHT_TEST_RUNTIME: ${{ github.workspace }}/.pw-runtime
         run: >-
           python -m pytest -q -ra --junitxml=reports/junit-browser.xml
           -m "playwright_acceptance or final1_browser_acceptance"
+      - name: Assert the browser job skipped nothing (real executions, not honest skips)
+        if: always()
+        run: python tools/assert_no_skips.py reports/junit-browser.xml
       - name: Upload bounded browser report (no secrets)
         if: always()
         uses: actions/upload-artifact@v4

@@ -18,6 +18,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from core.api_contract_importer import APIContractImporter
 from core.orchestration.client_work import ClientWorkService
 from core.orchestration.providers import FixedClock, SequentialIds
 from core.orchestration.work_execution import WorkExecutionService
@@ -97,7 +98,7 @@ def test_scenario_c_real_pytest_fails_before_passes_after(tmp_path):
     after = (ws / "evidence" / "passing_after.txt").read_text(encoding="utf-8")
     assert "(exit 0)" not in before.splitlines()[1] and "1 failed" in before   # genuinely failed first
     assert "(exit 0)" in after and "1 passed" in after                         # genuinely passed after
-    assert svc.status("c").status == "READY_FOR_DELIVERY"
+    assert svc.status("c").status == "DELIVERY_PREPARED"
 
 
 # --------------------------------------------------------------------------- D: real OpenAPI + HTTP
@@ -140,21 +141,41 @@ def _http_status(url: str) -> int:
 class RealApiTestExecutor:
     is_acceptance_fixture = False
     executor_id = "operator:genuine/api-testing"
-    _CASES = [{"name": "health ok", "path": "/health", "expect": 200},
-              {"name": "item found", "path": "/item/1", "expect": 200},
-              {"name": "item bad id (negative)", "path": "/item/abc", "expect": 400},
-              {"name": "unknown path (negative)", "path": "/nope", "expect": 404}]
 
     def execute(self, ctx: ExecutionContext) -> ExecutionOutcome:
         d = Path(ctx.workspace_dir) / "delivery"
         d.mkdir(parents=True, exist_ok=True)
-        (d / "openapi.json").write_text(json.dumps(_OPENAPI, indent=2), encoding="utf-8")
-        (d / "api_test_plan.json").write_text(json.dumps({"cases": self._CASES}, indent=2), encoding="utf-8")
+        spec_path = d / "openapi.json"
+        spec_path.write_text(json.dumps(_OPENAPI, indent=2), encoding="utf-8")
+        # Parse the written spec with the REAL production importer and DERIVE the cases from the
+        # parsed contract (not three unrelated hardcoded structures).
+        report = APIContractImporter().analyze(ctx.project_id, str(spec_path))
+        parsed_paths = {ep.path for ep in report.endpoints if ep.method == "GET"}
+        cases = []
+        for ep in report.endpoints:
+            if ep.method != "GET":
+                continue
+            if "{" in ep.path:                                   # a templated path -> positive + negative
+                cases.append({"name": f"{ep.path} valid id", "path": ep.path.replace("{id}", "1"),
+                              "expect": 200, "from_contract": ep.path})
+                cases.append({"name": f"{ep.path} bad id (negative)",
+                              "path": ep.path.replace("{id}", "abc"), "expect": 400,
+                              "from_contract": ep.path})
+            else:
+                cases.append({"name": f"{ep.path} ok", "path": ep.path, "expect": 200,
+                              "from_contract": ep.path})
+        cases.append({"name": "unknown path (negative)", "path": "/nope", "expect": 404,
+                      "from_contract": None})   # a negative not in the contract, by design
+        (d / "api_test_plan.json").write_text(
+            json.dumps({"cases": cases, "parsed_contract": {
+                "title": report.spec_title, "total_endpoints": report.total_endpoints,
+                "paths": sorted(parsed_paths)}}, indent=2), encoding="utf-8")
         return ExecutionOutcome(
             artifacts=[ExecutionArtifact("delivery/openapi.json", "report"),
                        ExecutionArtifact("delivery/api_test_plan.json", "api_tests")],
             files_changed=["delivery/openapi.json", "delivery/api_test_plan.json"],
-            progress_notes=[f"authored an OpenAPI fixture + {len(self._CASES)} pos/neg cases"])
+            progress_notes=[f"parsed the OpenAPI with APIContractImporter ({report.total_endpoints} "
+                            f"endpoints) and derived {len(cases)} pos/neg cases from the contract"])
 
     def validate(self, ctx: ExecutionContext) -> ValidationOutcome:
         ws = Path(ctx.workspace_dir)
@@ -192,4 +213,13 @@ def test_scenario_d_real_openapi_localhost_http_pos_neg(tmp_path):
     results = json.loads((ws / "delivery" / "API_TEST_RESULTS.json").read_text(encoding="utf-8"))
     got = {r["path"]: r["got"] for r in results}
     assert got == {"/health": 200, "/item/1": 200, "/item/abc": 400, "/nope": 404}   # real responses
-    assert svc.status("d").status == "READY_FOR_DELIVERY"
+    # The plan was DERIVED from the parsed contract: the production importer really parsed the spec,
+    # and every positive/negative-id case traces back to a contract path.
+    plan = json.loads((ws / "delivery" / "api_test_plan.json").read_text(encoding="utf-8"))
+    assert plan["parsed_contract"]["paths"] == ["/health", "/item/{id}"]
+    assert plan["parsed_contract"]["total_endpoints"] == 2
+    contract_paths = set(plan["parsed_contract"]["paths"])
+    for c in plan["cases"]:
+        if c["from_contract"] is not None:
+            assert c["from_contract"] in contract_paths          # tested path traces to the contract
+    assert svc.status("d").status == "DELIVERY_PREPARED"

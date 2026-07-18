@@ -664,9 +664,13 @@ def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 
     server.scout_csrf_token = token          # type: ignore[attr-defined]
     server.scout_launcher = launcher         # type: ignore[attr-defined]
     bound_host, bound_port = server.server_address[0], server.server_address[1]
+    out_dir = getattr(service, "output_dir", "outputs")
     # Publish the CSRF token to a local, per-port file so the loopback CLI control command can
     # authenticate. It lives under the (gitignored) output dir; a cross-origin page cannot read it.
-    _publish_csrf_token(getattr(service, "output_dir", "outputs"), bound_port, token)
+    _publish_csrf_token(out_dir, bound_port, token)
+    # Write an ownership record so `stop-local` can prove a process is THIS dashboard invocation
+    # (PID + start time + command identity + port + repo) before ever stopping it (v3.0.2 M7).
+    write_ownership_record(out_dir, bound_port, token)
     import threading
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, f"http://{bound_host}:{bound_port}"
@@ -694,3 +698,51 @@ def read_csrf_token(output_dir: str, port: int) -> Optional[str]:
         return csrf_token_path(output_dir, port).read_text(encoding="utf-8").strip() or None
     except OSError:
         return None
+
+
+# --- ownership record (v3.0.2 M7): lets `stop-local` prove a process is THIS dashboard -----------
+_OWNERSHIP_MARKER = "main.py scout dashboard"
+
+
+def ownership_path(output_dir: str, port: int) -> Path:
+    return Path(output_dir) / "scout" / "_dashboard" / f"ownership-{int(port)}.json"
+
+
+def write_ownership_record(output_dir: str, port: int, token: str) -> Optional[dict]:
+    """Atomically write who owns the dashboard on ``port``: PID, process start time (anti PID
+    reuse), the expected command identity, the workspace/repo, and a random owner token. Returns
+    the record (or None if it could not be written)."""
+    import sys
+    from datetime import datetime, timezone
+    record = {
+        "schema": "dashboard-ownership/v1",
+        "pid": os.getpid(),
+        "port": int(port),
+        "python_executable": sys.executable,
+        "command_marker": _OWNERSHIP_MARKER,
+        "argv": list(sys.argv),
+        "repo": str(Path.cwd()),
+        "workspace": str(Path(output_dir).resolve()),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "owner_token": secrets.token_urlsafe(16),
+    }
+    try:
+        path = ownership_path(output_dir, port)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)             # best-effort (POSIX; no-op on Windows)
+        except OSError:
+            pass
+        return record
+    except OSError:
+        return None   # best-effort; the dashboard still works, stop-local just won't find a record
+
+
+def remove_ownership_record(output_dir: str, port: int) -> None:
+    try:
+        ownership_path(output_dir, port).unlink()
+    except OSError:
+        pass

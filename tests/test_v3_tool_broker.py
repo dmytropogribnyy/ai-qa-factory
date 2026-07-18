@@ -45,19 +45,24 @@ def test_local_binary_health_check_is_honest():
     assert s["node"].readiness == "unavailable"
 
 
-def test_internal_runner_requires_a_concrete_check_not_catalogue_presence():
-    # With the real dependency present, the in-repo runner is fixture-tested; nothing is live-accepted.
+def test_internal_runner_requires_a_concrete_production_binding_not_a_test_file():
+    # A real production binding + passing bounded health check is required. The API runner genuinely
+    # parses a fixture OpenAPI and generates stubs in-process -> fixture-tested. The Playwright runner
+    # binding is present (production tools.test_runner) -> health-checked; browser runtime is a
+    # separate, honestly-reported readiness. Nothing is ever live-accepted.
     ready = _broker(module_available=lambda _n: True)
     s = _by_id(ready.discover())
     assert ready.snapshot()["any_live_accepted"] is False
-    assert s["playwright_internal"].readiness == "fixture-tested"
     assert s["api_runner_internal"].readiness == "fixture-tested"
-    # With the browser dependency MISSING, playwright_internal drops to 'declared' (honest), while the
-    # stdlib-only API runner stays fixture-tested. Catalogue presence alone never claims fixture-tested.
-    degraded = _by_id(_broker(module_available=lambda n: n not in ("playwright", "axe_core_python")).discover())
-    assert degraded["playwright_internal"].readiness == "declared"
-    assert degraded["playwright_internal"].setup_instruction        # setup is surfaced
-    assert degraded["api_runner_internal"].readiness == "fixture-tested"
+    assert "APIContractImporter" in s["api_runner_internal"].check_result
+    assert s["playwright_internal"].readiness == "health-checked"
+    assert "never live-accepted" in s["playwright_internal"].check_result
+    # If the PRODUCTION module cannot be imported, the runner honestly drops to 'declared' with a
+    # reason and setup - catalogue presence alone never claims more than declared.
+    degraded = _by_id(_broker(
+        module_available=lambda n: n != "core.api_contract_importer").discover())
+    assert degraded["api_runner_internal"].readiness == "declared"
+    assert "not importable" in degraded["api_runner_internal"].check_result
 
 
 def test_mcp_tools_are_only_declared_not_live():
