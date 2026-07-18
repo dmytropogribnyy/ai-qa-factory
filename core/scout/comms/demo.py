@@ -25,6 +25,7 @@ from core.scout.comms.providers import (
 )
 from core.scout.comms.providers import ProviderMetadata as CommsProviderMetadata
 from core.scout.comms.repository import CommsRepository
+from core.scout.comms.review import preview_hash_for
 from core.scout.comms.send import SendService
 from core.scout.memory.db import MemoryDB
 from core.scout.memory.repository import MemoryRepository
@@ -76,7 +77,8 @@ def run_radar_demo(output_dir: str, *, campaign_id: str = "radar-demo",
     rid = build_revision(mem, comms, draft_id="d1", company_id="co-1", contact_id="k1",
                          finding_id="f1", channel="email", subject="A quick QA note about One",
                          body="Hello, we noticed one issue on your public site.", now=_NOW)
-    aid = approve_revision(comms, rid, reviewer="human-reviewer", now=_NOW)
+    aid = approve_revision(mem, comms, rid, reviewer="human-reviewer", now=_NOW,
+                           reviewed_content_hash=preview_hash_for(comms, rid))
     comms.set_control("__global_outreach__", "ENABLED")
     comms.add_allowlist(_RECIP, "demo", _NOW)
 

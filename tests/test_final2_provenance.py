@@ -7,6 +7,7 @@ from core.scout.comms.approval import ApprovalError, approve_revision, build_rev
 from core.scout.comms.provenance import fixture_provenance, is_fixture, provenance_blockers
 from core.scout.comms.providers import DeterministicLocalSinkProvider, ProviderRegistry
 from core.scout.comms.repository import CommsRepository
+from core.scout.comms.review import preview_hash_for
 from core.scout.comms.send import S_ACCEPTED, S_BLOCKED, SendService
 from core.scout.memory.db import MemoryDB
 from core.scout.memory.repository import MemoryRepository
@@ -45,7 +46,8 @@ def _seed(tmp_path, *, provenance="fixture"):
 def _prepare_and_send(mem, comms, svc):
     rid = build_revision(mem, comms, draft_id="d1", company_id="co-1", contact_id="k1",
                          finding_id="f1", channel="email", subject="Hi", body="Body.", now=_NOW)
-    aid = approve_revision(comms, rid, reviewer="human", now=_NOW)
+    aid = approve_revision(mem, comms, rid, reviewer="human", now=_NOW,
+                           reviewed_content_hash=preview_hash_for(comms, rid))
     comms.set_control("__global_outreach__", "ENABLED")
     comms.add_allowlist(_RECIP, "test", _NOW)
     out = svc.send(rid, aid, "local_sink", campaign_id="camp", channel="email", live=True,
@@ -70,7 +72,8 @@ def test_superseded_provenance_blocks_send(tmp_path):
     mem, comms, svc = _seed(tmp_path)
     rid = build_revision(mem, comms, draft_id="d1", company_id="co-1", contact_id="k1",
                          finding_id="f1", channel="email", subject="Hi", body="Body.", now=_NOW)
-    aid = approve_revision(comms, rid, reviewer="human", now=_NOW)
+    aid = approve_revision(mem, comms, rid, reviewer="human", now=_NOW,
+                           reviewed_content_hash=preview_hash_for(comms, rid))
     comms.set_control("__global_outreach__", "ENABLED")
     comms.add_allowlist(_RECIP, "test", _NOW)
     mem.db.execute("UPDATE contact_provenance SET state='SUPERSEDED' WHERE contact_id='k1'")
@@ -115,7 +118,8 @@ def test_provenance_change_after_approval_invalidates(tmp_path):
     mem, comms, svc = _seed(tmp_path)
     rid = build_revision(mem, comms, draft_id="d1", company_id="co-1", contact_id="k1",
                          finding_id="f1", channel="email", subject="Hi", body="Body.", now=_NOW)
-    aid = approve_revision(comms, rid, reviewer="human", now=_NOW)
+    aid = approve_revision(mem, comms, rid, reviewer="human", now=_NOW,
+                           reviewed_content_hash=preview_hash_for(comms, rid))
     comms.set_control("__global_outreach__", "ENABLED")
     comms.add_allowlist(_RECIP, "test", _NOW)
     # A new ACTIVE provenance from a different source supersedes the approved one.

@@ -13,6 +13,7 @@ from core.scout.comms.approval import ApprovalError, approve_revision, build_rev
 from core.scout.comms.provenance import fixture_provenance
 from core.scout.comms.providers import DeterministicLocalSinkProvider, ProviderRegistry
 from core.scout.comms.repository import CommsRepository
+from core.scout.comms.review import preview_hash_for
 from core.scout.comms.send import S_ACCEPTED, SendService
 from core.scout.memory.db import MemoryDB
 from core.scout.memory.repository import MemoryRepository
@@ -76,7 +77,8 @@ def run_benchmark(output_dir: str, *, clock: Callable[[], str] = lambda: _NOW) -
             rid = build_revision(mem, comms, draft_id=f"d-{cid}", company_id=cid,
                                  contact_id=f"k-{cid}", finding_id=f"f-{cid}", channel="email",
                                  subject="Note", body="Hello.", now=_NOW)
-            aid = approve_revision(comms, rid, reviewer="human", now=_NOW)
+            aid = approve_revision(mem, comms, rid, reviewer="human", now=_NOW,
+                                   reviewed_content_hash=preview_hash_for(comms, rid))
         except ApprovalError:
             results[name] = "blocked_at_build"  # responsible disclosure never builds a revision
             continue

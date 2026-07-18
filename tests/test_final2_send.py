@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from core.scout.comms.approval import approve_revision, build_revision, edit_revision
+from core.scout.comms.review import preview_hash_for
 from core.scout.comms.controls import global_kill
 from core.scout.comms.provenance import fixture_provenance
 from core.scout.comms.providers import DeterministicLocalSinkProvider, ProviderRegistry
@@ -49,7 +50,8 @@ def _seed(tmp_path, *, sink_outcome="ACCEPTED", raise_timeout=False):
     rid = build_revision(mem, comms, draft_id="d1", company_id="co-1", contact_id="k1",
                          finding_id="f1", channel="email", subject="A quick QA note",
                          body="Hello, we noticed one issue.", now=_NOW)
-    aid = approve_revision(comms, rid, reviewer="human", now=_NOW)
+    aid = approve_revision(mem, comms, rid, reviewer="human", now=_NOW,
+                           reviewed_content_hash=preview_hash_for(comms, rid))
     return mem, comms, svc, rid, aid, tmp_path
 
 

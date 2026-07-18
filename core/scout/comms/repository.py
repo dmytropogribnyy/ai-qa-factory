@@ -83,6 +83,9 @@ class CommsRepository:
             raise CommsError("approval references an unknown revision")
         if rev["superseded"] or rev["state"] not in (R_PENDING, R_DRAFT):
             raise CommsError("approval can only bind to a current (non-superseded) revision")
+        # Proof-of-reviewed-content is mandatory: an approval can never be created without it.
+        if not (ap.get("reviewed_content_hash") or "").strip():
+            raise CommsError("reviewed_content_hash is required to create an approval")
         with self.db.transaction() as c:
             c.execute(
                 "INSERT INTO approval_records (approval_id, revision_id, recipient_hash, body_hash, "

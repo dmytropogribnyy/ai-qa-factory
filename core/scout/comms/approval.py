@@ -16,7 +16,8 @@ from core.scout.comms.records import (
     ensure_suppression_check,
     record_pre_send_revalidation,
 )
-from core.scout.comms.repository import CommsError, CommsRepository
+from core.scout.comms.repository import CommsError, CommsRepository, R_DRAFT, R_PENDING
+from core.scout.comms.review import preview_hash
 from core.scout.comms.snapshots import approval_binding, body_hash, suppression_snapshot
 from core.scout.memory.repository import MemoryRepository
 from core.scout.outreach.disclosure import build_manifest
@@ -102,13 +103,32 @@ def build_revision(mem: MemoryRepository, comms: CommsRepository, *, draft_id: s
     return revision_id
 
 
-def approve_revision(comms: CommsRepository, revision_id: str, *, reviewer: str, now: str,
-                     ttl_hours: int = 24, reason: str = "", reviewed_content_hash: str = "") -> str:
+def approve_revision(mem: MemoryRepository, comms: CommsRepository, revision_id: str, *,
+                     reviewer: str, now: str, reviewed_content_hash: str, ttl_hours: int = 24,
+                     reason: str = "") -> str:
+    """Approve ONE revision. Requires the exact canonical review-preview hash (mandatory proof the
+    reviewer saw this exact content); an empty/arbitrary/stale hash is rejected. Never sends."""
     if not reviewer.strip():
         raise ApprovalError("reviewer identity must not be empty")
     rev = comms.get_revision(revision_id)
     if rev is None:
         raise ApprovalError("unknown revision")
+    if rev["superseded"] or rev["state"] not in (R_PENDING, R_DRAFT):
+        raise ApprovalError("cannot approve a superseded/non-pending revision")
+    if not (reviewed_content_hash or "").strip():
+        raise ApprovalError("reviewed_content_hash is required (approve the exact reviewed preview)")
+    if reviewed_content_hash != preview_hash(rev):
+        raise ApprovalError("reviewed_content_hash does not match the current review preview")
+    # Reject a stale preview: the underlying contact/finding/evidence/provenance/suppression must
+    # still match the revision the reviewer saw (recomputing raises if provenance/contact is gone).
+    current = _current_binding(mem, comms, revision_id=revision_id, company_id=rev["company_id"],
+                               contact_id=rev["contact_id"], finding_id=rev["finding_id"],
+                               channel=rev["channel"], subject=rev["subject"], body=rev["body"],
+                               now=now)
+    for key in ("recipient_hash", "body_hash", "disclosure_hash", "finding_hash", "evidence_hash",
+                "contact_provenance_hash", "suppression_hash"):
+        if current.get(key) != rev.get(key):
+            raise ApprovalError("review preview is stale: underlying data changed since build")
     approval_id = f"ap-{revision_id}"
     comms.create_approval({
         "approval_id": approval_id, "revision_id": revision_id, "recipient_hash": rev["recipient_hash"],
