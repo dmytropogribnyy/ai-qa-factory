@@ -125,6 +125,20 @@ def test_modified_validation_evidence_blocks_delivery(tmp_path):
     assert "changed after validation" in str(exc.value)
 
 
+def test_secret_bearing_argv_is_redacted_in_evidence(tmp_path):
+    # v3.1 M0.4: a token passed as an argument is redacted before being persisted as evidence.
+    svc = _start(tmp_path, "p")
+    token = "ghp_" + "a" * 36
+    _, result = svc.validate("p", CommandValidationExecutor(
+        [_PY, "-c", f"print('using {token}')"]))
+    vdir = _ws(tmp_path, "p") / "evidence" / "validation" / result.details["validation_id"]
+    meta = json.loads((vdir / "metadata.json").read_text(encoding="utf-8"))
+    joined = " ".join(meta["argv"])
+    assert token not in joined and "[REDACTED_github_token]" in joined
+    # The redacted display is what is stored; the real command still ran (produced stdout).
+    assert token not in (vdir / "metadata.json").read_text(encoding="utf-8")
+
+
 def test_no_environment_secrets_are_persisted(tmp_path, monkeypatch):
     canary = "canary-secret-value-1234567890"
     monkeypatch.setenv("FACTORY_TEST_CANARY", canary)

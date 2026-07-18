@@ -121,7 +121,11 @@ class CommandValidationExecutor:
             argv = [str(a) for a in command]
         self._check_argv(argv)
         self._argv: List[str] = argv
-        self._display = " ".join(argv)
+        # Redact likely secret-bearing arguments before they are ever persisted as evidence
+        # (metadata/display) - reusing the single intake redactor. The real argv still runs.
+        from core.orchestration.content_safety import redact_intake_text
+        self._safe_argv: List[str] = [redact_intake_text(a).text for a in argv]
+        self._display = " ".join(self._safe_argv)
         self.executor_id = executor_id
         self._timeout = max(1, min(int(timeout_s), _MAX_TIMEOUT_S))
 
@@ -197,7 +201,7 @@ class CommandValidationExecutor:
         passed = rc == 0
         metadata = {
             "validation_id": vid, "project_id": ctx.project_id, "executor_id": self.executor_id,
-            "argv": list(self._argv), "cwd": ".", "cwd_confined_to_workspace": True,
+            "argv": list(self._safe_argv), "cwd": ".", "cwd_confined_to_workspace": True,
             "started_at": started, "finished_at": finished, "timeout_s": self._timeout,
             "exit_code": rc, "timed_out": timed_out, "spawn_error": spawn_error, "passed": passed,
             "stdout": {"path": f"{rel}/stdout.txt", "truncated": out_trunc,

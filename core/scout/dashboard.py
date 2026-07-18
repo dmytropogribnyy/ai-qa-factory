@@ -488,7 +488,8 @@ table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding
         def _tools_html(self) -> str:
             snap = self._tools_snapshot()
             rows = "".join(
-                f"<tr><td>{_esc(t['id'])}</td><td>{_esc(t['domain'])}</td>"
+                f"<tr><td>{_esc(t['id'])}</td><td>{_esc(t.get('ui_level', ''))}</td>"
+                f"<td>{_esc(t['domain'])}</td>"
                 f"<td>{_esc(t['readiness'])}</td><td>{_esc(t['auth_requirement'])}</td>"
                 f"<td>{_esc(t['fallback'])}</td><td>{_esc(t.get('setup_instruction', ''))}</td></tr>"
                 for t in snap.get("tools", []))
@@ -502,8 +503,8 @@ table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding
 <p class=banner>Honest readiness (no live MCP/network call). None is live-accepted
 (any_live_accepted={_esc(snap.get('any_live_accepted'))}). Session-only MCP tools show
 <code>declared</code>; connect them in Claude Code (/mcp) to use. No secret values are shown.</p>
-<table><tr><th>tool</th><th>domain</th><th>readiness</th><th>auth</th><th>fallback</th><th>setup</th></tr>
-{rows or '<tr><td colspan=6>none</td></tr>'}</table>
+<table><tr><th>tool</th><th>level</th><th>domain</th><th>readiness</th><th>auth</th><th>fallback</th><th>setup</th></tr>
+{rows or '<tr><td colspan=7>none</td></tr>'}</table>
 <p>API: <a href="/api/tools">/api/tools</a></p>
 </body></html>"""
 

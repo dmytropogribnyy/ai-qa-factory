@@ -370,9 +370,10 @@ def run_tool_status(args) -> int:
         print(_json.dumps(broker.snapshot(), indent=2, ensure_ascii=False))
         return 0
     print("Tool readiness (deterministic; no live MCP/network call; none live-accepted):")
-    print(f"  {'tool':22} {'domain':26} {'readiness':16} auth / fallback")
+    print(f"  {'tool':22} {'level':18} {'domain':26} {'readiness':16} auth / fallback")
     for t in broker.discover():
-        print(f"  {t.id:22} {t.domain:26} {t.readiness:16} {t.auth_requirement} / {t.fallback}")
+        print(f"  {t.id:22} {t.ui_level:18} {t.domain:26} {t.readiness:16} "
+              f"{t.auth_requirement} / {t.fallback}")
         if t.readiness in ("unavailable", "blocked-by-auth") and t.setup_instruction:
             print(f"      setup: {t.setup_instruction}")
     print("Session-only MCP tools are 'declared' here; connect them in Claude Code (/mcp) to use.")
