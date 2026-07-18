@@ -340,6 +340,36 @@ def run_client_work(args) -> int:
     return 0
 
 
+def run_operator_dashboard(args) -> int:
+    """v3.1 - the local operator dashboard (Overview/Work/Scout/Tools) over the existing core.
+
+    Reads persisted state through read-only DTOs and exposes guarded lifecycle actions (approve,
+    review, prepare/reopen/mark delivery) that call the SAME services the CLI uses. It never runs an
+    arbitrary command, never accepts argv over HTTP, and sends nothing.
+    """
+    import time as _time
+
+    from core.config import get_settings
+    from core.scout.dashboard import remove_ownership_record, start_dashboard
+    from core.scout.service import ScoutService
+    out = args.output or str(Path(get_settings().output_dir))
+    service = ScoutService(out)
+    server, url = start_dashboard(service, port=args.port, operator_home=True)
+    bound_port = server.server_address[1]
+    print(f"AI QA Factory operator dashboard: {url}   (Ctrl+C to stop)")
+    print(f"  Overview {url}/  ·  Work {url}/work  ·  Scout {url}/scout  ·  Tools {url}/tools")
+    print("  Reads persisted state; lifecycle actions are guarded; nothing is scanned or sent.")
+    try:
+        while True:
+            _time.sleep(1)
+    except KeyboardInterrupt:
+        server.shutdown()
+        print("dashboard stopped")
+    finally:
+        remove_ownership_record(out, bound_port)
+    return 0
+
+
 def run_projects(args) -> int:
     """v3.0.0 - one read-only index over client-work projects + Scout campaigns (no new database)."""
     from core.config import get_settings
@@ -480,6 +510,13 @@ def main(argv: list[str] | None = None) -> int:
     tool_cmd.add_argument("--json", action="store_true", dest="as_json",
                           help="Print the machine-readable capability snapshot")
 
+    # v3.1 — the local operator dashboard (Overview / Scout / Work / Tools) over the existing core
+    dash_cmd = subparsers.add_parser(
+        "dashboard", help="Start the local operator dashboard on 127.0.0.1 (Overview, Work, Scout, "
+                          "Tools; read-only reads + guarded lifecycle actions; nothing is sent)")
+    dash_cmd.add_argument("--port", type=int, default=8765, help="Dashboard port")
+    dash_cmd.add_argument("--output", default=None, help="Output workspace (defaults to OUTPUT_DIR)")
+
     # v3.0.0 — unified project index (client-work + Scout)
     projects_cmd = subparsers.add_parser(
         "projects", help="List client-work projects + Scout campaigns from existing state (read-only)")
@@ -619,6 +656,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "client-work":
         return run_client_work(args)
+
+    if args.mode == "dashboard":
+        return run_operator_dashboard(args)
 
     if args.mode == "scout":
         from core.scout.cli import run_scout_cli

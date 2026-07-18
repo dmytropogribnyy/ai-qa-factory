@@ -33,7 +33,8 @@ _MAX_START_BODY_BYTES = 64 * 1024
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
 
-def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token: str):
+def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token: str,
+                  operator_home: bool = False):
     class _Handler(BaseHTTPRequestHandler):
         server_version = f"ScoutDashboard/{SCOUT_VERSION}"
 
@@ -56,6 +57,15 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
+            # Local-only CSP: no external scripts/styles/fonts/frames; images may be inline data URIs.
+            self.send_header("Content-Security-Policy",
+                             "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                             "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+                             "form-action 'self'")
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
@@ -98,11 +108,33 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/tools":
                 return self._json(200, self._tools_snapshot())
             if path == "/tools":
-                return self._html(200, self._tools_html())
+                return self._html(200, self._tools_page())
             if path == "/api/projects":
                 return self._json(200, self._projects_snapshot())
             if path == "/projects":
                 return self._html(200, self._projects_html())
+            # v3.1 operator dashboard read-model routes
+            if path == "/api/overview":
+                return self._json(200, self._read_model().overview().to_dict())
+            if path == "/api/work":
+                view = (q.get("view") or ["all"])[0]
+                return self._json(200, self._read_model().project_list(view=view))
+            if path.startswith("/api/work/"):
+                return self._json(200, self._work_detail_json(path[len("/api/work/"):]))
+            if path == "/work" or path == "/work/":
+                return self._html(200, self._work_list_page(q))
+            if path.startswith("/work/"):
+                return self._html(200, self._work_detail_page(path[len("/work/"):]))
+            if path == "/scout":
+                return self._html(200, self._overview_html())    # the Scout run/home view
+            if path == "/activity":
+                return self._html(200, self._activity_page(q))
+            if path == "/api/activity":
+                return self._json(200, self._activity_json((q.get("project") or [""])[0]))
+            if path == "/settings":
+                return self._html(200, self._settings_page())
+            if path == "/docs":
+                return self._html(200, self._docs_page())
             if path == "/api/results":
                 return self._json(200, self._results_snapshot())
             if path == "/results":
@@ -112,8 +144,25 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
+                # Operator home = the new Overview inbox; a Scout-run-bound dashboard keeps its
+                # existing run view at "/" (regression-preserved). Both link to each other.
+                if operator_home and not service.is_running() and not self._has_active_run():
+                    return self._html(200, self._operator_overview_page())
                 return self._html(200, self._overview_html())
             return self._json(404, {"error": "not found"})
+
+        def _has_active_run(self) -> bool:
+            try:
+                st = service.status().get("state", {})
+                return bool(st.get("candidates") or st.get("prospects") or st.get("status"))
+            except Exception:
+                return False
+
+        def _read_model(self):
+            from core.dashboard.read_model import DashboardReadModel
+            from datetime import datetime, timezone
+            return DashboardReadModel(service.output_dir,
+                                      clock=lambda: datetime.now(timezone.utc).isoformat())
 
         do_HEAD = do_GET
 
@@ -123,22 +172,95 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._control(parsed)
             if parsed.path == "/api/campaign/start":
                 return self._campaign_start()
+            if parsed.path.startswith("/api/work/"):
+                return self._work_action(parsed.path[len("/api/work/"):])
             return self._json(404, {"error": "not found"})
 
-        def _control(self, parsed):
-            """Apply a run control signal — behind the SAME guards as start: loopback Host +
-            Origin + CSRF. Drain any body first so an early rejection never breaks the pipe."""
-            self._read_json_body()   # optional body; also captures a body CSRF token
+        def _guard_mutation(self, body):
+            """One shared guard for every state-changing endpoint (v3.1 M10): loopback bind (server)
+            + loopback Host (anti DNS-rebinding) + Origin + per-server CSRF. Returns an error dict on
+            refusal, else None. The caller must have already drained the body."""
             if not self._host_is_loopback():
-                return self._json(403, {"ok": False, "error": "non-loopback Host header refused"})
+                return (403, {"ok": False, "error": "non-loopback Host header refused"})
             if not self._origin_ok():
-                return self._json(403, {"ok": False, "error": "cross-origin control requests are refused"})
+                return (403, {"ok": False, "error": "cross-origin requests are refused"})
             if not self._csrf_ok():
-                return self._json(403, {"ok": False, "error": "missing or invalid CSRF token"})
+                return (403, {"ok": False, "error": "missing or invalid CSRF token"})
+            return None
+
+        def _control(self, parsed):
+            """Apply a run control signal — behind the shared mutation guard. Drain any body first so
+            an early rejection never breaks the pipe."""
+            body = self._read_json_body()   # optional body; also captures a body CSRF token
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
             action = (parse_qs(parsed.query).get("action") or [""])[0]
             ok, status, message = service.control(action)
             return self._json(status, {"ok": ok, "action": action, "message": message,
                                        "status": service.status()})
+
+        # --- guarded client-work mutations (v3.1) — NEVER a command/argv over HTTP -------------
+        def _work_action(self, action: str):
+            """Guarded client-work lifecycle mutations that call WorkExecutionService (the same
+            service the CLI uses). Only reviewer/note/reason are accepted — never a command."""
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            if body is None:
+                return self._json(400, {"ok": False, "error": "invalid or oversized JSON body"})
+            pid = str(body.get("project_id") or "")
+            reviewer = str(body.get("reviewer") or "")[:120]
+            note = str(body.get("note") or "")[:500]
+            reason = str(body.get("reason") or "")[:500]
+            from core.orchestration.work_execution import WorkExecutionError, WorkExecutionService
+            from core.orchestration.work_state_manager import InvalidTransitionError
+            if action == "analyze":
+                # Read-only intake (analysis only; nothing is executed). Reuses ClientWorkService.
+                brief = str(body.get("text") or "").strip()
+                if not brief:
+                    return self._json(400, {"ok": False, "error": "a client brief is required"})
+                from core.orchestration.client_work import ClientWorkService
+                from core.orchestration.providers import ClockProvider, IdProvider
+                try:
+                    res = ClientWorkService(ClockProvider(), IdProvider(),
+                                            output_dir=service.output_dir).analyze(
+                        brief, project_id=(pid or None),
+                        source_platform=str(body.get("source_platform") or "manual"))
+                except Exception as exc:
+                    return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+                return self._json(200, {"ok": True, "action": action,
+                                        "project_id": res.project_id})
+            svc = WorkExecutionService(output_dir=service.output_dir)
+            try:
+                if action == "approve":
+                    st = svc.approve(pid, reviewer=reviewer or "operator", note=note)
+                elif action == "review":
+                    st = svc.review(pid, reviewer=reviewer or "operator", approved=True, note=note)
+                elif action == "review-reject":
+                    st = svc.review(pid, reviewer=reviewer or "operator", approved=False, note=note)
+                elif action == "prepare-delivery":
+                    svc.prepare_delivery(pid)
+                    st = svc.status(pid)
+                    return self._json(200, {"ok": True, "action": action, "project_id": pid,
+                                            "status": st.status})
+                elif action == "reopen-delivery":
+                    if not reason.strip():
+                        return self._json(400, {"ok": False, "error": "reason is required"})
+                    entry = svc.reopen_delivery(pid, reviewer=reviewer or "operator", reason=reason)
+                    return self._json(200, {"ok": True, "action": action, "project_id": pid,
+                                            "status": svc.status(pid).status, "outcome": entry["outcome"]})
+                elif action == "mark-delivered":
+                    st = svc.mark_delivered(pid, note=note)
+                else:
+                    return self._json(404, {"ok": False, "error": "unknown work action"})
+            except (WorkExecutionError, InvalidTransitionError) as exc:
+                return self._json(409, {"ok": False, "action": action, "project_id": pid,
+                                        "error": str(exc)})
+            v = svc.status(pid)
+            return self._json(200, {"ok": True, "action": action, "project_id": pid,
+                                    "status": v.status, "next_action": v.next_action})
 
         # --- guarded campaign start (v3.0.0 M4b) -----------------------------------------------
         def _campaign_start(self):
@@ -146,14 +268,11 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             # Drain the (bounded) request body first so an early rejection never leaves the client
             # writing into a half-closed socket (a broken pipe / connection abort).
             body = self._read_json_body()
-            if not self._host_is_loopback():
-                return self._json(403, {"ok": False, "error": "non-loopback Host header refused"})
-            if not self._origin_ok():
-                return self._json(403, {"ok": False, "error": "cross-origin start requests are refused"})
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
             if body is None:
                 return self._json(400, {"ok": False, "error": "invalid or oversized JSON body"})
-            if not self._csrf_ok():
-                return self._json(403, {"ok": False, "error": "missing or invalid CSRF token"})
             result = launcher.start(body)
             payload = result.to_dict()
             payload["status_snapshot"] = service.status()
@@ -617,6 +736,258 @@ function startCampaign(){{
 </script>
 </body></html>"""
 
+        # --- v3.1 operator dashboard pages (Overview / Work / Activity / Settings) -------------
+        def _work_actions_script(self) -> str:
+            return ("const CSRF=" + json.dumps(csrf_token) + ";\n"
+                    "function wact(action, extra){const b=Object.assign({},extra||{});"
+                    "fetch('/api/work/'+action,{method:'POST',headers:{'Content-Type':'application/json',"
+                    "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json()).then(j=>{"
+                    "if(j.ok){location.reload();}else{alert((j.error||'refused'));}}).catch(e=>alert(''+e));}\n"
+                    "function copyText(id){const el=document.getElementById(id);"
+                    "navigator.clipboard&&navigator.clipboard.writeText(el.textContent).then("
+                    "()=>{},()=>{});}\n")
+
+        def _operator_overview_page(self) -> str:
+            ov = self._read_model().overview()
+            def _att(a):
+                return (f'<div class="card"><div class="row" style="justify-content:space-between">'
+                        f'<div><strong>{_esc(a["title"])}</strong> {_badge(a["status"], "attention")}<br>'
+                        f'<span class="muted">{_esc(a["project_id"])} — {_esc(a["reason"])}</span></div>'
+                        f'<a class="btn primary" href="{_esc(a["href"])}">Open</a></div></div>')
+            att = "".join(_att(a) for a in ov.attention) or (
+                '<div class="card empty"><strong>You\'re all caught up</strong>'
+                '<div class="muted">No projects require your attention.</div></div>')
+            def _wrow(p):
+                return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></td>'
+                        f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
+                        f'<td>{_esc(p["next_action"])}</td></tr>')
+            work = "".join(_wrow(p) for p in ov.active_work)
+            work_tbl = (f'<table><caption>Active work</caption><tr><th>Project</th><th>Stage</th>'
+                        f'<th>Health</th><th>Next action</th></tr>{work}</table>'
+                        if work else '<div class="card empty muted">No active work.</div>')
+            def _crow(c):
+                return (f'<tr><td>{_esc(c["title"])}</td><td>{_badge(c["status"])}</td>'
+                        f'<td>{_esc(c["next_action"])}</td></tr>')
+            camps = "".join(_crow(c) for c in ov.active_campaigns)
+            camp_tbl = (f'<table><caption>Active Scout campaigns</caption><tr><th>Campaign</th>'
+                        f'<th>Status</th><th>Next action</th></tr>{camps}</table>'
+                        if camps else '<div class="card empty muted">No active Scout campaigns. '
+                        '<a href="/scout">Open Scout</a></div>')
+            body = (f'<h1>Overview</h1>'
+                    f'<div class="row"><span class="chip">Projects {ov.counts.get("projects", 0)}</span>'
+                    f'<span class="chip">Needs attention {ov.counts.get("attention", 0)}</span>'
+                    f'<span class="chip">Campaigns {ov.counts.get("campaigns", 0)}</span>'
+                    f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                    f'<h2>Needs your attention</h2>{att}'
+                    f'<h2>Active work</h2>{work_tbl}'
+                    f'<h2>Scout</h2>{camp_tbl}')
+            return _page("AI QA Factory — Overview", "/", body)
+
+        _WORK_VIEWS = (("all", "All Work"), ("needs_attention", "Needs Attention"),
+                       ("ready_to_execute", "Ready to Execute"), ("in_progress", "In Progress"),
+                       ("blocked", "Blocked"), ("ready_for_review", "Ready for Review"),
+                       ("ready_for_delivery", "Ready for Delivery"),
+                       ("delivery_prepared", "Delivery Prepared"), ("completed", "Completed"))
+
+        def _work_list_page(self, q) -> str:
+            view = (q.get("view") or ["all"])[0]
+            data = self._read_model().project_list(view=view)
+            views = "".join(
+                f'<a class="chip" href="/work?view={v}" '
+                f'{"style=font-weight:600" if v == view else ""}>{_esc(lbl)}</a>'
+                for v, lbl in self._WORK_VIEWS)
+            def _row(p):
+                return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a>'
+                        f'<div class="muted">{_esc(p["project_id"])}</div></td>'
+                        f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
+                        f'<td>{_esc(p["next_action"])}</td><td class="muted">{_esc(p["updated"])}</td></tr>')
+            rows = "".join(_row(p) for p in data["projects"])
+            table = (f'<table><caption>{data["total"]} project(s) — view: {_esc(view)}</caption>'
+                     f'<tr><th>Project</th><th>Stage</th><th>Health</th><th>Next action</th>'
+                     f'<th>Updated</th></tr>{rows}</table>' if rows
+                     else '<div class="card empty">No projects in this view. '
+                          '<a href="/work?view=all">Clear filter</a></div>')
+            create = (
+                '<details class="card"><summary>Create work from a pasted client brief</summary>'
+                '<p class="muted">Analysis only — nothing is executed. This reuses analyze-job.</p>'
+                '<p><label>Project name (optional)<br><input id="cw_pid" placeholder="my-project"></label></p>'
+                '<p><label>Source platform (optional)<br><input id="cw_src" placeholder="upwork / direct"></label></p>'
+                '<p><label>Client brief<br><textarea id="cw_brief" rows="5" style="width:100%"></textarea></label></p>'
+                '<p><button class="btn primary" onclick="createWork()">Analyze brief</button></p>'
+                '<p class="muted">No Upwork API — paste the brief and (optionally) a source reference.</p>'
+                '</details>')
+            script = (self._work_actions_script() +
+                      "function createWork(){var b=document.getElementById('cw_brief').value.trim();"
+                      "if(!b){alert('paste a client brief');return;}"
+                      "fetch('/api/work/analyze',{method:'POST',headers:{'Content-Type':'application/json',"
+                      "'X-Scout-CSRF':CSRF},body:JSON.stringify({text:b,"
+                      "project_id:document.getElementById('cw_pid').value.trim(),"
+                      "source_platform:document.getElementById('cw_src').value.trim()})})"
+                      ".then(r=>r.json()).then(j=>{if(j.ok){location.href='/work/'+j.project_id;}"
+                      "else{alert(j.error||'refused');}}).catch(e=>alert(''+e));}")
+            body = (f'<h1>Work</h1><div class="row">{views}'
+                    f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                    f'{table}{create}')
+            return _page("AI QA Factory — Work", "/work", body, script)
+
+        def _work_detail_json(self, pid):
+            from core.dashboard.actions import ProjectDetailBuilder
+            d = ProjectDetailBuilder(service.output_dir).detail(pid)
+            return d or {"error": "not found", "project_id": pid}
+
+        def _work_detail_page(self, pid) -> str:
+            from core.dashboard.actions import ProjectDetailBuilder
+            b = ProjectDetailBuilder(service.output_dir)
+            d = b.detail(pid)
+            if d is None:
+                return _page("Project not found", "/work",
+                             '<h1>Project not found</h1><p><a href="/work">&larr; Work</a></p>')
+            h = d["header"]
+            actbtns = []
+            for a in d["allowed_actions"]:
+                cls = "btn primary" if a.get("primary") else "btn"
+                if a["kind"] == "http_mutation":
+                    extra = "{project_id:" + json.dumps(pid) + "}"
+                    if a.get("fields"):
+                        extra = ("Object.assign({project_id:" + json.dumps(pid) + "},"
+                                 "promptFields(" + json.dumps(a["fields"]) + "))")
+                    conf = ("if(!confirm('" + _esc(a["label"]) + "?'))return;" if a.get("confirm") else "")
+                    actbtns.append(f'<button class="{cls}" onclick="{conf}wact('
+                                   f'{json.dumps(a["endpoint"].split("/")[-1])},{extra})">{_esc(a["label"])}</button>')
+                elif a["id"] == "open_vscode":
+                    actbtns.append(f'<a class="{cls}" href="vscode://file/{_esc(d["workspace_path"])}">'
+                                   f'{_esc(a["label"])}</a>')
+                elif a["id"] == "copy_work_order":
+                    actbtns.append('<button class="btn" onclick="copyText(\'workorder\')">'
+                                   'Copy Work Order</button>')
+                elif a["id"] == "copy_workspace":
+                    actbtns.append('<button class="btn" onclick="copyText(\'wspath\')">'
+                                   'Copy Workspace Path</button>')
+                elif a["id"] == "refresh":
+                    actbtns.append('<button class="btn" onclick="location.reload()">Refresh</button>')
+            header = (f'<p><a href="/work">&larr; Work</a></p><h1>{_esc(h["title"])}</h1>'
+                      f'<div class="row">{_badge(h["stage"])} {_badge(h["health"], h["health"])} '
+                      f'<span class="muted">{_esc(h["source"])} · {h["progress"]}%</span></div>'
+                      f'<div class="row" style="margin:.6rem 0">{"".join(actbtns)}</div>')
+            summary = d["summary"]
+            blockers = "".join(f"<li>{_esc(x)}</li>" for x in summary["blockers"]) or "<li class=muted>none</li>"
+            tabs = (
+                '<h2>Summary</h2><div class="card">'
+                f'<p><strong>Next:</strong> {_esc(summary["next_action"])}</p>'
+                f'<p><strong>Validation:</strong> {summary["tests_passed"]}/{summary["tests_run"]} · '
+                f'evidence {summary["evidence_count"]}</p>'
+                f'<p><strong>Blockers:</strong></p><ul>{blockers}</ul></div>'
+                '<h2>Plan</h2><div class="card">'
+                f'<p><strong>Intent:</strong> {_esc(d["plan"]["client_intent"])}</p>'
+                f'<p><strong>Verdict:</strong> {_badge(d["plan"]["verdict"] or "n/a")}</p>'
+                f'<details><summary>Requirements & questions</summary>'
+                f'<ul>{"".join(f"<li>{_esc(r)}</li>" for r in d["plan"]["requirements"]) or "<li class=muted>none</li>"}</ul>'
+                f'</details></div>'
+                '<h2>Results</h2><div class="card">'
+                f'<p>Validation: {_badge("PASS" if d["results"]["validation_passed"] else "pending", "ok" if d["results"]["validation_passed"] else "")}</p>'
+                f'<p class="muted">Artifacts: {_esc(", ".join(str(a) for a in d["results"]["artifacts"]) or "none")}</p>'
+                f'<details><summary>Evidence ({len(d["results"]["evidence"])})</summary>'
+                f'<ul>{"".join(f"<li>{_esc(e.get("relative_path", ""))} <span class=muted>{_esc(e.get("kind", ""))}</span></li>" for e in d["results"]["evidence"]) or "<li class=muted>none</li>"}</ul>'
+                f'</details></div>'
+                '<h2>Delivery</h2><div class="card">'
+                f'<p>State: {_badge(d["delivery"]["status"], "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
+                f'<p class="muted">Reviewed by {_esc(d["delivery"]["reviewed_by"] or "—")} · '
+                f'digest {_esc((d["delivery"]["manifest_digest"] or "—")[:23])}</p>'
+                f'<details><summary>Included files ({len(d["delivery"]["included_files"])})</summary>'
+                f'<ul>{"".join(f"<li>{_esc(x)}</li>" for x in d["delivery"]["included_files"]) or "<li class=muted>not prepared</li>"}</ul>'
+                f'</details>'
+                '<p class="muted">mark-delivered records your manual send; the Dashboard sends nothing.</p></div>'
+                f'<div style="display:none"><pre id="wspath">{_esc(d["workspace_path"])}</pre>'
+                f'<pre id="workorder">{_esc(b.work_order(pid) or "")}</pre></div>')
+            script = (self._work_actions_script() +
+                      "function promptFields(names){var o={};for(var i=0;i<names.length;i++){"
+                      "var v=prompt(names[i]);if(v===null)throw 'cancelled';o[names[i]]=v;}return o;}")
+            return _page(f"AI QA Factory — {pid}", "/work", header + tabs, script)
+
+        def _activity_json(self, project):
+            events = []
+            from core.orchestration.work_execution import WorkExecutionService
+            wx = WorkExecutionService(output_dir=service.output_dir)
+            index = self._read_model().project_list(view="all")["projects"]
+            targets = [project] if project else [p["project_id"] for p in index]
+            for pid in targets:
+                try:
+                    st = wx._load_state(pid)
+                except Exception:
+                    continue
+                for h in st.history[-50:]:
+                    hd = h.to_dict() if hasattr(h, "to_dict") else dict(h)
+                    events.append({"time": hd.get("at", ""), "actor": hd.get("actor", ""),
+                                   "action": f'{hd.get("from_state")} -> {hd.get("to_state")}',
+                                   "object": pid, "result": hd.get("reason", "")})
+            events.sort(key=lambda e: e["time"], reverse=True)
+            return {"schema": "dashboard-read-model/v1", "events": events[:200]}
+
+        def _activity_page(self, q) -> str:
+            data = self._activity_json((q.get("project") or [""])[0])
+            rows = "".join(
+                f'<tr><td class="muted">{_esc(e["time"])}</td><td>{_esc(e["actor"])}</td>'
+                f'<td>{_esc(e["action"])}</td><td>{_esc(e["object"])}</td>'
+                f'<td class="muted">{_esc(e["result"])}</td></tr>' for e in data["events"])
+            table = (f'<table><caption>Recent state transitions</caption><tr><th>Time</th><th>Actor</th>'
+                     f'<th>Action</th><th>Project</th><th>Result</th></tr>{rows}</table>' if rows
+                     else '<div class="card empty muted">No activity yet.</div>')
+            return _page("AI QA Factory — Activity", "/activity", f"<h1>Activity</h1>{table}")
+
+        def _settings_page(self) -> str:
+            from core.orchestration.tool_broker import ToolBroker
+            gmail = next((t for t in ToolBroker(clock=lambda: "").discover()
+                         if t.id == "gmail_personal"), None)
+            gmail_state = gmail.ui_level if gmail else "Unknown"
+            body = (
+                '<h1>Settings</h1>'
+                f'<div class="card"><h2>Workspace</h2>'
+                f'<p>Output workspace: <code>{_esc(str(service.output_dir))}</code></p></div>'
+                '<div class="card"><h2>Display density</h2>'
+                '<div class="row"><button class="btn" onclick="setDensity(\'comfortable\')">Comfortable</button>'
+                '<button class="btn" onclick="setDensity(\'compact\')">Compact</button></div>'
+                '<p class="muted">Saved in this browser only (no server preference database).</p></div>'
+                '<div class="card"><h2>Scout defaults (bounded, read-only)</h2>'
+                '<p class="muted">1–10 public https seeds · static browser · concurrency 1 · read-only.</p></div>'
+                f'<div class="card"><h2>Gmail</h2><p>Setup status: {_badge(gmail_state)} '
+                '<span class="muted">(no secret is shown; live send is a separate opt-in CLI path)</span></p></div>')
+            script = ("function setDensity(d){document.documentElement.setAttribute('data-density',d);"
+                      "try{localStorage.setItem('qa_density',d);}catch(e){}}"
+                      "try{var d=localStorage.getItem('qa_density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}")
+            return _page("AI QA Factory — Settings", "/settings", body, script)
+
+        def _tools_page(self) -> str:
+            data = self._read_model().tools()
+            def _lvl_kind(level):
+                return {"Runtime Available": "ok", "Fixture Verified": "ok", "Live Verified": "ok",
+                        "Blocked": "blocked", "Unavailable": "blocked"}.get(level, "")
+            rows = "".join(
+                f'<tr><td>{_esc(t["name"])}<div class="muted">{_esc(t["id"])}</div></td>'
+                f'<td>{_esc(t["capability"])}</td><td>{_badge(t["ui_level"], _lvl_kind(t["ui_level"]))}</td>'
+                f'<td class="muted">{_esc(t["readiness"])}</td>'
+                f'<td class="muted">{_esc(t["reason"])}</td>'
+                f'<td class="muted">{_esc(t["setup_action"])}</td></tr>' for t in data["tools"])
+            table = (f'<table><caption>Honest readiness (no live MCP/network call; '
+                     f'any_live_accepted={data["any_live_accepted"]})</caption>'
+                     f'<tr><th>Tool</th><th>Capability</th><th>Level</th><th>Readiness</th>'
+                     f'<th>Reason</th><th>Setup action</th></tr>{rows}</table>')
+            body = (f'<h1>Tools</h1><p class="muted">A test file is never a runtime binding; a binding '
+                    f'present is "Binding Available"; a checked runtime is "Runtime Available"; nothing '
+                    f'is "Live Verified" without a real live acceptance.</p>{table}')
+            return _page("AI QA Factory — Tools", "/tools", body)
+
+        def _docs_page(self) -> str:
+            docs = [("Product contract", "PRODUCT_CONTRACT_V3.md"),
+                    ("Client work operator guide", "CLIENT_WORK_OPERATOR_GUIDE.md"),
+                    ("Scout operator guide", "SCOUT_OPERATOR_GUIDE.md"),
+                    ("Dashboard guide", "DASHBOARD_OPERATOR_GUIDE.md"),
+                    ("Tool readiness guide", "TOOL_READINESS_GUIDE.md"),
+                    ("Troubleshooting", "TROUBLESHOOTING_OPERATOR.md")]
+            items = "".join(f"<li>{_esc(lbl)} — <code>docs/{_esc(f)}</code></li>" for lbl, f in docs)
+            body = (f'<h1>Documentation</h1><div class="card"><p class="muted">Local documentation '
+                    f'(open in your editor):</p><ul>{items}</ul></div>')
+            return _page("AI QA Factory — Documentation", "/docs", body)
+
     return _Handler
 
 
@@ -639,6 +1010,78 @@ def _esc(s: str) -> str:
             .replace('"', "&quot;"))
 
 
+# --- v3.1 design system (local CSS tokens; no external assets) ---------------------------------
+_TOKENS_CSS = """
+:root{
+ --bg:#f6f7f9; --surface:#fff; --surface-2:#f0f2f5; --border:#d7dbe0; --text:#1a1d21;
+ --muted:#5b6570; --primary:#1f6feb; --primary-ink:#fff; --ok:#1a7f37; --attention:#9a6700;
+ --danger:#b42318; --focus:#1f6feb;
+ --radius:8px; --pad:16px; --gap:12px; --maxw:1200px; --row:40px;
+ --font:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+}
+:root[data-density="compact"]{ --pad:10px; --gap:8px; --row:32px; }
+*{box-sizing:border-box}
+body{font-family:var(--font);margin:0;background:var(--bg);color:var(--text);line-height:1.5}
+a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
+header.top{background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+header.top .wrap{max-width:var(--maxw);margin:0 auto;display:flex;align-items:center;gap:var(--gap);padding:10px var(--pad)}
+header.top .brand{font-weight:700} header.top nav{display:flex;gap:4px;margin-left:8px}
+header.top nav a{padding:6px 12px;border-radius:6px;color:var(--muted)}
+header.top nav a[aria-current="page"]{background:var(--surface-2);color:var(--text);font-weight:600}
+main{max-width:var(--maxw);margin:0 auto;padding:var(--pad)}
+h1{font-size:22px;margin:.2rem 0 1rem} h2{font-size:16px;margin:1.4rem 0 .6rem}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);margin-bottom:var(--gap)}
+.muted{color:var(--muted)} .row{display:flex;gap:var(--gap);flex-wrap:wrap;align-items:center}
+table{border-collapse:collapse;width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+caption{text-align:left;color:var(--muted);padding:6px 2px;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;height:var(--row)}
+th{background:var(--surface-2);color:var(--muted);font-weight:600}
+tr:last-child td{border-bottom:none}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--surface-2)}
+.badge.ok{color:var(--ok);border-color:#a6e3b8} .badge.attention{color:var(--attention);border-color:#e6cf7a}
+.badge.blocked,.badge.danger{color:var(--danger);border-color:#f2b8b1} .badge.done{color:var(--muted)}
+.btn{display:inline-block;padding:8px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:14px}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
+.btn.danger{border-color:#f2b8b1;color:var(--danger)}
+.btn:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.chip{display:inline-flex;gap:6px;align-items:center;padding:2px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;font-size:12px}
+.empty{padding:2rem;text-align:center;color:var(--muted)}
+input,select{padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--surface);color:var(--text)}
+pre{background:var(--surface-2);padding:.7rem;border-radius:6px;overflow:auto;white-space:pre-wrap;font-size:12px}
+details>summary{cursor:pointer;color:var(--muted)}
+.skeleton{background:linear-gradient(90deg,var(--surface-2),#e9edf1,var(--surface-2));border-radius:6px;height:14px}
+"""
+
+_NAV = (("Overview", "/"), ("Scout", "/scout"), ("Work", "/work"))
+_MORE = (("Tools", "/tools"), ("Activity", "/activity"), ("Settings", "/settings"),
+         ("Documentation", "/docs"))
+
+
+def _nav_html(active: str) -> str:
+    links = []
+    for label, href in _NAV:
+        cur = ' aria-current="page"' if href == active else ""
+        links.append(f'<a href="{href}"{cur}>{label}</a>')
+    more = "".join(f'<a href="{h}">{lbl}</a>' for lbl, h in _MORE)
+    return (f'<header class="top"><div class="wrap"><span class="brand">AI QA Factory</span>'
+            f'<nav aria-label="Primary">{"".join(links)}'
+            f'<details style="position:relative"><summary class="btn" style="padding:6px 12px">More</summary>'
+            f'<div class="card" style="position:absolute;right:0;min-width:180px;z-index:10">{more}</div>'
+            f'</details></nav></div></header>')
+
+
+def _page(title: str, active: str, body: str, script: str = "") -> str:
+    scr = f"<script>{script}</script>" if script else ""
+    return (f"<!doctype html><html lang=en><head><meta charset=utf-8>"
+            f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f"<title>{_esc(title)}</title><style>{_TOKENS_CSS}</style></head><body>"
+            f"{_nav_html(active)}<main>{body}</main>{scr}</body></html>")
+
+
+def _badge(text: str, kind: str = "") -> str:
+    return f'<span class="badge {kind}">{_esc(text)}</span>'
+
+
 def _gmail_compose_url(to: str, subject: str, body: str) -> str:
     """A Gmail compose (draft) deep link — opens Gmail with the fields pre-filled. It NEVER sends;
     the operator reviews/edits and clicks Send manually."""
@@ -649,19 +1092,23 @@ def _gmail_compose_url(to: str, subject: str, body: str) -> str:
 
 def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 0,
                     launcher: Optional[CampaignLauncher] = None,
-                    csrf_token: Optional[str] = None) -> Tuple[ThreadingHTTPServer, str]:
+                    csrf_token: Optional[str] = None,
+                    operator_home: bool = False) -> Tuple[ThreadingHTTPServer, str]:
     """Start the dashboard (localhost only) and return (server, base_url). Non-blocking.
 
     ``launcher`` (defaults to a live ``CampaignLauncher`` with an empty local-host allowlist, so
     localhost/private targets stay rejected) backs the guarded start endpoint; ``csrf_token``
     defaults to a fresh per-server secret. Both are attached to the returned server for the
-    operator/tests (``server.scout_csrf_token`` / ``server.scout_launcher``).
+    operator/tests (``server.scout_csrf_token`` / ``server.scout_launcher``). ``operator_home``
+    makes ``/`` the v3.1 Overview inbox when no Scout run is bound (the Scout run view is preserved
+    at ``/`` for a run-bound dashboard, and always available at ``/scout``).
     """
     if host not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("dashboard binds to localhost only")
     launcher = launcher or CampaignLauncher(service)
-    token = csrf_token or secrets.token_urlsafe(32)
-    server = ThreadingHTTPServer((host, port), _make_handler(service, launcher, token))
+    token = secrets.token_urlsafe(32) if csrf_token is None else csrf_token
+    server = ThreadingHTTPServer((host, port),
+                                 _make_handler(service, launcher, token, operator_home))
     server.scout_csrf_token = token          # type: ignore[attr-defined]
     server.scout_launcher = launcher         # type: ignore[attr-defined]
     bound_host, bound_port = server.server_address[0], server.server_address[1]
