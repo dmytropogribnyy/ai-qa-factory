@@ -37,11 +37,14 @@ def sending_allowed(repo: CommsRepository, *, campaign_id: str, provider_id: str
 
 def precall_blockers(mem: MemoryRepository, comms: CommsRepository, *, campaign_id: str,
                      provider_id: str, channel: str, recipient: str, contact_id: str,
-                     company_id: str, live: bool = True) -> List[str]:
+                     company_id: str, now: str = "", live: bool = True) -> List[str]:
     """Re-read ALL authoritative gates immediately before the provider call (the control race). Any
     blocker here cancels the reserved message with zero provider calls."""
+    from core.scout.comms.limits import daily_limit_blockers
     _, blockers = sending_allowed(comms, campaign_id=campaign_id, provider_id=provider_id,
                                   channel=channel, recipient=recipient, live=live)
+    blockers.extend(daily_limit_blockers(comms, provider_id=provider_id, campaign_id=campaign_id,
+                                         now=now))
     if mem.is_suppressed(company_id, "NO_OUTREACH"):
         blockers.append("no_outreach_suppression")
     if mem.is_suppressed(company_id, "NO_SCAN") or mem.is_suppressed(company_id, "COOLDOWN"):

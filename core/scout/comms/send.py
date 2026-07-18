@@ -184,7 +184,7 @@ class SendService:
         blockers = precall_blockers(self.mem, self.comms, campaign_id=campaign_id,
                                     provider_id=provider_id, channel=rev["channel"],
                                     recipient=reval.recipient_value, contact_id=rev["contact_id"],
-                                    company_id=rev["company_id"], live=True)
+                                    company_id=rev["company_id"], now=now, live=True)
         if msg is None or msg["state"] != M_RESERVED:
             blockers.append("reservation_lost")
         if blockers:

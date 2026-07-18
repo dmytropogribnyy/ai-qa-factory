@@ -398,6 +398,15 @@ class CommsRepository:
         rows = self.db.query("SELECT state FROM outreach_controls WHERE scope=?", (scope,))
         return rows[0]["state"] if rows else ("DISABLED" if scope == "__global_outreach__" else "RUNNING")
 
+    def get_control_extra(self, scope: str) -> Dict[str, Any]:
+        rows = self.db.query("SELECT extra FROM outreach_controls WHERE scope=?", (scope,))
+        if not rows:
+            return {}
+        try:
+            return json.loads(rows[0]["extra"] or "{}")
+        except (ValueError, TypeError):
+            return {}
+
     def add_allowlist(self, normalized_value: str, note: str, now: str) -> None:
         with self.db.transaction() as c:
             c.execute("INSERT OR IGNORE INTO recipient_allowlist (normalized_value, note, added_at) "
