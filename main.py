@@ -200,6 +200,25 @@ def run_analyze_job(args) -> int:
     return 0
 
 
+def run_projects(args) -> int:
+    """v3.0.0 - one read-only index over client-work projects + Scout campaigns (no new database)."""
+    from core.config import get_settings
+    from core.orchestration.project_index import ProjectIndex
+    out_dir = str(Path(get_settings().output_dir))
+    index = ProjectIndex(out_dir)
+    if getattr(args, "as_json", False):
+        import json as _json
+        print(_json.dumps(index.snapshot(), indent=2, ensure_ascii=False))
+        return 0
+    projects = index.list_projects()
+    print(f"Projects ({len(projects)}) - client-work + Scout, from existing state:")
+    for p in projects:
+        print(f"  [{p.type:14}] {p.project_id:28} {p.lifecycle_state:22} {p.progress:3}%  "
+              f"blockers={len(p.blockers)} evidence={p.evidence_count}")
+        print(f"      next: {p.operator_next_action}")
+    return 0
+
+
 def run_tool_status(args) -> int:
     """v3.0.0 - honest capability/tool readiness (no live MCP or network call; none live-accepted)."""
     from datetime import datetime, timezone
@@ -320,6 +339,12 @@ def main(argv: list[str] | None = None) -> int:
     tool_cmd.add_argument("--json", action="store_true", dest="as_json",
                           help="Print the machine-readable capability snapshot")
 
+    # v3.0.0 — unified project index (client-work + Scout)
+    projects_cmd = subparsers.add_parser(
+        "projects", help="List client-work projects + Scout campaigns from existing state (read-only)")
+    projects_cmd.add_argument("--json", action="store_true", dest="as_json",
+                              help="Print the machine-readable project snapshot")
+
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
     scout_cmd = subparsers.add_parser(
         "scout", help="Prospect QA Scout v1.0 — bounded read-only local QA over public seeds"
@@ -419,6 +444,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "tool-status":
         return run_tool_status(args)
+
+    if args.mode == "projects":
+        return run_projects(args)
 
     if args.mode == "scout":
         from core.scout.cli import run_scout_cli

@@ -83,6 +83,10 @@ def _make_handler(service: ScoutService):
                 return self._json(200, self._tools_snapshot())
             if path == "/tools":
                 return self._html(200, self._tools_html())
+            if path == "/api/projects":
+                return self._json(200, self._projects_snapshot())
+            if path == "/projects":
+                return self._html(200, self._projects_html())
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
@@ -253,6 +257,32 @@ Review items: {s['review_items']} — APIs: <a href="/api/presend">presend</a>,
 {rrows or '<tr><td colspan=2>none</td></tr>'}</table>
 </body></html>"""
 
+        def _projects_snapshot(self):
+            from core.orchestration.project_index import ProjectIndex
+            return ProjectIndex(service.output_dir).snapshot()
+
+        def _projects_html(self) -> str:
+            snap = self._projects_snapshot()
+            rows = "".join(
+                f"<tr><td>{_esc(p['project_id'])}</td><td>{_esc(p['type'])}</td>"
+                f"<td>{_esc(p['title'])}</td><td>{_esc(p['lifecycle_state'])}</td>"
+                f"<td>{_esc(p['progress'])}%</td><td>{_esc(len(p['blockers']))}</td>"
+                f"<td>{_esc(p['evidence_count'])}</td><td>{_esc(p['operator_next_action'])}</td></tr>"
+                for p in snap.get("projects", []))
+            return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
+<title>{SCOUT_PRODUCT_NAME} — Projects</title>
+<style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:1200px}}
+table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:6px;font-size:13px;text-align:left}}</style></head>
+<body><h1>{SCOUT_PRODUCT_NAME} <small>projects</small></h1>
+<p><a href="/">&larr; Home</a> · <a href="/tools">tool readiness</a></p>
+<p>Client-work projects and Scout campaigns, from the existing project state (read-only;
+{_esc(snap.get('project_count', 0))} total).</p>
+<table><tr><th>project</th><th>type</th><th>title</th><th>state</th><th>progress</th>
+<th>blockers</th><th>evidence</th><th>operator next action</th></tr>
+{rows or '<tr><td colspan=8>none yet</td></tr>'}</table>
+<p>API: <a href="/api/projects">/api/projects</a></p>
+</body></html>"""
+
         def _tools_snapshot(self):
             from core.orchestration.tool_broker import ToolBroker
             return ToolBroker(clock=lambda: "").snapshot()
@@ -361,7 +391,7 @@ button{{margin-right:.5rem;padding:.4rem .8rem}}code{{background:#f4f4f4;padding
 <p>Controls: {controls}</p>
 <p>Manual-action prospects: {len(manual)} — Live: <a href="/api/events">events</a>,
 <a href="/api/status">status</a>, <a href="/health">health</a> · Operator:
-<a href="/tools">tool readiness</a></p>
+<a href="/projects">projects</a>, <a href="/tools">tool readiness</a></p>
 <h2>Prospects</h2><table><tr><th>id</th><th>url</th><th>status</th><th>priority</th>
 <th>defects</th><th></th></tr>{''.join(rows) or '<tr><td colspan=6>none yet</td></tr>'}</table>
 <script>function ctl(a){{fetch('/api/control?action='+a,{{method:'POST'}})
