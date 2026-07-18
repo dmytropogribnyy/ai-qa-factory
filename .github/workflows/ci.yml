@@ -115,3 +115,42 @@ jobs:
           name: junit-provider
           path: reports/junit-provider.xml
           if-no-files-found: ignore
+
+  windows-smoke:
+    # The product's primary platform is Windows + PowerShell. This proves the full deterministic
+    # suite passes on windows-latest and that the operator PowerShell scripts parse cleanly.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install core dependencies (requirements.txt only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Ruff
+        run: python -m ruff check .
+      - name: Full deterministic tests on Windows (browser-free, network-free, no external email)
+        run: python -m pytest tests/ -q -ra --junitxml=reports/junit-windows.xml
+      - name: Operator CLI + PowerShell script smoke
+        shell: pwsh
+        run: |
+          python main.py tool-status
+          python main.py client-work --help
+          $failed = 0
+          foreach ($s in "setup-local","start-local","stop-local","doctor-local") {
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile(
+              "scripts/$s.ps1", [ref]$null, [ref]$errors)
+            if ($errors) { Write-Host "$s.ps1 parse errors"; $failed = 1 }
+          }
+          if ($failed -ne 0) { exit 1 }
+      - name: Upload Windows report (no secrets)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-windows
+          path: reports/junit-windows.xml
+          if-no-files-found: ignore

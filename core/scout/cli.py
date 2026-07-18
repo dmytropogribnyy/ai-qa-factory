@@ -153,9 +153,15 @@ def cmd_control(args) -> int:
     if signal not in ("pause", "resume", "cancel", "kill"):
         print("ERROR: --signal must be pause|resume|cancel|kill", file=sys.stderr)
         return 1
+    from core.scout.dashboard import read_csrf_token
+    token = read_csrf_token(args.output, args.port)
+    if not token:
+        print(f"ERROR: no dashboard CSRF token for port {args.port} under {args.output} "
+              "(is the dashboard running on this port/output dir?)", file=sys.stderr)
+        return 1
     target = f"http://127.0.0.1:{args.port}/api/control?action={signal}"
     try:
-        req = urllib.request.Request(target, method="POST")
+        req = urllib.request.Request(target, method="POST", headers={"X-Scout-CSRF": token})
         with urllib.request.urlopen(req, timeout=5) as r:
             print(json.dumps(json.loads(r.read().decode("utf-8")), indent=2))
     except Exception as exc:

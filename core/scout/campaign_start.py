@@ -118,10 +118,15 @@ class CampaignLauncher:
 
         with self._lock:
             existing = self._lookup(key)
-            if existing and existing.get("run_id"):
-                return CampaignStartResult(ok=True, status=200, run_id=existing["run_id"],
-                                           message="idempotent replay (campaign already started)",
-                                           idempotent=True)
+            if existing:
+                prior = existing.get("status")
+                # ONLY a genuinely STARTED record is an idempotent success. STARTING is ambiguous
+                # (a crash may have happened between persist and start), and REJECTED/FAILED are
+                # explicit non-starts - all three must retry, never report a false success.
+                if prior == "STARTED" and existing.get("run_id"):
+                    return CampaignStartResult(ok=True, status=200, run_id=existing["run_id"],
+                                               message="idempotent replay (campaign already started)",
+                                               idempotent=True)
             if self._service.is_running():
                 return _reject(409, "a campaign is already active; stop it before starting another")
 
@@ -149,21 +154,30 @@ class CampaignLauncher:
 
             record = {"idempotency_key": key, "run_id": cfg.run_id, "status": "STARTING",
                       "requested_at": self._clock(), "source": "dashboard_http", "confirmed": True,
+                      "previous_status": (existing or {}).get("status"),
                       "config": cfg.material_signature()}
             self._persist(key, record)                      # persist BEFORE execution
 
             try:
                 run_id = self._starter(cfg)
             except RuntimeError as exc:                       # one-active guard in the service
-                record["status"] = "REJECTED"
-                record["error"] = str(exc)[:200]
-                self._persist(key, record)
-                return _reject(409, str(exc))
+                return self._fail(key, record, 409, str(exc))
+            except Exception as exc:  # noqa: BLE001 - any starter failure is recorded honestly, not swallowed
+                return self._fail(key, record, 500, f"campaign start failed: {exc}")
             record["status"] = "STARTED"
             record["run_id"] = run_id
             self._persist(key, record)
             return CampaignStartResult(ok=True, status=202, run_id=run_id,
                                        message="bounded read-only campaign started")
+
+    def _fail(self, key: str, record: Dict[str, Any], status: int, message: str
+              ) -> CampaignStartResult:
+        """Record a non-start honestly (REJECTED for a refusal, FAILED for a starter error) so a
+        later replay retries instead of reading a false success."""
+        record["status"] = "REJECTED" if status < 500 else "FAILED"
+        record["error"] = message[:200]
+        self._persist(key, record)
+        return _reject(status, message)
 
     def _build_config(self, request: Dict[str, Any], seeds: List[str]) -> ScoutRunConfig:
         """Build a bounded config from untrusted input. Only an allowlist of fields is honored;

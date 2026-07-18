@@ -23,8 +23,9 @@ def _get(url):
         return r.status, r.read().decode("utf-8")
 
 
-def _post(url):
-    req = urllib.request.Request(url, method="POST")
+def _post(url, token=None):
+    headers = {"X-Scout-CSRF": token} if token else {}
+    req = urllib.request.Request(url, method="POST", headers=headers)
     with urllib.request.urlopen(req, timeout=5) as r:
         return r.status, r.read().decode("utf-8")
 
@@ -89,7 +90,7 @@ def test_global_kill_via_dashboard(tmp_path):
         server, url = start_dashboard(svc)
         try:
             svc.start(cfg, clock=_clock)
-            s, body = _post(url + "/api/control?action=kill")
+            s, body = _post(url + "/api/control?action=kill", server.scout_csrf_token)
             assert s == 200 and json.loads(body)["ok"] is True
             svc.join(timeout=30)
             s, body = _get(url + "/api/status")

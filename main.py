@@ -200,13 +200,35 @@ def run_analyze_job(args) -> int:
     return 0
 
 
+def _parse_artifacts(spec, kind, is_evidence=False):
+    """Parse 'path[:kind_or_desc],...' into ProducedArtifact list."""
+    from core.orchestration.operator_executor import ProducedArtifact
+    out = []
+    for item in (spec or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        path, _, extra = item.partition(":")
+        path = path.strip()
+        if not path:
+            continue
+        if is_evidence:
+            out.append(ProducedArtifact(path, "report", is_evidence=True, evidence_kind="report",
+                                        description=extra.strip() or path))
+        else:
+            out.append(ProducedArtifact(path, (extra.strip() or kind)))
+    return out
+
+
 def run_client_work(args) -> int:
-    """v3.0.0 - operator actions over the persisted client-work lifecycle. Execution itself is
-    Claude-Code-driven and human-approved; Factory records/validates/delivers what was produced."""
+    """v3.0.0/v3.0.1 - operator CLI over the persisted client-work lifecycle. Execution is
+    Claude-Code-driven and human-approved; the Factory records/validates/reviews/delivers what was
+    produced. A whole client job completes via these commands - no custom Python driver needed."""
     import sys as _sys
 
     from core.config import get_settings
     from core.orchestration.work_execution import WorkExecutionError, WorkExecutionService
+    from core.orchestration.work_state_manager import InvalidTransitionError
     if not args.project_id:
         print("ERROR: --project-id is required", file=_sys.stderr)
         return 1
@@ -225,16 +247,51 @@ def run_client_work(args) -> int:
                 print("ERROR: --reviewer is required to approve", file=_sys.stderr)
                 return 1
             st = svc.approve(pid, reviewer=args.reviewer, note=args.note or "")
-            print(f"Approved {pid}: {st.status}. Execution is Claude-Code-driven and human-approved - "
-                  "produce artifacts in the workspace, then record evidence + validation via Factory.")
+            print(f"Approved {pid}: {st.status}. Do the work in the workspace, then: record-execution "
+                  "-> validate -> review -> prepare-delivery.")
+        elif args.action == "record-execution":
+            from core.orchestration.operator_executor import OperatorWorkspaceExecutor
+            produced = (_parse_artifacts(args.artifacts, "artifact")
+                        + _parse_artifacts(args.evidence, "report", is_evidence=True))
+            if not produced:
+                print("ERROR: give --artifacts and/or --evidence (comma-separated relative paths)",
+                      file=_sys.stderr)
+                return 1
+            executor = OperatorWorkspaceExecutor(produced, executor_id="operator:cli")
+            state, outcome = svc.execute(pid, executor)
+            if outcome.blockers:
+                print("BLOCKED: " + "; ".join(outcome.blockers), file=_sys.stderr)
+                return 2
+            print(f"Recorded execution for {pid}: {len(outcome.artifacts)} artifact(s), "
+                  f"{len(outcome.evidence)} evidence item(s). State {state.status}. Now: validate.")
+        elif args.action == "validate":
+            from core.orchestration.operator_executor import CommandValidationExecutor
+            if not (args.command or "").strip():
+                print("ERROR: --command is required (e.g. --command \"pytest -q\")", file=_sys.stderr)
+                return 1
+            state, result = svc.validate(pid, CommandValidationExecutor(args.command))
+            print(f"Validation for {pid}: {'PASS' if result.passed else 'FAIL'} "
+                  f"({result.tests_passed}/{result.tests_run}). State {state.status}. "
+                  f"{'Now: review.' if result.passed else 'Fix, then record-execution again.'}")
+            return 0 if result.passed else 3
+        elif args.action == "review":
+            if not (args.reviewer or "").strip():
+                print("ERROR: --reviewer is required to review", file=_sys.stderr)
+                return 1
+            st = svc.review(pid, reviewer=args.reviewer, approved=not args.reject, note=args.note or "")
+            print(f"Review {'REJECTED' if args.reject else 'APPROVED'} for {pid}: {st.status}.")
         elif args.action == "prepare-delivery":
             m = svc.prepare_delivery(pid)
             print(f"Delivery package prepared for {pid}: {len(m['produced_artifacts'])} artifact(s), "
-                  f"evidence={m['evidence_count']}, validation_passed={m['validation_passed']}.")
+                  f"evidence={m['evidence_count']}, validation_passed={m['validation_passed']}, "
+                  f"reviewed_by={m.get('reviewed_by') or '(none)'}.")
+        elif args.action == "mark-delivered":
+            st = svc.mark_delivered(pid, note=args.note or "")
+            print(f"Marked delivered for {pid}: {st.status}.")
         else:
             print("ERROR: unknown action", file=_sys.stderr)
             return 1
-    except WorkExecutionError as exc:
+    except (WorkExecutionError, InvalidTransitionError) as exc:
         print(f"BLOCKED: {exc}", file=_sys.stderr)
         return 2
     return 0
@@ -388,12 +445,21 @@ def main(argv: list[str] | None = None) -> int:
     # v3.0.0 — operator actions over the persisted client-work execution lifecycle
     cw_cmd = subparsers.add_parser(
         "client-work",
-        help="Drive the persisted client-work lifecycle: approve/status/resume/prepare-delivery "
+        help="Drive the persisted client-work lifecycle end to end: approve, record-execution, "
+             "validate, review, prepare-delivery, mark-delivered, status/resume "
              "(execution is Claude-Code-driven and human-approved)")
-    cw_cmd.add_argument("action", choices=["status", "resume", "approve", "prepare-delivery"])
+    cw_cmd.add_argument("action", choices=["status", "resume", "approve", "record-execution",
+                                           "validate", "review", "prepare-delivery", "mark-delivered"])
     cw_cmd.add_argument("--project-id", required=True, help="Project id (from analyze-job)")
-    cw_cmd.add_argument("--reviewer", help="Reviewer identity (required to approve)")
-    cw_cmd.add_argument("--note", default="", help="Optional approval note")
+    cw_cmd.add_argument("--reviewer", help="Reviewer identity (required to approve/review)")
+    cw_cmd.add_argument("--note", default="", help="Optional note (approval/review/delivery)")
+    cw_cmd.add_argument("--artifacts", help="record-execution: comma-separated relative artifact "
+                                            "paths, each optionally 'path:kind'")
+    cw_cmd.add_argument("--evidence", help="record-execution: comma-separated relative evidence "
+                                           "paths, each optionally 'path:description'")
+    cw_cmd.add_argument("--command", help="validate: the operator's own validation command run in "
+                                          "the workspace (e.g. \"pytest -q\")")
+    cw_cmd.add_argument("--reject", action="store_true", help="review: reject (send to REPAIR_REQUIRED)")
 
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
     scout_cmd = subparsers.add_parser(

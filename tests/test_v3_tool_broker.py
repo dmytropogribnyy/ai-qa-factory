@@ -21,8 +21,9 @@ def _gmail_unconfigured():
     return {"client_config_present": False, "token_present": False}
 
 
-def _broker(gmail=None):
-    return ToolBroker(which=_which, gmail_status_fn=gmail or _gmail_unconfigured, clock=lambda: "T0")
+def _broker(gmail=None, module_available=None):
+    return ToolBroker(which=_which, gmail_status_fn=gmail or _gmail_unconfigured, clock=lambda: "T0",
+                      module_available=module_available or (lambda _n: True))
 
 
 def _by_id(statuses):
@@ -44,12 +45,19 @@ def test_local_binary_health_check_is_honest():
     assert s["node"].readiness == "unavailable"
 
 
-def test_internal_runner_is_fixture_tested_and_no_tool_is_live_accepted():
-    snap = _broker().snapshot()
-    assert snap["any_live_accepted"] is False
-    s = _by_id(snap["tools"] and _broker().discover())
+def test_internal_runner_requires_a_concrete_check_not_catalogue_presence():
+    # With the real dependency present, the in-repo runner is fixture-tested; nothing is live-accepted.
+    ready = _broker(module_available=lambda _n: True)
+    s = _by_id(ready.discover())
+    assert ready.snapshot()["any_live_accepted"] is False
     assert s["playwright_internal"].readiness == "fixture-tested"
     assert s["api_runner_internal"].readiness == "fixture-tested"
+    # With the browser dependency MISSING, playwright_internal drops to 'declared' (honest), while the
+    # stdlib-only API runner stays fixture-tested. Catalogue presence alone never claims fixture-tested.
+    degraded = _by_id(_broker(module_available=lambda n: n not in ("playwright", "axe_core_python")).discover())
+    assert degraded["playwright_internal"].readiness == "declared"
+    assert degraded["playwright_internal"].setup_instruction        # setup is surfaced
+    assert degraded["api_runner_internal"].readiness == "fixture-tested"
 
 
 def test_mcp_tools_are_only_declared_not_live():

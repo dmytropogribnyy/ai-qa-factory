@@ -66,7 +66,12 @@ def test_operator_execution_is_recorded_and_persisted(tmp_path):
     state, outcome = svc.execute("op", executor)
     assert state.status == "VERIFYING" and not outcome.blockers
     state, result = svc.validate("op", executor)
-    assert result.passed and result.tests_passed == 1
+    assert result.passed and result.tests_passed == 1 and state.status == "READY_FOR_REVIEW"
+    # Delivery needs an explicit operator review; it cannot be prepared straight from validation.
+    import pytest
+    with pytest.raises(Exception):
+        svc.prepare_delivery("op")
+    svc.review("op", reviewer="operator", approved=True, note="reviewed the deliverables")
     manifest = svc.prepare_delivery("op")
 
     # The Factory PERSISTED the operator-authored artifacts, evidence, validation, and delivery.
@@ -74,8 +79,25 @@ def test_operator_execution_is_recorded_and_persisted(tmp_path):
     assert prog["is_acceptance_fixture"] is False
     assert (ws / "EVIDENCE_INDEX.json").exists() and svc.status("op").evidence_count == 1
     assert json.loads((ws / "TEST_RESULTS.json").read_text(encoding="utf-8"))["passed"] is True
-    assert manifest["validation_passed"] and (ws / "WORK_DELIVERY_MANIFEST.json").exists()
+    assert manifest["validation_passed"] and manifest["review_approved"] is True
+    assert manifest["artifact_hashes"] and (ws / "WORK_DELIVERY_MANIFEST.json").exists()
     assert svc.status("op").status == "READY_FOR_DELIVERY"
+
+
+def test_command_validation_executor_runs_a_real_command(tmp_path):
+    import sys as _sys
+
+    from core.orchestration.operator_executor import CommandValidationExecutor
+    from core.schemas.work_execution import ExecutionContext
+    (tmp_path / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    ctx = ExecutionContext(project_id="x", profile="", workspace_dir=str(tmp_path),
+                           requirements=[], now="t")
+    ok = CommandValidationExecutor([_sys.executable, "-c", "import calc; assert calc.add(2, 3) == 5"])
+    res = ok.validate(ctx)
+    assert res.passed and res.details["returncode"] == 0
+    assert (tmp_path / "evidence" / "validation_output.txt").exists()   # captured output as evidence
+    bad = CommandValidationExecutor([_sys.executable, "-c", "raise SystemExit(1)"])
+    assert bad.validate(ctx).passed is False
 
 
 def test_missing_operator_artifact_is_an_honest_blocker(tmp_path):

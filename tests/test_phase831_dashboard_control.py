@@ -59,8 +59,9 @@ def _cfg(base, host, tmp, names, run_id):
                           output_dir=str(tmp), run_id=run_id, max_pages_per_site=3)
 
 
-def _post(url):
-    req = urllib.request.Request(url, method="POST")
+def _post(url, token=None):
+    headers = {"X-Scout-CSRF": token} if token else {}
+    req = urllib.request.Request(url, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status, json.loads(r.read().decode("utf-8"))
@@ -89,7 +90,7 @@ def test_pause_halts_then_resume_completes(tmp_path):
             svc.start(_cfg(base, host, tmp_path, names, "pause-run"), clock=_clock, backend=gated)
             assert gated.entered.wait(timeout=5)     # worker is inside the first observe()
 
-            code, body = _post(url + "/api/control?action=pause")
+            code, body = _post(url + "/api/control?action=pause", server.scout_csrf_token)
             assert code == 200 and body["ok"] is True
             assert _status(url)["controllable"] is True and _status(url)["mode"] == "ACTIVE"
 
@@ -99,7 +100,7 @@ def test_pause_halts_then_resume_completes(tmp_path):
             assert paused["control"]["paused"] is True
             assert _done_count(paused["state"]) == 0  # no prospect completes while paused
 
-            code, body = _post(url + "/api/control?action=resume")
+            code, body = _post(url + "/api/control?action=resume", server.scout_csrf_token)
             assert code == 200 and body["ok"] is True
             svc.join(timeout=30)
             final = _status(url)
@@ -120,7 +121,7 @@ def test_cancel_produces_cancelled(tmp_path):
         try:
             svc.start(_cfg(base, host, tmp_path, names, "cancel-run"), clock=_clock, backend=gated)
             assert gated.entered.wait(timeout=5)
-            code, body = _post(url + "/api/control?action=cancel")
+            code, body = _post(url + "/api/control?action=cancel", server.scout_csrf_token)
             assert code == 200 and body["ok"] is True
             gated.release()
             svc.join(timeout=30)
@@ -140,7 +141,7 @@ def test_global_kill_produces_killed(tmp_path):
         try:
             svc.start(_cfg(base, host, tmp_path, names, "kill-run"), clock=_clock, backend=gated)
             assert gated.entered.wait(timeout=5)
-            code, body = _post(url + "/api/control?action=kill")
+            code, body = _post(url + "/api/control?action=kill", server.scout_csrf_token)
             assert code == 200 and body["ok"] is True
             gated.release()
             svc.join(timeout=30)
@@ -166,7 +167,7 @@ def test_attached_finished_run_rejects_control(tmp_path):
             assert st["mode"] == "READ_ONLY_ATTACHED" and st["controllable"] is False
             assert st["state"]["status"] == RUN_COMPLETED
             for action in ("pause", "resume", "cancel", "kill"):
-                code, body = _post(url + f"/api/control?action={action}")
+                code, body = _post(url + f"/api/control?action={action}", server.scout_csrf_token)
                 assert code == 409 and body["ok"] is False  # no fake success
             # HTML overview hides controls for a read-only run.
             with urllib.request.urlopen(url + "/", timeout=5) as r:
