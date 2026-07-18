@@ -42,15 +42,24 @@ After approval, Claude executes through the repo runners, the selected tools (se
 runs validation, and prepares the delivery package. Execution is **Claude-Code-driven and
 human-approved** — the Factory records and persists what was produced; it is not an autonomous agent.
 
-Drive the persisted lifecycle from the CLI (each command reads/writes the durable state on disk, so
-it survives a restart or a new Claude session):
+Drive the whole persisted lifecycle from the CLI — no custom script needed. Each command
+reads/writes durable state on disk, so it survives a restart or a new Claude session:
 
 ```powershell
-python main.py client-work status           --project-id <id>   # where it stands + next action
-python main.py client-work approve           --project-id <id> --reviewer <you> --note "..."
-python main.py client-work resume            --project-id <id>   # reload persisted state
-python main.py client-work prepare-delivery  --project-id <id>   # build the delivery package
+python main.py client-work status           --project-id <id>                    # where it stands + next action
+python main.py client-work approve           --project-id <id> --reviewer <you>   # PLANNED -> READY_TO_EXECUTE
+#   ... do the work in outputs/<id>/40_ark_work/ ...
+python main.py client-work record-execution  --project-id <id> --artifacts src/app.py,tests/test_app.py --evidence before.txt:"failing first"
+python main.py client-work validate          --project-id <id> --command "pytest -q"   # runs YOUR command; captures output as evidence
+python main.py client-work review            --project-id <id> --reviewer <you>   # explicit gate (or --reject -> REPAIR_REQUIRED)
+python main.py client-work prepare-delivery  --project-id <id>                    # verifies hashes + scans, builds the package
+python main.py client-work mark-delivered    --project-id <id>
+python main.py client-work resume            --project-id <id>                    # reload persisted state after a restart
 ```
+
+The Factory content-hashes every produced artifact + evidence at execution and **refuses delivery**
+if anything changed after validation or if the delivery contents look secret-like. Delivery also
+requires the explicit review above — validation alone never advances to delivery.
 
 ## 4. Delivery
 
