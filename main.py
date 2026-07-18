@@ -200,6 +200,46 @@ def run_analyze_job(args) -> int:
     return 0
 
 
+def run_client_work(args) -> int:
+    """v3.0.0 - operator actions over the persisted client-work lifecycle. Execution itself is
+    Claude-Code-driven and human-approved; Factory records/validates/delivers what was produced."""
+    import sys as _sys
+
+    from core.config import get_settings
+    from core.orchestration.work_execution import WorkExecutionError, WorkExecutionService
+    if not args.project_id:
+        print("ERROR: --project-id is required", file=_sys.stderr)
+        return 1
+    svc = WorkExecutionService(output_dir=str(Path(get_settings().output_dir)))
+    pid = args.project_id
+    try:
+        if args.action in ("status", "resume"):
+            v = svc.resume(pid) if args.action == "resume" else svc.status(pid)
+            print(f"Project {pid}: {v.status} ({v.progress}%)  evidence={v.evidence_count}  "
+                  f"tests={v.tests_passed}/{v.tests_run}  delivery_ready={v.delivery_ready}")
+            if v.blockers:
+                print("Blockers: " + ", ".join(v.blockers))
+            print(f"Next: {v.next_action}")
+        elif args.action == "approve":
+            if not (args.reviewer or "").strip():
+                print("ERROR: --reviewer is required to approve", file=_sys.stderr)
+                return 1
+            st = svc.approve(pid, reviewer=args.reviewer, note=args.note or "")
+            print(f"Approved {pid}: {st.status}. Execution is Claude-Code-driven and human-approved - "
+                  "produce artifacts in the workspace, then record evidence + validation via Factory.")
+        elif args.action == "prepare-delivery":
+            m = svc.prepare_delivery(pid)
+            print(f"Delivery package prepared for {pid}: {len(m['produced_artifacts'])} artifact(s), "
+                  f"evidence={m['evidence_count']}, validation_passed={m['validation_passed']}.")
+        else:
+            print("ERROR: unknown action", file=_sys.stderr)
+            return 1
+    except WorkExecutionError as exc:
+        print(f"BLOCKED: {exc}", file=_sys.stderr)
+        return 2
+    return 0
+
+
 def run_projects(args) -> int:
     """v3.0.0 - one read-only index over client-work projects + Scout campaigns (no new database)."""
     from core.config import get_settings
@@ -345,6 +385,16 @@ def main(argv: list[str] | None = None) -> int:
     projects_cmd.add_argument("--json", action="store_true", dest="as_json",
                               help="Print the machine-readable project snapshot")
 
+    # v3.0.0 — operator actions over the persisted client-work execution lifecycle
+    cw_cmd = subparsers.add_parser(
+        "client-work",
+        help="Drive the persisted client-work lifecycle: approve/status/resume/prepare-delivery "
+             "(execution is Claude-Code-driven and human-approved)")
+    cw_cmd.add_argument("action", choices=["status", "resume", "approve", "prepare-delivery"])
+    cw_cmd.add_argument("--project-id", required=True, help="Project id (from analyze-job)")
+    cw_cmd.add_argument("--reviewer", help="Reviewer identity (required to approve)")
+    cw_cmd.add_argument("--note", default="", help="Optional approval note")
+
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
     scout_cmd = subparsers.add_parser(
         "scout", help="Prospect QA Scout v1.0 — bounded read-only local QA over public seeds"
@@ -447,6 +497,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "projects":
         return run_projects(args)
+
+    if args.mode == "client-work":
+        return run_client_work(args)
 
     if args.mode == "scout":
         from core.scout.cli import run_scout_cli
