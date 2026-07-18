@@ -81,9 +81,12 @@ jobs:
         run: |
           mkdir -p .pw-runtime
           cd .pw-runtime
-          npm init -y
+          # A dotted dir name is an invalid npm package name, so write package.json explicitly
+          # instead of `npm init -y`. System libs were already installed by the Python step above,
+          # so install the browser only (no --with-deps).
+          printf '{"name":"pw-runtime","version":"1.0.0","private":true}\n' > package.json
           npm install "@playwright/test@^1.44.0"
-          ./node_modules/.bin/playwright install --with-deps chromium
+          ./node_modules/.bin/playwright install chromium
       - name: "Real browser acceptance: Chromium+axe (B) + real playwright test on generated TS framework (A); zero skips"
         env:
           PLAYWRIGHT_TEST_RUNTIME: ${{ github.workspace }}/.pw-runtime
