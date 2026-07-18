@@ -137,6 +137,30 @@ class MemoryRepository:
         with self.db.transaction() as c:
             c.execute("UPDATE contacts SET status=? WHERE contact_id=?", (status, contact_id))
 
+    # --- contact provenance (schema v3) ----------------------------------
+    def add_provenance(self, record: Dict[str, Any]) -> str:
+        """Persist an immutable provenance row, superseding any prior ACTIVE row for the contact
+        (a contact's provenance is a normalized, immutable, single-ACTIVE-row history)."""
+        cols = ("provenance_id", "contact_id", "company_id", "source_category", "source_url",
+                "source_evidence_ref", "extraction_method", "observed_at", "last_verified_at",
+                "freshness_deadline", "publicly_published_for_contact", "terms_review_status",
+                "source_version", "confidence", "data_subject_category", "person_class",
+                "manual_review_required", "manual_review_ref", "named_person_review_result",
+                "suppression_check_ref", "normalized_source_hash", "created_at")
+        with self.db.transaction() as c:
+            c.execute("UPDATE contact_provenance SET state='SUPERSEDED' "
+                      "WHERE contact_id=? AND state='ACTIVE'", (record["contact_id"],))
+            c.execute(
+                f"INSERT INTO contact_provenance ({', '.join(cols)}, state) "
+                f"VALUES ({', '.join('?' for _ in cols)}, 'ACTIVE')",
+                tuple(_prov_value(record, col) for col in cols))
+        return record["provenance_id"]
+
+    def active_provenance(self, contact_id: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM contact_provenance WHERE contact_id=? AND state='ACTIVE' "
+                             "ORDER BY created_at DESC LIMIT 1", (contact_id,))
+        return dict(rows[0]) if rows else None
+
     def get_finding(self, finding_id: str) -> Optional[Dict[str, Any]]:
         rows = self.db.query("SELECT * FROM findings WHERE finding_id=? ORDER BY last_seen_at DESC "
                              "LIMIT 1", (finding_id,))
@@ -228,3 +252,12 @@ class MemoryRepository:
 
 def now_of(f: Dict[str, Any]) -> str:
     return f.get("first_seen_at") or f.get("last_seen_at") or ""
+
+
+_PROV_BOOL_COLS = frozenset({"publicly_published_for_contact", "manual_review_required"})
+
+
+def _prov_value(record: Dict[str, Any], col: str) -> Any:
+    if col in _PROV_BOOL_COLS:
+        return 1 if record.get(col) else 0
+    return record.get(col, "")

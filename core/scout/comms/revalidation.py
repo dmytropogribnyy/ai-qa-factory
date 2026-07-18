@@ -13,6 +13,12 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from core.scout.comms.controls import sending_allowed
+from core.scout.comms.provenance import provenance_blockers
+from core.scout.comms.records import (
+    ensure_suppression_check,
+    record_pre_send_revalidation,
+    references_resolve,
+)
 from core.scout.comms.repository import CommsRepository
 from core.scout.comms.snapshots import approval_binding, is_placeholder_ref, suppression_snapshot
 from core.scout.memory.repository import MemoryRepository
@@ -75,6 +81,10 @@ def revalidate(mem: MemoryRepository, comms: CommsRepository, revision_id: str, 
     finding = mem.get_finding(rev["finding_id"])
     evidence = mem.evidence_for_finding(rev["finding_id"])
     events = comms.contact_event_types(rev["contact_id"])
+    provenance = mem.active_provenance(rev["contact_id"])
+
+    # Complete contact provenance is mandatory (missing/synthetic/unpublished/expired -> block).
+    blockers.extend(provenance_blockers(provenance, now=now))
 
     if contact is None:
         blockers.append("contact_missing")
@@ -113,12 +123,29 @@ def revalidate(mem: MemoryRepository, comms: CommsRepository, revision_id: str, 
                         "is_client_safe": bool(finding["client_safe"]), "evidence_ids": ev_ids}
         safe_findings = ([{"finding_id": finding["finding_id"], "business_impact": finding["title"],
                            "evidence_ids": ev_ids}] if finding["client_safe"] else [])
+        # Real, persisted, resolvable gate references (never synthetic "reval-live" labels).
+        supp_blockers = ([b for b, on in (("no_outreach", no_outreach),
+                          ("company_suppressed", company_suppressed), ("opt_out", "OPT_OUT" in events),
+                          ("hard_bounce", "HARD_BOUNCE" in events), ("complaint", "COMPLAINT" in events))
+                          if on])
+        supp_ref = ensure_suppression_check(comms, company_id=rev["company_id"],
+                                            contact_id=rev["contact_id"], blockers=supp_blockers,
+                                            now=now)
+        reval_ref = record_pre_send_revalidation(comms, company_id=rev["company_id"],
+                                                 contact_id=rev["contact_id"], revision_id=revision_id,
+                                                 approval_id=approval_id, blockers=sorted(set(blockers)),
+                                                 now=now)
         manifest = build_manifest(rev["company_id"], safe_findings, stage="OUTREACH",
-                                  contact_ref=rev["contact_id"], suppression_check_ref="reval-live",
-                                  revalidation_ref="reval-live", approval_ref="", generated_at=now)
+                                  contact_ref=rev["contact_id"], suppression_check_ref=supp_ref,
+                                  revalidation_ref=reval_ref, approval_ref="", generated_at=now)
         disc = {"ready": manifest.is_ready, "stage": manifest.stage,
                 "item_finding_refs": [i.finding_ref for i in manifest.items],
                 "blockers": manifest.blockers}
+        # The manifest is send-ready only when its suppression reference resolves to a real record.
+        _, ref_blockers = references_resolve(comms, suppression_check_ref=supp_ref,
+                                             company_id=rev["company_id"],
+                                             contact_id=rev["contact_id"], now=now)
+        blockers.extend(ref_blockers)
         supp = suppression_snapshot(rev["company_id"], no_outreach=no_outreach,
                                     company_suppressed=company_suppressed,
                                     opted_out="OPT_OUT" in events,
@@ -127,7 +154,7 @@ def revalidate(mem: MemoryRepository, comms: CommsRepository, revision_id: str, 
         current = approval_binding(revision_id=revision_id, recipient=contact, channel=channel,
                                    subject=rev["subject"], body=rev["body"], disclosure=disc,
                                    finding=finding_dict, evidence_rows=evidence, contact=contact,
-                                   suppression=supp)
+                                   suppression=supp, provenance=provenance)
         for key in _HASH_KEYS:
             if current.get(key) != ap.get(key):
                 blockers.append(f"changed_{key[:-5]}")  # e.g. changed_body, changed_recipient

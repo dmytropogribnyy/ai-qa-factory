@@ -25,7 +25,7 @@ class MigrationError(MemoryError):
     pass
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Each migration is (version, [DDL statements]). Applied atomically in ascending order.
 _MIGRATION_1: List[str] = [
@@ -229,7 +229,55 @@ _MIGRATION_2: List[str] = [
     "CREATE INDEX idx_provider_events_type ON provider_events(normalized_type)",
 ]
 
-MIGRATIONS: List[Tuple[int, List[str]]] = [(1, _MIGRATION_1), (2, _MIGRATION_2)]
+# Final Independent Acceptance (v2.0.1) — complete contact provenance and real, persisted gate
+# records (suppression checks, pre-send revalidations, policy decisions). Additive: all v1/v2
+# tables and no-send draft history are preserved. Synthetic string references (e.g. "reval-live")
+# are replaced by rows with resolvable immutable ids, content hashes, and expiry.
+_MIGRATION_3: List[str] = [
+    """CREATE TABLE contact_provenance (
+        provenance_id TEXT PRIMARY KEY, contact_id TEXT NOT NULL, company_id TEXT NOT NULL,
+        source_category TEXT NOT NULL DEFAULT '', source_url TEXT NOT NULL DEFAULT '',
+        source_evidence_ref TEXT NOT NULL DEFAULT '', extraction_method TEXT NOT NULL DEFAULT '',
+        observed_at TEXT NOT NULL DEFAULT '', last_verified_at TEXT NOT NULL DEFAULT '',
+        freshness_deadline TEXT NOT NULL DEFAULT '',
+        publicly_published_for_contact INTEGER NOT NULL DEFAULT 0,
+        terms_review_status TEXT NOT NULL DEFAULT 'unreviewed', source_version TEXT NOT NULL DEFAULT '',
+        confidence TEXT NOT NULL DEFAULT 'low', data_subject_category TEXT NOT NULL DEFAULT 'unknown',
+        person_class TEXT NOT NULL DEFAULT 'generic', manual_review_required INTEGER NOT NULL DEFAULT 0,
+        manual_review_ref TEXT NOT NULL DEFAULT '', named_person_review_result TEXT NOT NULL DEFAULT '',
+        suppression_check_ref TEXT NOT NULL DEFAULT '', normalized_source_hash TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL DEFAULT 'ACTIVE', created_at TEXT NOT NULL,
+        FOREIGN KEY (contact_id) REFERENCES contacts(contact_id) ON DELETE CASCADE,
+        CHECK (state IN ('ACTIVE','SUPERSEDED')),
+        CHECK (publicly_published_for_contact IN (0,1)),
+        CHECK (manual_review_required IN (0,1))
+    )""",
+    """CREATE TABLE suppression_checks (
+        check_id TEXT PRIMARY KEY, company_id TEXT NOT NULL, contact_id TEXT NOT NULL DEFAULT '',
+        result TEXT NOT NULL DEFAULT '', blockers TEXT NOT NULL DEFAULT '[]',
+        content_hash TEXT NOT NULL DEFAULT '', generated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (company_id) REFERENCES companies(company_id) ON DELETE CASCADE
+    )""",
+    """CREATE TABLE pre_send_revalidations (
+        revalidation_id TEXT PRIMARY KEY, company_id TEXT NOT NULL, contact_id TEXT NOT NULL DEFAULT '',
+        revision_id TEXT NOT NULL DEFAULT '', approval_id TEXT NOT NULL DEFAULT '',
+        result TEXT NOT NULL DEFAULT '', blockers TEXT NOT NULL DEFAULT '[]',
+        content_hash TEXT NOT NULL DEFAULT '', generated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE policy_decisions (
+        decision_id TEXT PRIMARY KEY, company_id TEXT NOT NULL, contact_id TEXT NOT NULL DEFAULT '',
+        channel TEXT NOT NULL DEFAULT 'email', country TEXT NOT NULL DEFAULT '',
+        result TEXT NOT NULL DEFAULT '', content_hash TEXT NOT NULL DEFAULT '',
+        generated_at TEXT NOT NULL, expires_at TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE INDEX idx_provenance_contact ON contact_provenance(contact_id, state)",
+    "CREATE INDEX idx_suppression_checks_company ON suppression_checks(company_id)",
+]
+
+MIGRATIONS: List[Tuple[int, List[str]]] = [
+    (1, _MIGRATION_1), (2, _MIGRATION_2), (3, _MIGRATION_3)]
 
 
 class MemoryDB:

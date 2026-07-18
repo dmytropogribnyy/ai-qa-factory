@@ -11,9 +11,14 @@ import hashlib
 import json
 from typing import Any, Dict, List
 
-# References that are placeholders, never authoritative — sending must reject them.
+# References that are placeholders/labels, never authoritative persisted records — sending must
+# reject them. A real reference is a resolvable immutable record id, not a human-looking string.
 PLACEHOLDER_REFS = frozenset({"", "supp-1", "reval-1", "ev-pending", "ev-none", "ev",
-                              "reval-pending", "pending", "c", "c1", "site", "market-policy"})
+                              "reval-pending", "pending", "c", "c1", "site", "market-policy",
+                              "reval-live", "supp-live", "live", "current", "latest",
+                              "placeholder", "none", "todo", "tbd", "x", "n/a", "-"})
+# Prefixes that mark a legacy fixture shortcut / label rather than a persisted record id.
+_PLACEHOLDER_PREFIXES = ("reval-live", "supp-live", "placeholder", "pending", "temp-", "fixme")
 
 
 def canonical_hash(obj: Any) -> str:
@@ -23,7 +28,8 @@ def canonical_hash(obj: Any) -> str:
 
 
 def is_placeholder_ref(ref: str) -> bool:
-    return (ref or "").strip() in PLACEHOLDER_REFS
+    r = (ref or "").strip()
+    return r in PLACEHOLDER_REFS or r.lower().startswith(_PLACEHOLDER_PREFIXES)
 
 
 def body_hash(subject: str, body: str) -> str:
@@ -46,6 +52,27 @@ def contact_provenance_snapshot(contact: Dict[str, Any]) -> Dict[str, Any]:
             "source_category": contact.get("source_category", ""),
             "manual_review_required": bool(contact.get("manual_review_required")),
             "last_verified_at": contact.get("last_verified_at", "")}
+
+
+# Stable schema version for the provenance snapshot hash (bump only on a field change).
+PROVENANCE_SNAPSHOT_VERSION = "1"
+_PROVENANCE_FIELDS = (
+    "provenance_id", "contact_id", "company_id", "source_category", "source_url",
+    "source_evidence_ref", "extraction_method", "observed_at", "last_verified_at",
+    "freshness_deadline", "terms_review_status", "source_version", "confidence",
+    "data_subject_category", "person_class", "named_person_review_result",
+    "normalized_source_hash", "state")
+
+
+def provenance_snapshot(provenance: Dict[str, Any]) -> Dict[str, Any]:
+    """The immutable provenance snapshot an approval binds to. Includes the boolean gate flags so
+    a later change to 'publicly published' or 'manual review' invalidates the approval."""
+    snap: Dict[str, Any] = {"version": PROVENANCE_SNAPSHOT_VERSION}
+    for f in _PROVENANCE_FIELDS:
+        snap[f] = provenance.get(f, "")
+    snap["publicly_published_for_contact"] = bool(provenance.get("publicly_published_for_contact"))
+    snap["manual_review_required"] = bool(provenance.get("manual_review_required"))
+    return snap
 
 
 def finding_snapshot(finding: Dict[str, Any]) -> Dict[str, Any]:
@@ -80,8 +107,13 @@ def suppression_snapshot(company_id: str, *, no_outreach: bool, company_suppress
 def approval_binding(*, revision_id: str, recipient: Dict[str, Any], channel: str,
                      subject: str, body: str, disclosure: Dict[str, Any], finding: Dict[str, Any],
                      evidence_rows: List[Dict[str, Any]], contact: Dict[str, Any],
-                     suppression: Dict[str, Any]) -> Dict[str, str]:
-    """The full set of hashes an approval binds to (and revalidation recomputes)."""
+                     suppression: Dict[str, Any],
+                     provenance: Dict[str, Any] = None) -> Dict[str, str]:
+    """The full set of hashes an approval binds to (and revalidation recomputes). When a full
+    persisted provenance record is supplied it is bound (v2.0.1); otherwise the lightweight
+    contact-derived provenance snapshot is used (legacy)."""
+    prov_hash = (canonical_hash(provenance_snapshot(provenance)) if provenance
+                 else canonical_hash(contact_provenance_snapshot(contact)))
     return {
         "revision_id": revision_id,
         "recipient_hash": canonical_hash(recipient_snapshot(recipient)),
@@ -90,6 +122,6 @@ def approval_binding(*, revision_id: str, recipient: Dict[str, Any], channel: st
         "disclosure_hash": canonical_hash(disclosure_snapshot(disclosure)),
         "finding_hash": canonical_hash(finding_snapshot(finding)),
         "evidence_hash": canonical_hash(evidence_snapshot(evidence_rows)),
-        "contact_provenance_hash": canonical_hash(contact_provenance_snapshot(contact)),
+        "contact_provenance_hash": prov_hash,
         "suppression_hash": canonical_hash(suppression),
     }

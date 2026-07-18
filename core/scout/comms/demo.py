@@ -17,6 +17,7 @@ from core.scout.comms.approval import approve_revision, build_revision
 from core.scout.comms.events import process_event
 from core.scout.comms.followup import evaluate_followup
 from core.scout.comms.metrics import compute_metrics
+from core.scout.comms.provenance import fixture_provenance
 from core.scout.comms.providers import (
     DeterministicLocalSinkProvider,
     ProviderRegistry,
@@ -50,6 +51,7 @@ def _seed(mem: MemoryRepository) -> None:
                         "normalized_value": _RECIP, "status": "VERIFIED",
                         "data_subject_category": "organization", "manual_review_required": False,
                         "last_verified_at": _NOW})
+    mem.add_provenance(fixture_provenance("k1", "co-1", _NOW, domain="one.example"))
     mem.upsert_finding({"finding_id": "f1", "capability": "accessibility", "category": "accessibility",
                         "severity": "medium", "title": "Missing alt text on the hero image",
                         "root_impact_key": "axe:image-alt", "verification_state": "VERIFIED",

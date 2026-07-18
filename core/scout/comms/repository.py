@@ -231,6 +231,50 @@ class CommsRepository:
         return {r["event_type"] for r in self.db.query(
             "SELECT DISTINCT event_type FROM contact_events WHERE contact_id=?", (contact_id,))}
 
+    # --- real persisted gate records (schema v3) --------------------------
+    def record_suppression_check(self, rec: Dict[str, Any]) -> str:
+        with self.db.transaction() as c:
+            c.execute("INSERT OR REPLACE INTO suppression_checks (check_id, company_id, contact_id, "
+                      "result, blockers, content_hash, generated_at, expires_at) VALUES (?,?,?,?,?,?,?,?)",
+                      (rec["check_id"], rec["company_id"], rec.get("contact_id", ""),
+                       rec.get("result", ""), json.dumps(rec.get("blockers", [])),
+                       rec.get("content_hash", ""), rec["generated_at"], rec.get("expires_at", "")))
+        return rec["check_id"]
+
+    def get_suppression_check(self, check_id: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM suppression_checks WHERE check_id=?", (check_id,))
+        return dict(rows[0]) if rows else None
+
+    def record_revalidation(self, rec: Dict[str, Any]) -> str:
+        with self.db.transaction() as c:
+            c.execute("INSERT OR REPLACE INTO pre_send_revalidations (revalidation_id, company_id, "
+                      "contact_id, revision_id, approval_id, result, blockers, content_hash, "
+                      "generated_at, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (rec["revalidation_id"], rec["company_id"], rec.get("contact_id", ""),
+                       rec.get("revision_id", ""), rec.get("approval_id", ""), rec.get("result", ""),
+                       json.dumps(rec.get("blockers", [])), rec.get("content_hash", ""),
+                       rec["generated_at"], rec.get("expires_at", "")))
+        return rec["revalidation_id"]
+
+    def get_revalidation(self, revalidation_id: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM pre_send_revalidations WHERE revalidation_id=?",
+                             (revalidation_id,))
+        return dict(rows[0]) if rows else None
+
+    def record_policy_decision(self, rec: Dict[str, Any]) -> str:
+        with self.db.transaction() as c:
+            c.execute("INSERT OR REPLACE INTO policy_decisions (decision_id, company_id, contact_id, "
+                      "channel, country, result, content_hash, generated_at, expires_at) "
+                      "VALUES (?,?,?,?,?,?,?,?,?)",
+                      (rec["decision_id"], rec["company_id"], rec.get("contact_id", ""),
+                       rec.get("channel", "email"), rec.get("country", ""), rec.get("result", ""),
+                       rec.get("content_hash", ""), rec["generated_at"], rec.get("expires_at", "")))
+        return rec["decision_id"]
+
+    def get_policy_decision(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM policy_decisions WHERE decision_id=?", (decision_id,))
+        return dict(rows[0]) if rows else None
+
     # --- controls ---------------------------------------------------------
     def set_control(self, scope: str, state: str, extra: Optional[Dict[str, Any]] = None) -> None:
         with self.db.transaction() as c:

@@ -40,7 +40,8 @@ S_BLOCKED, S_DRY_RUN, S_ACCEPTED, S_FAILED, S_UNKNOWN, S_IDEMPOTENT = (
 _MATERIAL = ("changed_", "finding_not_sendable", "finding_missing", "contact_missing",
              "contact_not_verified", "contact_blocked_by_event", "evidence_expired",
              "evidence_not_client_safe", "no_outreach_suppression", "company_suppressed",
-             "revision_superseded", "revision_expired", "approval_expired", "placeholder_reference")
+             "revision_superseded", "revision_expired", "approval_expired", "placeholder_reference",
+             "provenance_", "contact_not_publicly_published", "named_person_review_incomplete")
 
 
 @dataclass

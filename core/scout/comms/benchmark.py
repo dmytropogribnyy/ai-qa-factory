@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict
 
 from core.scout.comms.approval import ApprovalError, approve_revision, build_revision
+from core.scout.comms.provenance import fixture_provenance
 from core.scout.comms.providers import DeterministicLocalSinkProvider, ProviderRegistry
 from core.scout.comms.repository import CommsRepository
 from core.scout.comms.send import S_ACCEPTED, SendService
@@ -20,13 +21,16 @@ _NOW = "2026-07-17T17:00:00+00:00"
 
 
 def _company(mem, cid, *, contact_status="VERIFIED", finding_lifecycle="ACTIVE",
-             client_safe=True, category="accessibility", suppress=False):
+             client_safe=True, category="accessibility", suppress=False, with_provenance=True):
     mem.upsert_company(cid, "camp", cid, f"{cid}.example", _NOW)
     mem.add_session(f"s-{cid}", "camp", cid, f"https://{cid}.example/", "agency", _NOW)
     mem.upsert_contact({"contact_id": f"k-{cid}", "company_id": cid, "channel": "email",
                         "normalized_value": f"hi@{cid}.example", "status": contact_status,
                         "data_subject_category": "organization", "manual_review_required": False,
                         "last_verified_at": _NOW})
+    # An inferred-only contact has no complete provenance (blocks at build).
+    if with_provenance:
+        mem.add_provenance(fixture_provenance(f"k-{cid}", cid, _NOW, domain=f"{cid}.example"))
     mem.upsert_finding({"finding_id": f"f-{cid}", "capability": "accessibility", "category": category,
                         "severity": "medium", "title": "Issue", "root_impact_key": f"k:{cid}",
                         "verification_state": "VERIFIED", "lifecycle_state": finding_lifecycle,
@@ -54,7 +58,7 @@ def run_benchmark(output_dir: str, *, clock: Callable[[], str] = lambda: _NOW) -
     scenarios = {
         "clean": {},
         "suppressed": {"suppress": True},
-        "inferred": {"contact_status": "UNVERIFIED"},
+        "inferred": {"contact_status": "UNVERIFIED", "with_provenance": False},
         "opted_out": {},  # opt-out event added below
         "stale_finding": {"finding_lifecycle": "RESOLVED"},
         "responsible_disclosure": {"category": "security"},
