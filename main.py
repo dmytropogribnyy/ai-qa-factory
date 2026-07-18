@@ -200,6 +200,26 @@ def run_analyze_job(args) -> int:
     return 0
 
 
+def run_tool_status(args) -> int:
+    """v3.0.0 - honest capability/tool readiness (no live MCP or network call; none live-accepted)."""
+    from datetime import datetime, timezone
+
+    from core.orchestration.tool_broker import ToolBroker
+    broker = ToolBroker(clock=lambda: datetime.now(timezone.utc).isoformat())
+    if getattr(args, "as_json", False):
+        import json as _json
+        print(_json.dumps(broker.snapshot(), indent=2, ensure_ascii=False))
+        return 0
+    print("Tool readiness (deterministic; no live MCP/network call; none live-accepted):")
+    print(f"  {'tool':22} {'domain':26} {'readiness':16} auth / fallback")
+    for t in broker.discover():
+        print(f"  {t.id:22} {t.domain:26} {t.readiness:16} {t.auth_requirement} / {t.fallback}")
+        if t.readiness in ("unavailable", "blocked-by-auth") and t.setup_instruction:
+            print(f"      setup: {t.setup_instruction}")
+    print("Session-only MCP tools are 'declared' here; connect them in Claude Code (/mcp) to use.")
+    return 0
+
+
 def require_real_llm_guard(settings, require_real_llm: bool, allow_mock: bool = False) -> None:
     if require_real_llm and settings.is_mock and not allow_mock:
         raise RuntimeError(
@@ -293,6 +313,12 @@ def main(argv: list[str] | None = None) -> int:
     analyze_cmd.add_argument("--source-platform", default="unknown",
                              help="Commercial source platform (e.g. upwork, direct)")
     analyze_cmd.add_argument("--profile", help="Optional capability-profile override")
+
+    # v3.0.0 — honest capability/tool readiness broker
+    tool_cmd = subparsers.add_parser(
+        "tool-status", help="Show honest tool readiness (internal/local/session/external; none live)")
+    tool_cmd.add_argument("--json", action="store_true", dest="as_json",
+                          help="Print the machine-readable capability snapshot")
 
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
     scout_cmd = subparsers.add_parser(
@@ -390,6 +416,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "analyze-job":
         return run_analyze_job(args)
+
+    if args.mode == "tool-status":
+        return run_tool_status(args)
 
     if args.mode == "scout":
         from core.scout.cli import run_scout_cli
