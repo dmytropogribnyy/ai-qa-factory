@@ -79,6 +79,10 @@ def _make_handler(service: ScoutService):
                 return self._json(200, self._presend_summary())
             if path == "/api/comms":
                 return self._json(200, self._comms_summary())
+            if path == "/api/tools":
+                return self._json(200, self._tools_snapshot())
+            if path == "/tools":
+                return self._html(200, self._tools_html())
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
@@ -249,6 +253,32 @@ Review items: {s['review_items']} — APIs: <a href="/api/presend">presend</a>,
 {rrows or '<tr><td colspan=2>none</td></tr>'}</table>
 </body></html>"""
 
+        def _tools_snapshot(self):
+            from core.orchestration.tool_broker import ToolBroker
+            return ToolBroker(clock=lambda: "").snapshot()
+
+        def _tools_html(self) -> str:
+            snap = self._tools_snapshot()
+            rows = "".join(
+                f"<tr><td>{_esc(t['id'])}</td><td>{_esc(t['domain'])}</td>"
+                f"<td>{_esc(t['readiness'])}</td><td>{_esc(t['auth_requirement'])}</td>"
+                f"<td>{_esc(t['fallback'])}</td><td>{_esc(t.get('setup_instruction', ''))}</td></tr>"
+                for t in snap.get("tools", []))
+            return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
+<title>{SCOUT_PRODUCT_NAME} — Tool Readiness</title>
+<style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:1100px}}
+table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding:6px;font-size:13px;text-align:left}}
+.banner{{background:#eef;border:1px solid #99c;padding:.6rem;border-radius:4px}}</style></head>
+<body><h1>{SCOUT_PRODUCT_NAME} <small>tool readiness</small></h1>
+<p><a href="/">&larr; Home</a></p>
+<p class=banner>Honest readiness (no live MCP/network call). None is live-accepted
+(any_live_accepted={_esc(snap.get('any_live_accepted'))}). Session-only MCP tools show
+<code>declared</code>; connect them in Claude Code (/mcp) to use. No secret values are shown.</p>
+<table><tr><th>tool</th><th>domain</th><th>readiness</th><th>auth</th><th>fallback</th><th>setup</th></tr>
+{rows or '<tr><td colspan=6>none</td></tr>'}</table>
+<p>API: <a href="/api/tools">/api/tools</a></p>
+</body></html>"""
+
         def _comms_summary(self):
             health = self._read_report("FINAL_PRODUCT_HEALTH.json") or {}
             metrics = self._read_report("COMMERCIAL_METRICS.json") or {}
@@ -330,7 +360,8 @@ button{{margin-right:.5rem;padding:.4rem .8rem}}code{{background:#f4f4f4;padding
 — status <strong>{_esc(st.get('status', 'n/a'))}</strong> — running: {_esc(status.get('running'))}</p>
 <p>Controls: {controls}</p>
 <p>Manual-action prospects: {len(manual)} — Live: <a href="/api/events">events</a>,
-<a href="/api/status">status</a>, <a href="/health">health</a></p>
+<a href="/api/status">status</a>, <a href="/health">health</a> · Operator:
+<a href="/tools">tool readiness</a></p>
 <h2>Prospects</h2><table><tr><th>id</th><th>url</th><th>status</th><th>priority</th>
 <th>defects</th><th></th></tr>{''.join(rows) or '<tr><td colspan=6>none yet</td></tr>'}</table>
 <script>function ctl(a){{fetch('/api/control?action='+a,{{method:'POST'}})
