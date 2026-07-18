@@ -8,7 +8,40 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
-## Final Phase II — Approved communication & product completion (Prospect QA Radar v2.0.0) — READ FIRST (latest)
+## Final Independent Acceptance — Prospect QA Radar v2.0.1 — READ FIRST (latest)
+
+**Author:** Claude Code. **Branch:** `fix/final-independent-acceptance-v2.0.1` (from `main@286cb16`,
+the v2.0.0 release). Earlier tags (`scout-v1.0.0/1.0.1/1.1.0/1.9.0/2.0.0`) are **not** moved.
+
+Independent verification of `scout-v2.0.0` + the real CI fix + the Gmail provider path.
+**Not** a new functional phase; no further product phase follows.
+
+**Done (all committed + tested):**
+
+- **CI root cause fixed** — the v2.0.0 `core-deterministic` failure (GitHub run `29614052117`) was a
+  test launching a subprocess with a hardcoded Windows `cwd` (`d:\1QA AI\ai-qa-factory`) → Linux
+  `FileNotFoundError` on 10 `TestCLIBlockedFlags` cases. Now derives the repo root from the test's
+  location + a regression guard against machine-specific hardcoded cwd.
+- **Complete contact provenance (schema v3, additive)** + **real persisted gate records**
+  (`suppression_checks` / `pre_send_revalidations` / `policy_decisions`) replacing synthetic
+  `reval-live`; expanded placeholder rejection.
+- **Mandatory reviewed-content proof** (canonical REVIEW_PREVIEW hash); **enforced state machines +
+  finalized send-attempts**; **closed pre-provider control race** (zero provider calls on a late
+  block); **provider-event trust model** (forged relationships quarantined).
+- **Exact-payload provider boundary** + **genuine Gmail API provider** (primary; sender
+  `dipptrue@gmail.com`) + **local send-only OAuth desktop flow**; **optional Resend secondary**
+  (`darrowcode.com`, excluded from critical path); **daily outreach limits** (5/day, ceiling 10);
+  **complete review + Gmail CLI**.
+- **CI hardened** with `PROSPECT_RADAR_EXTERNAL_SEND_DISABLED=1` on every job.
+
+**Verified state:** full deterministic suite **4336 passed, 4 pre-existing warnings**; ruff clean;
+`docs_audit` **[PASS]**; `agent_readiness` **[PASS]**. **No provider is live-accepted and no real
+external message has been sent.** Provider readiness: Gmail **adapter-ready** (no credential in this
+environment). See `docs/GMAIL_PROVIDER_SETUP.md` and `docs/releases/PROSPECT_QA_RADAR_V2.0.1.md`.
+
+---
+
+## Final Phase II — Approved communication & product completion (Prospect QA Radar v2.0.0) — earlier
 
 **Author:** Claude Code. **Branch:** `final/phase-2-product-completion` (from `main@86b2339`, the
 v1.9.0 release). **`scout-v1.0.0`/`1.0.1`/`1.1.0`/`1.9.0` were not moved.**

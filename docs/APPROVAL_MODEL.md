@@ -204,3 +204,26 @@ enforcement is not implemented in this phase** — these define the intended mod
 checkout submission; account creation; form submission; subscription; generated email/SMS/OTP.
 
 No runtime enforcement is added in Phase 8.2; this is a documented planning model.
+
+## Approved communication runtime (v2.0.1)
+
+The communication runtime enforces the approval model in code:
+
+- **Mandatory proof of reviewed content.** A canonical REVIEW_PREVIEW hash over one immutable
+  revision's exact recipient/subject/body + snapshot hashes + expiry is required to approve. An
+  empty, arbitrary, wrong-revision, or stale hash is rejected; the repository refuses to create an
+  approval without it.
+- **Single-use, expiring, snapshot-bound approval.** Bound to recipient/body/finding/evidence/
+  disclosure/suppression **and the full contact-provenance snapshot**; any material change
+  invalidates it. Editing supersedes the revision and invalidates its approval. No bulk / approve-all.
+- **Complete contact provenance is mandatory.** Pre-send blocks on missing / synthetic / unpublished
+  / terms-blocked / expired / named-person-incomplete provenance. Fixture provenance is allowed only
+  when explicitly marked `deterministic_fixture` and is never a real prospect contact.
+- **Real gate references.** Suppression checks and pre-send revalidations are persisted records with
+  content hashes and expiry; placeholder/label strings (`reval-live`, `live`, `latest`, …) are
+  rejected.
+- **At-most-once provider invocation per approval.** Reservation + consume are one transaction; the
+  provider is called at most once; ambiguous outcomes are `OUTCOME_UNKNOWN` and never auto-retried.
+  A late control/suppression/allowlist change cancels before the provider with zero provider calls.
+- **Enforced state machines** with an immutable lifecycle event per transition, and a **complete
+  finalized send-attempt** record for every invocation. Exactly-once external delivery is not claimed.

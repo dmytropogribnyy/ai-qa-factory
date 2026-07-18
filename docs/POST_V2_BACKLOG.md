@@ -43,3 +43,20 @@ proven by the deterministic integrated E2E and real local acceptance. Deeper pol
 
 _Final Phase II owns all sending, reply/opt-out history, follow-ups, CRM metrics, installer,
 benchmark, and the v2.0 release — those are roadmap, not backlog._
+
+## Non-blocking after v2.0.1 (Final Independent Acceptance)
+
+- **OS keyring backend** for the Gmail token (currently a git-ignored local file with best-effort
+  permission hardening; on Windows, protect via NTFS ACLs / a user-only directory).
+- **Optional live reply synchronization** for Gmail — requires a separately authorized
+  `gmail.metadata` scope, disabled by default; not required for v2.0.1 sending.
+- **Resend controlled live acceptance + signed webhook** — Resend stays optional, adapter-ready,
+  `darrowcode.com`-only, and excluded from the critical path (Gmail is the sole required live
+  provider). Its webhook signature verification is adapter-ready only.
+- **Controlled real Gmail acceptance** — a single harmless self-test send is optional and only
+  performed with explicit human confirmation; not part of automated acceptance.
+
+_Final Independent Acceptance (v2.0.1) owns the CI fix, complete provenance, real gate records,
+reviewed-content proof, state machines/attempts/control-race, provider-event trust, the exact-payload
+boundary, the Gmail provider + OAuth, daily limits, and the review/Gmail CLI — those are done, not
+backlog._

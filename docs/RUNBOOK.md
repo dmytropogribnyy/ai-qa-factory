@@ -2783,3 +2783,22 @@ hashes; pre-send revalidation recomputes every gate; the provider is called at m
 - [ ] No cookie/secret/credential appears in any artifact
 - [ ] Report + artifacts confined to `outputs/scout/<run_id>/`
 - [ ] The dashboard is reachable only on `127.0.0.1`; the global kill stops the run
+
+## Approved Gmail send workflow (v2.0.1)
+
+Gmail is the primary live provider (sender `dipptrue@gmail.com`); Resend is an optional secondary
+for `darrowcode.com` only. Sending is disabled and dry-run by default.
+
+1. **One-time**: `scout gmail-auth` (loopback OAuth, send scope only, verifies the authorized
+   account is `dipptrue@gmail.com`). Confirm with `scout gmail-status` / `scout provider-status`.
+2. **Prepare** one immutable revision: `scout draft-create` (body from `--body-file`).
+3. **Review** the exact content: `scout draft-preview` → copy the `reviewed_content_hash`.
+4. **Approve** exactly that content: `scout draft-approve --reviewed-content-hash <hash> --confirm APPROVE --reviewer <you>`.
+5. **Enable** outreach + allowlist the recipient: `scout outreach-control --state enable`,
+   then add the exact recipient to the allowlist.
+6. **Dry-run** first: `scout send --draft-revision <rid> --provider gmail_personal` (no `--approve-send`).
+7. **Live** send (optional, one at a time): add `--approve-send --approval-id <aid> --reviewer <you>
+   --confirm-recipient <exact>`. The provider is called at most once; an ambiguous outcome is
+   `OUTCOME_UNKNOWN` and is reconciled manually via the Sent folder (correlation id).
+8. Daily ceiling: default 5/day, hard 10. Follow-ups need a **new** approval each. See
+   [GMAIL_PROVIDER_SETUP.md](GMAIL_PROVIDER_SETUP.md).

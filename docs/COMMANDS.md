@@ -3477,3 +3477,38 @@ ambiguous outcome is `OUTCOME_UNKNOWN` and **never auto-retried**. Global/campai
 controls + global kill are checked at every gate. Opt-out/bounce/complaint immediately block; a
 security finding can never enter outreach. **Exactly-once external delivery is not claimed.** The
 deterministic demo/tests use only a confined local sink — **no real external message is sent**.
+
+## Human review + Gmail commands (v2.0.1)
+
+One revision at a time — **no bulk / approve-all**. The body is read from a file so it never enters
+shell history.
+
+```
+python main.py scout draft-create  --db <db> --draft-id d1 --company-id co-1 --contact-id k1 \
+                                    --finding-id f1 --subject "..." --body-file draft.txt --reviewer <you>
+python main.py scout draft-preview  --db <db> --draft-revision <rid>     # exact content + reviewed_content_hash
+python main.py scout draft-edit     --db <db> --draft-revision <rid> --subject "..." --body-file new.txt
+python main.py scout draft-approve  --db <db> --draft-revision <rid> --reviewer <you> \
+                                    --reviewed-content-hash <hash-from-preview> --confirm APPROVE
+python main.py scout draft-reject   --db <db> --draft-revision <rid> --reviewer <you> --reason "..."
+python main.py scout draft-revoke   --db <db> --approval-id <aid> --reason "..."
+python main.py scout draft-status   --db <db> --draft-revision <rid>     # states + lifecycle events
+```
+
+`draft-approve` requires the **exact** preview hash and a typed `--confirm APPROVE`; it never calls a
+provider. Editing supersedes the old revision and invalidates its approval.
+
+Gmail (primary live provider; sender `dipptrue@gmail.com`) and provider status:
+
+```
+python main.py scout gmail-auth --client-config <client.json> --token-store <token.json> \
+                                --expected-account dipptrue@gmail.com     # loopback OAuth (send scope only)
+python main.py scout gmail-status --client-config ... --token-store ...   # no token values shown
+python main.py scout gmail-revoke-local-token --token-store <token.json> --confirm REVOKE
+python main.py scout provider-status                                       # local_sink / gmail_personal / resend
+```
+
+A live Gmail send requires all of: `--approve-send`, exact `--draft-revision`, exact `--approval-id`,
+`--provider gmail_personal`, non-empty `--reviewer`, exact `--confirm-recipient`, current allowlist,
+outreach enabled, all gates green. Daily defaults: 5/day, hard ceiling 10, one recipient, no CC/BCC,
+no batch, no auto-retry. See [GMAIL_PROVIDER_SETUP.md](GMAIL_PROVIDER_SETUP.md).

@@ -138,7 +138,7 @@ def _j(obj: Any) -> str:
 
 def _report_md(outcome, metrics) -> str:
     return (
-        "# Final Product E2E — Prospect QA Radar v2.0.0 (local sink)\n\n"
+        "# Final Product E2E — Prospect QA Radar v2.0.1 (local sink)\n\n"
         f"- Send status: **{outcome.status}** (provider message: `{outcome.provider_message_id}`)\n"
         f"- Verified prospects: {metrics['verified_prospects']} · Approved: {metrics['approved_drafts']}"
         f" · Accepted: {metrics['sends_accepted']} · Delivered: {metrics['delivered']}"

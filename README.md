@@ -229,7 +229,24 @@ handoff, not inline here, so this instruction never drifts as the suite grows.
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v2.0.0 — Prospect QA Radar v2.0.0 (complete local, human-approved product, current)
+### v2.0.1 — Prospect QA Radar v2.0.1 (Final Independent Acceptance + Gmail primary provider, current)
+
+- **CI root cause fixed** (a test's hardcoded Windows `cwd` broke Linux CI) with a regression guard.
+- **Genuine Gmail API provider is primary** (sender pinned to `dipptrue@gmail.com`): real MIME +
+  base64url + injected transport + local send-only OAuth desktop flow; no token leakage; honest
+  idempotency. **Resend** is an optional secondary for `darrowcode.com` only, excluded from the
+  critical path. Deterministic tests use a fake transport — no network, no Google libs, no credential.
+- **Send core hardened**: complete contact provenance (schema v3) + real persisted gate records
+  (no synthetic `reval-live`), mandatory reviewed-content proof hash, enforced state machines +
+  finalized send-attempts, a closed pre-provider control race (zero provider calls on a late block),
+  a provider-event trust model (forged relationships quarantined), daily outreach limits (5/day,
+  ceiling 10), and a complete one-at-a-time review + Gmail CLI.
+- CI sets `PROSPECT_RADAR_EXTERNAL_SEND_DISABLED=1`; every real transport refuses external calls.
+  **No provider is live-accepted and no real external message has been sent.** See
+  [`docs/GMAIL_PROVIDER_SETUP.md`](docs/GMAIL_PROVIDER_SETUP.md) and
+  [`docs/releases/PROSPECT_QA_RADAR_V2.0.1.md`](docs/releases/PROSPECT_QA_RADAR_V2.0.1.md).
+
+### v2.0.0 — Prospect QA Radar v2.0.0 (complete local, human-approved product)
 
 - **Final Phase II** completes the product: immutable draft revisions + single-use expiring
   approvals (bound to exact recipient/body/finding/evidence/disclosure/suppression hashes; any

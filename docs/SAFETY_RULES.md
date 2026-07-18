@@ -1519,3 +1519,24 @@ rate-limit evasion; proxy rotation to avoid blocks.
 **Protected sites:** a protected site is **not** automatically rejected as a prospect. It may
 become `PARTIAL_ANALYSIS`, `CONTACT_FIRST`, `MANUAL_REVIEW_REQUIRED`, or
 `AUTHORIZED_AUDIT_REQUIRED`. Access restrictions must never be bypassed automatically.
+
+## Communication safety (v2.0.1)
+
+- Sending is **disabled by default**. Every external message must be individually, explicitly, and
+  **currently** approved by a human. No autonomous or bulk outreach.
+- **Gmail** is the primary live provider; the sender is pinned to **`dipptrue@gmail.com`** and a
+  different account is rejected. **Resend** may send only from a verified **`darrowcode.com`**
+  address and never from `dipptrue@gmail.com`.
+- Scopes are **send-only** (`gmail.send` + `openid`/`email`); `gmail.modify`/`readonly`/`compose`/
+  `metadata`/full-mailbox are refused and never added silently.
+- One recipient per message; **no CC/BCC**, no batch API. Default **5** sends/day, hard ceiling
+  **10**, optional per-campaign ceiling. No auto-send scheduler, no auto-retry after an ambiguous
+  outcome.
+- Tokens/credentials are never printed, never stored in SQLite, never placed under `outputs/`, and
+  never appear in exceptions or artifacts. `.secrets/` and token/client files are git-ignored. A
+  ChatGPT/Claude connector is **not** a Factory credential.
+- CI sets `PROSPECT_RADAR_EXTERNAL_SEND_DISABLED=1`; every real transport refuses external calls
+  under the guard. No real email is ever sent by any automated test.
+- Permanently blocked: inferred-contact sending, sending after opt-out, contact-form submission,
+  LinkedIn/browser outreach automation, CAPTCHA bypass, access-control bypass, and cloud/public
+  deployment.
