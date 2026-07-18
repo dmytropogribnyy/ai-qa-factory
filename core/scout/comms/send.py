@@ -82,6 +82,17 @@ class SendService:
         return canonical_hash({"provider": provider_id, "revision_id": rev["revision_id"],
                                "recipient_hash": rev["recipient_hash"], "channel": channel})
 
+    def _preflight_provider(self, provider_id: str):
+        """Resolve + readiness-check a provider WITHOUT any state mutation. Returns
+        (provider|None, blockers). An unknown provider or a not-ready adapter yields blockers."""
+        try:
+            provider = self.providers.get(provider_id)
+        except ProviderError:
+            return None, ["unknown_provider"]
+        pf = getattr(provider, "preflight", None)
+        blockers = list(pf()) if callable(pf) else []
+        return provider, sorted(set(blockers))
+
     def send(self, revision_id: str, approval_id: str, provider_id: str, *, campaign_id: str,
              channel: str = "email", live: bool = False, reviewer: str = "",
              confirm_recipient: str = "") -> SendOutcome:
@@ -106,6 +117,15 @@ class SendService:
         if confirm_recipient.strip() != reval.recipient_value:
             return SendOutcome(status=S_BLOCKED, blockers=["recipient_confirmation_mismatch"],
                                recipient=reval.recipient_value, revalidation=reval.artifact)
+
+        # Provider preflight BEFORE consuming the approval, reserving a message, or creating an
+        # attempt. An unknown / disabled / unconfigured / unauthorized / wrong-account / insufficient
+        # -scope provider yields a clean BLOCKED with the approval unconsumed and nothing reserved.
+        _, pf_blockers = self._preflight_provider(provider_id)
+        if pf_blockers:
+            return SendOutcome(status=S_BLOCKED, blockers=pf_blockers,
+                               recipient=reval.recipient_value, revalidation=reval.artifact,
+                               note="provider preflight failed; approval unconsumed, nothing reserved")
 
         rev = self.comms.get_revision(revision_id)
         key = self._idempotency_key(provider_id, rev, channel)

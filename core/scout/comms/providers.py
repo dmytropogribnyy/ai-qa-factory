@@ -112,6 +112,9 @@ class DeterministicLocalSinkProvider:
     def sender(self) -> tuple:
         return ("qa@local.sink", "QA Radar (local sink)")
 
+    def preflight(self) -> List[str]:
+        return []  # the confined local sink is always ready (no network, no credential)
+
     def send(self, envelope: SendEnvelope) -> SendResult:
         if self._raise_timeout:
             raise ProviderTimeout("simulated ambiguous timeout")
@@ -160,6 +163,9 @@ class RealEmailAdapter:
     @property
     def configured(self) -> bool:
         return bool(self.metadata.auth_ref) and self._cred_present(self.metadata.auth_ref)
+
+    def preflight(self) -> List[str]:
+        return [] if self.configured else ["provider_not_configured"]
 
     def send(self, envelope: SendEnvelope) -> SendResult:
         if not self.configured:

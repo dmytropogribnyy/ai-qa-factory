@@ -53,8 +53,10 @@ def cmd_radar_demo(args) -> int:
 
 
 def _registry(db_path: str):
-    from core.scout.comms.demo import build_provider_registry
-    return build_provider_registry(str(Path(db_path).parent / "sink"))
+    # The public send command uses the PRODUCTION runtime registry (local_sink + gmail_personal +
+    # optional resend) — never the deterministic demo registry.
+    from core.scout.comms.runtime import build_runtime_provider_registry
+    return build_runtime_provider_registry(str(Path(db_path).parent / "sink"))
 
 
 def cmd_send(args) -> int:
