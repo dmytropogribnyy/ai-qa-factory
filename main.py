@@ -265,11 +265,36 @@ def run_client_work(args) -> int:
             print(f"Recorded execution for {pid}: {len(outcome.artifacts)} artifact(s), "
                   f"{len(outcome.evidence)} evidence item(s). State {state.status}. Now: validate.")
         elif args.action == "validate":
-            from core.orchestration.operator_executor import CommandValidationExecutor
-            if not (args.command or "").strip():
-                print("ERROR: --command is required (e.g. --command \"pytest -q\")", file=_sys.stderr)
+            from core.orchestration.operator_executor import (
+                CommandValidationExecutor,
+                ValidationCommandError,
+            )
+            command = None
+            if (getattr(args, "validation_argv_json", None) or "").strip():
+                import json as _json
+                try:
+                    command = _json.loads(args.validation_argv_json)
+                except ValueError:
+                    print("ERROR: --validation-argv-json is not valid JSON", file=_sys.stderr)
+                    return 1
+                if (not isinstance(command, list) or not command
+                        or not all(isinstance(a, str) and a for a in command)):
+                    print("ERROR: --validation-argv-json must be a JSON array of non-empty strings, "
+                          "e.g. '[\"python\", \"-m\", \"pytest\", \"-q\"]'", file=_sys.stderr)
+                    return 1
+            elif (args.command or "").strip():
+                command = args.command      # compatibility: POSIX-tokenized command string
+            else:
+                print("ERROR: give --validation-argv-json '[\"python\", \"-m\", \"pytest\", \"-q\"]' "
+                      "(preferred; unambiguous on Windows) or --command \"pytest -q\"",
+                      file=_sys.stderr)
                 return 1
-            state, result = svc.validate(pid, CommandValidationExecutor(args.command))
+            try:
+                executor = CommandValidationExecutor(command)
+            except ValidationCommandError as exc:
+                print(f"ERROR: invalid validation command: {exc}", file=_sys.stderr)
+                return 1
+            state, result = svc.validate(pid, executor)
             print(f"Validation for {pid}: {'PASS' if result.passed else 'FAIL'} "
                   f"({result.tests_passed}/{result.tests_run}). State {state.status}. "
                   f"{'Now: review.' if result.passed else 'Fix, then record-execution again.'}")
@@ -459,8 +484,14 @@ def main(argv: list[str] | None = None) -> int:
                                             "paths, each optionally 'path:kind'")
     cw_cmd.add_argument("--evidence", help="record-execution: comma-separated relative evidence "
                                            "paths, each optionally 'path:description'")
-    cw_cmd.add_argument("--command", help="validate: the operator's own validation command run in "
-                                          "the workspace (e.g. \"pytest -q\")")
+    cw_cmd.add_argument("--validation-argv-json", dest="validation_argv_json",
+                        help="validate: the operator's validation command as a JSON array of "
+                             "argument strings (preferred; cross-platform), e.g. "
+                             "'[\"python\", \"-m\", \"pytest\", \"-q\"]'. Runs in the workspace "
+                             "with shell=False and a bounded timeout.")
+    cw_cmd.add_argument("--command", help="validate (compatibility): a single command string, "
+                                          "tokenized POSIX-style; prefer --validation-argv-json "
+                                          "on Windows or for paths with spaces")
     cw_cmd.add_argument("--reject", action="store_true", help="review: reject (send to REPAIR_REQUIRED)")
 
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)

@@ -137,6 +137,37 @@ def test_no_environment_secrets_are_persisted(tmp_path, monkeypatch):
         assert "FACTORY_TEST_CANARY" not in text, f.name  # no env dump at all
 
 
+def test_structured_argv_handles_spaces_in_paths_cross_platform(tmp_path):
+    # v3.0.2 M3: structured argv is unambiguous for Windows paths and spaces (runs on both the
+    # Linux core job and the windows-smoke job).
+    from core.schemas.work_execution import ExecutionContext
+    scripts = tmp_path / "my scripts dir"
+    scripts.mkdir()
+    (scripts / "check me.py").write_text("print('spaced ok')\n", encoding="utf-8")
+    ctx = ExecutionContext(project_id="x", profile="", workspace_dir=str(tmp_path),
+                           requirements=[], now="t")
+    res = CommandValidationExecutor([_PY, str(scripts / "check me.py")]).validate(ctx)
+    assert res.passed
+    out = (tmp_path / "evidence" / "validation" / res.details["validation_id"] / "stdout.txt")
+    assert "spaced ok" in out.read_text(encoding="utf-8")
+
+
+def test_structured_argv_python_dash_c_with_quotes(tmp_path):
+    from core.schemas.work_execution import ExecutionContext
+    ctx = ExecutionContext(project_id="x", profile="", workspace_dir=str(tmp_path),
+                           requirements=[], now="t")
+    res = CommandValidationExecutor(
+        [_PY, "-c", "print('hello world with \"quotes\"')"]).validate(ctx)
+    assert res.passed
+    out = (tmp_path / "evidence" / "validation" / res.details["validation_id"] / "stdout.txt")
+    assert 'hello world with "quotes"' in out.read_text(encoding="utf-8")
+
+
+def test_command_string_compatibility_tokenizes_posix_style():
+    ex = CommandValidationExecutor('tool "an arg with spaces" plain')
+    assert ex._argv == ["tool", "an arg with spaces", "plain"]
+
+
 def test_structured_argv_bounds_are_enforced():
     with pytest.raises(ValidationCommandError):
         CommandValidationExecutor([])
