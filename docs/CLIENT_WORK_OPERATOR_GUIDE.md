@@ -39,13 +39,30 @@ execution (writes, repo changes, external tools) waits for your approval** of sc
 
 After approval, Claude executes through the repo runners, the selected tools (see
 `python main.py tool-status`), and MCPs connected in your session, records progress and evidence,
-runs validation, and prepares the delivery package.
+runs validation, and prepares the delivery package. Execution is **Claude-Code-driven and
+human-approved** — the Factory records and persists what was produced; it is not an autonomous agent.
+
+Drive the persisted lifecycle from the CLI (each command reads/writes the durable state on disk, so
+it survives a restart or a new Claude session):
+
+```powershell
+python main.py client-work status           --project-id <id>   # where it stands + next action
+python main.py client-work approve           --project-id <id> --reviewer <you> --note "..."
+python main.py client-work resume            --project-id <id>   # reload persisted state
+python main.py client-work prepare-delivery  --project-id <id>   # build the delivery package
+```
 
 ## 4. Delivery
 
 A delivery package includes the scope completed, changed files, setup/run commands, test results,
 evidence, known limitations, handover notes, and a client-facing message. Delivery is never claimed
 before validation passes. Resume a project later from its persisted `WORK_RUN_STATE.json`.
+
+The execution lifecycle (approval → execution → progress/blockers → produced artifacts → evidence →
+validation → delivery → resume) is persisted by the Factory and proven two ways: deterministic
+acceptance **fixtures** in CI (`tests/test_v3_execution_lifecycle.py`) and a documented **real
+Claude-Code operator** run for scenarios A–D (see
+[acceptance/OPERATOR_ACCEPTANCE_A_D.md](acceptance/OPERATOR_ACCEPTANCE_A_D.md)).
 
 ## Supported vs rejected
 

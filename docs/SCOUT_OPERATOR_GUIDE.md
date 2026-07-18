@@ -12,15 +12,22 @@ scripts\start-local.ps1        # http://127.0.0.1:8765 (idle home; nothing scann
 
 ## Create + run a campaign
 
-Use simple filters: campaign name, countries, languages, industries/keywords, excluded domains, max
-companies, scan depth (quick / standard / deep), issue categories, and a safe budget/time limit.
-Reasonable safe defaults are pre-selected; Advanced Settings expose providers, pages, concurrency,
-engine, timeouts, budgets, a11y rules, retention, contact-collection, and dedup. Start, then watch:
-status, sites discovered/triaged/checked, verified findings, contacts found, current safe operation,
-and errors. Controls: Pause / Resume / Stop Safely / Cancel. State survives a restart.
+**From the dashboard (guarded Start panel).** On the idle home page, the **Start a bounded read-only
+campaign** panel takes 1–10 **public https** seed URLs, a campaign name, and max pages/site, plus an
+explicit confirmation checkbox. It starts only the existing bounded, read-only Scout engine — it
+never sends email, submits forms, solves CAPTCHAs, or runs commands. The endpoint is fenced by four
+independent guards: it binds to loopback only, the `Host` header must be loopback (blocks
+DNS-rebinding), a cross-origin `Origin` is refused, and a per-page CSRF token is required. Non-public
+/ private / loopback targets are rejected before anything runs, one campaign runs at a time, and the
+campaign intent is persisted before execution (so a restart leaves an honest record).
 
-The CLI equivalent is available too (`python main.py scout campaign-run ...`,
-`python main.py scout dashboard --run-id <id>`).
+Then watch: status, sites discovered/triaged/checked, verified findings, contacts found, the current
+safe operation, and errors. Controls: **Pause / Resume / Stop Safely** (graceful) **/ Cancel** (global
+kill). State survives a restart.
+
+**From the CLI.** Richer discovery-based campaigns (countries/languages/industries, providers,
+budgets, a11y rules, retention, dedup) run through `python main.py scout campaign-run ...`; attach the
+dashboard to a run with `python main.py scout dashboard --run-id <id>`.
 
 ## Review results
 
