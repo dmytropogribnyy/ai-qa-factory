@@ -1,4 +1,13 @@
-# Prospect QA Radar v2.0.0 — Runtime Architecture
+# Prospect QA Radar v2.0.1 — Runtime Architecture
+
+> **v2.0.1 (Final Independent Acceptance):** adds complete contact provenance (schema v3) + real
+> persisted gate records, mandatory reviewed-content proof, enforced state machines + finalized
+> attempts + a closed pre-provider control race, a provider-event trust model, an exact-payload
+> provider boundary, a genuine Gmail API provider + local OAuth (primary; sender
+> `dipptrue@gmail.com`), an optional Resend secondary (`darrowcode.com`), daily outreach limits, and
+> a full review/Gmail CLI. No provider is live-accepted and no real external message has been sent.
+> See [../GMAIL_PROVIDER_SETUP.md](../GMAIL_PROVIDER_SETUP.md) and
+> [../releases/PROSPECT_QA_RADAR_V2.0.1.md](../releases/PROSPECT_QA_RADAR_V2.0.1.md).
 
 **Status:** Implemented (Phase 8.3 QA runtime; hardened in 8.3.1; discovery + commercial triage in
 8.4; complete pre-send pipeline in Final Phase I; approved communication + product completion in

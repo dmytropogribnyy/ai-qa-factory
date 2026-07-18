@@ -37,7 +37,7 @@ def cmd_radar_demo(args) -> int:
     except Exception as exc:
         print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    print("AI QA Factory / ARK Prospect QA Radar v2.0.0 - complete local product demo (LOCAL SINK)")
+    print("AI QA Factory / ARK Prospect QA Radar v2.0.1 - complete local product demo (LOCAL SINK)")
     print(f"Campaign: {s['campaign_id']}  send_status={s['send_status']}  "
           f"provider_message_id={s['provider_message_id']}")
     print(f"Delivered={s['delivered']}  replied={s['replied']}  followup={s['followup_state']}")
@@ -142,7 +142,287 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _open(args):
+    """Open the memory DB and return (db, mem, comms) or (None, None, None) after printing an error."""
+    if not args.db:
+        print("ERROR: --db is required", file=sys.stderr)
+        return None, None, None
+    try:
+        db = MemoryDB(args.db)
+    except MemoryError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return None, None, None
+    return db, MemoryRepository(db), CommsRepository(db)
+
+
+def _read_body(args) -> str:
+    """Read the draft body from a file (preferred; never echoes into shell history) or --body."""
+    if getattr(args, "body_file", None):
+        return Path(args.body_file).read_text(encoding="utf-8")
+    return args.body or ""
+
+
+# --- one-at-a-time human review commands (no bulk / approve-all) ----------------------------------
+
+def cmd_draft_create(args) -> int:
+    from core.scout.comms.approval import ApprovalError, build_revision
+    from core.scout.comms.review import preview_hash_for
+    db, mem, comms = _open(args)
+    if db is None:
+        return 1
+    for req in ("draft_id", "company_id", "contact_id", "finding_id", "subject"):
+        if not getattr(args, req, None):
+            print(f"ERROR: --{req.replace('_', '-')} is required", file=sys.stderr)
+            db.close()
+            return 1
+    try:
+        rid = build_revision(mem, comms, draft_id=args.draft_id, company_id=args.company_id,
+                             contact_id=args.contact_id, finding_id=args.finding_id,
+                             channel=args.channel or "email", subject=args.subject,
+                             body=_read_body(args), now=_now(), creator=args.reviewer or "operator")
+    except (ApprovalError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        db.close()
+        return 1
+    print(f"Created immutable revision: {rid}")
+    print(f"reviewed_content_hash: {preview_hash_for(comms, rid)}")
+    print(f"Next: scout draft-preview --db {args.db} --draft-revision {rid}")
+    db.close()
+    return 0
+
+
+def cmd_draft_preview(args) -> int:
+    from core.scout.comms.review import review_preview
+    db, mem, comms = _open(args)
+    if db is None:
+        return 1
+    if not args.draft_revision:
+        print("ERROR: --draft-revision is required", file=sys.stderr)
+        db.close()
+        return 1
+    try:
+        p = review_preview(mem, comms, args.draft_revision)
+    except KeyError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        db.close()
+        return 1
+    print("=== REVIEW PREVIEW (exact content) ===")
+    print(f"  revision:   {p['revision_id']} (#{p['revision_number']})  state={p['state']}"
+          f"  superseded={p['superseded']}")
+    print(f"  company:    {p['company_id']}   contact: {p['contact_id']}")
+    print(f"  recipient:  {p['recipient']}   channel: {p['channel']}")
+    print(f"  subject:    {p['subject']}")
+    print(f"  finding:    {p['finding_id']}  {p['finding_title']}")
+    cp = p["contact_provenance"]
+    print(f"  provenance: source={cp['source_category']} published={cp['publicly_published_for_contact']}"
+          f" terms={cp['terms_review_status']} person={cp['person_class']}")
+    print(f"  expires:    {p['expires_at']}")
+    print("  --- body ---")
+    print(p["body"])
+    print("  ------------")
+    print(f"reviewed_content_hash: {p['reviewed_content_hash']}")
+    print("To approve exactly this content:")
+    print(f"  scout draft-approve --db {args.db} --draft-revision {p['revision_id']} "
+          f"--reviewer <you> --reviewed-content-hash {p['reviewed_content_hash']} --confirm APPROVE")
+    db.close()
+    return 0
+
+
+def cmd_draft_edit(args) -> int:
+    from core.scout.comms.approval import ApprovalError, edit_revision
+    from core.scout.comms.review import preview_hash_for
+    db, mem, comms = _open(args)
+    if db is None:
+        return 1
+    if not args.draft_revision or not args.subject:
+        print("ERROR: --draft-revision and --subject are required", file=sys.stderr)
+        db.close()
+        return 1
+    try:
+        new_rid = edit_revision(mem, comms, args.draft_revision, subject=args.subject,
+                                body=_read_body(args), now=_now())
+    except (ApprovalError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        db.close()
+        return 1
+    print(f"Edited -> new immutable revision: {new_rid} (old revision superseded, its approval invalidated)")
+    print(f"reviewed_content_hash: {preview_hash_for(comms, new_rid)}")
+    db.close()
+    return 0
+
+
+def cmd_draft_approve(args) -> int:
+    from core.scout.comms.approval import ApprovalError, approve_revision
+    db, mem, comms = _open(args)
+    if db is None:
+        return 1
+    if not args.draft_revision or not (args.reviewer or "").strip():
+        print("ERROR: --draft-revision and --reviewer are required", file=sys.stderr)
+        db.close()
+        return 1
+    if args.confirm != "APPROVE":
+        print("ERROR: typed confirmation required (--confirm APPROVE)", file=sys.stderr)
+        db.close()
+        return 1
+    if not args.reviewed_content_hash:
+        print("ERROR: --reviewed-content-hash is required (from draft-preview)", file=sys.stderr)
+        db.close()
+        return 1
+    try:
+        aid = approve_revision(mem, comms, args.draft_revision, reviewer=args.reviewer, now=_now(),
+                               reviewed_content_hash=args.reviewed_content_hash)
+    except ApprovalError as exc:
+        print(f"ERROR: approval refused: {exc}", file=sys.stderr)
+        db.close()
+        return 2
+    print(f"Approved: {aid}  (single-use; sending is a SEPARATE command)")
+    db.close()
+    return 0
+
+
+def cmd_draft_reject(args) -> int:
+    from core.scout.comms.repository import R_REJECTED
+    db, mem, comms = _open(args)
+    if db is None:
+        return 1
+    if not args.draft_revision or not (args.reviewer or "").strip():
+        print("ERROR: --draft-revision and --reviewer are required", file=sys.stderr)
+        db.close()
+        return 1
+    try:
+        comms.transition_revision(args.draft_revision, R_REJECTED, _now())
+    except Exception as exc:  # noqa: BLE001
+        print(f"ERROR: {exc}", file=sys.stderr)
+        db.close()
+        return 1
+    mem.add_review_item(f"reject-{args.draft_revision}", "draft_review", args.draft_revision,
+                        None, _now())
+    print(f"Rejected revision {args.draft_revision} (audited).  reason: {args.reason or '(none)'}")
+    db.close()
+    return 0
+
+
+def cmd_draft_revoke(args) -> int:
+    db, mem, comms = _open(args)
+    if db is None:
+        return 1
+    approval_id = args.approval_id or (f"ap-{args.draft_revision}" if args.draft_revision else "")
+    if not approval_id:
+        print("ERROR: --approval-id or --draft-revision is required", file=sys.stderr)
+        db.close()
+        return 1
+    comms.revoke_approval(approval_id, args.reason or "revoked by reviewer", _now())
+    print(f"Revoked approval {approval_id} (audited).  reason: {args.reason or '(none)'}")
+    db.close()
+    return 0
+
+
+def cmd_draft_status(args) -> int:
+    db, mem, comms = _open(args)
+    if db is None:
+        return 1
+    if not args.draft_revision:
+        print("ERROR: --draft-revision is required", file=sys.stderr)
+        db.close()
+        return 1
+    rev = comms.get_revision(args.draft_revision)
+    if rev is None:
+        print("ERROR: unknown revision", file=sys.stderr)
+        db.close()
+        return 1
+    ap = comms.get_approval(f"ap-{args.draft_revision}")
+    print(f"Revision {rev['revision_id']} (#{rev['revision_number']})  state={rev['state']}"
+          f"  superseded={bool(rev['superseded'])}  expires={rev['expires_at']}")
+    print(f"Approval: {(ap or {}).get('state', '(none)')}  consumed={(ap or {}).get('consumed', 0)}")
+    print("Lifecycle:")
+    for e in comms.lifecycle_events("revision", rev["revision_id"]):
+        print(f"  [{e['at']}] revision {e['event']}")
+    if ap:
+        for e in comms.lifecycle_events("approval", ap["approval_id"]):
+            print(f"  [{e['at']}] approval {e['event']}")
+    db.close()
+    return 0
+
+
+# --- Gmail + provider commands --------------------------------------------------------------------
+
+def _gmail_config(args) -> dict:
+    from core.scout.comms.gmail import gmail_config_from_env
+    cfg = gmail_config_from_env()
+    if getattr(args, "client_config", None):
+        cfg["client_json"] = args.client_config
+    if getattr(args, "token_store", None):
+        cfg["token_json"] = args.token_store
+    if getattr(args, "expected_account", None):
+        cfg["expected_account"] = args.expected_account
+    return cfg
+
+
+def cmd_gmail_status(args) -> int:
+    from core.scout.comms.gmail_oauth import gmail_status
+    status = gmail_status(_gmail_config(args))
+    print("Gmail provider status (no token values shown):")
+    for k in ("readiness", "client_config_present", "token_present", "refreshable",
+              "authorized_account", "expected_account", "expected_account_match", "scopes"):
+        print(f"  {k:22} {status[k]}")
+    return 0
+
+
+def cmd_gmail_auth(args) -> int:
+    from core.scout.comms.gmail import GmailConfigError
+    from core.scout.comms.gmail_oauth import authorize
+    cfg = _gmail_config(args)
+    if not cfg["client_json"] or not cfg["token_json"]:
+        print("ERROR: --client-config and --token-store are required (or set GMAIL_OAUTH_CLIENT_JSON "
+              "/ GMAIL_OAUTH_TOKEN_JSON)", file=sys.stderr)
+        return 1
+    try:
+        result = authorize(client_config_path=cfg["client_json"], token_store_path=cfg["token_json"],
+                           expected_account=cfg["expected_account"])
+    except GmailConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"Authorized account: {result['account']}  scopes: {', '.join(result['scopes'])}")
+    if result["permissions"]["warning"]:
+        print(f"WARNING: {result['permissions']['warning']}", file=sys.stderr)
+    return 0
+
+
+def cmd_gmail_revoke_local_token(args) -> int:
+    from core.scout.comms.gmail_oauth import revoke_local_token
+    cfg = _gmail_config(args)
+    if not cfg["token_json"]:
+        print("ERROR: --token-store is required", file=sys.stderr)
+        return 1
+    if args.confirm != "REVOKE":
+        print("ERROR: typed confirmation required (--confirm REVOKE)", file=sys.stderr)
+        return 1
+    result = revoke_local_token(cfg["token_json"])
+    print(f"Local token removed: {result['removed_local_token']}. {result['note']}")
+    return 0
+
+
+def cmd_provider_status(args) -> int:
+    from core.scout.comms.gmail_oauth import gmail_status
+    print("Providers (readiness; none live-accepted without a recorded controlled acceptance):")
+    print("  local_sink       fixture-tested   (no network; drives tests/demos)")
+    gs = gmail_status(_gmail_config(args))
+    print(f"  gmail_personal   {gs['readiness']}   sender=dipptrue@gmail.com  "
+          f"expected_match={gs['expected_account_match']}")
+    from core.scout.comms.resend import resend_config_from_env
+    rc = resend_config_from_env()
+    print(f"  resend_email     {'configured' if rc['api_key_present'] and rc['from_email'] else 'adapter-ready'}"
+          f"   darrowcode.com-only (secondary, optional)")
+    return 0
+
+
 def run_comms_cli(args) -> int:
     return {"radar-demo": cmd_radar_demo, "send": cmd_send,
             "outreach-control": cmd_outreach_control, "comms-status": cmd_comms_status,
+            "draft-create": cmd_draft_create, "draft-preview": cmd_draft_preview,
+            "draft-edit": cmd_draft_edit, "draft-approve": cmd_draft_approve,
+            "draft-reject": cmd_draft_reject, "draft-revoke": cmd_draft_revoke,
+            "draft-status": cmd_draft_status, "gmail-auth": cmd_gmail_auth,
+            "gmail-status": cmd_gmail_status, "gmail-revoke-local-token": cmd_gmail_revoke_local_token,
+            "provider-status": cmd_provider_status,
             }[args.action](args)

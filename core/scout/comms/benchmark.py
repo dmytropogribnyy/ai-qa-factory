@@ -10,8 +10,10 @@ from __future__ import annotations
 from typing import Any, Callable, Dict
 
 from core.scout.comms.approval import ApprovalError, approve_revision, build_revision
+from core.scout.comms.provenance import fixture_provenance
 from core.scout.comms.providers import DeterministicLocalSinkProvider, ProviderRegistry
 from core.scout.comms.repository import CommsRepository
+from core.scout.comms.review import preview_hash_for
 from core.scout.comms.send import S_ACCEPTED, SendService
 from core.scout.memory.db import MemoryDB
 from core.scout.memory.repository import MemoryRepository
@@ -20,13 +22,16 @@ _NOW = "2026-07-17T17:00:00+00:00"
 
 
 def _company(mem, cid, *, contact_status="VERIFIED", finding_lifecycle="ACTIVE",
-             client_safe=True, category="accessibility", suppress=False):
+             client_safe=True, category="accessibility", suppress=False, with_provenance=True):
     mem.upsert_company(cid, "camp", cid, f"{cid}.example", _NOW)
     mem.add_session(f"s-{cid}", "camp", cid, f"https://{cid}.example/", "agency", _NOW)
     mem.upsert_contact({"contact_id": f"k-{cid}", "company_id": cid, "channel": "email",
                         "normalized_value": f"hi@{cid}.example", "status": contact_status,
                         "data_subject_category": "organization", "manual_review_required": False,
                         "last_verified_at": _NOW})
+    # An inferred-only contact has no complete provenance (blocks at build).
+    if with_provenance:
+        mem.add_provenance(fixture_provenance(f"k-{cid}", cid, _NOW, domain=f"{cid}.example"))
     mem.upsert_finding({"finding_id": f"f-{cid}", "capability": "accessibility", "category": category,
                         "severity": "medium", "title": "Issue", "root_impact_key": f"k:{cid}",
                         "verification_state": "VERIFIED", "lifecycle_state": finding_lifecycle,
@@ -54,7 +59,7 @@ def run_benchmark(output_dir: str, *, clock: Callable[[], str] = lambda: _NOW) -
     scenarios = {
         "clean": {},
         "suppressed": {"suppress": True},
-        "inferred": {"contact_status": "UNVERIFIED"},
+        "inferred": {"contact_status": "UNVERIFIED", "with_provenance": False},
         "opted_out": {},  # opt-out event added below
         "stale_finding": {"finding_lifecycle": "RESOLVED"},
         "responsible_disclosure": {"category": "security"},
@@ -72,7 +77,8 @@ def run_benchmark(output_dir: str, *, clock: Callable[[], str] = lambda: _NOW) -
             rid = build_revision(mem, comms, draft_id=f"d-{cid}", company_id=cid,
                                  contact_id=f"k-{cid}", finding_id=f"f-{cid}", channel="email",
                                  subject="Note", body="Hello.", now=_NOW)
-            aid = approve_revision(comms, rid, reviewer="human", now=_NOW)
+            aid = approve_revision(mem, comms, rid, reviewer="human", now=_NOW,
+                                   reviewed_content_hash=preview_hash_for(comms, rid))
         except ApprovalError:
             results[name] = "blocked_at_build"  # responsible disclosure never builds a revision
             continue

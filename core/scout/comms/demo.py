@@ -17,6 +17,7 @@ from core.scout.comms.approval import approve_revision, build_revision
 from core.scout.comms.events import process_event
 from core.scout.comms.followup import evaluate_followup
 from core.scout.comms.metrics import compute_metrics
+from core.scout.comms.provenance import fixture_provenance
 from core.scout.comms.providers import (
     DeterministicLocalSinkProvider,
     ProviderRegistry,
@@ -24,6 +25,7 @@ from core.scout.comms.providers import (
 )
 from core.scout.comms.providers import ProviderMetadata as CommsProviderMetadata
 from core.scout.comms.repository import CommsRepository
+from core.scout.comms.review import preview_hash_for
 from core.scout.comms.send import SendService
 from core.scout.memory.db import MemoryDB
 from core.scout.memory.repository import MemoryRepository
@@ -50,6 +52,7 @@ def _seed(mem: MemoryRepository) -> None:
                         "normalized_value": _RECIP, "status": "VERIFIED",
                         "data_subject_category": "organization", "manual_review_required": False,
                         "last_verified_at": _NOW})
+    mem.add_provenance(fixture_provenance("k1", "co-1", _NOW, domain="one.example"))
     mem.upsert_finding({"finding_id": "f1", "capability": "accessibility", "category": "accessibility",
                         "severity": "medium", "title": "Missing alt text on the hero image",
                         "root_impact_key": "axe:image-alt", "verification_state": "VERIFIED",
@@ -74,7 +77,8 @@ def run_radar_demo(output_dir: str, *, campaign_id: str = "radar-demo",
     rid = build_revision(mem, comms, draft_id="d1", company_id="co-1", contact_id="k1",
                          finding_id="f1", channel="email", subject="A quick QA note about One",
                          body="Hello, we noticed one issue on your public site.", now=_NOW)
-    aid = approve_revision(comms, rid, reviewer="human-reviewer", now=_NOW)
+    aid = approve_revision(mem, comms, rid, reviewer="human-reviewer", now=_NOW,
+                           reviewed_content_hash=preview_hash_for(comms, rid))
     comms.set_control("__global_outreach__", "ENABLED")
     comms.add_allowlist(_RECIP, "demo", _NOW)
 
@@ -85,9 +89,11 @@ def run_radar_demo(output_dir: str, *, campaign_id: str = "radar-demo",
 
     delivered = process_event(mem, comms, {"event_id": "pe1", "normalized_type": "DELIVERED",
                                            "received_ts": _NOW, "dedup_key": "d-1",
+                                           "trust_class": "deterministic_fixture_event",
                                            "message_ref": outcome.message_id}, now=_NOW)
     replied = process_event(mem, comms, {"event_id": "pe2", "normalized_type": "REPLIED_POSITIVE",
                                          "received_ts": _NOW, "dedup_key": "r-1",
+                                         "trust_class": "deterministic_fixture_event",
                                          "message_ref": outcome.message_id}, now=_NOW)
     followup = evaluate_followup(mem, comms, company_id="co-1", contact_id="k1",
                                  parent_message_id=outcome.message_id, sequence_no=1, now=_NOW)
@@ -132,7 +138,7 @@ def _j(obj: Any) -> str:
 
 def _report_md(outcome, metrics) -> str:
     return (
-        "# Final Product E2E — Prospect QA Radar v2.0.0 (local sink)\n\n"
+        "# Final Product E2E — Prospect QA Radar v2.0.1 (local sink)\n\n"
         f"- Send status: **{outcome.status}** (provider message: `{outcome.provider_message_id}`)\n"
         f"- Verified prospects: {metrics['verified_prospects']} · Approved: {metrics['approved_drafts']}"
         f" · Accepted: {metrics['sends_accepted']} · Delivered: {metrics['delivered']}"

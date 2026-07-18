@@ -11,7 +11,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
-from core.scout.comms.repository import CommsError, CommsRepository
+from core.scout.comms.records import (
+    ensure_policy_decision,
+    ensure_suppression_check,
+    record_pre_send_revalidation,
+)
+from core.scout.comms.repository import CommsError, CommsRepository, R_DRAFT, R_PENDING
+from core.scout.comms.review import preview_hash
 from core.scout.comms.snapshots import approval_binding, body_hash, suppression_snapshot
 from core.scout.memory.repository import MemoryRepository
 from core.scout.outreach.disclosure import build_manifest
@@ -28,14 +34,18 @@ def _plus(now: str, hours: int) -> str:
         return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 
 
-def _current_binding(mem: MemoryRepository, *, revision_id: str, company_id: str, contact_id: str,
-                     finding_id: str, channel: str, subject: str, body: str, now: str
-                     ) -> Dict[str, Any]:
+def _current_binding(mem: MemoryRepository, comms: CommsRepository, *, revision_id: str,
+                     company_id: str, contact_id: str, finding_id: str, channel: str, subject: str,
+                     body: str, now: str) -> Dict[str, Any]:
     contact = mem.get_contact(contact_id)
     finding = mem.get_finding(finding_id)
     evidence = mem.evidence_for_finding(finding_id)
     if contact is None or finding is None:
         raise ApprovalError("cannot build a revision from missing contact/finding")
+    provenance = mem.active_provenance(contact_id)
+    if provenance is None:
+        # Complete provenance is mandatory: a revision cannot bind to a contact with no provenance.
+        raise ApprovalError("cannot build a revision: contact provenance is missing")
     if finding.get("category") == "security":
         # Responsible disclosure: never build an outreach revision from a security finding.
         raise ApprovalError("responsible-disclosure (security) finding cannot enter outreach")
@@ -46,8 +56,16 @@ def _current_binding(mem: MemoryRepository, *, revision_id: str, company_id: str
                     "is_client_safe": bool(finding["client_safe"]), "evidence_ids": ev_ids}
     safe = ([{"finding_id": finding["finding_id"], "business_impact": finding["title"],
               "evidence_ids": ev_ids}] if finding["client_safe"] else [])
+    # Real persisted gate references (never synthetic "reval-live" labels).
+    supp_ref = ensure_suppression_check(comms, company_id=company_id, contact_id=contact_id,
+                                        blockers=[], now=now)
+    ensure_policy_decision(comms, company_id=company_id, contact_id=contact_id, channel=channel,
+                           result="approved", now=now)
+    reval_ref = record_pre_send_revalidation(comms, company_id=company_id, contact_id=contact_id,
+                                             revision_id=revision_id, approval_id="", blockers=[],
+                                             now=now)
     manifest = build_manifest(company_id, safe, stage="OUTREACH", contact_ref=contact_id,
-                              suppression_check_ref="reval-live", revalidation_ref="reval-live",
+                              suppression_check_ref=supp_ref, revalidation_ref=reval_ref,
                               generated_at=now)
     disc = {"ready": manifest.is_ready, "stage": manifest.stage,
             "item_finding_refs": [i.finding_ref for i in manifest.items], "blockers": manifest.blockers}
@@ -58,7 +76,8 @@ def _current_binding(mem: MemoryRepository, *, revision_id: str, company_id: str
                                 hard_bounced=False)
     binding = approval_binding(revision_id=revision_id, recipient=contact, channel=channel,
                                subject=subject, body=body, disclosure=disc, finding=finding_dict,
-                               evidence_rows=evidence, contact=contact, suppression=supp)
+                               evidence_rows=evidence, contact=contact, suppression=supp,
+                               provenance=provenance)
     binding["evidence_ids"] = ev_ids
     return binding
 
@@ -68,7 +87,7 @@ def build_revision(mem: MemoryRepository, comms: CommsRepository, *, draft_id: s
                    now: str, ttl_hours: int = 72, creator: str = "pipeline") -> str:
     number = comms.next_revision_number(draft_id)
     revision_id = f"rev-{draft_id}-{number}"
-    binding = _current_binding(mem, revision_id=revision_id, company_id=company_id,
+    binding = _current_binding(mem, comms, revision_id=revision_id, company_id=company_id,
                                contact_id=contact_id, finding_id=finding_id, channel=channel,
                                subject=subject, body=body, now=now)
     comms.create_revision({
@@ -84,13 +103,32 @@ def build_revision(mem: MemoryRepository, comms: CommsRepository, *, draft_id: s
     return revision_id
 
 
-def approve_revision(comms: CommsRepository, revision_id: str, *, reviewer: str, now: str,
-                     ttl_hours: int = 24, reason: str = "", reviewed_content_hash: str = "") -> str:
+def approve_revision(mem: MemoryRepository, comms: CommsRepository, revision_id: str, *,
+                     reviewer: str, now: str, reviewed_content_hash: str, ttl_hours: int = 24,
+                     reason: str = "") -> str:
+    """Approve ONE revision. Requires the exact canonical review-preview hash (mandatory proof the
+    reviewer saw this exact content); an empty/arbitrary/stale hash is rejected. Never sends."""
     if not reviewer.strip():
         raise ApprovalError("reviewer identity must not be empty")
     rev = comms.get_revision(revision_id)
     if rev is None:
         raise ApprovalError("unknown revision")
+    if rev["superseded"] or rev["state"] not in (R_PENDING, R_DRAFT):
+        raise ApprovalError("cannot approve a superseded/non-pending revision")
+    if not (reviewed_content_hash or "").strip():
+        raise ApprovalError("reviewed_content_hash is required (approve the exact reviewed preview)")
+    if reviewed_content_hash != preview_hash(rev):
+        raise ApprovalError("reviewed_content_hash does not match the current review preview")
+    # Reject a stale preview: the underlying contact/finding/evidence/provenance/suppression must
+    # still match the revision the reviewer saw (recomputing raises if provenance/contact is gone).
+    current = _current_binding(mem, comms, revision_id=revision_id, company_id=rev["company_id"],
+                               contact_id=rev["contact_id"], finding_id=rev["finding_id"],
+                               channel=rev["channel"], subject=rev["subject"], body=rev["body"],
+                               now=now)
+    for key in ("recipient_hash", "body_hash", "disclosure_hash", "finding_hash", "evidence_hash",
+                "contact_provenance_hash", "suppression_hash"):
+        if current.get(key) != rev.get(key):
+            raise ApprovalError("review preview is stale: underlying data changed since build")
     approval_id = f"ap-{revision_id}"
     comms.create_approval({
         "approval_id": approval_id, "revision_id": revision_id, "recipient_hash": rev["recipient_hash"],

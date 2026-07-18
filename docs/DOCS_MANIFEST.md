@@ -1,10 +1,10 @@
 # Documentation Manifest — Guided QA Automation Workbench
 
-**Version:** 2.0.0
+**Version:** 2.0.1
 
 **Updated:** 2026-07-17
 
-**Phase:** Functional roadmap COMPLETE — 8.1/8.2 contracts; 8.3/8.3.1 Scout QA runtime; 8.4 discovery + triage; Final Phase I complete pre-send pipeline; Final Phase II approved communication + product completion (Prospect QA Radar v2.0.0). Only the verification-only Final Independent Acceptance pass remains.
+**Phase:** Functional roadmap COMPLETE — 8.1/8.2 contracts; 8.3/8.3.1 Scout QA runtime; 8.4 discovery + triage; Final Phase I complete pre-send pipeline; Final Phase II approved communication + product completion. Final Independent Acceptance (v2.0.1) DONE — CI fix, complete contact provenance + real gate records, mandatory reviewed-content proof, enforced state machines + attempts + pre-provider control race, provider-event trust, exact-payload boundary, genuine Gmail API provider + OAuth (primary; sender dipptrue@gmail.com), optional Resend secondary (darrowcode.com), daily outreach limits, full review/Gmail CLI. See `docs/GMAIL_PROVIDER_SETUP.md` and `docs/releases/PROSPECT_QA_RADAR_V2.0.1.md`. No real external message has been sent.
 
 This file is the registry of all documentation tracked by the workbench.
 Run `python tools/docs_audit.py` to verify that these docs are current.

@@ -7,4 +7,4 @@ external recipient. Exactly-once external delivery is not claimed.
 """
 from __future__ import annotations
 
-COMMS_VERSION = "2.0.0"
+COMMS_VERSION = "2.0.1"

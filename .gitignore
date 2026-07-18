@@ -5,6 +5,13 @@
 .env.production
 .env.staging
 
+# ── Gmail OAuth client config + token stores (v2.0.1 — never commit) ───────────
+.secrets/
+*.gmail-token.json
+client_secret*.json
+gmail-token*.json
+**/gmail/token.json
+
 # ── Playwright auth state (Phase 4E — must never be committed) ────────────────
 .auth/
 storageState*.json
@@ -50,6 +57,9 @@ desktop.ini
 outputs/*
 !outputs/.gitkeep
 outputs_dry/
+
+# ── CI test reports (JUnit) ───────────────────────────────────────────────────
+reports/
 
 # ── Memory: runtime state (project runs, client data, learned patterns) ───────
 # pricing_book.yaml is source — keep it. Everything else is runtime.

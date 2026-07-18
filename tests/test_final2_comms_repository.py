@@ -30,7 +30,8 @@ def _approve(repo, rid):
     repo.create_approval({"approval_id": aid, "revision_id": rid, "recipient_hash": "r",
                           "body_hash": "sha256:b", "disclosure_hash": "d", "finding_hash": "f",
                           "evidence_hash": "e", "contact_provenance_hash": "cp", "suppression_hash": "s",
-                          "channel": "email", "reviewer": "human", "approved_at": _NOW})
+                          "channel": "email", "reviewer": "human", "approved_at": _NOW,
+                          "reviewed_content_hash": "sha256:reviewed"})
     return aid
 
 
