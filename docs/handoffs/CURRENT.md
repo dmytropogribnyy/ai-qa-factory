@@ -8,7 +8,31 @@ preparation of handoff + reuse analysis for the next Claude Code session.
 
 ---
 
-## Final Independent Acceptance — Prospect QA Radar v2.0.1 — READ FIRST (latest)
+## Operator-Path Hotfix — Prospect QA Radar v2.0.2 — READ FIRST (latest)
+
+**Author:** Claude Code. **Branch:** `fix/scout-v2.0.2-gmail-operator-path` (from `main@11a7b8a`, the
+v2.0.1 release). Earlier tags (incl. `scout-v2.0.1`) are **not** moved. **Not** a new functional phase.
+
+Two independently discovered operator-path defects reproduced and fixed:
+
+- **Blocker 1** — Gmail was not wired into the public `scout send`: `cli._registry` used the demo
+  registry (no `gmail_personal`); `GmailProvider` lived only in tests; and the provider was resolved
+  only AFTER approval consumption + reservation (stranding state on an unknown provider). Fix: new
+  `runtime.build_runtime_provider_registry` (registers `gmail_personal`), the CLI uses it, and a
+  **provider preflight** runs BEFORE approval consumption / reservation / attempt — bad providers →
+  clean BLOCKED, nothing reserved, zero provider calls.
+- **Blocker 2** — OAuth account verification was fail-open (`account or expected_account` invented the
+  identity). Fix: scopes validated first; account proven fail-closed via a verified id-token claim;
+  unprovable/wrong account or invalid scopes raise and write no token (atomic write, partial temp
+  removed); `gmail_status` verifies only via the id-token claim, never the bare `account` field.
+
+**Verified:** targeted operator-path suite green; ruff clean. OAuth remains unconfigured (no creds
+supplied); **no provider live-accepted; no real external message sent.** See
+`docs/releases/PROSPECT_QA_RADAR_V2.0.2.md`.
+
+---
+
+## Final Independent Acceptance — Prospect QA Radar v2.0.1 — earlier
 
 **Author:** Claude Code. **Branch:** `fix/final-independent-acceptance-v2.0.1` (from `main@286cb16`,
 the v2.0.0 release). Earlier tags (`scout-v1.0.0/1.0.1/1.1.0/1.9.0/2.0.0`) are **not** moved.

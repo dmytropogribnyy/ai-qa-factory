@@ -37,7 +37,7 @@ def cmd_radar_demo(args) -> int:
     except Exception as exc:
         print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    print("AI QA Factory / ARK Prospect QA Radar v2.0.1 - complete local product demo (LOCAL SINK)")
+    print("AI QA Factory / ARK Prospect QA Radar v2.0.2 - complete local product demo (LOCAL SINK)")
     print(f"Campaign: {s['campaign_id']}  send_status={s['send_status']}  "
           f"provider_message_id={s['provider_message_id']}")
     print(f"Delivered={s['delivered']}  replied={s['replied']}  followup={s['followup_state']}")
@@ -53,8 +53,10 @@ def cmd_radar_demo(args) -> int:
 
 
 def _registry(db_path: str):
-    from core.scout.comms.demo import build_provider_registry
-    return build_provider_registry(str(Path(db_path).parent / "sink"))
+    # The public send command uses the PRODUCTION runtime registry (local_sink + gmail_personal +
+    # optional resend) — never the deterministic demo registry.
+    from core.scout.comms.runtime import build_runtime_provider_registry
+    return build_runtime_provider_registry(str(Path(db_path).parent / "sink"))
 
 
 def cmd_send(args) -> int:

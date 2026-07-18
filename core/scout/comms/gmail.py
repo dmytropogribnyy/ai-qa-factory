@@ -30,6 +30,12 @@ from core.scout.comms.providers import (
 GMAIL_SEND_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 GMAIL_IDENTITY_SCOPES = ("openid", "email")
+REQUIRED_GMAIL_SCOPES = (GMAIL_SEND_SCOPE, *GMAIL_IDENTITY_SCOPES)
+# Scopes that must NEVER be requested/stored/used for basic send-only authorization.
+FORBIDDEN_GMAIL_SCOPES = frozenset({
+    "https://mail.google.com/", "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.metadata"})
 GMAIL_PROVIDER_ID = "gmail_personal"
 EXPECTED_ACCOUNT_DEFAULT = "dipptrue@gmail.com"
 EXTERNAL_SEND_DISABLED_ENV = "PROSPECT_RADAR_EXTERNAL_SEND_DISABLED"
@@ -115,6 +121,7 @@ class GmailProvider:
     def __init__(self, *, from_email: str, from_name: str, expected_account: str,
                  transport: Callable[[str, str], Dict[str, Any]],
                  token_provider: Callable[[], str],
+                 status_provider: Optional[Callable[[], Dict[str, Any]]] = None,
                  readiness: str = "adapter-ready") -> None:
         self.metadata = ProviderMetadata(provider_id=GMAIL_PROVIDER_ID, channel="email",
                                          readiness=readiness, auth_ref="GMAIL_OAUTH_TOKEN_JSON",
@@ -124,9 +131,33 @@ class GmailProvider:
         self._expected_account = expected_account
         self._transport = transport
         self._token_provider = token_provider
+        self._status_provider = status_provider
 
     def sender(self) -> tuple:
         return (self._from_email, self._from_name)
+
+    def preflight(self) -> list:
+        """Readiness check WITHOUT any network call — proves the operator can send live before the
+        send service consumes an approval. Unconfigured/unauthorized/wrong-account/insufficient-scope
+        all block. With no status provider (deterministic transport-only tests) it is treated ready."""
+        if self._status_provider is None:
+            return []
+        s = self._status_provider() or {}
+        blockers = []
+        if not s.get("client_config_present"):
+            blockers.append("gmail_oauth_client_not_configured")
+        elif not s.get("token_present"):
+            blockers.append("gmail_not_authorized")
+        elif not s.get("refreshable"):
+            blockers.append("gmail_token_not_refreshable")
+        scopes = set(s.get("scopes", []))
+        if GMAIL_SEND_SCOPE not in scopes:
+            blockers.append("gmail_missing_send_scope")
+        if scopes & FORBIDDEN_GMAIL_SCOPES:
+            blockers.append("gmail_forbidden_scope")
+        if not s.get("expected_account_match"):
+            blockers.append("gmail_account_not_verified")
+        return sorted(set(blockers))
 
     def send(self, envelope: SendEnvelope) -> SendResult:
         # Sender is pinned to the single authorized account.

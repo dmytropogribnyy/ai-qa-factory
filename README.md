@@ -229,7 +229,21 @@ handoff, not inline here, so this instruction never drifts as the suite grows.
 ## Changelog highlights
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v2.0.1 — Prospect QA Radar v2.0.1 (Final Independent Acceptance + Gmail primary provider, current)
+### v2.0.2 — Prospect QA Radar v2.0.2 (operator-path hotfix: Gmail wired into the real CLI, current)
+
+- **Gmail is now wired into the public `scout send --provider gmail_personal`** through a production
+  runtime provider registry (was only in tests before). A **provider preflight** runs BEFORE the
+  approval is consumed or a message reserved — an unknown/unconfigured/unauthorized/wrong-account/
+  insufficient-scope provider yields a clean `BLOCKED` with nothing reserved and zero provider calls.
+- **OAuth account verification is fail-closed**: the authorized account is proven via a verified
+  Google id-token claim (never an invented identity); an unprovable/wrong account or invalid scopes
+  raise and write no token; `gmail_status` never treats an altered `account` field as proof.
+- Deterministic operator-path acceptance (fake transport, fake creds, no network, no Google libs, no
+  real send). OAuth remains **unconfigured until local setup**; **no provider is live-accepted and no
+  real external message has been sent.** See
+  [`docs/releases/PROSPECT_QA_RADAR_V2.0.2.md`](docs/releases/PROSPECT_QA_RADAR_V2.0.2.md).
+
+### v2.0.1 — Prospect QA Radar v2.0.1 (Final Independent Acceptance + Gmail primary provider)
 
 - **CI root cause fixed** (a test's hardcoded Windows `cwd` broke Linux CI) with a regression guard.
 - **Genuine Gmail API provider is primary** (sender pinned to `dipptrue@gmail.com`): real MIME +
