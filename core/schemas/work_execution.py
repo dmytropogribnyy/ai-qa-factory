@@ -53,16 +53,24 @@ class ExecutionOutcome:
 
 @dataclass
 class ValidationOutcome:
-    """What VALIDATION found (recorded by Factory)."""
+    """What VALIDATION found (recorded by Factory).
+
+    ``evidence`` (v3.0.2 M2) carries validation-produced evidence items (e.g. the captured
+    stdout/stderr + provenance metadata of a validation command run). The service registers
+    them in EVIDENCE_INDEX.json and includes them in the validated integrity snapshot.
+    """
     passed: bool = False
     tests_run: int = 0
     tests_passed: int = 0
     failures: List[str] = field(default_factory=list)
     report: str = ""
     details: Dict[str, Any] = field(default_factory=dict)
+    evidence: List[EvidenceItem] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        return dict(self.__dict__)
+        d = dict(self.__dict__)
+        d["evidence"] = [e.to_dict() for e in self.evidence]
+        return d
 
 
 @dataclass

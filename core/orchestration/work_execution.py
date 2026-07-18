@@ -99,6 +99,21 @@ class WorkExecutionService:
                 out[rel] = self._hash_file(target)
         return out
 
+    def _append_evidence(self, pid: str, items: List[Any]) -> None:
+        """Append evidence items to EVIDENCE_INDEX.json (dedupe by evidence_id, keep latest)."""
+        idx = self._read_json(self._ws(pid) / "EVIDENCE_INDEX.json")
+        merged: Dict[str, Dict[str, Any]] = {}
+        for e in idx.get("evidence", []):
+            if isinstance(e, dict) and e.get("evidence_id"):
+                merged[e["evidence_id"]] = e
+        for item in items:
+            d = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+            if d.get("evidence_id"):
+                merged[d["evidence_id"]] = d
+        out = list(merged.values())
+        self._write(self._ws(pid) / "EVIDENCE_INDEX.json",
+                    json.dumps({"evidence": out, "count": len(out)}, indent=2, sort_keys=True))
+
     def _registered_files(self, pid: str) -> List[str]:
         """Every registered artifact + evidence relative path (execution outcome + evidence index,
         which also carries validation-run evidence)."""
@@ -186,9 +201,14 @@ class WorkExecutionService:
             "executor": eid, "is_acceptance_fixture": bool(getattr(executor, "is_acceptance_fixture",
                                                                    False)),
             "at": self._clock.now_iso(), "outcome": outcome_dict}, indent=2, sort_keys=True))
+        # Rebuild the index from this execution, but PRESERVE validation-run evidence from earlier
+        # attempts (evidence/validation/<id>/ is append-only; later attempts never overwrite it).
+        prior = self._read_json(self._ws(pid) / "EVIDENCE_INDEX.json").get("evidence", [])
+        kept = [e for e in prior if isinstance(e, dict)
+                and str(e.get("relative_path", "")).startswith("evidence/validation/")]
+        merged = kept + [e.to_dict() for e in outcome.evidence]
         self._write(self._ws(pid) / "EVIDENCE_INDEX.json", json.dumps({
-            "evidence": [e.to_dict() for e in outcome.evidence],
-            "count": len(outcome.evidence)}, indent=2, sort_keys=True))
+            "evidence": merged, "count": len(merged)}, indent=2, sort_keys=True))
         # Content-hash every produced artifact + evidence file (confined) so a later change is detectable.
         hashes = self._hash_map(pid, self._artifact_files(outcome_dict))
         self._write(self._ws(pid) / "ARTIFACT_HASHES.json",
@@ -206,6 +226,10 @@ class WorkExecutionService:
         result = executor.validate(self._context(pid))
         self._write(self._ws(pid) / "TEST_RESULTS.json",
                     json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        # Register validation-produced evidence (pass, fail, and timeout alike) in the real
+        # evidence index BEFORE snapshotting, so it is part of the validated integrity set.
+        if getattr(result, "evidence", None):
+            self._append_evidence(pid, result.evidence)
         if result.passed:
             # Snapshot the exact artifact hashes that were validated, so any later change is caught
             # before delivery. Validation stops at READY_FOR_REVIEW - delivery needs explicit review.

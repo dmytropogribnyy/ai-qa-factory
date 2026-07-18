@@ -96,9 +96,12 @@ def test_command_validation_executor_runs_a_real_command(tmp_path):
     ok = CommandValidationExecutor([_sys.executable, "-c", "import calc; assert calc.add(2, 3) == 5"])
     res = ok.validate(ctx)
     assert res.passed and res.details["returncode"] == 0
-    assert (tmp_path / "evidence" / "validation_output.txt").exists()   # captured output as evidence
+    vdir = tmp_path / "evidence" / "validation" / res.details["validation_id"]
+    assert (vdir / "metadata.json").exists() and (vdir / "stdout.txt").exists()  # per-attempt evidence
+    assert len(res.evidence) == 3                                       # registered by the service
     bad = CommandValidationExecutor([_sys.executable, "-c", "raise SystemExit(1)"])
-    assert bad.validate(ctx).passed is False
+    bad_res = bad.validate(ctx)
+    assert bad_res.passed is False and bad_res.details["validation_id"] != res.details["validation_id"]
 
 
 def test_missing_operator_artifact_is_an_honest_blocker(tmp_path):
