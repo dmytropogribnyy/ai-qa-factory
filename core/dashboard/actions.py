@@ -134,9 +134,23 @@ class ProjectDetailBuilder:
                 "proposed_plan": fr.get("proposed_plan", fr.get("plan", [])),
                 "client_questions": fr.get("client_questions", []),
                 "approval": self._read(pid, "APPROVAL.json")}
+        # Evidence with a safe preview href + a Stale flag when the current hash no longer matches
+        # the validated snapshot (M7).
+        validated = self._read(pid, "VALIDATED_ARTIFACTS.json").get("hashes", {})
+        ev_items = []
+        for e in ev.get("evidence", []):
+            rel = e.get("relative_path", "")
+            item = dict(e)
+            item["href"] = (f"/work-evidence?project={pid}&path={rel}") if rel else ""
+            if rel and rel in validated:
+                cur = self._svc._hash_map(pid, [rel]).get(rel)
+                item["integrity"] = "verified" if cur == validated[rel] else "stale"
+            else:
+                item["integrity"] = "unverified"
+            ev_items.append(item)
         results = {"validation_passed": bool(tr.get("passed")), "tests_run": tr.get("tests_run", 0),
                    "tests_passed": tr.get("tests_passed", 0), "failures": tr.get("failures", []),
-                   "evidence": ev.get("evidence", []),
+                   "evidence": ev_items,
                    "artifacts": [a.get("filename") for a in prog.get("outcome", {}).get("artifacts", [])]}
         delivery = {"status": state.status,
                     "review_approved": bool(review.get("approved")),

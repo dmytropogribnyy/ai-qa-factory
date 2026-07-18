@@ -127,6 +127,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._html(200, self._work_detail_page(path[len("/work/"):]))
             if path == "/scout":
                 return self._html(200, self._overview_html())    # the Scout run/home view
+            if path == "/scout/campaigns":
+                return self._html(200, self._scout_campaigns_page())
             if path == "/activity":
                 return self._html(200, self._activity_page(q))
             if path == "/api/activity":
@@ -143,6 +145,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._html(200, self._company_html((q.get("id") or [""])[0]))
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
+            if path == "/work-evidence":
+                return self._work_evidence((q.get("project") or [""])[0], (q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
                 # Operator home = the new Overview inbox; a Scout-run-bound dashboard keeps its
                 # existing run view at "/" (regression-preserved). Both link to each other.
@@ -886,8 +890,8 @@ function startCampaign(){{
                 '<h2>Results</h2><div class="card">'
                 f'<p>Validation: {_badge("PASS" if d["results"]["validation_passed"] else "pending", "ok" if d["results"]["validation_passed"] else "")}</p>'
                 f'<p class="muted">Artifacts: {_esc(", ".join(str(a) for a in d["results"]["artifacts"]) or "none")}</p>'
-                f'<details><summary>Evidence ({len(d["results"]["evidence"])})</summary>'
-                f'<ul>{"".join(f"<li>{_esc(e.get("relative_path", ""))} <span class=muted>{_esc(e.get("kind", ""))}</span></li>" for e in d["results"]["evidence"]) or "<li class=muted>none</li>"}</ul>'
+                f'<details open><summary>Evidence ({len(d["results"]["evidence"])})</summary>'
+                f'<ul>{"".join(self._evidence_li(e) for e in d["results"]["evidence"]) or "<li class=muted>none</li>"}</ul>'
                 f'</details></div>'
                 '<h2>Delivery</h2><div class="card">'
                 f'<p>State: {_badge(d["delivery"]["status"], "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
@@ -903,6 +907,37 @@ function startCampaign(){{
                       "function promptFields(names){var o={};for(var i=0;i<names.length;i++){"
                       "var v=prompt(names[i]);if(v===null)throw 'cancelled';o[names[i]]=v;}return o;}")
             return _page(f"AI QA Factory — {pid}", "/work", header + tabs, script)
+
+        def _scout_campaigns_page(self) -> str:
+            ov = self._read_model().overview()
+            # Reuse the unified project index for scout campaigns (no second store).
+            from core.orchestration.project_index import ProjectIndex
+            camps = [p for p in ProjectIndex(service.output_dir).list_projects()
+                     if p.type == "scout_campaign"]
+            rows = "".join(
+                f'<tr><td>{_esc(c.title)}</td><td>{_badge(c.lifecycle_state)}</td>'
+                f'<td>{c.progress}%</td><td>{c.evidence_count}</td>'
+                f'<td class="muted">{_esc(c.operator_next_action)}</td></tr>' for c in camps)
+            table = (f'<table><caption>Scout campaigns</caption><tr><th>Campaign</th><th>Status</th>'
+                     f'<th>Progress</th><th>Evidence</th><th>Next action</th></tr>{rows}</table>'
+                     if rows else '<div class="card empty muted">No campaigns yet. '
+                     '<a href="/scout">Open Scout to start one</a>.</div>')
+            body = (f'<h1>Scout campaigns</h1><div class="row">'
+                    f'<a class="chip" href="/scout">Scout home</a>'
+                    f'<a class="chip" href="/results">Results</a>'
+                    f'<span class="chip">Active {len(ov.active_campaigns)}</span></div>{table}'
+                    f'<p class="muted">Campaign start + Pause/Resume/Stop Safely/Cancel controls are '
+                    f'on <a href="/scout">Scout home</a> (bounded, read-only; nothing is sent).</p>')
+            return _page("AI QA Factory — Scout campaigns", "/scout", body)
+
+        def _evidence_li(self, e) -> str:
+            rel = e.get("relative_path", "")
+            integ = e.get("integrity", "unverified")
+            kind = {"verified": "ok", "stale": "blocked"}.get(integ, "")
+            label = {"verified": "Verified", "stale": "Stale", "unverified": "Unverified"}.get(integ, "")
+            link = (f' — <a href="{_esc(e["href"])}">Preview</a>' if e.get("href") else "")
+            return (f'<li>{_esc(rel)} <span class="muted">{_esc(e.get("kind", ""))}</span> '
+                    f'{_badge(label, kind)}{link}</li>')
 
         def _activity_json(self, project):
             events = []
@@ -955,6 +990,50 @@ function startCampaign(){{
                       "try{localStorage.setItem('qa_density',d);}catch(e){}}"
                       "try{var d=localStorage.getItem('qa_density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}")
             return _page("AI QA Factory — Settings", "/settings", body, script)
+
+        # Safe evidence preview/download for client-work projects (v3.1 M7). Path-confined, size-
+        # bounded, correct MIME; ACTIVE content (html/svg/js/xml) is NEVER served inline - it is
+        # returned as text/plain attachment so the browser cannot execute it. Images preview inline.
+        _EV_IMG = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                   ".gif": "image/gif", ".webp": "image/webp"}
+        _EV_TEXT = {".txt", ".log", ".json", ".md", ".csv", ".ts", ".py"}
+        _EV_ACTIVE = {".html", ".htm", ".svg", ".xml", ".js", ".mjs", ".xhtml"}
+        _EV_MAX = 5 * 1024 * 1024
+
+        def _work_evidence(self, project: str, rel: str):
+            from core.orchestration.work_execution import WorkExecutionError, WorkExecutionService
+            wx = WorkExecutionService(output_dir=service.output_dir)
+            if not project or not rel:
+                return self._json(400, {"error": "project and path are required"})
+            try:
+                ws = wx._ws(project)                       # validates the project id
+                target = wx._confine(ws, rel)              # refuses traversal
+            except WorkExecutionError:
+                return self._json(403, {"error": "path not allowed"})
+            if not target.is_file():
+                return self._json(404, {"error": "not found"})
+            if target.stat().st_size > self._EV_MAX:
+                return self._json(413, {"error": "evidence too large to preview"})
+            ext = target.suffix.lower()
+            data = target.read_bytes()
+            if ext in self._EV_IMG:
+                ctype, disp = self._EV_IMG[ext], "inline"
+            elif ext in self._EV_ACTIVE:
+                ctype, disp = "text/plain; charset=utf-8", "attachment"   # never execute active content
+            elif ext in self._EV_TEXT or ext == "":
+                ctype, disp = "text/plain; charset=utf-8", "inline"
+            else:
+                ctype, disp = "application/octet-stream", "attachment"
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            safe_name = Path(rel).name.replace('"', "")
+            self.send_header("Content-Disposition", f'{disp}; filename="{safe_name}"')
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(data)
 
         def _tools_page(self) -> str:
             data = self._read_model().tools()

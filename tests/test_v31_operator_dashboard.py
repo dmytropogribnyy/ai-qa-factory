@@ -201,3 +201,51 @@ def test_unknown_project_detail_is_not_found(tmp_path):
         assert status == 200 and "Project not found" in body
     finally:
         server.shutdown()
+
+
+def _get_full(url):
+    with urllib.request.urlopen(url, timeout=5) as r:
+        return r.status, r.read(), dict(r.headers)
+
+
+def test_evidence_preview_is_safe(tmp_path):
+    _seed_ready_for_review(tmp_path)
+    ws = tmp_path / "alpha" / "40_ark_work"
+    (ws / "evidence").mkdir(exist_ok=True)
+    (ws / "evidence" / "log.txt").write_text("a validation log line\n", encoding="utf-8")
+    (ws / "evidence" / "danger.html").write_text("<script>alert(1)</script>", encoding="utf-8")
+    server, url = _dash(tmp_path)
+    try:
+        # Text evidence previews inline as text/plain.
+        s, data, h = _get_full(url + "/work-evidence?project=alpha&path=evidence/log.txt")
+        assert s == 200 and h["Content-Type"].startswith("text/plain")
+        assert h.get("X-Content-Type-Options") == "nosniff" and "validation log" in data.decode()
+        # Active content (HTML) is NEVER served inline: text/plain + attachment + sandbox CSP.
+        s, data, h = _get_full(url + "/work-evidence?project=alpha&path=evidence/danger.html")
+        assert s == 200 and h["Content-Type"].startswith("text/plain")
+        assert "attachment" in h.get("Content-Disposition", "")
+        assert "sandbox" in h.get("Content-Security-Policy", "")
+        # Traversal is refused.
+        try:
+            urllib.request.urlopen(url + "/work-evidence?project=alpha&path=../../../etc/passwd",
+                                   timeout=5)
+            raise AssertionError("traversal not refused")
+        except urllib.error.HTTPError as e:
+            assert e.code in (403, 404)
+        # An unsafe project id is refused.
+        try:
+            urllib.request.urlopen(url + "/work-evidence?project=../evil&path=x", timeout=5)
+            raise AssertionError("unsafe project not refused")
+        except urllib.error.HTTPError as e:
+            assert e.code in (403, 404)
+    finally:
+        server.shutdown()
+
+
+def test_scout_campaigns_page_renders(tmp_path):
+    server, url = _dash(tmp_path)
+    try:
+        status, body, _ = _get(url + "/scout/campaigns")
+        assert status == 200 and "Scout campaigns" in body and "<main>" in body
+    finally:
+        server.shutdown()
