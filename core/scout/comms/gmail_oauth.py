@@ -10,16 +10,18 @@ Google client libraries, imported lazily so the deterministic core never needs t
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.scout.comms.gmail import (
     EXPECTED_ACCOUNT_DEFAULT,
-    GMAIL_IDENTITY_SCOPES,
+    FORBIDDEN_GMAIL_SCOPES,
     GMAIL_SEND_SCOPE,
+    REQUIRED_GMAIL_SCOPES,
     GmailConfigError,
 )
 
@@ -31,12 +33,38 @@ READINESS_ACCOUNT = "expected-account-verified"
 READINESS_CONTROLLED = "controlled-address-accepted"
 READINESS_LIVE = "live-accepted"
 
-# Scopes that must NEVER be silently requested for basic send-only authorization.
-FORBIDDEN_SCOPES = frozenset({
-    "https://mail.google.com/", "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose",
-    "https://www.googleapis.com/auth/gmail.metadata"})
-REQUESTED_SCOPES = [GMAIL_SEND_SCOPE, *GMAIL_IDENTITY_SCOPES]
+FORBIDDEN_SCOPES = FORBIDDEN_GMAIL_SCOPES        # re-export for back-compat
+REQUESTED_SCOPES = list(REQUIRED_GMAIL_SCOPES)
+
+
+def validate_scopes(granted) -> List[str]:
+    """Return scope blockers: the required send scope must be present and no forbidden scope may be."""
+    scopes = set(granted or [])
+    blockers: List[str] = []
+    if GMAIL_SEND_SCOPE not in scopes:
+        blockers.append("missing_send_scope")
+    if scopes & FORBIDDEN_GMAIL_SCOPES:
+        blockers.append("forbidden_scope")
+    return blockers
+
+
+def _id_token_verified_email(id_token: str) -> str:
+    """Decode a Google ID-token JWT payload and return the email ONLY when the claim is present and
+    email_verified is true. Offline decode of a signed Google claim (full signature verification is
+    done at live preflight); a manually altered top-level 'account' field is never consulted here."""
+    if not id_token:
+        return ""
+    try:
+        parts = id_token.split(".")
+        if len(parts) < 2:
+            return ""
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64.encode("ascii")))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return ""
+    if payload.get("email") and payload.get("email_verified"):
+        return str(payload["email"])
+    return ""
 
 
 def parse_client_config(path: str) -> Dict[str, Any]:
@@ -73,7 +101,10 @@ def read_token_store(path: str) -> Optional[Dict[str, Any]]:
         return {"malformed": True}
     return {"malformed": False, "account": data.get("account", ""),
             "scopes": list(data.get("scopes", [])), "has_refresh_token": bool(data.get("refresh_token")),
-            "has_token": bool(data.get("token"))}
+            "has_token": bool(data.get("token")),
+            # The AUTHORITATIVE identity is the verified id-token email claim, never the bare
+            # 'account' field (which a user could manually alter).
+            "verified_email_claim": _id_token_verified_email(data.get("id_token", ""))}
 
 
 def gmail_status(config: Dict[str, str]) -> Dict[str, Any]:
@@ -82,7 +113,7 @@ def gmail_status(config: Dict[str, str]) -> Dict[str, Any]:
     expected = config.get("expected_account", EXPECTED_ACCOUNT_DEFAULT)
     status: Dict[str, Any] = {"expected_account": expected, "client_config_present": False,
                               "token_present": False, "refreshable": False, "authorized_account": "",
-                              "expected_account_match": False, "scopes": [],
+                              "expected_account_match": False, "scopes": [], "scopes_ok": False,
                               "readiness": READINESS_ADAPTER}
     try:
         parse_client_config(config.get("client_json", ""))
@@ -93,11 +124,15 @@ def gmail_status(config: Dict[str, str]) -> Dict[str, Any]:
     token = read_token_store(config.get("token_json", ""))
     if not token or token.get("malformed") or not token.get("has_token"):
         return status
+    verified = token.get("verified_email_claim", "")
     status.update(token_present=True, refreshable=bool(token["has_refresh_token"]),
-                  authorized_account=token["account"], scopes=token["scopes"])
+                  authorized_account=verified or token["account"], scopes=token["scopes"],
+                  scopes_ok=(not validate_scopes(token["scopes"])))
     if token["has_refresh_token"]:
         status["readiness"] = READINESS_AUTHORIZED
-    if token["account"] and token["account"] == expected:
+    # expected-account-verified requires a VERIFIED id-token claim matching the expected account,
+    # a refresh token, and valid scopes — never the bare 'account' field alone.
+    if (verified and verified == expected and token["has_refresh_token"] and status["scopes_ok"]):
         status["expected_account_match"] = True
         status["readiness"] = READINESS_ACCOUNT
     return status
@@ -135,28 +170,66 @@ def authorize(*, client_config_path: str, token_store_path: str,
             "(pip install -r requirements-gmail.txt)") from exc
     flow = InstalledAppFlow.from_client_secrets_file(client_config_path, scopes=REQUESTED_SCOPES)
     creds = flow.run_local_server(port=0, open_browser=open_browser)  # loopback, not out-of-band
-    granted = set(getattr(creds, "scopes", []) or [])
-    if granted & FORBIDDEN_SCOPES:
-        raise GmailConfigError("authorization returned forbidden Gmail scopes; refusing to store")
-    account = ""
-    try:
-        info = build("oauth2", "v2", credentials=creds).userinfo().get().execute()
-        account = (info or {}).get("email", "")
-    except Exception:  # noqa: BLE001 - never leak provider internals
-        account = ""
-    if account and account != expected_account:
-        raise GmailConfigError("authorized a different account than expected; refusing to store")
-    _write_token(token_store_path, creds, account or expected_account)
-    return {"account": account or expected_account, "scopes": sorted(granted),
+    return finalize_authorization(creds, build, token_store_path=token_store_path,
+                                  expected_account=expected_account)
+
+
+def finalize_authorization(creds: Any, build: Any, *, token_store_path: str,
+                           expected_account: str = EXPECTED_ACCOUNT_DEFAULT) -> Dict[str, Any]:
+    """Validate scopes, prove the account FAIL-CLOSED, and atomically store the token. Raises a
+    sanitized GmailConfigError (and writes NO token) on invalid scopes, an unprovable account, or a
+    wrong account. Separated from the browser flow so it is deterministically testable."""
+    granted = sorted(set(getattr(creds, "scopes", []) or []))
+    scope_blockers = validate_scopes(granted)
+    if scope_blockers:
+        raise GmailConfigError(
+            f"authorization returned invalid scopes ({','.join(scope_blockers)}); refusing to store")
+    # Prove the authorized identity — never invent expected_account when the lookup fails.
+    verified_email = _verified_account(creds, build)
+    if not verified_email:
+        raise GmailConfigError("could not prove the authorized Google account; refusing to store token")
+    if verified_email != expected_account:
+        raise GmailConfigError("authorized a different account than expected; refusing to store token")
+    _write_token_atomic(token_store_path, creds, verified_email, granted)
+    return {"account": verified_email, "scopes": granted,
             "permissions": harden_file_permissions(token_store_path)}
 
 
-def _write_token(token_store_path: str, creds: Any, account: str) -> None:
+def _verified_account(creds: Any, build: Any) -> str:
+    """Prove the authorized account (empty string == unproven -> caller fails closed)."""
+    email = _id_token_verified_email(getattr(creds, "id_token", "") or "")
+    if email:
+        return email
+    try:
+        info = build("oauth2", "v2", credentials=creds).userinfo().get().execute() or {}
+    except Exception:  # noqa: BLE001 - never leak provider internals; treat as unproven
+        return ""
+    if info.get("email") and info.get("verified_email", True):
+        return str(info["email"])
+    return ""
+
+
+def _write_token_atomic(token_store_path: str, creds: Any, account: str, scopes: List[str]) -> None:
+    """Write the token via an atomic local-file replace; a partial temp file is always removed."""
     p = Path(token_store_path)
     p.parent.mkdir(parents=True, exist_ok=True)
     payload = json.loads(creds.to_json())
     payload["account"] = account
-    p.write_text(json.dumps(payload), encoding="utf-8")
+    payload["account_verified"] = True
+    payload["scopes"] = list(scopes)
+    id_token = getattr(creds, "id_token", "") or ""
+    if id_token:
+        payload["id_token"] = id_token
+    tmp = p.with_name(p.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp, p)                       # atomic replace
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     harden_file_permissions(token_store_path)
 
 
