@@ -1,27 +1,37 @@
-"""Localhost Scout dashboard (Phase 8.3).
+"""Localhost Scout dashboard (Phase 8.3; v3.0.0 M4b guarded start).
 
 A dependency-light stdlib HTTP dashboard bound to 127.0.0.1 only. It reads the run store and
 exposes control (pause/resume/cancel/global-kill). Artifact serving is path-confined to the
-active run directory — no arbitrary filesystem access, no traversal. It performs no external
-side effect.
+active run directory — no arbitrary filesystem access, no traversal.
+
+v3.0.0 adds ONE state-changing endpoint — ``POST /api/campaign/start`` — for the local operator.
+It is fenced by four independent guards: the server binds loopback only; the ``Host`` header must
+be loopback (blocks DNS-rebinding); ``Origin`` (when present) must match; and a per-server CSRF
+token is required. It can only launch the existing bounded, read-only Scout engine (see
+``campaign_start.CampaignLauncher``) — it never sends email, submits forms, or runs commands.
 """
 from __future__ import annotations
 
 import json
+import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Tuple
+from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 from core.scout import SCOUT_PRODUCT_NAME, SCOUT_VERSION
+from core.scout.campaign_start import CampaignLauncher
 from core.scout.service import ScoutService
 from core.scout.store import StoreError
 
 _CONTENT_TYPES = {".json": "application/json", ".png": "image/png", ".md": "text/markdown"}
 # Defensive cap on how much a single artifact response may return (our artifacts are small).
 _MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
+# The largest JSON body accepted by the start endpoint (requests are tiny).
+_MAX_START_BODY_BYTES = 64 * 1024
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
 
-def _make_handler(service: ScoutService):
+def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token: str):
     class _Handler(BaseHTTPRequestHandler):
         server_version = f"ScoutDashboard/{SCOUT_VERSION}"
 
@@ -59,6 +69,10 @@ def _make_handler(service: ScoutService):
                                         "running": service.is_running()})
             if path == "/api/status":
                 return self._json(200, service.status())
+            if path == "/api/csrf":
+                # Same-origin pages can read this; a cross-origin page cannot (no CORS header),
+                # so the token stays secret to foreign origins — the point of the guard.
+                return self._json(200, {"csrf_token": csrf_token})
             if path == "/api/prospects":
                 st = service.status().get("state", {})
                 return self._json(200, {"prospects": st.get("prospects", {})})
@@ -103,21 +117,70 @@ def _make_handler(service: ScoutService):
 
         def do_POST(self):
             parsed = urlsplit(self.path)
-            if parsed.path != "/api/control":
-                return self._json(404, {"error": "not found"})
+            if parsed.path == "/api/control":
+                if not self._origin_ok():
+                    return self._json(403, {"error": "cross-origin control requests are refused"})
+                action = (parse_qs(parsed.query).get("action") or [""])[0]
+                ok, status, message = service.control(action)
+                return self._json(status, {"ok": ok, "action": action, "message": message,
+                                           "status": service.status()})
+            if parsed.path == "/api/campaign/start":
+                return self._campaign_start()
+            return self._json(404, {"error": "not found"})
+
+        # --- guarded campaign start (v3.0.0 M4b) -----------------------------------------------
+        def _campaign_start(self):
+            """Start a bounded, read-only campaign — behind loopback + Host + Origin + CSRF guards."""
+            # Drain the (bounded) request body first so an early rejection never leaves the client
+            # writing into a half-closed socket (a broken pipe / connection abort).
+            body = self._read_json_body()
+            if not self._host_is_loopback():
+                return self._json(403, {"ok": False, "error": "non-loopback Host header refused"})
             if not self._origin_ok():
-                return self._json(403, {"error": "cross-origin control requests are refused"})
-            action = (parse_qs(parsed.query).get("action") or [""])[0]
-            ok, status, message = service.control(action)
-            return self._json(status, {"ok": ok, "action": action, "message": message,
-                                       "status": service.status()})
+                return self._json(403, {"ok": False, "error": "cross-origin start requests are refused"})
+            if body is None:
+                return self._json(400, {"ok": False, "error": "invalid or oversized JSON body"})
+            if not self._csrf_ok():
+                return self._json(403, {"ok": False, "error": "missing or invalid CSRF token"})
+            result = launcher.start(body)
+            payload = result.to_dict()
+            payload["status_snapshot"] = service.status()
+            return self._json(result.status, payload)
+
+        def _host_is_loopback(self) -> bool:
+            host = (self.headers.get("Host", "") or "").rsplit(":", 1)[0].strip().lower()
+            host = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+            return host in _LOOPBACK_HOSTS
+
+        def _csrf_ok(self) -> bool:
+            supplied = self.headers.get("X-Scout-CSRF") or self._body_csrf
+            return bool(supplied) and secrets.compare_digest(str(supplied), csrf_token)
+
+        def _read_json_body(self) -> Optional[dict]:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                return None
+            if length <= 0 or length > _MAX_START_BODY_BYTES:
+                return None
+            try:
+                raw = self.rfile.read(length)
+                data = json.loads(raw.decode("utf-8"))
+            except (ValueError, OSError):
+                return None
+            if not isinstance(data, dict):
+                return None
+            self._body_csrf = data.get("csrf_token")   # allow CSRF via body too (no header needed)
+            return data
+
+        _body_csrf = None
 
         def _origin_ok(self) -> bool:
-            """Reject browser-originated cross-origin control POSTs (lightweight CSRF guard).
+            """Reject browser-originated cross-origin POSTs (lightweight CSRF guard).
 
             Browsers always attach Origin on cross-origin fetch; the CLI control command sends
-            none, so a missing Origin is allowed while a foreign one is refused. The dashboard
-            is localhost-only and never exposes an HTTP start/scan endpoint.
+            none, so a missing Origin is allowed while a foreign one is refused. The start endpoint
+            layers a required CSRF token on top, so a missing Origin alone never suffices there.
             """
             origin = self.headers.get("Origin")
             if not origin:
@@ -489,16 +552,21 @@ was sent (any_real_send={_esc(s['any_real_send'])}).</p>
                     f"<td><a href='/api/prospect?id={_esc(pid)}'>details</a></td></tr>"
                 )
             manual = [pid for pid, p in prospects.items() if p.get("status") == "MANUAL_ACTION_REQUIRED"]
+            running = bool(status.get("running"))
             if controllable:
+                # Stop Safely = graceful cancel (finish the current unit, stop future work);
+                # Cancel = global kill (interrupt the active safe loop promptly). No forced kill.
                 controls = (
                     '<button onclick="ctl(\'pause\')">Pause</button>'
                     '<button onclick="ctl(\'resume\')">Resume</button>'
-                    '<button onclick="ctl(\'cancel\')">Cancel</button>'
-                    '<button onclick="ctl(\'kill\')" style="color:#a00">GLOBAL KILL</button>'
+                    '<button onclick="ctl(\'cancel\')">Stop Safely</button>'
+                    '<button onclick="ctl(\'kill\')" style="color:#a00">Cancel (kill)</button>'
                 )
             else:
                 controls = ("<em>Controls unavailable — this run is "
                             f"<strong>{_esc(mode)}</strong> (read-only).</em>")
+            # The guarded start panel is offered only when nothing is running (idle / finished).
+            start_panel = "" if running else _START_PANEL_HTML
             return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <title>{SCOUT_PRODUCT_NAME} v{SCOUT_VERSION}</title>
 <style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:1000px}}
@@ -514,11 +582,40 @@ button{{margin-right:.5rem;padding:.4rem .8rem}}code{{background:#f4f4f4;padding
 <a href="/results">results</a>, <a href="/projects">projects</a>, <a href="/tools">tool readiness</a></p>
 <h2>Prospects</h2><table><tr><th>id</th><th>url</th><th>status</th><th>priority</th>
 <th>defects</th><th></th></tr>{''.join(rows) or '<tr><td colspan=6>none yet</td></tr>'}</table>
-<script>function ctl(a){{fetch('/api/control?action='+a,{{method:'POST'}})
-.then(r=>r.json()).then(j=>{{if(!j.ok)alert('control refused: '+j.message);location.reload()}})}}</script>
+{start_panel}
+<script>const CSRF={json.dumps(csrf_token)};
+function ctl(a){{fetch('/api/control?action='+a,{{method:'POST'}})
+.then(r=>r.json()).then(j=>{{if(!j.ok)alert('control refused: '+j.message);location.reload()}})}}
+function startCampaign(){{
+ var seeds=(document.getElementById('seeds').value||'').split(/[\\n,]+/).map(s=>s.trim()).filter(Boolean);
+ if(!seeds.length){{alert('enter at least one public https URL');return;}}
+ if(!document.getElementById('confirm').checked){{alert('please confirm the bounded read-only scan');return;}}
+ var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();
+ fetch('/api/campaign/start',{{method:'POST',headers:{{'Content-Type':'application/json','X-Scout-CSRF':CSRF}},
+  body:JSON.stringify({{confirm:true,idempotency_key:key,seeds:seeds,
+   campaign:document.getElementById('campaign').value||'adhoc',
+   max_pages:parseInt(document.getElementById('maxpages').value||'5',10)}})}})
+ .then(r=>r.json()).then(j=>{{if(j.ok){{location.reload();}}
+  else{{alert('start refused: '+(j.message||j.error)+(j.rejected&&j.rejected.length?'\\n'+j.rejected.map(x=>x.url+': '+x.reason).join('\\n'):''));}}}})
+ .catch(e=>alert('start failed: '+e));}}
+</script>
 </body></html>"""
 
     return _Handler
+
+
+_START_PANEL_HTML = """<h2>Start a bounded read-only campaign</h2>
+<div style="border:1px solid #ccc;padding:1rem;border-radius:6px;max-width:640px">
+<p>Runs the existing bounded, read-only Scout engine over 1&ndash;10 <strong>public https</strong>
+seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. Non-public / private
+/ loopback targets are rejected.</p>
+<p><label>Public seed URLs (one per line):<br>
+<textarea id="seeds" rows="4" style="width:100%" placeholder="https://example.com/"></textarea></label></p>
+<p><label>Campaign name: <input id="campaign" value="adhoc"></label>
+&nbsp;<label>Max pages/site: <input id="maxpages" type="number" value="5" min="1" max="50" style="width:5rem"></label></p>
+<p><label><input type="checkbox" id="confirm"> I confirm this is an authorized, bounded, read-only scan.</label></p>
+<p><button onclick="startCampaign()">Start campaign</button></p>
+</div>"""
 
 
 def _esc(s: str) -> str:
@@ -534,12 +631,23 @@ def _gmail_compose_url(to: str, subject: str, body: str) -> str:
             f"&to={quote(to)}&su={quote(subject)}&body={quote(body)}")
 
 
-def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 0
-                    ) -> Tuple[ThreadingHTTPServer, str]:
-    """Start the dashboard (localhost only) and return (server, base_url). Non-blocking."""
+def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 0,
+                    launcher: Optional[CampaignLauncher] = None,
+                    csrf_token: Optional[str] = None) -> Tuple[ThreadingHTTPServer, str]:
+    """Start the dashboard (localhost only) and return (server, base_url). Non-blocking.
+
+    ``launcher`` (defaults to a live ``CampaignLauncher`` with an empty local-host allowlist, so
+    localhost/private targets stay rejected) backs the guarded start endpoint; ``csrf_token``
+    defaults to a fresh per-server secret. Both are attached to the returned server for the
+    operator/tests (``server.scout_csrf_token`` / ``server.scout_launcher``).
+    """
     if host not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("dashboard binds to localhost only")
-    server = ThreadingHTTPServer((host, port), _make_handler(service))
+    launcher = launcher or CampaignLauncher(service)
+    token = csrf_token or secrets.token_urlsafe(32)
+    server = ThreadingHTTPServer((host, port), _make_handler(service, launcher, token))
+    server.scout_csrf_token = token          # type: ignore[attr-defined]
+    server.scout_launcher = launcher         # type: ignore[attr-defined]
     bound_host, bound_port = server.server_address[0], server.server_address[1]
     import threading
     threading.Thread(target=server.serve_forever, daemon=True).start()
