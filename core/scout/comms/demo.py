@@ -89,9 +89,11 @@ def run_radar_demo(output_dir: str, *, campaign_id: str = "radar-demo",
 
     delivered = process_event(mem, comms, {"event_id": "pe1", "normalized_type": "DELIVERED",
                                            "received_ts": _NOW, "dedup_key": "d-1",
+                                           "trust_class": "deterministic_fixture_event",
                                            "message_ref": outcome.message_id}, now=_NOW)
     replied = process_event(mem, comms, {"event_id": "pe2", "normalized_type": "REPLIED_POSITIVE",
                                          "received_ts": _NOW, "dedup_key": "r-1",
+                                         "trust_class": "deterministic_fixture_event",
                                          "message_ref": outcome.message_id}, now=_NOW)
     followup = evaluate_followup(mem, comms, company_id="co-1", contact_id="k1",
                                  parent_message_id=outcome.message_id, sequence_no=1, now=_NOW)

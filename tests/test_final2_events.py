@@ -25,7 +25,8 @@ def _seed(tmp_path):
 
 
 def _ev(t, dk, **kw):
-    base = {"event_id": f"ev-{dk}", "normalized_type": t, "received_ts": _NOW, "dedup_key": dk}
+    base = {"event_id": f"ev-{dk}", "normalized_type": t, "received_ts": _NOW, "dedup_key": dk,
+            "trust_class": "deterministic_fixture_event"}
     base.update(kw)
     return base
 
