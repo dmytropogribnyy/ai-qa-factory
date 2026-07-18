@@ -51,7 +51,7 @@ def test_health_and_status_and_prospects(tmp_path):
             s, body = _get(url + "/api/prospects")
             assert len(json.loads(body)["prospects"]) == 3
             s, body = _get(url + "/")   # HTML overview renders
-            assert "Prospect QA Scout" in body and "GLOBAL KILL" in body
+            assert "Prospect QA Scout" in body and "Cancel (kill)" in body and "Stop Safely" in body
         finally:
             server.shutdown()
 

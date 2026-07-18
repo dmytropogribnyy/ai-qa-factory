@@ -20,6 +20,7 @@ from core.scout.comms.gmail import (
 )
 from core.scout.comms.gmail_oauth import (
     READINESS_ACCOUNT,
+    READINESS_AUTHORIZED,
     finalize_authorization,
     gmail_status,
     read_token_store,
@@ -74,7 +75,19 @@ def _build_raises(*a, **k):
     raise RuntimeError("no network in tests")
 
 
-def _seed(tmp_path, *, transport=None, status=None):
+def _fake_verifier(claims, *, sig_valid=True, enforce_aud=True):
+    from core.scout.comms.gmail import GmailConfigError
+
+    def _verify(id_token, audience):
+        if not sig_valid:
+            raise GmailConfigError("id-token verification failed: invalid signature")
+        if enforce_aud and claims.get("aud") != audience:
+            raise GmailConfigError("id-token verification failed: wrong audience")
+        return claims
+    return _verify
+
+
+def _seed(tmp_path, *, transport=None, status=None, identity_prover=None):
     transport = transport if transport is not None else _Capture()
     db = MemoryDB(str(tmp_path / "m.db"))
     mem, comms = MemoryRepository(db), CommsRepository(db)
@@ -98,7 +111,8 @@ def _seed(tmp_path, *, transport=None, status=None):
     reg.register(GmailProvider(from_email=_EXPECTED, from_name="Dmytro Pogribnyy",
                                expected_account=_EXPECTED, transport=transport,
                                token_provider=lambda: "tok",
-                               status_provider=(lambda: status) if status is not None else None))
+                               status_provider=(lambda: status) if status is not None else None,
+                               identity_prover=identity_prover))
     svc = SendService(mem, comms, reg, lambda: _NOW)
     rid = build_revision(mem, comms, draft_id="d1", company_id="co-1", contact_id="k1",
                          finding_id="f1", channel="email", subject="A quick QA note",
@@ -142,7 +156,8 @@ def test_cli_send_path_uses_gmail_with_exact_payload(tmp_path, monkeypatch):
         reg.register(DeterministicLocalSinkProvider(sink_dir))
         reg.register(GmailProvider(from_email=_EXPECTED, from_name="Dmytro Pogribnyy",
                                    expected_account=_EXPECTED, transport=cap,
-                                   token_provider=lambda: "tok", status_provider=_verified_status))
+                                   token_provider=lambda: "tok", status_provider=_verified_status,
+                                   identity_prover=lambda: _EXPECTED))
         return reg
     monkeypatch.setattr("core.scout.comms.runtime.build_runtime_provider_registry", fake_factory)
     from argparse import Namespace
@@ -155,7 +170,8 @@ def test_cli_send_path_uses_gmail_with_exact_payload(tmp_path, monkeypatch):
 
 
 def test_full_gmail_send_with_verified_status(tmp_path):
-    mem, comms, svc, rid, aid, transport = _seed(tmp_path, status=_verified_status())
+    mem, comms, svc, rid, aid, transport = _seed(tmp_path, status=_verified_status(),
+                                                 identity_prover=lambda: _EXPECTED)
     out = _send(svc, rid, aid)
     assert out.status == S_ACCEPTED and transport.calls == 1
     assert comms.get_approval(aid)["state"] == "CONSUMED"
@@ -163,7 +179,8 @@ def test_full_gmail_send_with_verified_status(tmp_path):
 
 
 def test_dry_run_never_calls_provider_or_consumes(tmp_path):
-    mem, comms, svc, rid, aid, transport = _seed(tmp_path, status=_verified_status())
+    mem, comms, svc, rid, aid, transport = _seed(tmp_path, status=_verified_status(),
+                                                 identity_prover=lambda: _EXPECTED)
     out = _send(svc, rid, aid, live=False)
     assert out.status == S_DRY_RUN and transport.calls == 0
     assert comms.get_approval(aid)["state"] == "APPROVED"
@@ -173,19 +190,35 @@ def test_dry_run_never_calls_provider_or_consumes(tmp_path):
     ({"client_config_present": False}, "gmail_oauth_client_not_configured"),
     ({"client_config_present": True, "token_present": False}, "gmail_not_authorized"),
     ({"client_config_present": True, "token_present": True, "refreshable": True,
-      "expected_account_match": False, "scopes": [GMAIL_SEND_SCOPE, "openid", "email"]},
-     "gmail_account_not_verified"),
+      "scopes": ["openid", "email"]}, "gmail_missing_send_scope"),
     ({"client_config_present": True, "token_present": True, "refreshable": True,
-      "expected_account_match": True, "scopes": ["openid", "email"]}, "gmail_missing_send_scope"),
-    ({"client_config_present": True, "token_present": True, "refreshable": True,
-      "expected_account_match": True,
       "scopes": [GMAIL_SEND_SCOPE, "https://www.googleapis.com/auth/gmail.modify"]},
      "gmail_forbidden_scope"),
 ])
 def test_gmail_preflight_blocks_before_reservation(tmp_path, status, blocker):
-    mem, comms, svc, rid, aid, transport = _seed(tmp_path, status=status)
+    mem, comms, svc, rid, aid, transport = _seed(tmp_path, status=status,
+                                                 identity_prover=lambda: _EXPECTED)
     out = _send(svc, rid, aid)
     assert out.status == S_BLOCKED and blocker in out.blockers
+    _assert_no_state_mutation(comms, aid, rid, transport)
+
+
+def test_unverified_identity_blocks_before_reservation(tmp_path):
+    # Status is fine, but the authoritative identity proof fails (wrong account / verifier raises).
+    def _bad_identity():
+        raise RuntimeError("verifier rejected")
+    mem, comms, svc, rid, aid, transport = _seed(tmp_path, status=_verified_status(),
+                                                 identity_prover=_bad_identity)
+    out = _send(svc, rid, aid)
+    assert out.status == S_BLOCKED and "gmail_identity_unverified" in out.blockers
+    _assert_no_state_mutation(comms, aid, rid, transport)
+
+
+def test_missing_identity_prover_blocks_live_send(tmp_path):
+    # A status-wired provider with NO authoritative identity proof cannot send live.
+    mem, comms, svc, rid, aid, transport = _seed(tmp_path, status=_verified_status())
+    out = _send(svc, rid, aid)
+    assert out.status == S_BLOCKED and "gmail_identity_unverified" in out.blockers
     _assert_no_state_mutation(comms, aid, rid, transport)
 
 
@@ -203,24 +236,33 @@ def test_external_send_guard_blocks_real_transport(monkeypatch):
     assert exc.value.before_transmission is True
 
 
-# --- BLOCKER 2: fail-closed OAuth (finalize_authorization + gmail_status) --------------------------
+# --- BLOCKER 2: fail-closed OAuth (finalize_authorization + gmail_status), M0-hardened -------------
+
+_AUD = "client-id-123.apps.googleusercontent.com"
+
+
+def _claims(email=_EXPECTED, *, iss="https://accounts.google.com", sub="sub-1", verified=True,
+            aud=_AUD):
+    return {"iss": iss, "sub": sub, "email": email, "email_verified": verified, "aud": aud}
+
 
 def test_finalize_authorization_success_stores_verified_identity(tmp_path):
     token_path = str(tmp_path / "token.json")
     creds = _FakeCreds([GMAIL_SEND_SCOPE, "openid", "email"], id_token=_jwt(_EXPECTED))
-    result = finalize_authorization(creds, _build_raises, token_store_path=token_path,
-                                    expected_account=_EXPECTED)
+    result = finalize_authorization(creds, _build_raises, token_store_path=token_path, audience=_AUD,
+                                    expected_account=_EXPECTED, verifier=_fake_verifier(_claims()))
     assert result["account"] == _EXPECTED
     token = read_token_store(token_path)
-    assert token["verified_email_claim"] == _EXPECTED and token["has_refresh_token"]
+    assert token["account_claim"] == _EXPECTED and token["has_refresh_token"]
 
 
-def test_finalize_authorization_unprovable_identity_fails_closed(tmp_path):
+def test_finalize_authorization_invalid_signature_fails_closed(tmp_path):
     token_path = tmp_path / "token.json"
-    creds = _FakeCreds([GMAIL_SEND_SCOPE, "openid", "email"], id_token="")  # no claim
+    creds = _FakeCreds([GMAIL_SEND_SCOPE, "openid", "email"], id_token=_jwt(_EXPECTED))
     with pytest.raises(GmailConfigError):
-        finalize_authorization(creds, _build_raises, token_store_path=str(token_path),
-                               expected_account=_EXPECTED)
+        finalize_authorization(creds, _build_raises, token_store_path=str(token_path), audience=_AUD,
+                               expected_account=_EXPECTED,
+                               verifier=_fake_verifier(_claims(), sig_valid=False))
     assert not token_path.exists()  # no token written
 
 
@@ -228,8 +270,9 @@ def test_finalize_authorization_wrong_account_fails_closed(tmp_path):
     token_path = tmp_path / "token.json"
     creds = _FakeCreds([GMAIL_SEND_SCOPE, "openid", "email"], id_token=_jwt("someone-else@gmail.com"))
     with pytest.raises(GmailConfigError):
-        finalize_authorization(creds, _build_raises, token_store_path=str(token_path),
-                               expected_account=_EXPECTED)
+        finalize_authorization(creds, _build_raises, token_store_path=str(token_path), audience=_AUD,
+                               expected_account=_EXPECTED,
+                               verifier=_fake_verifier(_claims("someone-else@gmail.com")))
     assert not token_path.exists()
 
 
@@ -239,8 +282,8 @@ def test_finalize_authorization_invalid_scopes_fail_closed(tmp_path, scopes):
     token_path = tmp_path / "token.json"
     creds = _FakeCreds(scopes, id_token=_jwt(_EXPECTED))
     with pytest.raises(GmailConfigError):
-        finalize_authorization(creds, _build_raises, token_store_path=str(token_path),
-                               expected_account=_EXPECTED)
+        finalize_authorization(creds, _build_raises, token_store_path=str(token_path), audience=_AUD,
+                               expected_account=_EXPECTED, verifier=_fake_verifier(_claims()))
     assert not token_path.exists()
 
 
@@ -252,21 +295,24 @@ def _client_config(tmp_path):
 
 
 def test_altered_account_field_is_not_identity_proof(tmp_path):
-    # A token file with account=dipptrue but NO verified id-token claim must NOT verify.
+    # A token file with account=dipptrue but NO id-token claim must NOT verify offline.
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"token": "a", "refresh_token": "r", "account": _EXPECTED,
                                  "scopes": [GMAIL_SEND_SCOPE, "openid", "email"]}), encoding="utf-8")
     status = gmail_status({"expected_account": _EXPECTED, "client_json": _client_config(tmp_path),
                            "token_json": str(token)})
-    assert status["expected_account_match"] is False and status["readiness"] != READINESS_ACCOUNT
+    assert status["expected_account_match"] is False
+    assert status["expected_account_claim_match"] is False and status["readiness"] != READINESS_ACCOUNT
 
 
-def test_verified_id_token_produces_expected_account_verified(tmp_path):
+def test_offline_status_is_claim_only_and_requires_live_verification(tmp_path):
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"token": "a", "refresh_token": "r", "account": _EXPECTED,
                                  "id_token": _jwt(_EXPECTED),
                                  "scopes": [GMAIL_SEND_SCOPE, "openid", "email"]}), encoding="utf-8")
     status = gmail_status({"expected_account": _EXPECTED, "client_json": _client_config(tmp_path),
                            "token_json": str(token)})
-    assert status["expected_account_match"] is True and status["readiness"] == READINESS_ACCOUNT
-    assert status["scopes_ok"] is True
+    # A decoded claim is NEVER authoritative: expected-account-verified is not granted offline.
+    assert status["expected_account_match"] is False and status["readiness"] == READINESS_AUTHORIZED
+    assert status["expected_account_claim_match"] is True
+    assert status["identity_verification"] == "live-required" and status["scopes_ok"] is True

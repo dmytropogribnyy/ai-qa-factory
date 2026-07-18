@@ -139,6 +139,146 @@ def run_work(args) -> int:
     return 0
 
 
+def run_analyze_job(args) -> int:
+    """v3.0.0 — analyze a potential client (Upwork/direct) job: read-only planning + a human-readable
+    feasibility verdict. NEVER starts implementation. Exit: 0 ok, 1 invalid, 2 safety block."""
+    import sys as _sys
+
+    from core.config import get_settings
+    try:
+        if getattr(args, "stdin", False):
+            raw = _sys.stdin.read()
+        elif getattr(args, "text", None) is not None:
+            raw = args.text
+        else:
+            raw = read_input(args.input)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=_sys.stderr)
+        return 1
+    raw = (raw or "").strip()
+    if not raw:
+        print("ERROR: empty input", file=_sys.stderr)
+        return 1
+    if len(raw.encode("utf-8")) > _WORK_MAX_INPUT_BYTES:
+        print(f"ERROR: input exceeds {_WORK_MAX_INPUT_BYTES} bytes", file=_sys.stderr)
+        return 1
+
+    from core.orchestration.content_safety import redact_intake_text
+    from core.orchestration.providers import ClockProvider, IdProvider, generate_project_id
+    generated = args.project_id is None
+    project_id = (generate_project_id(redact_intake_text(raw).text, IdProvider())
+                  if generated else args.project_id)
+    if not _valid_project_id(project_id):
+        print("ERROR: invalid project id (use [A-Za-z0-9._-], no separators)", file=_sys.stderr)
+        return 2
+    try:
+        out_dir = Path(get_settings().output_dir).resolve()
+        from core.orchestration.client_work import ClientWorkService
+        res = ClientWorkService(ClockProvider(), IdProvider(), output_dir=str(out_dir)).analyze(
+            raw, project_id=project_id, source_platform=args.source_platform,
+            profile_override=args.profile, fresh_only=generated)
+    except Exception as exc:
+        print(f"BLOCKED/ERROR: {exc}", file=_sys.stderr)
+        return 2
+    r = res.feasibility
+    print(f"=== Feasibility: {r.verdict}  (confidence {r.confidence}, risk {r.risk_level}) ===")
+    print(f"Project: {res.project_id}   Profile: {res.profile or '(unresolved)'}")
+    print(f"Intent: {r.client_intent}")
+    print(f"Technical fit: {r.technical_fit}")
+    print(f"Effort: {r.estimated_effort}   Pricing: {r.pricing_guidance}")
+    if r.client_questions:
+        print("Questions for the client:")
+        for q in r.client_questions:
+            print(f"  - {q}")
+    if r.reasons_to_reject:
+        print("Honest reasons this may not fit:")
+        for x in r.reasons_to_reject:
+            print(f"  - {x}")
+    print(f"Workspace: {res.workspace_dir}")
+    print("Analysis only - nothing executed. Review FEASIBILITY_SUMMARY.md / PROPOSAL_DRAFT.md, "
+          "then approve to proceed.")
+    return 0
+
+
+def run_client_work(args) -> int:
+    """v3.0.0 - operator actions over the persisted client-work lifecycle. Execution itself is
+    Claude-Code-driven and human-approved; Factory records/validates/delivers what was produced."""
+    import sys as _sys
+
+    from core.config import get_settings
+    from core.orchestration.work_execution import WorkExecutionError, WorkExecutionService
+    if not args.project_id:
+        print("ERROR: --project-id is required", file=_sys.stderr)
+        return 1
+    svc = WorkExecutionService(output_dir=str(Path(get_settings().output_dir)))
+    pid = args.project_id
+    try:
+        if args.action in ("status", "resume"):
+            v = svc.resume(pid) if args.action == "resume" else svc.status(pid)
+            print(f"Project {pid}: {v.status} ({v.progress}%)  evidence={v.evidence_count}  "
+                  f"tests={v.tests_passed}/{v.tests_run}  delivery_ready={v.delivery_ready}")
+            if v.blockers:
+                print("Blockers: " + ", ".join(v.blockers))
+            print(f"Next: {v.next_action}")
+        elif args.action == "approve":
+            if not (args.reviewer or "").strip():
+                print("ERROR: --reviewer is required to approve", file=_sys.stderr)
+                return 1
+            st = svc.approve(pid, reviewer=args.reviewer, note=args.note or "")
+            print(f"Approved {pid}: {st.status}. Execution is Claude-Code-driven and human-approved - "
+                  "produce artifacts in the workspace, then record evidence + validation via Factory.")
+        elif args.action == "prepare-delivery":
+            m = svc.prepare_delivery(pid)
+            print(f"Delivery package prepared for {pid}: {len(m['produced_artifacts'])} artifact(s), "
+                  f"evidence={m['evidence_count']}, validation_passed={m['validation_passed']}.")
+        else:
+            print("ERROR: unknown action", file=_sys.stderr)
+            return 1
+    except WorkExecutionError as exc:
+        print(f"BLOCKED: {exc}", file=_sys.stderr)
+        return 2
+    return 0
+
+
+def run_projects(args) -> int:
+    """v3.0.0 - one read-only index over client-work projects + Scout campaigns (no new database)."""
+    from core.config import get_settings
+    from core.orchestration.project_index import ProjectIndex
+    out_dir = str(Path(get_settings().output_dir))
+    index = ProjectIndex(out_dir)
+    if getattr(args, "as_json", False):
+        import json as _json
+        print(_json.dumps(index.snapshot(), indent=2, ensure_ascii=False))
+        return 0
+    projects = index.list_projects()
+    print(f"Projects ({len(projects)}) - client-work + Scout, from existing state:")
+    for p in projects:
+        print(f"  [{p.type:14}] {p.project_id:28} {p.lifecycle_state:22} {p.progress:3}%  "
+              f"blockers={len(p.blockers)} evidence={p.evidence_count}")
+        print(f"      next: {p.operator_next_action}")
+    return 0
+
+
+def run_tool_status(args) -> int:
+    """v3.0.0 - honest capability/tool readiness (no live MCP or network call; none live-accepted)."""
+    from datetime import datetime, timezone
+
+    from core.orchestration.tool_broker import ToolBroker
+    broker = ToolBroker(clock=lambda: datetime.now(timezone.utc).isoformat())
+    if getattr(args, "as_json", False):
+        import json as _json
+        print(_json.dumps(broker.snapshot(), indent=2, ensure_ascii=False))
+        return 0
+    print("Tool readiness (deterministic; no live MCP/network call; none live-accepted):")
+    print(f"  {'tool':22} {'domain':26} {'readiness':16} auth / fallback")
+    for t in broker.discover():
+        print(f"  {t.id:22} {t.domain:26} {t.readiness:16} {t.auth_requirement} / {t.fallback}")
+        if t.readiness in ("unavailable", "blocked-by-auth") and t.setup_instruction:
+            print(f"      setup: {t.setup_instruction}")
+    print("Session-only MCP tools are 'declared' here; connect them in Claude Code (/mcp) to use.")
+    return 0
+
+
 def require_real_llm_guard(settings, require_real_llm: bool, allow_mock: bool = False) -> None:
     if require_real_llm and settings.is_mock and not allow_mock:
         raise RuntimeError(
@@ -218,6 +358,42 @@ def main(argv: list[str] | None = None) -> int:
     work_cmd.add_argument("--profile", help="Optional capability-profile override")
     work_cmd.add_argument("--json", action="store_true", dest="as_json",
                           help="Print a redacted machine summary")
+
+    # v3.0.0 — analyze a potential client job (read-only planning + feasibility verdict; never executes)
+    analyze_cmd = subparsers.add_parser(
+        "analyze-job",
+        help="Analyze a potential Upwork/direct client job: feasibility verdict + questions + proposal "
+             "(read-only; nothing is executed)")
+    analyze_src = analyze_cmd.add_mutually_exclusive_group(required=True)
+    analyze_src.add_argument("--input", "-i", help="Path to the job brief file")
+    analyze_src.add_argument("--text", help="Literal job brief text")
+    analyze_src.add_argument("--stdin", action="store_true", help="Read the brief from stdin")
+    analyze_cmd.add_argument("--project-id", help="Project id (safe name; generated when omitted)")
+    analyze_cmd.add_argument("--source-platform", default="unknown",
+                             help="Commercial source platform (e.g. upwork, direct)")
+    analyze_cmd.add_argument("--profile", help="Optional capability-profile override")
+
+    # v3.0.0 — honest capability/tool readiness broker
+    tool_cmd = subparsers.add_parser(
+        "tool-status", help="Show honest tool readiness (internal/local/session/external; none live)")
+    tool_cmd.add_argument("--json", action="store_true", dest="as_json",
+                          help="Print the machine-readable capability snapshot")
+
+    # v3.0.0 — unified project index (client-work + Scout)
+    projects_cmd = subparsers.add_parser(
+        "projects", help="List client-work projects + Scout campaigns from existing state (read-only)")
+    projects_cmd.add_argument("--json", action="store_true", dest="as_json",
+                              help="Print the machine-readable project snapshot")
+
+    # v3.0.0 — operator actions over the persisted client-work execution lifecycle
+    cw_cmd = subparsers.add_parser(
+        "client-work",
+        help="Drive the persisted client-work lifecycle: approve/status/resume/prepare-delivery "
+             "(execution is Claude-Code-driven and human-approved)")
+    cw_cmd.add_argument("action", choices=["status", "resume", "approve", "prepare-delivery"])
+    cw_cmd.add_argument("--project-id", required=True, help="Project id (from analyze-job)")
+    cw_cmd.add_argument("--reviewer", help="Reviewer identity (required to approve)")
+    cw_cmd.add_argument("--note", default="", help="Optional approval note")
 
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
     scout_cmd = subparsers.add_parser(
@@ -312,6 +488,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "work":
         return run_work(args)
+
+    if args.mode == "analyze-job":
+        return run_analyze_job(args)
+
+    if args.mode == "tool-status":
+        return run_tool_status(args)
+
+    if args.mode == "projects":
+        return run_projects(args)
+
+    if args.mode == "client-work":
+        return run_client_work(args)
 
     if args.mode == "scout":
         from core.scout.cli import run_scout_cli

@@ -75,9 +75,16 @@ jobs:
           pip install playwright axe-core-python
           python -m playwright install --with-deps chromium
       - name: Real local Playwright + axe + performance acceptance (local fixtures only)
-        run: |
-          python -m pytest -m playwright_acceptance -q
-          python -m pytest -m final1_browser_acceptance -q
+        run: >-
+          python -m pytest -q -ra --junitxml=reports/junit-browser.xml
+          -m "playwright_acceptance or final1_browser_acceptance"
+      - name: Upload bounded browser report (no secrets)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-browser
+          path: reports/junit-browser.xml
+          if-no-files-found: ignore
 
   provider-contract:
     # LocalSinkProvider + fake Gmail/Resend transports + OAuth config parsing with fixture creds only.
