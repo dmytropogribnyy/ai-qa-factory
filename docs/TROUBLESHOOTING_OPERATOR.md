@@ -7,7 +7,7 @@
 | dependency install failed | offline / proxy | Check your internet/proxy, re-run setup |
 | `outputs\ is not writable` | permissions | Run from a user-writable folder; check the directory ACLs |
 | dashboard URL not reachable | not started / wrong port | `scripts\start-local.ps1 [port]`; open the printed `http://127.0.0.1:<port>` |
-| dashboard won't stop | stray process | `scripts\stop-local.ps1 [port]` |
+| dashboard won't stop | stray process | `scripts\stop-local.ps1 -Port <port>` — ownership-safe: it stops the dashboard only after proving the process is this dashboard (PID + start time + command + port), and never kills another Python process by port/name. "No ownership record … Refusing" means no dashboard of ours is on that port; use Ctrl+C in its window. |
 | a tool shows `unavailable` | binary not on PATH | Follow the setup line from `python main.py tool-status` |
 | a tool shows `blocked-by-auth` | not authorized locally | Follow its setup (e.g. Gmail: `docs\GMAIL_PROVIDER_SETUP.md`); optional tools don't block other work |
 | GitHub MCP shows `declared` | session MCP not connected | Connect it in Claude Code (`/mcp`); the local `gh` CLI is the fallback |
