@@ -127,9 +127,10 @@ def cmd_dashboard(args) -> int:
             run_id = args.run_id
             mode = "READ-ONLY ATTACHED"
         else:
-            print("ERROR: dashboard needs --seeds (start an active run) or --run-id "
-                  "(attach read-only to an existing run)", file=sys.stderr)
-            return 1
+            # Idle HOME dashboard: serve the localhost home + tool readiness without starting any
+            # scan. The operator opens this first, then starts a campaign explicitly.
+            run_id = "(none)"
+            mode = "HOME (idle)"
     except Exception as exc:
         print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
