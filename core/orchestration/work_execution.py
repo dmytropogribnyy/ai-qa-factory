@@ -301,30 +301,129 @@ class WorkExecutionService:
         if leaked:
             raise WorkExecutionError(f"refusing to deliver: secret-like content in {leaked[0]}")
 
-        artifacts = [a.get("filename") for a in prog.get("outcome", {}).get("artifacts", [])]
-        digest = self._manifest_digest(current)
+        produced = [a.get("filename") for a in prog.get("outcome", {}).get("artifacts", [])]
+        # Partition the registered files into artifacts vs evidence by the actual evidence paths
+        # (the operator executor records an evidence file as both an artifact and evidence).
+        ev_rels = {e.get("relative_path") for e in ev.get("evidence", [])
+                   if isinstance(e, dict) and e.get("relative_path")}
+        ev_rels |= {e.get("relative_path") for e in prog.get("outcome", {}).get("evidence", [])
+                    if isinstance(e, dict) and e.get("relative_path")}
+        evidence_files = sorted(f for f in files if f in ev_rels)
+        artifacts = sorted(f for f in files if f not in ev_rels)
+        # Generate/preserve the delivery documents BEFORE sealing and INCLUDE them in the exact
+        # package integrity set (M0.2). The report is always regenerated; the client message is
+        # preserved when it already exists (never silently overwriting an operator edit).
+        self._write(ws / "DELIVERY_REPORT.md",
+                    self._delivery_md(pid, fr, tr, artifacts, evidence_files))
+        cm_path = ws / "CLIENT_MESSAGE.md"
+        if cm_path.exists():
+            client_message_source = "preserved"      # may be operator-edited; never overwritten here
+        else:
+            self._write(cm_path, self._client_message_md(pid, fr))
+            client_message_source = "generated"
+        delivery_docs = ["DELIVERY_REPORT.md", "CLIENT_MESSAGE.md"]
+        # Secret-scan the delivery documents too, then hash the EXACT package (registered files +
+        # the delivery documents) - not the whole workspace.
+        leaked_docs = self._scan_delivery(pid, delivery_docs)
+        if leaked_docs:
+            raise WorkExecutionError(f"refusing to deliver: secret-like content in {leaked_docs[0]}")
+        package_files = files + delivery_docs
+        package_hashes = self._hash_map(pid, package_files)
+        digest = self._manifest_digest(package_hashes)
         manifest = {"project_id": pid, "generated_at": self._clock.now_iso(),
                     "deliverables": fr.get("expected_deliverables", []),
-                    "produced_artifacts": artifacts, "evidence_count": ev.get("count", 0),
+                    "produced_artifacts": produced, "evidence_count": ev.get("count", 0),
                     "validation_passed": bool(tr.get("passed")), "tests_run": tr.get("tests_run", 0),
                     "reviewed_by": review.get("reviewer", ""), "review_approved": bool(review.get("approved")),
-                    "included_files": files, "artifact_hashes": current, "manifest_digest": digest,
+                    "included": {"artifacts": artifacts, "evidence": evidence_files,
+                                 "delivery_docs": delivery_docs},
+                    "included_files": package_files, "artifact_hashes": package_hashes,
+                    "manifest_digest": digest, "client_message_source": client_message_source,
                     "approved_for_delivery": True,
-                    "note": "validated + operator-reviewed; delivery package prepared (not yet sent)"}
+                    "note": "validated + operator-reviewed; exact delivery package prepared (not sent)"}
         text = json.dumps(manifest, indent=2, sort_keys=True)
         self._write(ws / "WORK_DELIVERY_MANIFEST.json", text)
-        self._write(ws / "DELIVERY_REPORT.md", self._delivery_md(pid, fr, tr, artifacts,
-                                                                 ev.get("count", 0)))
-        self._write(ws / "CLIENT_MESSAGE.md", self._client_message_md(pid, fr))
         # Record the exact manifest bytes AS WRITTEN, so a later manifest edit is detected.
         self._write(ws / "DELIVERY_PREPARED.json", json.dumps(
             {"prepared_at": self._clock.now_iso(), "manifest_digest": digest,
              "manifest_sha256": self._hash_file(ws / "WORK_DELIVERY_MANIFEST.json"),
-             "included_file_count": len(files)}, indent=2, sort_keys=True))
+             "included_file_count": len(package_files)}, indent=2, sort_keys=True))
         state = self._sm.transition(state, "DELIVERY_PREPARED",
                                     "delivery package prepared; all integrity checks passed", "cli")
         self._save_state(pid, state)
         return manifest
+
+    def reopen_delivery(self, pid: str, reviewer: str, reason: str) -> Dict[str, Any]:
+        """Recover a prepared delivery (M0.1). Only from DELIVERY_PREPARED. Archives the prepared
+        manifest + seal as audit history, then either returns to READY_FOR_DELIVERY (only drafts /
+        metadata changed) or, if the validated registered content changed, invalidates preparation
+        AND review and drops to REPAIR_REQUIRED so the operator redoes execution/validation/review.
+        Never silently accepts changed content."""
+        if not reviewer.strip():
+            raise WorkExecutionError("reviewer identity is required to reopen a delivery")
+        state = self._load_state(pid)
+        if state.status != "DELIVERY_PREPARED":
+            raise WorkExecutionError(f"reopen-delivery needs state DELIVERY_PREPARED "
+                                     f"(is {state.status})")
+        ws = self._ws(pid)
+        manifest = self._read_json(ws / "WORK_DELIVERY_MANIFEST.json")
+        prev_digest = manifest.get("manifest_digest", "")
+        self._archive_delivery(pid, prev_digest)          # preserve old manifest + seal as history
+        validated = self._read_json(ws / "VALIDATED_ARTIFACTS.json").get("hashes", {})
+        current = self._hash_map(pid, self._registered_files(pid))
+        changed = sorted(k for k in set(validated) | set(current) if validated.get(k) != current.get(k))
+        # Invalidate the prepared seal either way.
+        try:
+            (ws / "DELIVERY_PREPARED.json").unlink()
+        except OSError:
+            pass
+        entry = {"at": self._clock.now_iso(), "reviewer": reviewer, "reason": reason[:500],
+                 "previous_manifest_digest": prev_digest, "registered_changed": changed}
+        if changed:
+            # Validated content changed: invalidate the review and require the full loop again.
+            self._write(ws / "REVIEW.json", json.dumps(
+                {"reviewer": reviewer, "approved": False,
+                 "note": f"invalidated by reopen-delivery: {reason}"[:200],
+                 "at": self._clock.now_iso()}, indent=2, sort_keys=True))
+            entry["outcome"] = "REPAIR_REQUIRED"
+            state = self._sm.transition(
+                state, "REPAIR_REQUIRED",
+                f"delivery reopened; validated content changed ({len(changed)} file(s)): {reason}"[:200],
+                reviewer)
+        else:
+            entry["outcome"] = "READY_FOR_DELIVERY"
+            state = self._sm.transition(
+                state, "READY_FOR_DELIVERY",
+                f"delivery reopened (drafts/metadata only): {reason}"[:200], reviewer)
+        self._append_delivery_history(pid, entry)
+        self._save_state(pid, state)
+        return entry
+
+    def _archive_delivery(self, pid: str, digest: str) -> None:
+        """Copy the current manifest + prepared seal into delivery_history/<n>/ so provenance is
+        preserved rather than overwritten."""
+        ws = self._ws(pid)
+        base = ws / "delivery_history"
+        n = 1
+        while (base / f"{n:03d}").exists():
+            n += 1
+        dest = base / f"{n:03d}"
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in ("WORK_DELIVERY_MANIFEST.json", "DELIVERY_PREPARED.json", "REVIEW.json"):
+            src = ws / name
+            if src.is_file():
+                (dest / name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        (dest / "_archived.json").write_text(json.dumps(
+            {"archived_at": self._clock.now_iso(), "manifest_digest": digest}, indent=2,
+            sort_keys=True), encoding="utf-8")
+
+    def _append_delivery_history(self, pid: str, entry: Dict[str, Any]) -> None:
+        ws = self._ws(pid)
+        hist = self._read_json(ws / "DELIVERY_HISTORY.json")
+        events = hist.get("events", []) if isinstance(hist, dict) else []
+        events.append(entry)
+        self._write(ws / "DELIVERY_HISTORY.json",
+                    json.dumps({"events": events}, indent=2, sort_keys=True))
 
     def _scan_delivery(self, pid: str, files: List[str]) -> List[str]:
         """Return the relative paths whose actual content looks secret-like (delivery-content scan)."""
@@ -418,16 +517,17 @@ class WorkExecutionService:
 
     @staticmethod
     def _delivery_md(pid: str, fr: Dict[str, Any], tr: Dict[str, Any], artifacts: List[str],
-                     evidence: int) -> str:
+                     evidence_files: List[str]) -> str:
         lines = [f"# Delivery Report - {pid}", "",
                  f"**Scope.** {fr.get('client_intent', '')}", "",
-                 "## Deliverables produced", *[f"- {a}" for a in artifacts], "",
+                 "## Deliverables (exact package)", *[f"- {a}" for a in artifacts], "",
+                 "## Evidence included", *[f"- {e}" for e in evidence_files], "",
                  f"## Validation\n- tests run: {tr.get('tests_run', 0)} · passed: "
-                 f"{tr.get('tests_passed', 0)} · result: {'PASS' if tr.get('passed') else 'FAIL'}",
-                 f"- evidence items: {evidence}", "",
+                 f"{tr.get('tests_passed', 0)} · result: {'PASS' if tr.get('passed') else 'FAIL'}", "",
                  "## Known limitations", "- as noted during execution", "",
-                 "_Validation passed before this package was prepared. Nothing was sent to the client "
-                 "automatically._"]
+                 "_The exact delivery package is defined by WORK_DELIVERY_MANIFEST.json (this report + "
+                 "the client message are part of it). Validation passed before preparation. Nothing "
+                 "was sent to the client automatically._"]
         return "\n".join(lines) + "\n"
 
     @staticmethod

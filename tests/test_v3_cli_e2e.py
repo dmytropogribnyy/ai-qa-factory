@@ -210,6 +210,28 @@ def test_cli_secret_containing_delivery_is_blocked(tmp_path):
     assert r.returncode != 0 and "secret-like content" in (r.stdout + r.stderr)
 
 
+def test_cli_reopen_delivery_recovery(tmp_path):
+    out = tmp_path / "outputs"
+    pid = "reopen"
+    _reach(out, pid, "prepared")
+    # A drafts/metadata-only reopen returns to READY_FOR_DELIVERY; re-prepare + mark completes.
+    r = _cli(["client-work", "reopen-delivery", "--project-id", pid, "--reviewer", "op",
+              "--reason", "fix a typo"], out)
+    assert r.returncode == 0 and "READY_FOR_DELIVERY" in r.stdout
+    assert _read(out, pid, "WORK_RUN_STATE.json")["status"] == "READY_FOR_DELIVERY"
+    assert _cli(["client-work", "prepare-delivery", "--project-id", pid], out).returncode == 0
+    assert _cli(["client-work", "mark-delivered", "--project-id", pid], out).returncode == 0
+    assert _read(out, pid, "WORK_RUN_STATE.json")["status"] == "COMPLETED"
+
+
+def test_cli_reopen_delivery_requires_reason(tmp_path):
+    out = tmp_path / "outputs"
+    pid = "reopen2"
+    _reach(out, pid, "prepared")
+    r = _cli(["client-work", "reopen-delivery", "--project-id", pid, "--reviewer", "op"], out)
+    assert r.returncode == 1 and "reason" in (r.stdout + r.stderr).lower()
+
+
 @pytest.mark.parametrize("bad", ['{"not": "an array"}', "[]", "[oops", '["python", ""]'])
 def test_cli_malformed_structured_argv_is_rejected(tmp_path, bad):
     out = tmp_path / "outputs"

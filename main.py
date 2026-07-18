@@ -311,6 +311,22 @@ def run_client_work(args) -> int:
                   f"evidence={m['evidence_count']}, validation_passed={m['validation_passed']}, "
                   f"reviewed_by={m.get('reviewed_by') or '(none)'}, digest={m['manifest_digest'][:23]}... "
                   "State DELIVERY_PREPARED. Send the package yourself, then: mark-delivered.")
+        elif args.action == "reopen-delivery":
+            if not (args.reviewer or "").strip():
+                print("ERROR: --reviewer is required to reopen a delivery", file=_sys.stderr)
+                return 1
+            if not (args.reason or "").strip():
+                print("ERROR: --reason is required to reopen a delivery", file=_sys.stderr)
+                return 1
+            entry = svc.reopen_delivery(pid, reviewer=args.reviewer, reason=args.reason)
+            outcome = entry["outcome"]
+            if outcome == "REPAIR_REQUIRED":
+                print(f"Reopened {pid}: validated content changed ({len(entry['registered_changed'])} "
+                      "file(s)) -> REPAIR_REQUIRED. Redo: record-execution -> validate -> review -> "
+                      "prepare-delivery.")
+            else:
+                print(f"Reopened {pid}: drafts/metadata only -> READY_FOR_DELIVERY. "
+                      "Re-run prepare-delivery when ready.")
         elif args.action == "mark-delivered":
             st = svc.mark_delivered(pid, note=args.note or "")
             print(f"Marked delivered for {pid}: {st.status}. (This recorded your assertion that you "
@@ -476,10 +492,13 @@ def main(argv: list[str] | None = None) -> int:
              "validate, review, prepare-delivery, mark-delivered, status/resume "
              "(execution is Claude-Code-driven and human-approved)")
     cw_cmd.add_argument("action", choices=["status", "resume", "approve", "record-execution",
-                                           "validate", "review", "prepare-delivery", "mark-delivered"])
+                                           "validate", "review", "prepare-delivery",
+                                           "reopen-delivery", "mark-delivered"])
     cw_cmd.add_argument("--project-id", required=True, help="Project id (from analyze-job)")
-    cw_cmd.add_argument("--reviewer", help="Reviewer identity (required to approve/review)")
+    cw_cmd.add_argument("--reviewer", help="Reviewer identity (required to approve/review/reopen)")
     cw_cmd.add_argument("--note", default="", help="Optional note (approval/review/delivery)")
+    cw_cmd.add_argument("--reason", default="", help="reopen-delivery: why the prepared delivery is "
+                                                     "being reopened (required)")
     cw_cmd.add_argument("--artifacts", help="record-execution: comma-separated relative artifact "
                                             "paths, each optionally 'path:kind'")
     cw_cmd.add_argument("--evidence", help="record-execution: comma-separated relative evidence "
