@@ -13,8 +13,9 @@ from __future__ import annotations
 import importlib.util
 import shutil
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+from core.orchestration.internal_bindings import binding_for
 
 # Availability domains (honest; a connector in ChatGPT/Claude is NOT a local Factory credential).
 DOMAIN_SESSION = "CLAUDE_SESSION_TOOL"            # usable by Claude Code in the current IDE session
@@ -106,16 +107,6 @@ _CATALOGUE: List[ToolProfile] = [
 _BY_ID = {p.id: p for p in _CATALOGUE}
 
 
-# Concrete checks that must PASS before an internal runner is more than "declared": the runner's
-# real dependency must import AND its in-repo binding (the runner/acceptance file) must exist.
-_INTERNAL_CHECKS: Dict[str, Callable[["ToolBroker"], bool]] = {
-    "playwright_internal": lambda b: (b._mod("playwright") and b._mod("axe_core_python")
-                                      and b._repo_file("tests/test_v3_dashboard_browser_acceptance.py")),
-    "api_runner_internal": lambda b: (b._mod("http.server") and b._mod("urllib.request")
-                                      and b._repo_file("tests/test_v3_genuine_execution_cd.py")),
-}
-
-
 def _default_module_available(name: str) -> bool:
     try:
         return importlib.util.find_spec(name) is not None
@@ -126,20 +117,12 @@ def _default_module_available(name: str) -> bool:
 class ToolBroker:
     def __init__(self, *, env: Optional[Dict[str, str]] = None, which: Callable[[str], Any] = shutil.which,
                  clock: Optional[Callable[[], str]] = None, gmail_status_fn: Optional[Callable[[], Dict]] = None,
-                 module_available: Optional[Callable[[str], bool]] = None, repo_root: Optional[str] = None
-                 ) -> None:
+                 module_available: Optional[Callable[[str], bool]] = None) -> None:
         self._env = env
         self._which = which
         self._clock = clock or (lambda: "")
         self._gmail_status_fn = gmail_status_fn
         self._module_available = module_available or _default_module_available
-        self._repo_root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
-
-    def _mod(self, name: str) -> bool:
-        return bool(self._module_available(name))
-
-    def _repo_file(self, rel: str) -> bool:
-        return (self._repo_root / rel).exists()
 
     def discover(self) -> List[ToolStatus]:
         return [self._status(p) for p in _CATALOGUE]
@@ -168,18 +151,17 @@ class ToolBroker:
 
     def _readiness(self, p: ToolProfile):
         if p.kind == "internal":
-            # Catalogue presence alone is only 'declared'; 'fixture-tested' needs a concrete binding
-            # (the runner file) AND its real dependency importable - an ACTUAL check, not a claim.
-            check = _INTERNAL_CHECKS.get(p.id)
-            ok = False
-            if check is not None:
-                try:
-                    ok = bool(check(self))
-                except Exception:
-                    ok = False
-            if ok:
-                return "fixture-tested", "in-repo runner + dependency verified", ""
-            return "declared", "internal runner declared; dependency or binding not verified", p.setup
+            # Catalogue presence alone is only 'declared'. A tool exceeds 'declared' ONLY when its
+            # PRODUCTION module imports, the expected callable adapter exists and is callable, and a
+            # bounded health check passes (see internal_bindings). A tests/ file is never a binding.
+            binding = binding_for(p.id)
+            if binding is None:
+                return ("declared", "internal runner declared; no production binding registered",
+                        p.setup)
+            res = binding.evaluate(module_available=self._module_available)
+            if res.ok:
+                return res.readiness, res.detail, ""
+            return "declared", res.detail, res.setup or p.setup
         if p.kind == "local_bin":
             found = bool(self._which(p.bin_name))
             return (("health-checked", f"{p.bin_name} found on PATH", "") if found
