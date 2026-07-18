@@ -27,6 +27,30 @@ M_PREPARED, M_RESERVED, M_IN_PROGRESS, M_ACCEPTED = (
     "PREPARED", "RESERVED", "PROVIDER_CALL_IN_PROGRESS", "ACCEPTED")
 M_DELIVERED, M_BOUNCED, M_REPLIED, M_OPTED_OUT = "DELIVERED", "BOUNCED", "REPLIED", "OPTED_OUT"
 M_FAILED, M_UNKNOWN, M_CANCELLED = "FAILED_DEFINITE", "OUTCOME_UNKNOWN", "CANCELLED"
+# Send-attempt outcomes.
+ATT_ACCEPTED, ATT_FAILED, ATT_UNKNOWN, ATT_CANCELLED = (
+    "ACCEPTED", "FAILED_DEFINITE", "OUTCOME_UNKNOWN", "CANCELLED_BEFORE_PROVIDER")
+
+# Explicit allowed state transitions. Anything not listed (terminal rewrite, state skipping, an
+# unknown state) is rejected. Every accepted transition appends an immutable lifecycle event.
+_REVISION_TRANSITIONS = {
+    R_DRAFT: {R_PENDING, R_REJECTED, R_SUPERSEDED, R_INVALIDATED},
+    R_PENDING: {R_APPROVED, R_REJECTED, R_SUPERSEDED, R_INVALIDATED},
+    R_APPROVED: {R_RESERVED, R_SUPERSEDED, R_INVALIDATED},
+    R_RESERVED: {R_CONSUMED, R_INVALIDATED},
+}
+_APPROVAL_TRANSITIONS = {
+    A_PENDING: {A_APPROVED, A_REJECTED},
+    A_APPROVED: {A_CONSUMED, A_REVOKED, A_EXPIRED, A_INVALIDATED},
+}
+_MESSAGE_TRANSITIONS = {
+    M_PREPARED: {M_RESERVED, M_CANCELLED},
+    M_RESERVED: {M_IN_PROGRESS, M_CANCELLED},
+    M_IN_PROGRESS: {M_ACCEPTED, M_FAILED, M_UNKNOWN},
+    M_ACCEPTED: {M_DELIVERED, M_BOUNCED, M_REPLIED, M_OPTED_OUT},
+    M_DELIVERED: {M_REPLIED, M_OPTED_OUT},
+    M_REPLIED: {M_OPTED_OUT},
+}
 
 
 class CommsError(MemoryError):
@@ -36,6 +60,17 @@ class CommsError(MemoryError):
 class CommsRepository:
     def __init__(self, db: MemoryDB) -> None:
         self.db = db
+
+    @staticmethod
+    def _event(c, subject_type: str, subject_ref: str, event: str, detail: str, at: str) -> None:
+        """Append an immutable lifecycle/state event inside the caller's transaction."""
+        c.execute("INSERT INTO lifecycle_events (subject_type, subject_ref, event, detail, at) "
+                  "VALUES (?,?,?,?,?)", (subject_type, subject_ref, event, detail[:200], at))
+
+    def lifecycle_events(self, subject_type: str, subject_ref: str) -> List[Dict[str, Any]]:
+        return [dict(r) for r in self.db.query(
+            "SELECT * FROM lifecycle_events WHERE subject_type=? AND subject_ref=? ORDER BY event_id",
+            (subject_type, subject_ref))]
 
     # --- draft revisions --------------------------------------------------
     def next_revision_number(self, draft_id: str) -> int:
@@ -66,15 +101,48 @@ class CommsRepository:
         rows = self.db.query("SELECT * FROM draft_revisions WHERE revision_id=?", (revision_id,))
         return dict(rows[0]) if rows else None
 
-    def supersede_revision(self, revision_id: str) -> None:
+    def supersede_revision(self, revision_id: str, now: str = "") -> None:
         with self.db.transaction() as c:
-            c.execute("UPDATE draft_revisions SET state='SUPERSEDED', superseded=1 "
-                      "WHERE revision_id=? AND state IN ('DRAFT','PENDING_REVIEW','APPROVED')",
-                      (revision_id,))
+            cur = c.execute("UPDATE draft_revisions SET state='SUPERSEDED', superseded=1 "
+                            "WHERE revision_id=? AND state IN ('DRAFT','PENDING_REVIEW','APPROVED')",
+                            (revision_id,))
+            if cur.rowcount == 1:
+                self._event(c, "revision", revision_id, "->SUPERSEDED", "edited/superseded", now)
 
-    def set_revision_state(self, revision_id: str, state: str) -> None:
+    def transition_revision(self, revision_id: str, to_state: str, now: str) -> None:
+        """Guarded draft-revision transition (rejects terminal rewrite / skipping / unknown state)."""
+        rev = self.get_revision(revision_id)
+        if rev is None:
+            raise CommsError(f"unknown revision: {revision_id!r}")
+        frm = rev["state"]
+        if to_state not in _REVISION_TRANSITIONS.get(frm, frozenset()):
+            raise CommsError(f"invalid_revision_transition:{frm}->{to_state}")
+        superseded = 1 if to_state in (R_SUPERSEDED, R_INVALIDATED) else 0
         with self.db.transaction() as c:
-            c.execute("UPDATE draft_revisions SET state=? WHERE revision_id=?", (state, revision_id))
+            cur = c.execute("UPDATE draft_revisions SET state=?, superseded=CASE WHEN ? THEN 1 "
+                            "ELSE superseded END WHERE revision_id=? AND state=?",
+                            (to_state, superseded, revision_id, frm))
+            if cur.rowcount != 1:
+                raise CommsError(f"revision_transition_conflict:{revision_id}")
+            self._event(c, "revision", revision_id, f"{frm}->{to_state}", "", now)
+
+    def transition_approval(self, approval_id: str, to_state: str, now: str, *, reason: str = "") -> None:
+        """Guarded approval transition (rejects terminal rewrite / skipping / unknown state)."""
+        ap = self.get_approval(approval_id)
+        if ap is None:
+            raise CommsError(f"unknown approval: {approval_id!r}")
+        frm = ap["state"]
+        if to_state not in _APPROVAL_TRANSITIONS.get(frm, frozenset()):
+            raise CommsError(f"invalid_approval_transition:{frm}->{to_state}")
+        with self.db.transaction() as c:
+            cur = c.execute("UPDATE approval_records SET state=?, invalidated_at=CASE WHEN ? "
+                            "THEN ? ELSE invalidated_at END, invalidation_reason=? "
+                            "WHERE approval_id=? AND state=?",
+                            (to_state, 1 if to_state in (A_INVALIDATED, A_REVOKED, A_EXPIRED) else 0,
+                             now, reason, approval_id, frm))
+            if cur.rowcount != 1:
+                raise CommsError(f"approval_transition_conflict:{approval_id}")
+            self._event(c, "approval", approval_id, f"{frm}->{to_state}", reason, now)
 
     # --- approvals --------------------------------------------------------
     def create_approval(self, ap: Dict[str, Any]) -> str:
@@ -100,6 +168,9 @@ class CommsRepository:
                  ap["approved_at"], ap.get("expires_at", ""), ap.get("reviewed_content_hash", "")))
             c.execute("UPDATE draft_revisions SET state='APPROVED' WHERE revision_id=?",
                       (ap["revision_id"],))
+            self._event(c, "approval", ap["approval_id"], "->APPROVED", ap["reviewer"],
+                        ap["approved_at"])
+            self._event(c, "revision", ap["revision_id"], "->APPROVED", "", ap["approved_at"])
         return ap["approval_id"]
 
     def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
@@ -108,20 +179,26 @@ class CommsRepository:
 
     def reject_approval(self, approval_id: str, reviewer: str, reason: str, now: str) -> None:
         with self.db.transaction() as c:
-            c.execute("UPDATE approval_records SET state='REJECTED', reason=?, reviewer=? "
-                      "WHERE approval_id=? AND state='PENDING'", (reason, reviewer, approval_id))
+            cur = c.execute("UPDATE approval_records SET state='REJECTED', reason=?, reviewer=? "
+                            "WHERE approval_id=? AND state='PENDING'", (reason, reviewer, approval_id))
+            if cur.rowcount == 1:
+                self._event(c, "approval", approval_id, "->REJECTED", reason, now)
 
     def revoke_approval(self, approval_id: str, reason: str, now: str) -> None:
         with self.db.transaction() as c:
-            c.execute("UPDATE approval_records SET state='REVOKED', invalidated_at=?, "
-                      "invalidation_reason=? WHERE approval_id=? AND state IN ('APPROVED','PENDING')",
-                      (now, reason, approval_id))
+            cur = c.execute("UPDATE approval_records SET state='REVOKED', invalidated_at=?, "
+                            "invalidation_reason=? WHERE approval_id=? AND state IN ('APPROVED','PENDING')",
+                            (now, reason, approval_id))
+            if cur.rowcount == 1:
+                self._event(c, "approval", approval_id, "->REVOKED", reason, now)
 
     def invalidate_approval(self, approval_id: str, reason: str, now: str) -> None:
         with self.db.transaction() as c:
-            c.execute("UPDATE approval_records SET state='INVALIDATED', invalidated_at=?, "
-                      "invalidation_reason=? WHERE approval_id=? AND state IN ('APPROVED','PENDING')",
-                      (now, reason, approval_id))
+            cur = c.execute("UPDATE approval_records SET state='INVALIDATED', invalidated_at=?, "
+                            "invalidation_reason=? WHERE approval_id=? AND state IN ('APPROVED','PENDING')",
+                            (now, reason, approval_id))
+            if cur.rowcount == 1:
+                self._event(c, "approval", approval_id, "->INVALIDATED", reason, now)
 
     def consume_approval(self, approval_id: str) -> bool:
         """Atomic single-use: succeeds exactly once, only from APPROVED + not consumed."""
@@ -174,23 +251,38 @@ class CommsRepository:
                  msg["idempotency_key"], msg["now"], msg["now"], msg["now"]))
             c.execute("UPDATE draft_revisions SET state='RESERVED_FOR_SEND' WHERE revision_id=?",
                       (msg["revision_id"],))
+            self._event(c, "approval", approval_id, "->CONSUMED", "reserved for send", msg["now"])
+            self._event(c, "message", msg["message_id"], "->RESERVED", "", msg["now"])
+            self._event(c, "revision", msg["revision_id"], "->RESERVED_FOR_SEND", "", msg["now"])
         return msg["message_id"], "reserved"
 
-    def set_message_state(self, message_id: str, state: str, now: str, *,
-                          provider_message_id: str = "", error: str = "", sent: bool = False) -> None:
+    def transition_message(self, message_id: str, to_state: str, now: str, *,
+                           provider_message_id: str = "", error: str = "", sent: bool = False) -> None:
+        """Guarded outbound-message transition: only an ALLOWED edge succeeds; any invalid/terminal/
+        skipping/unknown transition raises. Every transition appends a lifecycle event."""
+        msg = self.get_message(message_id)
+        if msg is None:
+            raise CommsError(f"unknown message: {message_id!r}")
+        frm = msg["state"]
+        if to_state not in _MESSAGE_TRANSITIONS.get(frm, frozenset()):
+            raise CommsError(f"invalid_message_transition:{frm}->{to_state}")
         with self.db.transaction() as c:
-            c.execute("UPDATE outbound_messages SET state=?, updated_at=?, "
-                      "provider_message_id=COALESCE(NULLIF(?,''), provider_message_id), "
-                      "last_error=?, sent_at=CASE WHEN ? THEN ? ELSE sent_at END "
-                      "WHERE message_id=?",
-                      (state, now, provider_message_id, error[:400], 1 if sent else 0, now,
-                       message_id))
+            cur = c.execute(
+                "UPDATE outbound_messages SET state=?, updated_at=?, "
+                "provider_message_id=COALESCE(NULLIF(?,''), provider_message_id), "
+                "last_error=?, sent_at=CASE WHEN ? THEN ? ELSE sent_at END "
+                "WHERE message_id=? AND state=?",
+                (to_state, now, provider_message_id, error[:400], 1 if sent else 0, now,
+                 message_id, frm))
+            if cur.rowcount != 1:
+                raise CommsError(f"message_transition_conflict:{message_id}")
+            self._event(c, "message", message_id, f"{frm}->{to_state}", error[:200], now)
 
     def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
         rows = self.db.query("SELECT * FROM outbound_messages WHERE message_id=?", (message_id,))
         return dict(rows[0]) if rows else None
 
-    def add_attempt(self, att: Dict[str, Any]) -> None:
+    def add_attempt(self, att: Dict[str, Any]) -> str:
         with self.db.transaction() as c:
             c.execute("INSERT INTO send_attempts (attempt_id, message_id, provider, request_hash, "
                       "idempotency_key, attempt_number, started_at, finished_at, outcome, "
@@ -200,6 +292,23 @@ class CommsRepository:
                        att.get("finished_at", ""), att.get("outcome", ""),
                        att.get("provider_response_ref", ""), att.get("ambiguity_state", ""),
                        att.get("error", "")[:400]))
+        return att["attempt_id"]
+
+    def finalize_attempt(self, attempt_id: str, *, outcome: str, finished_at: str,
+                         provider_response_ref: str = "", ambiguity_state: str = "",
+                         error: str = "") -> None:
+        with self.db.transaction() as c:
+            cur = c.execute(
+                "UPDATE send_attempts SET outcome=?, finished_at=?, provider_response_ref=?, "
+                "ambiguity_state=?, error=? WHERE attempt_id=?",
+                (outcome, finished_at, provider_response_ref, ambiguity_state, error[:400],
+                 attempt_id))
+            if cur.rowcount != 1:
+                raise CommsError(f"unknown attempt: {attempt_id!r}")
+
+    def attempts_for(self, message_id: str) -> List[Dict[str, Any]]:
+        return [dict(r) for r in self.db.query(
+            "SELECT * FROM send_attempts WHERE message_id=? ORDER BY attempt_number", (message_id,))]
 
     def messages_in_state(self, *states: str) -> List[Dict[str, Any]]:
         qs = ",".join("?" for _ in states)

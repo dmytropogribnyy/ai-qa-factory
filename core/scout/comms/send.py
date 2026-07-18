@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
+from core.scout.comms.controls import precall_blockers
 from core.scout.comms.providers import (
     ACCEPTED,
     FAILED_DEFINITE,
@@ -20,13 +21,19 @@ from core.scout.comms.providers import (
     ProviderTimeout,
 )
 from core.scout.comms.repository import (
+    ATT_ACCEPTED,
+    ATT_CANCELLED,
+    ATT_FAILED,
+    ATT_UNKNOWN,
     CommsError,
     CommsRepository,
     M_ACCEPTED,
     M_CANCELLED,
     M_FAILED,
     M_IN_PROGRESS,
+    M_RESERVED,
     M_UNKNOWN,
+    R_CONSUMED,
 )
 from core.scout.comms.revalidation import RevalidationResult, revalidate
 from core.scout.comms.snapshots import canonical_hash
@@ -66,6 +73,9 @@ class SendService:
         self.comms = comms
         self.providers = providers
         self.clock = clock
+        # Test-only hook fired AFTER reservation and BEFORE the final pre-provider control re-check,
+        # so a race (kill/disable/opt-out/bounce inserted at the last moment) can be exercised.
+        self.before_invoke: Callable[[], None] = None
 
     def _idempotency_key(self, provider_id: str, rev: Dict[str, Any], channel: str) -> str:
         return canonical_hash({"provider": provider_id, "revision_id": rev["revision_id"],
@@ -114,49 +124,93 @@ class SendService:
                                recipient=reval.recipient_value, revalidation=reval.artifact,
                                note=f"already reserved (state={existing.get('state')}); not re-sent")
 
-        return self._invoke_provider(message_id, provider_id, rev, reval, now)
+        return self._invoke_provider(message_id, provider_id, campaign_id, rev, reval, now)
 
-    def _invoke_provider(self, message_id: str, provider_id: str, rev: Dict[str, Any],
-                         reval: RevalidationResult, now: str) -> SendOutcome:
+    def _precall_cancel(self, message_id: str, provider_id: str, blockers: List[str],
+                        idempotency_key: str, started_at: str, reval: RevalidationResult
+                        ) -> SendOutcome:
+        """A blocker appeared after reservation: cancel the reserved message with ZERO provider
+        calls and finalize a CANCELLED_BEFORE_PROVIDER attempt."""
+        att_id = f"att-{message_id}-c"
+        self.comms.add_attempt({"attempt_id": att_id, "message_id": message_id,
+                                "provider": provider_id, "idempotency_key": idempotency_key,
+                                "started_at": started_at, "finished_at": self.clock(),
+                                "outcome": ATT_CANCELLED, "ambiguity_state": "provider_call_count=0",
+                                "error": ";".join(blockers)[:200]})
+        self.comms.transition_message(message_id, M_CANCELLED, self.clock(),
+                                      error="cancelled before provider")
+        return SendOutcome(status=S_BLOCKED, message_id=message_id, blockers=blockers,
+                           recipient=reval.recipient_value, revalidation=reval.artifact,
+                           note="cancelled before provider call (control race); 0 provider calls")
+
+    def _invoke_provider(self, message_id: str, provider_id: str, campaign_id: str,
+                         rev: Dict[str, Any], reval: RevalidationResult, now: str) -> SendOutcome:
         provider = self.providers.get(provider_id)
-        self.comms.set_message_state(message_id, M_IN_PROGRESS, now)
+        msg = self.comms.get_message(message_id)
+        key = (msg or {}).get("idempotency_key", "")
+
+        # --- Pre-provider control race: re-read ALL authoritative gates after reservation ---------
+        if self.before_invoke is not None:
+            self.before_invoke()
+        blockers = precall_blockers(self.mem, self.comms, campaign_id=campaign_id,
+                                    provider_id=provider_id, channel=rev["channel"],
+                                    recipient=reval.recipient_value, contact_id=rev["contact_id"],
+                                    company_id=rev["company_id"], live=True)
+        if msg is None or msg["state"] != M_RESERVED:
+            blockers.append("reservation_lost")
+        if blockers:
+            return self._precall_cancel(message_id, provider_id, sorted(set(blockers)), key, now, reval)
+
+        # --- Atomically move RESERVED -> PROVIDER_CALL_IN_PROGRESS, then invoke EXACTLY once -------
+        self.comms.transition_message(message_id, M_IN_PROGRESS, now)
         attempt_id = f"att-{message_id}"
+        request_hash = canonical_hash({"provider": provider_id, "idempotency_key": key,
+                                       "channel": rev["channel"], "body_hash": rev["body_hash"],
+                                       "recipient_hash": rev["recipient_hash"]})
         self.comms.add_attempt({"attempt_id": attempt_id, "message_id": message_id,
-                                "provider": provider_id, "idempotency_key": rev["recipient_hash"],
-                                "started_at": now})
-        envelope = {"channel": reval.artifact.get("channel"), "recipient_ref": rev["contact_id"],
-                    "subject": rev["subject"], "body_hash": rev["body_hash"],
-                    "idempotency_key": self._idempotency_key(provider_id, rev,
-                                                             reval.artifact.get("channel", "email"))}
+                                "provider": provider_id, "request_hash": request_hash,
+                                "idempotency_key": key, "attempt_number": 1, "started_at": now})
+        envelope = {"channel": rev["channel"], "recipient_ref": rev["contact_id"],
+                    "subject": rev["subject"], "body_hash": rev["body_hash"], "idempotency_key": key}
         try:
             result = provider.send(envelope)          # exactly one provider call
         except ProviderTimeout as exc:
             # Ambiguous outcome: never auto-retry; requires human/idempotency reconciliation.
-            self.comms.set_message_state(message_id, M_UNKNOWN, self.clock(), error=str(exc)[:200])
+            self.comms.finalize_attempt(attempt_id, outcome=ATT_UNKNOWN, finished_at=self.clock(),
+                                        ambiguity_state="ambiguous_after_transmission",
+                                        error=str(exc)[:200])
+            self.comms.transition_message(message_id, M_UNKNOWN, self.clock(), error=str(exc)[:200])
             return SendOutcome(status=S_UNKNOWN, message_id=message_id,
                                recipient=reval.recipient_value, revalidation=reval.artifact,
                                note="ambiguous provider outcome; not retried automatically")
         except ProviderError as exc:
-            self.comms.set_message_state(message_id, M_FAILED, self.clock(), error=str(exc)[:200])
+            self.comms.finalize_attempt(attempt_id, outcome=ATT_FAILED, finished_at=self.clock(),
+                                        error=str(exc)[:200])
+            self.comms.transition_message(message_id, M_FAILED, self.clock(), error=str(exc)[:200])
             return SendOutcome(status=S_FAILED, message_id=message_id,
                                recipient=reval.recipient_value, revalidation=reval.artifact,
                                provider_result={"error": str(exc)[:200]})
 
         if result.outcome == ACCEPTED:
-            self.comms.set_message_state(message_id, M_ACCEPTED, self.clock(),
-                                         provider_message_id=result.provider_message_id, sent=True)
-            self.comms.set_revision_state(rev["revision_id"], "CONSUMED")
+            self.comms.finalize_attempt(attempt_id, outcome=ATT_ACCEPTED, finished_at=self.clock(),
+                                        provider_response_ref=result.provider_message_id)
+            self.comms.transition_message(message_id, M_ACCEPTED, self.clock(),
+                                          provider_message_id=result.provider_message_id, sent=True)
+            self.comms.transition_revision(rev["revision_id"], R_CONSUMED, self.clock())
             self.mem.add_event("outbound", message_id, "ACCEPTED", provider_id, self.clock())
             return SendOutcome(status=S_ACCEPTED, message_id=message_id,
                                provider_message_id=result.provider_message_id,
                                recipient=reval.recipient_value, revalidation=reval.artifact,
                                provider_result=result.to_dict())
         if result.outcome == FAILED_DEFINITE:
-            self.comms.set_message_state(message_id, M_FAILED, self.clock())
+            self.comms.finalize_attempt(attempt_id, outcome=ATT_FAILED, finished_at=self.clock())
+            self.comms.transition_message(message_id, M_FAILED, self.clock())
             return SendOutcome(status=S_FAILED, message_id=message_id,
                                recipient=reval.recipient_value, revalidation=reval.artifact,
                                provider_result=result.to_dict())
-        self.comms.set_message_state(message_id, M_UNKNOWN, self.clock())
+        self.comms.finalize_attempt(attempt_id, outcome=ATT_UNKNOWN, finished_at=self.clock(),
+                                    ambiguity_state="unknown_provider_result")
+        self.comms.transition_message(message_id, M_UNKNOWN, self.clock())
         return SendOutcome(status=S_UNKNOWN, message_id=message_id,
                            recipient=reval.recipient_value, revalidation=reval.artifact,
                            provider_result=result.to_dict())
@@ -167,15 +221,21 @@ class SendService:
 
     def reconcile(self) -> Dict[str, int]:
         """Crash recovery: a message stuck IN_PROGRESS with no accepted result becomes
-        OUTCOME_UNKNOWN (never auto-retried); a bare RESERVED message is safely cancelled."""
+        OUTCOME_UNKNOWN (never auto-retried; its open attempt is finalized); a bare RESERVED message
+        (never invoked, zero provider calls) is safely cancelled."""
         now = self.clock()
         unknown = cancelled = 0
         for m in self.comms.messages_in_state(M_IN_PROGRESS):
-            self.comms.set_message_state(m["message_id"], M_UNKNOWN, now,
-                                         error="reconciled after interruption")
+            for att in self.comms.attempts_for(m["message_id"]):
+                if not att["finished_at"]:
+                    self.comms.finalize_attempt(att["attempt_id"], outcome=ATT_UNKNOWN,
+                                                finished_at=now,
+                                                ambiguity_state="reconciled_after_interruption")
+            self.comms.transition_message(m["message_id"], M_UNKNOWN, now,
+                                          error="reconciled after interruption")
             unknown += 1
-        for m in self.comms.messages_in_state("RESERVED"):
-            self.comms.set_message_state(m["message_id"], M_CANCELLED, now,
-                                         error="reserved but never invoked; cancelled")
+        for m in self.comms.messages_in_state(M_RESERVED):
+            self.comms.transition_message(m["message_id"], M_CANCELLED, now,
+                                          error="reserved but never invoked; cancelled")
             cancelled += 1
         return {"outcome_unknown": unknown, "cancelled": cancelled}

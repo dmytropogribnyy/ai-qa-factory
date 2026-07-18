@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from core.scout.comms.repository import CommsRepository, M_BOUNCED, M_DELIVERED, M_OPTED_OUT, M_REPLIED
+from core.scout.comms.repository import (
+    CommsError,
+    CommsRepository,
+    M_BOUNCED,
+    M_DELIVERED,
+    M_OPTED_OUT,
+    M_REPLIED,
+)
 from core.scout.memory.repository import MemoryRepository
 
 NORMALIZED_TYPES = frozenset({
@@ -19,6 +26,16 @@ NORMALIZED_TYPES = frozenset({
     "REPLIED_POSITIVE", "REPLIED_NEUTRAL", "REPLIED_NEGATIVE", "OPTED_OUT", "COMPLAINT", "UNKNOWN",
 })
 _REPLIES = frozenset({"REPLIED_POSITIVE", "REPLIED_NEUTRAL", "REPLIED_NEGATIVE"})
+
+
+def _try_transition(comms: CommsRepository, message_id: str, to_state: str, now: str,
+                    error: str = "") -> None:
+    """Best-effort message transition for an inbound event: an out-of-order/invalid transition is
+    ignored (the durable contact-state effect still applies), never a crash."""
+    try:
+        comms.transition_message(message_id, to_state, now, error=error)
+    except CommsError:
+        pass
 
 
 def process_event(mem: MemoryRepository, comms: CommsRepository, event: Dict[str, Any], *, now: str
@@ -36,17 +53,17 @@ def process_event(mem: MemoryRepository, comms: CommsRepository, event: Dict[str
     message_id = (msg or {}).get("message_id", "")
 
     if t == "DELIVERED" and message_id:
-        comms.set_message_state(message_id, M_DELIVERED, now)
+        _try_transition(comms, message_id, M_DELIVERED, now)
     elif t == "BOUNCED_HARD":
         if message_id:
-            comms.set_message_state(message_id, M_BOUNCED, now, error="hard bounce")
+            _try_transition(comms, message_id, M_BOUNCED, now, error="hard bounce")
         if contact_id:
             comms.add_contact_event(contact_id, company_id, "HARD_BOUNCE", "hard bounce", now)
             mem.set_contact_status(contact_id, "INVALID")  # invalid for sending
             mem.add_suppression(company_id, "", "NO_OUTREACH", "hard bounce", now)
     elif t == "OPTED_OUT":
         if message_id:
-            comms.set_message_state(message_id, M_OPTED_OUT, now)
+            _try_transition(comms, message_id, M_OPTED_OUT, now)
         if contact_id:
             comms.add_contact_event(contact_id, company_id, "OPT_OUT", "opt-out", now)
             mem.set_contact_status(contact_id, "DO_NOT_CONTACT")
@@ -58,7 +75,7 @@ def process_event(mem: MemoryRepository, comms: CommsRepository, event: Dict[str
             mem.add_suppression(company_id, "", "NO_OUTREACH", "complaint", now)
     elif t in _REPLIES:
         if message_id:
-            comms.set_message_state(message_id, M_REPLIED, now)
+            _try_transition(comms, message_id, M_REPLIED, now)
         if contact_id:
             comms.add_contact_event(contact_id, company_id, "REPLIED", t, now)  # stops follow-up
         if t == "REPLIED_POSITIVE" and company_id:
