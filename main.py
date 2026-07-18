@@ -227,7 +227,10 @@ def main(argv: list[str] | None = None) -> int:
         "run", "demo", "dashboard", "control", "smoke",
         "campaign-demo", "campaign-plan", "campaign-run", "providers",
         "presend-demo", "db-status", "db-backup", "db-restore", "review-list", "doctor",
-        "radar-demo", "send", "outreach-control", "comms-status", "mcp-audit"])
+        "radar-demo", "send", "outreach-control", "comms-status", "mcp-audit",
+        "draft-create", "draft-preview", "draft-edit", "draft-approve", "draft-reject",
+        "draft-revoke", "draft-status", "gmail-auth", "gmail-status",
+        "gmail-revoke-local-token", "provider-status"])
     scout_cmd.add_argument("--seeds", help="Comma-separated public URLs (run; or dashboard "
                                            "to start an active run)")
     scout_cmd.add_argument("--url", help="Single public URL (smoke)")
@@ -285,6 +288,25 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("--scope", help="Outreach-control scope (global|campaign:x|provider:x|channel:x)")
     scout_cmd.add_argument("--state", choices=["enable", "disable", "pause", "kill"],
                            help="Outreach-control state")
+    # v2.0.1 — human review CLI (one revision at a time; no bulk / approve-all).
+    scout_cmd.add_argument("--draft-id", dest="draft_id", help="Draft id (draft-create)")
+    scout_cmd.add_argument("--company-id", dest="company_id", help="Company id (draft-create)")
+    scout_cmd.add_argument("--contact-id", dest="contact_id", help="Contact id (draft-create)")
+    scout_cmd.add_argument("--finding-id", dest="finding_id", help="Finding id (draft-create)")
+    scout_cmd.add_argument("--subject", help="Draft subject (draft-create/draft-edit)")
+    scout_cmd.add_argument("--body", help="Draft body (prefer --body-file to avoid shell history)")
+    scout_cmd.add_argument("--body-file", dest="body_file",
+                           help="Read the draft body from a file (never echoed into shell history)")
+    scout_cmd.add_argument("--reason", help="Reason (draft-reject/draft-revoke)")
+    scout_cmd.add_argument("--reviewed-content-hash", dest="reviewed_content_hash",
+                           help="Exact preview hash from draft-preview (draft-approve)")
+    scout_cmd.add_argument("--confirm", help="Typed confirmation (draft-approve: APPROVE; "
+                                             "gmail-revoke-local-token: REVOKE)")
+    # v2.0.1 — Gmail OAuth desktop flow (credentials supplied locally; never committed).
+    scout_cmd.add_argument("--client-config", dest="client_config", help="Gmail OAuth client JSON path")
+    scout_cmd.add_argument("--token-store", dest="token_store", help="Gmail OAuth token store path")
+    scout_cmd.add_argument("--expected-account", dest="expected_account",
+                           help="Authorized Gmail account (default dipptrue@gmail.com)")
 
     args = parser.parse_args(argv)
 

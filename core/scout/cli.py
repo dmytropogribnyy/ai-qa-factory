@@ -175,7 +175,10 @@ def _print_summary(state, summary) -> None:
 _DISCOVERY_ACTIONS = frozenset({"campaign-demo", "campaign-plan", "campaign-run", "providers"})
 _PRESEND_ACTIONS = frozenset({"presend-demo", "db-status", "db-backup", "db-restore",
                               "review-list", "doctor", "mcp-audit"})
-_COMMS_ACTIONS = frozenset({"radar-demo", "send", "outreach-control", "comms-status"})
+_COMMS_ACTIONS = frozenset({"radar-demo", "send", "outreach-control", "comms-status",
+                            "draft-create", "draft-preview", "draft-edit", "draft-approve",
+                            "draft-reject", "draft-revoke", "draft-status", "gmail-auth",
+                            "gmail-status", "gmail-revoke-local-token", "provider-status"})
 
 
 def run_scout_cli(args) -> int:
