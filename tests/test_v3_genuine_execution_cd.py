@@ -97,7 +97,7 @@ def test_scenario_c_real_pytest_fails_before_passes_after(tmp_path):
     after = (ws / "evidence" / "passing_after.txt").read_text(encoding="utf-8")
     assert "(exit 0)" not in before.splitlines()[1] and "1 failed" in before   # genuinely failed first
     assert "(exit 0)" in after and "1 passed" in after                         # genuinely passed after
-    assert svc.status("c").status == "READY_FOR_DELIVERY"
+    assert svc.status("c").status == "DELIVERY_PREPARED"
 
 
 # --------------------------------------------------------------------------- D: real OpenAPI + HTTP
@@ -192,4 +192,4 @@ def test_scenario_d_real_openapi_localhost_http_pos_neg(tmp_path):
     results = json.loads((ws / "delivery" / "API_TEST_RESULTS.json").read_text(encoding="utf-8"))
     got = {r["path"]: r["got"] for r in results}
     assert got == {"/health": 200, "/item/1": 200, "/item/abc": 400, "/nope": 404}   # real responses
-    assert svc.status("d").status == "READY_FOR_DELIVERY"
+    assert svc.status("d").status == "DELIVERY_PREPARED"

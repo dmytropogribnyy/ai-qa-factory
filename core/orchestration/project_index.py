@@ -16,8 +16,8 @@ from typing import Any, Dict, List
 _CLIENT_PROGRESS = {
     "RECEIVED": 10, "INTAKE_COMPLETE": 25, "PLANNED": 40, "WAITING_FOR_INFORMATION": 40,
     "WAITING_FOR_APPROVAL": 55, "READY_TO_EXECUTE": 60, "EXECUTING": 75, "EXECUTION_PARTIAL": 75,
-    "VERIFYING": 85, "READY_FOR_REVIEW": 90, "READY_FOR_DELIVERY": 95, "COMPLETED": 100,
-    "BLOCKED": 40, "FAILED": 100, "CANCELLED": 100,
+    "VERIFYING": 85, "READY_FOR_REVIEW": 90, "READY_FOR_DELIVERY": 95, "DELIVERY_PREPARED": 98,
+    "COMPLETED": 100, "BLOCKED": 40, "FAILED": 100, "CANCELLED": 100,
 }
 
 
@@ -118,6 +118,8 @@ class ProjectIndex:
 
     @staticmethod
     def _client_next_action(fr: Dict[str, Any], status: str, blockers: List[str]) -> str:
+        if status == "DELIVERY_PREPARED":
+            return "send the prepared package manually, then mark it delivered"
         if status in ("COMPLETED", "READY_FOR_DELIVERY"):
             return "review the delivery package"
         if blockers:

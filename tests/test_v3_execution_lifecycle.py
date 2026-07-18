@@ -51,7 +51,7 @@ def test_scenario_a_playwright_framework_full_lifecycle(tmp_path):
     assert (ws / "EVIDENCE_INDEX.json").exists() and (ws / "TEST_RESULTS.json").exists()
     assert (ws / "WORK_DELIVERY_MANIFEST.json").exists() and (ws / "DELIVERY_REPORT.md").exists()
     view = svc.status("a")
-    assert view.status == "READY_FOR_DELIVERY" and view.delivery_ready and view.tests_run > 0
+    assert view.status == "DELIVERY_PREPARED" and view.delivery_ready and view.tests_run > 0
 
 
 def test_scenario_b_qa_audit_findings_and_evidence(tmp_path):
@@ -110,8 +110,8 @@ def test_lifecycle_resumes_after_restart(tmp_path):
     svc.prepare_delivery("r")
     # A brand-new service instance (new process / new Claude session) reads the persisted state.
     resumed = WorkExecutionService(FixedClock(), SequentialIds(), output_dir=str(tmp_path)).resume("r")
-    assert resumed.status == "READY_FOR_DELIVERY" and resumed.delivery_ready
-    assert resumed.progress == 95
+    assert resumed.status == "DELIVERY_PREPARED" and resumed.delivery_ready
+    assert resumed.progress == 98
 
 
 def test_recommended_verdict_reaches_planned_and_is_approvable(tmp_path):

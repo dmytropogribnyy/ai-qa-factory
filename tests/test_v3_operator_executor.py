@@ -81,7 +81,8 @@ def test_operator_execution_is_recorded_and_persisted(tmp_path):
     assert json.loads((ws / "TEST_RESULTS.json").read_text(encoding="utf-8"))["passed"] is True
     assert manifest["validation_passed"] and manifest["review_approved"] is True
     assert manifest["artifact_hashes"] and (ws / "WORK_DELIVERY_MANIFEST.json").exists()
-    assert svc.status("op").status == "READY_FOR_DELIVERY"
+    assert manifest["manifest_digest"].startswith("sha256:") and manifest["included_files"]
+    assert svc.status("op").status == "DELIVERY_PREPARED"
 
 
 def test_command_validation_executor_runs_a_real_command(tmp_path):

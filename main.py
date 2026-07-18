@@ -282,12 +282,14 @@ def run_client_work(args) -> int:
             print(f"Review {'REJECTED' if args.reject else 'APPROVED'} for {pid}: {st.status}.")
         elif args.action == "prepare-delivery":
             m = svc.prepare_delivery(pid)
-            print(f"Delivery package prepared for {pid}: {len(m['produced_artifacts'])} artifact(s), "
+            print(f"Delivery package prepared for {pid}: {len(m['included_files'])} file(s), "
                   f"evidence={m['evidence_count']}, validation_passed={m['validation_passed']}, "
-                  f"reviewed_by={m.get('reviewed_by') or '(none)'}.")
+                  f"reviewed_by={m.get('reviewed_by') or '(none)'}, digest={m['manifest_digest'][:23]}... "
+                  "State DELIVERY_PREPARED. Send the package yourself, then: mark-delivered.")
         elif args.action == "mark-delivered":
             st = svc.mark_delivered(pid, note=args.note or "")
-            print(f"Marked delivered for {pid}: {st.status}.")
+            print(f"Marked delivered for {pid}: {st.status}. (This recorded your assertion that you "
+                  "sent the prepared package manually; nothing was sent by this command.)")
         else:
             print("ERROR: unknown action", file=_sys.stderr)
             return 1

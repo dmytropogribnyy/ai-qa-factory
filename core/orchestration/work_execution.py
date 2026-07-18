@@ -24,7 +24,8 @@ from core.schemas.work_run_state import WorkRunState
 _ARK = "40_ark_work"
 _PROGRESS = {"READY_TO_EXECUTE": 60, "EXECUTING": 75, "EXECUTION_PARTIAL": 75, "VERIFYING": 85,
              "REPAIR_REQUIRED": 70, "READY_FOR_REVIEW": 90, "READY_FOR_DELIVERY": 95,
-             "COMPLETED": 100, "BLOCKED": 60, "FAILED": 100, "CANCELLED": 100}
+             "DELIVERY_PREPARED": 98, "COMPLETED": 100, "BLOCKED": 60, "FAILED": 100,
+             "CANCELLED": 100}
 
 
 class WorkExecutionError(Exception):
@@ -97,6 +98,23 @@ class WorkExecutionService:
             if target.is_file():
                 out[rel] = self._hash_file(target)
         return out
+
+    def _registered_files(self, pid: str) -> List[str]:
+        """Every registered artifact + evidence relative path (execution outcome + evidence index,
+        which also carries validation-run evidence)."""
+        prog = self._read_json(self._ws(pid) / "EXECUTION_PROGRESS.json")
+        files = set(self._artifact_files(prog.get("outcome", {})))
+        idx = self._read_json(self._ws(pid) / "EVIDENCE_INDEX.json")
+        files.update(e.get("relative_path") for e in idx.get("evidence", [])
+                     if isinstance(e, dict) and e.get("relative_path"))
+        return sorted(files)
+
+    @staticmethod
+    def _manifest_digest(hashes: Dict[str, str]) -> str:
+        """Deterministic package digest over the sorted (path, sha256) pairs."""
+        import hashlib
+        payload = "\n".join(f"{k}:{hashes[k]}" for k in sorted(hashes))
+        return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _read_json(self, path: Path) -> Dict[str, Any]:
         try:
@@ -191,8 +209,7 @@ class WorkExecutionService:
         if result.passed:
             # Snapshot the exact artifact hashes that were validated, so any later change is caught
             # before delivery. Validation stops at READY_FOR_REVIEW - delivery needs explicit review.
-            prog = self._read_json(self._ws(pid) / "EXECUTION_PROGRESS.json")
-            validated = self._hash_map(pid, self._artifact_files(prog.get("outcome", {})))
+            validated = self._hash_map(pid, self._registered_files(pid))
             self._write(self._ws(pid) / "VALIDATED_ARTIFACTS.json", json.dumps(
                 {"at": self._clock.now_iso(), "hashes": validated}, indent=2, sort_keys=True))
             state = self._sm.transition(state, "READY_FOR_REVIEW", "validation passed", eid)
@@ -221,42 +238,68 @@ class WorkExecutionService:
         return state
 
     def prepare_delivery(self, pid: str) -> Dict[str, Any]:
+        """The durable delivery-preparation boundary (v3.0.2 M1).
+
+        Rehashes every registered artifact + evidence file, compares them to the validated
+        snapshot, secret-scans the exact delivery file set, requires the approved explicit
+        review, writes the exact delivery manifest (per-file SHA-256 + deterministic package
+        digest), and only then transitions READY_FOR_DELIVERY -> DELIVERY_PREPARED. Completion
+        (``mark_delivered``) is impossible without this step.
+        """
         state = self._load_state(pid)
         if state.status != "READY_FOR_DELIVERY":
-            raise WorkExecutionError(f"delivery package needs state READY_FOR_DELIVERY (is {state.status})")
-        ev = self._read_json(self._ws(pid) / "EVIDENCE_INDEX.json")
-        tr = self._read_json(self._ws(pid) / "TEST_RESULTS.json")
-        fr = self._read_json(self._ws(pid) / "FEASIBILITY_REPORT.json")
-        prog = self._read_json(self._ws(pid) / "EXECUTION_PROGRESS.json")
-        review = self._read_json(self._ws(pid) / "REVIEW.json")
-        files = self._artifact_files(prog.get("outcome", {}))
+            raise WorkExecutionError(f"delivery preparation needs state READY_FOR_DELIVERY "
+                                     f"(is {state.status})")
+        ws = self._ws(pid)
+        review = self._read_json(ws / "REVIEW.json")
+        if not review.get("approved"):
+            raise WorkExecutionError("delivery needs an approved explicit operator review "
+                                     "(REVIEW.json); run the review step first")
+        ev = self._read_json(ws / "EVIDENCE_INDEX.json")
+        tr = self._read_json(ws / "TEST_RESULTS.json")
+        fr = self._read_json(ws / "FEASIBILITY_REPORT.json")
+        prog = self._read_json(ws / "EXECUTION_PROGRESS.json")
+        files = self._registered_files(pid)
 
-        # Detect any change to the produced artifacts since they were validated.
-        validated = self._read_json(self._ws(pid) / "VALIDATED_ARTIFACTS.json").get("hashes", {})
+        # Rehash and compare with the validated snapshot: reject missing, added, removed, or
+        # changed registered files.
+        validated = self._read_json(ws / "VALIDATED_ARTIFACTS.json").get("hashes", {})
+        if not validated:
+            raise WorkExecutionError("no validated artifact snapshot exists; validate before delivery")
         current = self._hash_map(pid, files)
         changed = sorted(k for k in set(validated) | set(current) if validated.get(k) != current.get(k))
         if changed:
             raise WorkExecutionError(
                 f"artifacts changed after validation ({', '.join(changed[:5])}"
                 f"{'...' if len(changed) > 5 else ''}); re-validate before delivery")
-        # Scan the actual delivery contents for secrets (not just the control JSON we write).
+        # Scan the exact delivery file set for secret-like content (real file contents).
         leaked = self._scan_delivery(pid, files)
         if leaked:
             raise WorkExecutionError(f"refusing to deliver: secret-like content in {leaked[0]}")
 
         artifacts = [a.get("filename") for a in prog.get("outcome", {}).get("artifacts", [])]
+        digest = self._manifest_digest(current)
         manifest = {"project_id": pid, "generated_at": self._clock.now_iso(),
                     "deliverables": fr.get("expected_deliverables", []),
                     "produced_artifacts": artifacts, "evidence_count": ev.get("count", 0),
                     "validation_passed": bool(tr.get("passed")), "tests_run": tr.get("tests_run", 0),
                     "reviewed_by": review.get("reviewer", ""), "review_approved": bool(review.get("approved")),
-                    "artifact_hashes": current, "approved_for_delivery": True,
+                    "included_files": files, "artifact_hashes": current, "manifest_digest": digest,
+                    "approved_for_delivery": True,
                     "note": "validated + operator-reviewed; delivery package prepared (not yet sent)"}
-        self._write(self._ws(pid) / "WORK_DELIVERY_MANIFEST.json",
-                    json.dumps(manifest, indent=2, sort_keys=True))
-        self._write(self._ws(pid) / "DELIVERY_REPORT.md", self._delivery_md(pid, fr, tr, artifacts,
-                                                                            ev.get("count", 0)))
-        self._write(self._ws(pid) / "CLIENT_MESSAGE.md", self._client_message_md(pid, fr))
+        text = json.dumps(manifest, indent=2, sort_keys=True)
+        self._write(ws / "WORK_DELIVERY_MANIFEST.json", text)
+        self._write(ws / "DELIVERY_REPORT.md", self._delivery_md(pid, fr, tr, artifacts,
+                                                                 ev.get("count", 0)))
+        self._write(ws / "CLIENT_MESSAGE.md", self._client_message_md(pid, fr))
+        # Record the exact manifest bytes AS WRITTEN, so a later manifest edit is detected.
+        self._write(ws / "DELIVERY_PREPARED.json", json.dumps(
+            {"prepared_at": self._clock.now_iso(), "manifest_digest": digest,
+             "manifest_sha256": self._hash_file(ws / "WORK_DELIVERY_MANIFEST.json"),
+             "included_file_count": len(files)}, indent=2, sort_keys=True))
+        state = self._sm.transition(state, "DELIVERY_PREPARED",
+                                    "delivery package prepared; all integrity checks passed", "cli")
+        self._save_state(pid, state)
         return manifest
 
     def _scan_delivery(self, pid: str, files: List[str]) -> List[str]:
@@ -276,8 +319,43 @@ class WorkExecutionService:
         return leaked
 
     def mark_delivered(self, pid: str, note: str = "") -> WorkRunState:
+        """Record the operator's assertion that the PREPARED package was delivered manually.
+
+        Requires DELIVERY_PREPARED and re-verifies the prepared manifest + every included file
+        before completing; it sends nothing itself. Any change after preparation (a file, the
+        manifest, a missing file) refuses completion.
+        """
         state = self._load_state(pid)
-        state = self._sm.transition(state, "COMPLETED", f"delivered to client: {note}"[:200], "cli")
+        if state.status != "DELIVERY_PREPARED":
+            raise WorkExecutionError(f"mark-delivered needs state DELIVERY_PREPARED "
+                                     f"(is {state.status}); run prepare-delivery first")
+        ws = self._ws(pid)
+        prepared = self._read_json(ws / "DELIVERY_PREPARED.json")
+        mpath = ws / "WORK_DELIVERY_MANIFEST.json"
+        manifest = self._read_json(mpath)
+        if (not prepared.get("manifest_sha256") or not mpath.is_file()
+                or not manifest.get("included_files") or not manifest.get("manifest_digest")):
+            raise WorkExecutionError("prepared delivery manifest is missing or corrupt; "
+                                     "re-run prepare-delivery")
+        if self._hash_file(mpath) != prepared["manifest_sha256"]:
+            raise WorkExecutionError("delivery manifest changed after preparation; "
+                                     "re-run prepare-delivery")
+        recorded = manifest.get("artifact_hashes", {})
+        if self._manifest_digest(recorded) != manifest["manifest_digest"]:
+            raise WorkExecutionError("delivery manifest digest mismatch (corrupt manifest); "
+                                     "re-run prepare-delivery")
+        current = self._hash_map(pid, [str(f) for f in manifest["included_files"]])
+        bad = sorted(k for k in set(recorded) | set(current) if recorded.get(k) != current.get(k))
+        if bad:
+            raise WorkExecutionError(
+                f"delivery contents changed after preparation ({', '.join(bad[:5])}"
+                f"{'...' if len(bad) > 5 else ''}); re-run prepare-delivery")
+        state = self._sm.transition(state, "COMPLETED",
+                                    f"operator recorded manual delivery: {note}"[:200], "cli")
+        self._write(ws / "DELIVERY_RECORD.json", json.dumps(
+            {"at": self._clock.now_iso(), "note": note, "manifest_digest": manifest["manifest_digest"],
+             "statement": "operator asserts the prepared package was delivered manually; "
+                          "this command sent nothing itself"}, indent=2, sort_keys=True))
         self._save_state(pid, state)
         return state
 
@@ -292,7 +370,7 @@ class WorkExecutionService:
             evidence_count=ev.get("count", 0), tests_run=tr.get("tests_run", 0),
             tests_passed=tr.get("tests_passed", 0), blockers=blockers,
             next_action=self._next_action(state.status, blockers),
-            delivery_ready=state.status in ("READY_FOR_DELIVERY", "COMPLETED"))
+            delivery_ready=state.status in ("READY_FOR_DELIVERY", "DELIVERY_PREPARED", "COMPLETED"))
 
     def resume(self, pid: str) -> LifecycleView:
         """Reload the persisted state from disk (proves resume after restart / a new Claude session)."""
@@ -309,7 +387,9 @@ class WorkExecutionService:
                 "VERIFYING": "run validation on the produced artifacts",
                 "REPAIR_REQUIRED": "fix the failures and re-run execution",
                 "READY_FOR_REVIEW": "review, then advance to delivery",
-                "READY_FOR_DELIVERY": "prepare the delivery package, then send and mark delivered",
+                "READY_FOR_DELIVERY": "prepare the delivery package (prepare-delivery)",
+                "DELIVERY_PREPARED": "send the prepared package to the client yourself, then "
+                                     "mark-delivered (records your assertion; sends nothing)",
                 "COMPLETED": "delivered"}.get(status, "review the project state")
 
     @staticmethod

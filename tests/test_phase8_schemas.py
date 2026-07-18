@@ -133,9 +133,15 @@ class TestSafetyInvariants:
 # ---------------------------------------------------------------------------
 
 class TestWorkRunStateMachine:
-    def test_sixteen_states(self):
-        assert len(WORK_RUN_STATES) == 16
-        assert len(set(WORK_RUN_STATES)) == 16
+    def test_seventeen_states(self):
+        # v3.0.2 added DELIVERY_PREPARED (the durable delivery-preparation boundary).
+        assert len(WORK_RUN_STATES) == 17
+        assert len(set(WORK_RUN_STATES)) == 17
+        assert "DELIVERY_PREPARED" in WORK_RUN_STATES
+
+    def test_completed_only_reachable_through_delivery_prepared(self):
+        sources = [src for src, targets in ALLOWED_TRANSITIONS.items() if "COMPLETED" in targets]
+        assert sources == ["DELIVERY_PREPARED"]
 
     def test_terminal_states(self):
         assert TERMINAL_STATES == frozenset({"COMPLETED", "FAILED", "CANCELLED"})

@@ -169,7 +169,7 @@ def test_scenario_a_real_playwright_run(tmp_path):
     assert (ws / "evidence" / "home.png").stat().st_size > 0        # a real screenshot was captured
     run = json.loads((ws / "delivery" / "RUN_RESULT.json").read_text(encoding="utf-8"))
     assert run["title"] == "QA Home" and run["passed"] is True      # the browser really loaded it
-    assert svc.status("a").status == "READY_FOR_DELIVERY"
+    assert svc.status("a").status == "DELIVERY_PREPARED"
 
 
 # --------------------------------------------------------------------------- B: real browser audit
@@ -231,4 +231,4 @@ def test_scenario_b_real_browser_audit_with_evidence(tmp_path):
     findings = json.loads((ws / "delivery" / "findings.json").read_text(encoding="utf-8"))
     assert any(f["id"] == "image-alt" for f in findings)           # genuinely detected the defect
     assert (ws / "evidence" / "audit.png").stat().st_size > 0      # real screenshot evidence
-    assert svc.status("b").status == "READY_FOR_DELIVERY"
+    assert svc.status("b").status == "DELIVERY_PREPARED"
