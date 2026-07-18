@@ -10,8 +10,10 @@ separate, documented, non-CI path.
 """
 from __future__ import annotations
 
+import importlib.util
 import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 # Availability domains (honest; a connector in ChatGPT/Claude is NOT a local Factory credential).
@@ -69,6 +71,7 @@ _CATALOGUE: List[ToolProfile] = [
                 setup="connect the GitHub MCP in Claude Code (/mcp); PAT-based, not a Factory credential"),
     ToolProfile("playwright_internal", "Internal Playwright runtime", DOMAIN_INTERNAL, "internal",
                 ["browser_automation", "e2e", "evidence"],
+                setup="pip install playwright axe-core-python && python -m playwright install chromium",
                 notes="in-repo browser acceptance (Chromium/axe/perf) with local fixtures"),
     ToolProfile("playwright_cli", "Playwright CLI", DOMAIN_LOCAL_FACTORY, "local_bin",
                 ["browser_automation", "e2e"], bin_name="playwright", fallback_id="playwright_internal",
@@ -103,14 +106,40 @@ _CATALOGUE: List[ToolProfile] = [
 _BY_ID = {p.id: p for p in _CATALOGUE}
 
 
+# Concrete checks that must PASS before an internal runner is more than "declared": the runner's
+# real dependency must import AND its in-repo binding (the runner/acceptance file) must exist.
+_INTERNAL_CHECKS: Dict[str, Callable[["ToolBroker"], bool]] = {
+    "playwright_internal": lambda b: (b._mod("playwright") and b._mod("axe_core_python")
+                                      and b._repo_file("tests/test_v3_dashboard_browser_acceptance.py")),
+    "api_runner_internal": lambda b: (b._mod("http.server") and b._mod("urllib.request")
+                                      and b._repo_file("tests/test_v3_genuine_execution_cd.py")),
+}
+
+
+def _default_module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 class ToolBroker:
     def __init__(self, *, env: Optional[Dict[str, str]] = None, which: Callable[[str], Any] = shutil.which,
-                 clock: Optional[Callable[[], str]] = None, gmail_status_fn: Optional[Callable[[], Dict]] = None
+                 clock: Optional[Callable[[], str]] = None, gmail_status_fn: Optional[Callable[[], Dict]] = None,
+                 module_available: Optional[Callable[[str], bool]] = None, repo_root: Optional[str] = None
                  ) -> None:
         self._env = env
         self._which = which
         self._clock = clock or (lambda: "")
         self._gmail_status_fn = gmail_status_fn
+        self._module_available = module_available or _default_module_available
+        self._repo_root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
+
+    def _mod(self, name: str) -> bool:
+        return bool(self._module_available(name))
+
+    def _repo_file(self, rel: str) -> bool:
+        return (self._repo_root / rel).exists()
 
     def discover(self) -> List[ToolStatus]:
         return [self._status(p) for p in _CATALOGUE]
@@ -139,7 +168,18 @@ class ToolBroker:
 
     def _readiness(self, p: ToolProfile):
         if p.kind == "internal":
-            return "fixture-tested", "in-repo runner present", ""
+            # Catalogue presence alone is only 'declared'; 'fixture-tested' needs a concrete binding
+            # (the runner file) AND its real dependency importable - an ACTUAL check, not a claim.
+            check = _INTERNAL_CHECKS.get(p.id)
+            ok = False
+            if check is not None:
+                try:
+                    ok = bool(check(self))
+                except Exception:
+                    ok = False
+            if ok:
+                return "fixture-tested", "in-repo runner + dependency verified", ""
+            return "declared", "internal runner declared; dependency or binding not verified", p.setup
         if p.kind == "local_bin":
             found = bool(self._which(p.bin_name))
             return (("health-checked", f"{p.bin_name} found on PATH", "") if found
