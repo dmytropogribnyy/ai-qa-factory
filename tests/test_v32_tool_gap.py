@@ -24,8 +24,9 @@ def test_snapshot_covers_all_services_without_false_live():
     snap = snapshot()
     assert snap["schema"] == "tool-gap/v1" and len(snap["reports"]) >= 12
     for rep in snap["reports"]:
-        # A report is "ready" only if there are no gaps.
-        assert rep["ready"] == (len(rep["gaps"]) == 0)
+        # A report is "ready" only if there are no tool gaps AND no unmet access prerequisites
+        # (a client-owned repo/DB/CI/cloud scope that is missing keeps the service not-ready).
+        assert rep["ready"] == (len(rep["gaps"]) == 0 and len(rep["access_gaps"]) == 0)
 
 
 def test_client_required_access_is_surfaced():

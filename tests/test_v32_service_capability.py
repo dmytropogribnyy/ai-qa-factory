@@ -33,10 +33,13 @@ def test_every_service_is_fully_specified_and_honest():
 
 def test_honesty_boundaries():
     by = {s.service_id: s for s in SERVICE_CAPABILITIES}
-    # Only GitHub CI is Live Verified (this repo's hosted CI genuinely runs).
-    assert by["cicd"].readiness == "Live Verified"
+    # The CI/CD ROW is never shown as Live Verified: only its GitHub Actions component is (item 19).
+    assert by["cicd"].readiness == "Partially Verified"
+    comps = {c.component_id: c.readiness for c in by["cicd"].components}
+    assert comps["github_actions"] == "Live Verified"
+    assert comps["azure_devops"] == "Needs Client" and comps["jenkins"] == "Needs Client"
     assert any("GitHub" in e for e in by["cicd"].acceptance_evidence)
-    assert any("Live Verified" in b for b in by["cicd"].safety_boundaries)
+    assert any("never shown as live verified" in b.lower() for b in by["cicd"].safety_boundaries)
     # n8n/Make needs the real client runtime; never Live Verified without it.
     assert by["workflow_automation"].readiness == "Needs Client"
     # Legal-tech requires operator review; never a legal certification.

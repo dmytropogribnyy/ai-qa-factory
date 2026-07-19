@@ -29,6 +29,7 @@ class AllowedAction:
     primary: bool = False
     fields: List[str] = field(default_factory=list)   # required inputs (reviewer/note/reason)
     note: str = ""
+    body: Dict[str, Any] = field(default_factory=dict)  # fixed body params (e.g. {"confirm": True})
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -48,6 +49,10 @@ def allowed_actions(status: str) -> List[AllowedAction]:
                               f"{_MUT}/approve", primary=True, fields=["reviewer"]), refresh]
     if s == "READY_TO_EXECUTE":
         return [handoff_execute,
+                AllowedAction("worker_start", "Run Autonomous Worker (bounded)", "http_mutation",
+                              "POST", f"{_MUT}/worker-start", confirm=True, body={"confirm": True},
+                              note="starts a bounded Claude Code worker built only from this "
+                                   "project's persisted plan; validation stays a separate step"),
                 AllowedAction("copy_work_order", "Copy Claude Code Work Order", "handoff"),
                 AllowedAction("copy_workspace", "Copy Workspace Path", "handoff"), refresh]
     if s in ("EXECUTING", "EXECUTION_PARTIAL"):
@@ -58,10 +63,15 @@ def allowed_actions(status: str) -> List[AllowedAction]:
                 refresh]
     if s == "REPAIR_REQUIRED":
         return [AllowedAction("open_vscode", "Resolve in VS Code", "handoff", primary=True,
-                              note="fix the failures, then re-record execution and validate"), refresh]
+                              note="fix the failures, then re-record execution and validate"),
+                AllowedAction("worker_resume", "Resume Autonomous Worker (bounded)", "http_mutation",
+                              "POST", f"{_MUT}/worker-resume", confirm=True, body={"confirm": True},
+                              note="resumes the bounded worker from the persisted session"), refresh]
     if s == "BLOCKED":
         return [AllowedAction("open_vscode", "Resolve Blocker in VS Code", "handoff", primary=True),
-                refresh]
+                AllowedAction("worker_resume", "Resume Autonomous Worker (bounded)", "http_mutation",
+                              "POST", f"{_MUT}/worker-resume", confirm=True, body={"confirm": True},
+                              note="resumes the bounded worker from the persisted session"), refresh]
     if s == "READY_FOR_REVIEW":
         return [AllowedAction("review_approve", "Approve Review", "http_mutation", "POST",
                               f"{_MUT}/review", primary=True, fields=["reviewer"]),

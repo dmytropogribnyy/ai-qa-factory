@@ -32,6 +32,23 @@ class ToolNeed:
         return asdict(self)
 
 
+# AccessBootstrap readiness values that mean a required access prerequisite is genuinely satisfied.
+_ACCESS_SATISFIED = {"Runtime Verified", "Fixture Verified", "Live Verified", "Runtime Available",
+                     "Authenticated", "Installed", "Connected"}
+
+
+@dataclass
+class AccessGap:
+    access_id: str
+    name: str
+    owner: str                 # operator | client | local
+    readiness: str
+    action: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass
 class ToolGapReport:
     service_id: str
@@ -39,6 +56,7 @@ class ToolGapReport:
     required_access: List[str]
     selected: List[str] = field(default_factory=list)
     gaps: List[Dict[str, Any]] = field(default_factory=list)
+    access_gaps: List[Dict[str, Any]] = field(default_factory=list)
     ready: bool = False
     fallback: str = ""
     operator_action: str = ""
@@ -56,7 +74,8 @@ def plan_tools(service_id: str, *, broker: ToolBroker = None, access: AccessBoot
     broker = broker or ToolBroker(clock=lambda: "")
     access = access or AccessBootstrap()
     tool_status = {t.id: t.readiness for t in broker.discover()}
-    access_status = {i.id: i.readiness for i in access.inspect()}
+    integrations = {i.id: i for i in access.inspect()}
+    access_status = {i: it.readiness for i, it in integrations.items()}
 
     needs: List[ToolNeed] = []
     for tool in svc.required_tools:
@@ -67,14 +86,34 @@ def plan_tools(service_id: str, *, broker: ToolBroker = None, access: AccessBoot
                               action=("" if ready else svc.operator_action_if_blocked)))
     selected = [n.tool for n in needs if n.ready]           # smallest relevant ready toolset
     gaps = [n.to_dict() for n in needs if not n.ready]
-    # Client-owned access is a gap only in the sense of "needs client"; report it distinctly.
-    access_gaps = [a for a in svc.required_access]
-    all_ready = not gaps
+
+    # Typed access/authorization prerequisites resolved through AccessBootstrap: a required access id
+    # that is not genuinely satisfied (e.g. a client-owned repo/DB/CI/cloud scope that is Needs Client)
+    # makes the service NOT ready and carries the exact owner + action (item 20).
+    access_gaps: List[Dict[str, Any]] = []
+    for aid in svc.required_access_ids:
+        it = integrations.get(aid)
+        if it is None:
+            access_gaps.append(AccessGap(aid, aid, "unknown", "unknown",
+                                         "unknown access id (not resolvable via AccessBootstrap)").to_dict())
+            continue
+        if it.readiness not in _ACCESS_SATISFIED:
+            access_gaps.append(AccessGap(aid, it.name, it.owner, it.readiness,
+                                         it.setup_action or svc.operator_action_if_blocked).to_dict())
+
+    all_ready = not gaps and not access_gaps
+    # The operator action prioritises a tool gap; else the first (client) access gap's exact action.
+    if all_ready:
+        operator_action = ""
+    elif gaps:
+        operator_action = svc.operator_action_if_blocked
+    else:
+        operator_action = access_gaps[0]["action"]
     return ToolGapReport(
         service_id=service_id, required_tools=list(svc.required_tools),
-        required_access=access_gaps, selected=selected, gaps=gaps, ready=all_ready,
-        fallback=("" if all_ready else svc.fallback),
-        operator_action=("" if all_ready else svc.operator_action_if_blocked))
+        required_access=list(svc.required_access), selected=selected, gaps=gaps,
+        access_gaps=access_gaps, ready=all_ready,
+        fallback=("" if all_ready else svc.fallback), operator_action=operator_action)
 
 
 def snapshot() -> Dict[str, Any]:

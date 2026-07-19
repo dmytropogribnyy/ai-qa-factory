@@ -193,19 +193,35 @@ class AccessBootstrap:
             "" if g_ready == AUTHENTICATED else "see docs/GMAIL_PROVIDER_SETUP.md (test inbox only)",
             secret_ref="GMAIL_OAUTH_TOKEN_JSON"))
 
-        # --- client-provided access (never local) ---
-        out.append(Integration(
-            "client_test_account", "Client test/staging account", "authorized client QA execution",
-            NEEDS_CLIENT, "client-defined", "client",
-            "not provided", "client provides a dedicated test/staging account + scope"))
-        out.append(Integration(
-            "client_database", "Client database (read-only)", "safe read-only DB validation",
-            NEEDS_CLIENT, "read-only connection", "client",
-            "not provided", "client provides a read-only DB connection (or a Docker DB)"))
-        out.append(Integration(
-            "client_oauth_tenant", "Client OAuth test tenant", "authorized auth-flow testing",
-            NEEDS_CLIENT, "test tenant", "client",
-            "not provided", "client provides an OAuth test tenant / bounded pre-authorized session"))
+        # --- client-provided access (never local; typed access ids the Tool-Gap report resolves) ---
+        for cid, name, purpose, scope, action in (
+                ("client_test_account", "Client test/staging account",
+                 "authorized client QA execution (app/URL/endpoint)", "client-defined",
+                 "client provides a dedicated test/staging account + authorized target"),
+                ("client_database", "Client database (read-only)", "safe read-only DB validation",
+                 "read-only connection",
+                 "client provides a read-only DB connection (or a Docker DB)"),
+                ("client_oauth_tenant", "Client OAuth test tenant", "authorized auth-flow testing",
+                 "test tenant",
+                 "client provides an OAuth test tenant / bounded pre-authorized session"),
+                ("client_repository", "Client repository / test suite",
+                 "run against the client's real code (framework build, migration, stabilization, BDD)",
+                 "repo read access",
+                 "client shares the repository / existing test suite to work against real code"),
+                ("client_ci_access", "Client CI provider access",
+                 "run non-GitHub pipelines (Azure DevOps / GitLab CI / Jenkins)", "CI provider access",
+                 "client grants access to the target CI provider to genuinely run the pipeline"),
+                ("client_workflow_platform", "Client n8n/Make workspace",
+                 "build + sandbox-validate a workflow", "workspace + credentials",
+                 "client provides authorized n8n/Make access + credentials"),
+                ("client_cloud_scope", "Client AWS scope + credentials",
+                 "bounded AWS QA diagnostics", "explicit bounded scope",
+                 "client provides AWS credentials + an explicit bounded scope"),
+                ("client_control_framework", "Client compliance control framework",
+                 "compliance/legal-tech evidence mapping", "control framework + sources",
+                 "client supplies the control framework; a qualified reviewer signs off")):
+            out.append(Integration(cid, name, purpose, NEEDS_CLIENT, scope, "client",
+                                   "not provided", action))
         return out
 
     def _gmail_status(self) -> Dict[str, Any]:

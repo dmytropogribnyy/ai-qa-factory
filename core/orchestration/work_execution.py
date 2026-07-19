@@ -191,8 +191,8 @@ class WorkExecutionService:
 
     def execute(self, pid: str, executor: Any) -> Tuple[WorkRunState, ExecutionOutcome]:
         state = self._load_state(pid)
-        if state.status == "REPAIR_REQUIRED":
-            state = self._sm.transition(state, "READY_TO_EXECUTE", "repair requested", "cli")
+        if state.status in ("REPAIR_REQUIRED", "BLOCKED"):
+            state = self._sm.transition(state, "READY_TO_EXECUTE", "repair/resume requested", "cli")
         if state.status != "READY_TO_EXECUTE":
             raise WorkExecutionError(f"cannot start execution from state {state.status} (approve first)")
         eid = getattr(executor, "executor_id", "executor")
@@ -220,6 +220,35 @@ class WorkExecutionService:
         state = self._sm.transition(state, to, "execution produced artifacts", eid)
         self._save_state(pid, state)
         return state, outcome
+
+    def recover_interrupted(self, pid: str) -> Optional[WorkRunState]:
+        """Reconcile a worker that died mid-run. ``execute`` persists EXECUTING before running the
+        executor and only leaves EXECUTING once the executor returns; so a project still at EXECUTING
+        with no live worker means the process was interrupted (a restart/crash). Move it to BLOCKED
+        with an explicit blocker so it can be safely resumed - never silently reset or lost. Idempotent
+        (returns None when there is nothing to recover). The caller is responsible for confirming no
+        worker is actually running in-process before calling this."""
+        try:
+            state = self._load_state(pid)
+        except WorkExecutionError:
+            return None
+        if state.status != "EXECUTING":
+            return None
+        state = self._sm.transition(state, "BLOCKED",
+                                    "worker interrupted (process restart); resume to continue",
+                                    "recovery")
+        # Surface the interruption through status() by recording it as an execution blocker.
+        prog = self._read_json(self._ws(pid) / "EXECUTION_PROGRESS.json")
+        outcome = prog.get("outcome", {}) if isinstance(prog, dict) else {}
+        outcome.setdefault("blockers", [])
+        if "worker interrupted (process restart); resume to continue" not in outcome["blockers"]:
+            outcome["blockers"].append("worker interrupted (process restart); resume to continue")
+        prog["outcome"] = outcome
+        prog.setdefault("executor", "recovery")
+        prog["recovered_at"] = self._clock.now_iso()
+        self._write(self._ws(pid) / "EXECUTION_PROGRESS.json", json.dumps(prog, indent=2, sort_keys=True))
+        self._save_state(pid, state)
+        return state
 
     def validate(self, pid: str, executor: Any) -> Tuple[WorkRunState, ValidationOutcome]:
         state = self._load_state(pid)

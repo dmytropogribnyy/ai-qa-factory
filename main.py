@@ -325,6 +325,45 @@ def run_client_work(args) -> int:
             st = svc.mark_delivered(pid, note=args.note or "")
             print(f"Marked delivered for {pid}: {st.status}. (This recorded your assertion that you "
                   "sent the prepared package manually; nothing was sent by this command.)")
+        elif args.action in ("worker-start", "worker-resume"):
+            # Bounded autonomous execution via the real Claude Code worker, built ONLY from the
+            # persisted project state. Confined to the workspace; never a prompt/command from a caller.
+            from core.orchestration.claude_worker import ClaudeWorkerExecutor
+            ws = Path(get_settings().output_dir) / pid / "40_ark_work"
+            (ws / "WORKER_CANCEL.json").unlink(missing_ok=True)   # clear any stale cancel marker
+            executor = ClaudeWorkerExecutor(resume=(args.action == "worker-resume"),
+                                            timeout_s=int(getattr(args, "timeout", 300) or 300))
+            state, outcome = svc.execute(pid, executor)
+            if outcome.blockers:
+                print("Worker BLOCKED: " + "; ".join(outcome.blockers), file=_sys.stderr)
+                return 2
+            print(f"Worker recorded execution for {pid}: {len(outcome.artifacts)} file(s) changed. "
+                  f"State {state.status}. Now: validate (a real command), then review.")
+        elif args.action == "worker-status":
+            import json as _json
+            ws = Path(get_settings().output_dir) / pid / "40_ark_work"
+            v = svc.status(pid)
+            print(f"Project {pid}: {v.status} ({v.progress}%). Next: {v.next_action}")
+            sess_path = ws / "EXECUTION_SESSION.json"
+            if sess_path.exists():
+                s = _json.loads(sess_path.read_text(encoding="utf-8"))
+                print(f"Worker session: executor={s.get('executor')} session={s.get('session_id')} "
+                      f"stop={s.get('stop_reason')} files_changed={len(s.get('files_changed', []))} "
+                      f"cost_usd={s.get('cost_usd')} ok={s.get('ok')}")
+                if s.get("blockers"):
+                    print("Blockers: " + "; ".join(s["blockers"]))
+            else:
+                print("No worker session recorded yet.")
+        elif args.action == "worker-cancel":
+            import json as _json
+            from datetime import datetime, timezone
+            ws = Path(get_settings().output_dir) / pid / "40_ark_work"
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "WORKER_CANCEL.json").write_text(
+                _json.dumps({"requested_at": datetime.now(timezone.utc).isoformat()}),
+                encoding="utf-8")
+            print(f"Cancel requested for {pid}: a running worker will stop safely (process tree "
+                  "terminated); a not-yet-started worker will not launch.")
         else:
             print("ERROR: unknown action", file=_sys.stderr)
             return 1
@@ -525,7 +564,9 @@ def main(argv: list[str] | None = None) -> int:
              "(execution is Claude-Code-driven and human-approved)")
     cw_cmd.add_argument("action", choices=["status", "resume", "approve", "record-execution",
                                            "validate", "review", "prepare-delivery",
-                                           "reopen-delivery", "mark-delivered"])
+                                           "reopen-delivery", "mark-delivered",
+                                           "worker-start", "worker-status", "worker-resume",
+                                           "worker-cancel"])
     cw_cmd.add_argument("--project-id", required=True, help="Project id (from analyze-job)")
     cw_cmd.add_argument("--reviewer", help="Reviewer identity (required to approve/review/reopen)")
     cw_cmd.add_argument("--note", default="", help="Optional note (approval/review/delivery)")
@@ -544,6 +585,8 @@ def main(argv: list[str] | None = None) -> int:
                                           "tokenized POSIX-style; prefer --validation-argv-json "
                                           "on Windows or for paths with spaces")
     cw_cmd.add_argument("--reject", action="store_true", help="review: reject (send to REPAIR_REQUIRED)")
+    cw_cmd.add_argument("--timeout", type=int, default=300,
+                        help="worker-start/resume: hard wall-clock bound in seconds (default 300)")
 
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
     scout_cmd = subparsers.add_parser(

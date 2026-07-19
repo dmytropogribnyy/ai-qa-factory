@@ -16,6 +16,7 @@ A deterministic ``FixtureClaudeWorker`` (is_acceptance_fixture=True) is used in 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -35,9 +36,10 @@ class WorkOrder:
     objective: str                              # the bounded task the worker must accomplish
     acceptance: str = ""                        # how success is judged (informational)
     allowed_tools: List[str] = field(default_factory=lambda: ["Edit", "Write", "Read"])
-    max_turns: int = 6
-    timeout_s: int = 300
+    max_budget_usd: float = 0.50                # genuine bound via the CLI's --max-budget-usd
+    timeout_s: int = 300                        # hard wall-clock bound enforced by the runner
     model: str = ""                             # optional model override
+    session_id: str = ""                        # deterministic/resumable session id
     mode: str = "AUTONOMOUS_LOCAL"
 
     def prompt(self) -> str:
@@ -51,8 +53,8 @@ class WorkOrder:
     def digest(self) -> str:
         import hashlib
         payload = json.dumps({"objective": self.objective, "acceptance": self.acceptance,
-                              "allowed_tools": sorted(self.allowed_tools), "max_turns": self.max_turns},
-                             sort_keys=True)
+                              "allowed_tools": sorted(self.allowed_tools),
+                              "max_budget_usd": self.max_budget_usd}, sort_keys=True)
         return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def to_dict(self) -> Dict[str, Any]:
@@ -80,12 +82,19 @@ class WorkerResult:
 
 
 def build_worker_command(order: WorkOrder, *, exe: str = "claude", resume_session: str = "") -> List[str]:
-    """Build the bounded headless command (pure/testable). NEVER includes a skip-permissions flag.
-    ``exe`` is the resolved Claude executable (on Windows the npm shim is ``claude.CMD``)."""
+    """Build the bounded headless command (pure/testable) using ONLY flags the installed Claude CLI
+    actually supports (verified against ``claude --help``): ``--output-format``, ``--permission-mode
+    acceptEdits``, ``--allowedTools``, ``--max-budget-usd`` (the real budget bound), ``--session-id``,
+    ``--resume``, ``--model``. It NEVER includes a skip-permissions flag and there is no ``--max-turns``
+    (that flag does not exist). ``exe`` is the resolved executable (Windows npm shim is ``claude.CMD``)."""
     cmd = [exe, "-p", order.prompt(), "--output-format", "json",
-           "--max-turns", str(int(order.max_turns)), "--permission-mode", "acceptEdits"]
+           "--permission-mode", "acceptEdits"]
     if order.allowed_tools:
         cmd += ["--allowedTools", *order.allowed_tools]
+    if order.max_budget_usd and order.max_budget_usd > 0:
+        cmd += ["--max-budget-usd", str(order.max_budget_usd)]
+    if order.session_id and not resume_session:
+        cmd += ["--session-id", order.session_id]
     if order.model:
         cmd += ["--model", order.model]
     if resume_session:
@@ -98,15 +107,40 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _terminate_tree(proc) -> None:
+    """Kill a process and its children safely on Windows (taskkill /T) and POSIX (killpg)."""
+    import os as _os
+    import signal
+    import time
+    try:
+        if _os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],  # noqa: S603,S607
+                           capture_output=True, timeout=15, check=False)
+        else:
+            try:
+                _os.killpg(_os.getpgid(proc.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                return
+            time.sleep(0.8)
+            if proc.poll() is None:
+                _os.killpg(_os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 class ClaudeCodeWorker:
     """Runs a Work Order via the real Claude Code CLI, bounded and confined."""
 
     is_acceptance_fixture = False
     executor_id = "worker:claude-code"
 
-    def __init__(self, *, which=shutil.which, run=subprocess.run) -> None:
+    def __init__(self, *, which=shutil.which, run=subprocess.run, popen=subprocess.Popen) -> None:
         self._which = which
         self._run = run
+        self._popen = popen
 
     def _exe(self) -> Optional[str]:
         # Resolve the real executable (on Windows shutil.which returns the npm claude.CMD shim;
@@ -140,18 +174,8 @@ class ClaudeCodeWorker:
         if not det.get("available"):
             stop_reason = "claude CLI unavailable (Needs Operator: install + authenticate)"
         else:
-            try:
-                proc = self._run(cmd, cwd=str(ws), capture_output=True, text=True,  # noqa: S603
-                                 timeout=order.timeout_s, check=False)
-                returncode, raw_out, raw_err = proc.returncode, proc.stdout or "", proc.stderr or ""
-                session_id, tokens, cost = _parse_result_json(raw_out)
-                stop_reason = "completed" if returncode == 0 else f"exit {returncode}"
-            except subprocess.TimeoutExpired:
-                stop_reason = f"timeout after {order.timeout_s}s"
-            except OSError as exc:
-                stop_reason = f"spawn error: {type(exc).__name__}"
-        if cancel is not None and cancel.is_set():
-            stop_reason = "cancelled by operator"
+            returncode, raw_out, raw_err, stop_reason = self._run_controlled(cmd, ws, order, cancel)
+            session_id, tokens, cost = _parse_result_json(raw_out)
         duration = (datetime.now(timezone.utc) - started).total_seconds()
         # Redact + persist bounded evidence.
         ev_dir = ws / "evidence" / "worker"
@@ -170,6 +194,60 @@ class ClaudeCodeWorker:
             blockers=([] if ok else [stop_reason]))
         self._write_session(ws, order, result, version)
         return result
+
+    def _run_controlled(self, cmd, ws, order, cancel):
+        """Popen-based execution with a hard wall-clock timeout, genuine cancellation, and a safe
+        process-tree kill on both Windows and POSIX. No shell; output is drained without deadlock and
+        bounded. Returns (returncode, stdout, stderr, stop_reason)."""
+        import time
+        popen_kwargs: Dict[str, Any] = dict(
+            cwd=str(ws), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            popen_kwargs["start_new_session"] = True   # own process group for killpg
+        try:
+            proc = self._popen(cmd, **popen_kwargs)     # noqa: S603 - shell=False, fixed argv
+        except OSError as exc:
+            return None, "", f"{type(exc).__name__}: {exc}", f"spawn error: {type(exc).__name__}"
+
+        collected: Dict[str, str] = {"out": "", "err": ""}
+
+        def _drain():
+            try:
+                collected["out"], collected["err"] = proc.communicate()
+            except Exception as exc:                    # pragma: no cover - defensive
+                collected["err"] = f"{type(exc).__name__}: {exc}"
+
+        t = threading.Thread(target=_drain, daemon=True)
+        t.start()
+        deadline = time.monotonic() + max(1, int(order.timeout_s))
+        stop = "completed"
+        cancel_marker = Path(ws) / "WORKER_CANCEL.json"
+        while t.is_alive():
+            if (cancel is not None and cancel.is_set()) or cancel_marker.exists():
+                _terminate_tree(proc)
+                stop = "cancelled by operator"
+                break
+            if time.monotonic() > deadline:
+                _terminate_tree(proc)
+                stop = f"timeout after {order.timeout_s}s"
+                break
+            t.join(0.2)
+        t.join(8)                                        # let communicate() return after a kill
+        out = (collected.get("out") or "")[-16000:]
+        err = (collected.get("err") or "")[-16000:]
+        rc = proc.returncode
+        if stop == "completed":
+            stop = "completed" if rc == 0 else f"exit {rc}"
+        return rc, out, err, stop
+
+    @staticmethod
+    def _read_session_static(ws: Path) -> Dict[str, Any]:
+        try:
+            return json.loads((ws / "EXECUTION_SESSION.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
 
     @staticmethod
     def _snapshot(ws: Path) -> Dict[str, str]:
@@ -221,6 +299,89 @@ def _parse_result_json(stdout: str):
     cost = obj.get("total_cost_usd") or obj.get("cost_usd")
     return sid, (int(tokens) if isinstance(tokens, (int, float)) else None), \
         (float(cost) if isinstance(cost, (int, float)) else None)
+
+
+_ORDER_NS = __import__("uuid").UUID("7b1e2c9a-4d3f-5a6b-8c7d-9e0f1a2b3c4d")
+
+
+def build_order_from_context(ctx, *, allowed_tools: Optional[List[str]] = None,
+                             max_budget_usd: float = 0.50, timeout_s: int = 300) -> WorkOrder:
+    """Build the Work Order ONLY from the validated persisted project state handed in by
+    WorkExecutionService (requirements + profile). It never accepts an arbitrary prompt, command,
+    argv, workspace path, allowed-tools list, model, or budget from an HTTP caller. The session id is
+    derived deterministically from the project id so a worker can be resumed."""
+    import uuid
+    reqs = [str(r) for r in (getattr(ctx, "requirements", None) or [])][:25]
+    objective = ("Implement or repair the deliverables for this project WITHIN this workspace so its "
+                 "recorded requirements and acceptance criteria are satisfied. Make the smallest "
+                 "correct change and add or fix tests as needed. Do not touch anything outside the "
+                 "workspace or contact external services.")
+    if reqs:
+        objective += "\n\nRecorded requirements:\n" + "\n".join(f"- {r}" for r in reqs)
+    return WorkOrder(project_id=ctx.project_id, objective=objective,
+                     acceptance="the project's own validation command passes",
+                     allowed_tools=allowed_tools or ["Edit", "Write", "Read"],
+                     max_budget_usd=max_budget_usd, timeout_s=timeout_s,
+                     session_id=str(uuid.uuid5(_ORDER_NS, ctx.project_id)))
+
+
+class ClaudeWorkerExecutor:
+    """Production executor satisfying the WorkExecutionService contract. It builds the Work Order
+    from persisted state, runs the (real or fixture) worker confined to the project workspace, and
+    records the GENUINE produced files as artifacts + the worker session/output as evidence. It never
+    fabricates an artifact list and never claims validation success - validation is a separate step
+    through the existing validation executor."""
+
+    def __init__(self, worker: Optional[ClaudeCodeWorker] = None, *,
+                 allowed_tools: Optional[List[str]] = None, max_budget_usd: float = 0.50,
+                 timeout_s: int = 300, resume: bool = False,
+                 cancel: Optional[threading.Event] = None) -> None:
+        self._worker = worker or ClaudeCodeWorker()
+        self._allowed_tools = allowed_tools
+        self._budget = max_budget_usd
+        self._timeout = timeout_s
+        self._resume = resume
+        self._cancel = cancel
+
+    @property
+    def is_acceptance_fixture(self) -> bool:
+        return bool(getattr(self._worker, "is_acceptance_fixture", False))
+
+    @property
+    def executor_id(self) -> str:
+        return getattr(self._worker, "executor_id", "worker:claude-code")
+
+    def execute(self, ctx):
+        from core.schemas.work_execution import EvidenceItem, ExecutionArtifact, ExecutionOutcome
+        order = build_order_from_context(ctx, allowed_tools=self._allowed_tools,
+                                         max_budget_usd=self._budget, timeout_s=self._timeout)
+        resume_id = ""
+        if self._resume:
+            prior = ClaudeCodeWorker._read_session_static(Path(ctx.workspace_dir))
+            resume_id = str(prior.get("session_id") or "")
+        result = self._worker.run(order, ctx.workspace_dir, resume_session=resume_id,
+                                  cancel=self._cancel)
+        artifacts = [ExecutionArtifact(f, "fix") for f in result.files_changed
+                     if f not in ("EXECUTION_SESSION.json",)]
+        evidence = [
+            EvidenceItem("worker-session", "log", "EXECUTION_SESSION.json",
+                         "claude worker execution session (redacted)", ctx.now),
+            EvidenceItem("worker-stdout", "log", "evidence/worker/stdout.txt",
+                         "worker stdout (bounded, redacted)", ctx.now),
+            EvidenceItem("worker-stderr", "log", "evidence/worker/stderr.txt",
+                         "worker stderr (bounded, redacted)", ctx.now),
+        ]
+        notes = [f"claude worker: {result.stop_reason}; {len(artifacts)} file(s) changed; "
+                 f"session={result.session_id or order.session_id}; budget<=${self._budget}"]
+        blockers = [] if (result.ok and artifacts) else (
+            result.blockers or ["worker produced no file changes"])
+        return ExecutionOutcome(artifacts=artifacts, evidence=evidence,
+                                files_changed=result.files_changed, progress_notes=notes,
+                                blockers=blockers)
+
+    def validate(self, ctx):
+        raise ValueError("the worker records execution only; run `client-work validate` with a real "
+                         "command (the existing validation executor + integrity gates apply)")
 
 
 class FixtureClaudeWorker(ClaudeCodeWorker):

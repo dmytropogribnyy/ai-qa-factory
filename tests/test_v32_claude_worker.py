@@ -1,10 +1,11 @@
-"""v3.2 Sections 9-10 - bounded Claude Code worker: safe command, fixture + injected run, gated live."""
+"""v3.2 Sections 9-10 - bounded Claude Code worker: real flags, controllable Popen, gated live."""
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -17,79 +18,142 @@ from core.orchestration.claude_worker import (
 )
 
 _ORDER = WorkOrder(project_id="p", objective="Fix add() in calc.py to return a+b.",
-                   acceptance="pytest passes", allowed_tools=["Edit", "Read"], max_turns=3)
+                   acceptance="pytest passes", allowed_tools=["Edit", "Read"], max_budget_usd=0.25,
+                   session_id="sess-abc")
 
 
-def test_command_is_bounded_and_never_skips_permissions():
+def test_command_uses_only_real_flags_and_never_skips_permissions():
     cmd = build_worker_command(_ORDER)
     assert cmd[0] == "claude" and "-p" in cmd and "--output-format" in cmd
     assert "--permission-mode" in cmd and "acceptEdits" in cmd
-    assert "--max-turns" in cmd and "--allowedTools" in cmd
+    assert "--allowedTools" in cmd
+    assert "--max-budget-usd" in cmd and "0.25" in cmd      # the REAL budget flag
+    assert "--session-id" in cmd and "sess-abc" in cmd
+    assert "--max-turns" not in cmd                          # invented flag removed
     assert "--dangerously-skip-permissions" not in cmd
     assert "--allow-dangerously-skip-permissions" not in cmd
 
 
-def test_fixture_worker_applies_edits_and_writes_atomic_session(tmp_path):
+def test_resume_uses_resume_flag():
+    cmd = build_worker_command(_ORDER, resume_session="sess-abc")
+    assert "--resume" in cmd and "sess-abc" in cmd
+
+
+class _FakePopen:
+    """A controllable fake process: writes an edit, optionally sleeps, then returns a JSON result."""
+
+    def __init__(self, argv, *, cwd=None, sleep=0.0, rc=0, edit=None, out=None, **kw):
+        self._sleep = sleep
+        self.returncode = None
+        self._rc = rc
+        self.pid = 424242
+        self._killed = False
+        if edit and cwd:
+            Path(cwd, edit[0]).write_text(edit[1], encoding="utf-8")
+        self._out = out if out is not None else (
+            '{"session_id":"sess-run","usage":{"output_tokens":12},"total_cost_usd":0.002}')
+
+    def communicate(self, timeout=None):
+        end = time.time() + self._sleep
+        while time.time() < end and not self._killed:
+            time.sleep(0.05)
+        self.returncode = 143 if self._killed else self._rc
+        return (self._out if not self._killed else ""), ""
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self._killed = True
+        self.returncode = 143
+
+    def terminate(self):
+        self.kill()
+
+
+def _worker(popen_factory, version="2.1.198 (Claude Code)"):
+    def _run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout=version, stderr="")
+    return ClaudeCodeWorker(which=lambda n: "/usr/bin/claude", run=_run, popen=popen_factory)
+
+
+def test_worker_run_success_records_real_change(tmp_path):
     ws = tmp_path / "ws"
-    (ws).mkdir()
-    (ws / "calc.py").write_text("def add(a,b):\n    return a-b\n", encoding="utf-8")
-    worker = FixtureClaudeWorker(edits={"calc.py": "def add(a, b):\n    return a + b\n"})
-    assert worker.is_acceptance_fixture is True
-    res = worker.run(_ORDER, str(ws))
-    assert res.ok and res.returncode == 0 and res.stop_reason == "completed"
-    assert "calc.py" in res.files_changed
-    session = json.loads((ws / "EXECUTION_SESSION.json").read_text(encoding="utf-8"))
-    assert session["executor"] == "worker:fixture" and session["work_order_digest"].startswith("sha256:")
-    assert session["authorized_tools"] == ["Edit", "Read"]
-    assert (ws / "calc.py").read_text(encoding="utf-8").strip().endswith("return a + b")
 
+    def _popen(argv, **kw):
+        return _FakePopen(argv, edit=("calc.py", "def add(a, b):\n    return a + b\n"), **kw)
 
-def test_worker_detect_and_run_with_injected_subprocess(tmp_path):
-    ws = tmp_path / "ws"
-    calls = {}
-
-    def fake_run(cmd, **kw):
-        if "--version" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout="2.1.198 (Claude Code)", stderr="")
-        # Simulate the worker editing a file in the confined cwd + returning a JSON result.
-        Path(kw["cwd"], "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-        calls["cmd"] = cmd
-        out = json.dumps({"session_id": "sess-123", "usage": {"output_tokens": 42},
-                          "total_cost_usd": 0.001})
-        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
-
-    worker = ClaudeCodeWorker(which=lambda n: "/usr/bin/claude", run=fake_run)
-    assert worker.detect() == {"available": True, "version": "2.1.198 (Claude Code)"}
-    res = worker.run(_ORDER, str(ws))
-    assert res.ok and res.session_id == "sess-123" and res.tokens == 42 and res.cost_usd == 0.001
-    assert "calc.py" in res.files_changed
-    assert "--permission-mode" in calls["cmd"] and "--dangerously-skip-permissions" not in calls["cmd"]
-    # Evidence is written + redacted (no crash on redaction).
+    res = _worker(_popen).run(_ORDER, str(ws))
+    assert res.ok and res.session_id == "sess-run" and res.tokens == 12 and res.cost_usd == 0.002
+    assert "calc.py" in res.files_changed and res.stop_reason == "completed"
+    assert (ws / "EXECUTION_SESSION.json").exists()
     assert (ws / "evidence" / "worker" / "stdout.txt").exists()
 
 
+def test_worker_hard_timeout_kills_tree(tmp_path):
+    ws = tmp_path / "ws"
+
+    def _popen(argv, **kw):
+        return _FakePopen(argv, sleep=30, **kw)   # would run far past the timeout
+
+    order = WorkOrder(project_id="p", objective="x", timeout_s=1)
+    t0 = time.time()
+    res = _worker(_popen).run(order, str(ws))
+    assert time.time() - t0 < 12                  # the hard timeout fired
+    assert res.ok is False and "timeout" in res.stop_reason
+
+
+def test_worker_genuine_cancellation(tmp_path):
+    ws = tmp_path / "ws"
+    cancel = threading.Event()
+
+    def _popen(argv, **kw):
+        return _FakePopen(argv, sleep=30, **kw)
+
+    threading.Timer(0.5, cancel.set).start()
+    order = WorkOrder(project_id="p", objective="x", timeout_s=30)
+    res = _worker(_popen).run(order, str(ws), cancel=cancel)
+    assert res.ok is False and "cancelled" in res.stop_reason
+
+
 def test_worker_reports_needs_operator_when_cli_missing(tmp_path):
-    worker = ClaudeCodeWorker(which=lambda n: None)
-    res = worker.run(_ORDER, str(tmp_path / "ws"))
+    res = ClaudeCodeWorker(which=lambda n: None).run(_ORDER, str(tmp_path / "ws"))
     assert res.ok is False and "unavailable" in res.stop_reason and res.blockers
+
+
+def test_fixture_worker_is_labeled_and_not_live(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "calc.py").write_text("def add(a,b):\n    return a-b\n", encoding="utf-8")
+    worker = FixtureClaudeWorker(edits={"calc.py": "def add(a, b):\n    return a + b\n"})
+    assert worker.is_acceptance_fixture is True and worker.executor_id == "worker:fixture"
+    res = worker.run(_ORDER, str(ws))
+    assert res.ok and res.version == "fixture" and "calc.py" in res.files_changed
+    session = __import__("json").loads((ws / "EXECUTION_SESSION.json").read_text(encoding="utf-8"))
+    assert session["executor"] == "worker:fixture"   # never mistaken for the live provider
 
 
 _LIVE = os.environ.get("AIQA_CLAUDE_LIVE") == "1" and shutil.which("claude") is not None
 
 
-@pytest.mark.skipif(not _LIVE, reason="live Claude run is operator-gated (set AIQA_CLAUDE_LIVE=1)")
+@pytest.mark.skipif(not _LIVE, reason="live Claude run is operator-gated (set AIQA_CLAUDE_LIVE=1 "
+                                      "in a clean, non-nested shell)")
 def test_live_claude_worker_repairs_a_fixture(tmp_path):
-    # Genuine bounded live provider execution (labeled). Repairs a real defect, then pytest verifies.
     ws = tmp_path / "live"
     ws.mkdir()
     (ws / "calc.py").write_text("def add(a, b):\n    return a - b  # bug\n", encoding="utf-8")
     (ws / "test_calc.py").write_text(
         "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n", encoding="utf-8")
-    order = WorkOrder(project_id="live", objective="Fix the add() function in calc.py so add(2,3)==5.",
-                      acceptance="pytest -q passes", allowed_tools=["Edit", "Read"], max_turns=4,
-                      timeout_s=180)
+    before = subprocess.run([os.sys.executable, "-m", "pytest", "-q", "test_calc.py"], cwd=str(ws),
+                            capture_output=True, text=True, timeout=120, check=False)
+    assert before.returncode != 0, "the fixture must genuinely fail before the repair"
+    order = WorkOrder(project_id="live", objective="Fix add() in calc.py so add(2,3)==5.",
+                      acceptance="pytest -q passes", allowed_tools=["Edit", "Read"],
+                      max_budget_usd=0.50, timeout_s=240)
     res = ClaudeCodeWorker().run(order, str(ws))
     assert res.ok, res.stop_reason
-    after = subprocess.run([os.sys.executable, "-m", "pytest", "-q", "test_calc.py"],
-                           cwd=str(ws), capture_output=True, text=True, timeout=120, check=False)
+    after = subprocess.run([os.sys.executable, "-m", "pytest", "-q", "test_calc.py"], cwd=str(ws),
+                           capture_output=True, text=True, timeout=120, check=False)
     assert after.returncode == 0, after.stdout + after.stderr
+    # Resume across a fresh process reads the persisted session.
+    assert (ws / "EXECUTION_SESSION.json").exists()

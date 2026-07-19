@@ -56,6 +56,27 @@ def _work_lock(key: str):
         return lk
 
 
+# In-process registry of running background workers, keyed by "<output_dir>::<pid>". It enforces
+# "one active worker per project" and carries the cancel Event for a still-running worker. A durable
+# WORKER_ACTIVE.json marker on disk lets a status call after a restart detect an interrupted run
+# (the marker exists but no live thread here -> the process died mid-run). The Work Order itself is
+# always rebuilt from persisted project state by ClaudeWorkerExecutor; NOTHING about the command,
+# prompt, argv, tools, model, or budget ever comes from the HTTP request.
+_ACTIVE_WORKERS: dict = {}
+_ACTIVE_WORKERS_GUARD = _threading.Lock()
+_WORKER_TIMEOUT_S = 300           # fixed server-side bound; never taken from the request
+
+
+def _default_worker_executor(*, resume: bool, cancel):
+    """The production factory: a bounded ClaudeWorkerExecutor built from persisted state only.
+    Tests replace this module attribute to inject a deterministic FixtureClaudeWorker."""
+    from core.orchestration.claude_worker import ClaudeWorkerExecutor
+    return ClaudeWorkerExecutor(resume=resume, timeout_s=_WORKER_TIMEOUT_S, cancel=cancel)
+
+
+_worker_executor_factory = _default_worker_executor
+
+
 # Bounded cache for the Access & Identity snapshot so a page/API request never blocks on the sum of
 # several subprocess version probes (the readiness rarely changes within a session). An explicit
 # refresh recomputes it. Computed at most once per _ACCESS_TTL_S, guarded for thread safety.
@@ -346,6 +367,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                         pass
                     return self._json(200, {"ok": True, "action": action,
                                             "project_id": res.project_id})
+            if action in ("worker-start", "worker-resume", "worker-cancel", "worker-status"):
+                return self._worker_action(action, pid, body)
             # Serialize conflicting lifecycle mutations per project so a double-submit cannot race
             # (the state machine already prevents duplicate history / an incorrect transition).
             with _work_lock(f"{service.output_dir}::{pid}"):
@@ -378,6 +401,124 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 v = svc.status(pid)
                 return self._json(200, {"ok": True, "action": action, "project_id": pid,
                                         "status": v.status, "next_action": v.next_action})
+
+        # --- guarded autonomous worker (v3.2) — project-id only, background, one-active ---------
+        def _worker_action(self, action: str, pid: str, body: dict):
+            """Start/resume/cancel/inspect a BOUNDED background Claude worker. Only a validated
+            project id is accepted (never a prompt/command/argv/workspace/tools/model/budget); the
+            Work Order is rebuilt from persisted state by ClaudeWorkerExecutor. Enforces one active
+            worker per project, persists before start, reconciles an interrupted run, and returns
+            immediately (the run proceeds in a daemon thread)."""
+            from datetime import datetime, timezone
+
+            from core.orchestration.providers import validate_project_id
+            from core.orchestration.work_execution import WorkExecutionError, WorkExecutionService
+            if not validate_project_id(pid):
+                return self._json(400, {"ok": False, "error": "a valid project id is required"})
+            key = f"{service.output_dir}::{pid}"
+            ws = Path(service.output_dir) / pid / _ARK_DIR
+
+            if action == "worker-status":
+                info = self._worker_live(key)
+                session = {}
+                sp = ws / "EXECUTION_SESSION.json"
+                if sp.exists():
+                    try:
+                        session = json.loads(sp.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        session = {}
+                try:
+                    st = WorkExecutionService(output_dir=service.output_dir).status(pid)
+                    lifecycle = {"status": st.status, "progress": st.progress,
+                                 "blockers": st.blockers, "next_action": st.next_action}
+                except WorkExecutionError as exc:
+                    lifecycle = {"error": str(exc)}
+                return self._json(200, {"ok": True, "action": action, "project_id": pid,
+                                        "running": info is not None,
+                                        "started_at": (info or {}).get("started_at"),
+                                        "lifecycle": lifecycle,
+                                        "session": {k: session.get(k) for k in
+                                                    ("executor", "session_id", "stop_reason", "ok",
+                                                     "files_changed", "cost_usd", "blockers")}})
+
+            if action == "worker-cancel":
+                # A running worker stops safely (process tree terminated); a not-yet-started worker
+                # will not launch. Both the durable marker and the in-process Event are set.
+                ws.mkdir(parents=True, exist_ok=True)
+                (ws / "WORKER_CANCEL.json").write_text(json.dumps(
+                    {"requested_at": datetime.now(timezone.utc).isoformat()}), encoding="utf-8")
+                info = self._worker_live(key)
+                if info is not None:
+                    info["cancel"].set()
+                return self._json(200, {"ok": True, "action": action, "project_id": pid,
+                                        "was_running": info is not None})
+
+            # worker-start / worker-resume: an explicit confirmation is required, and the request may
+            # carry ONLY the project id + confirm (any command/prompt/argv field is ignored).
+            if body.get("confirm") is not True:
+                return self._json(400, {"ok": False, "error": "autonomous worker execution requires "
+                                        "an explicit confirm=true"})
+            with _work_lock(key):
+                if self._worker_live(key) is not None:
+                    return self._json(409, {"ok": False, "action": action, "project_id": pid,
+                                            "error": "a worker is already running for this project"})
+                svc = WorkExecutionService(output_dir=service.output_dir)
+                # Restart recovery: no live worker in THIS process but state stuck at EXECUTING means
+                # a prior process died mid-run -> reconcile to BLOCKED so it can be resumed.
+                try:
+                    svc.recover_interrupted(pid)
+                    cur = svc.status(pid).status
+                except WorkExecutionError as exc:
+                    return self._json(404, {"ok": False, "error": str(exc)})
+                if cur not in ("READY_TO_EXECUTE", "REPAIR_REQUIRED", "BLOCKED"):
+                    return self._json(409, {"ok": False, "action": action, "project_id": pid,
+                                            "error": f"cannot start a worker from state {cur} "
+                                            "(approve the plan first)"})
+                # Persist-before-start: clear any stale cancel marker and register the active worker
+                # + a durable marker BEFORE the daemon thread launches.
+                try:
+                    (ws / "WORKER_CANCEL.json").unlink()
+                except OSError:
+                    pass
+                cancel = _threading.Event()
+                started_at = datetime.now(timezone.utc).isoformat()
+                with _ACTIVE_WORKERS_GUARD:
+                    _ACTIVE_WORKERS[key] = {"cancel": cancel, "started_at": started_at, "done": False}
+                try:
+                    ws.mkdir(parents=True, exist_ok=True)
+                    (ws / "WORKER_ACTIVE.json").write_text(json.dumps(
+                        {"started_at": started_at, "action": action}, indent=2, sort_keys=True),
+                        encoding="utf-8")
+                except OSError:
+                    pass
+
+                def _run():
+                    try:
+                        executor = _worker_executor_factory(
+                            resume=(action == "worker-resume"), cancel=cancel)
+                        WorkExecutionService(output_dir=service.output_dir).execute(pid, executor)
+                    except Exception:
+                        pass                       # the lifecycle records BLOCKED; never crash the server
+                    finally:
+                        with _ACTIVE_WORKERS_GUARD:
+                            cur_info = _ACTIVE_WORKERS.get(key)
+                            if cur_info is not None:
+                                cur_info["done"] = True
+                        try:
+                            (ws / "WORKER_ACTIVE.json").unlink()
+                        except OSError:
+                            pass
+
+                _threading.Thread(target=_run, name=f"worker:{pid}", daemon=True).start()
+                return self._json(202, {"ok": True, "action": action, "project_id": pid,
+                                        "status": "EXECUTING", "started_at": started_at,
+                                        "message": "bounded worker started; poll worker-status"})
+
+        @staticmethod
+        def _worker_live(key: str):
+            with _ACTIVE_WORKERS_GUARD:
+                info = _ACTIVE_WORKERS.get(key)
+                return info if (info is not None and not info["done"]) else None
 
         # --- guarded campaign start (v3.0.0 M4b) -----------------------------------------------
         def _campaign_start(self):
@@ -1052,12 +1193,13 @@ function startCampaign(){{
                 cls = "btn primary" if a.get("primary") else "btn"
                 if a["kind"] == "http_mutation":
                     act = a["endpoint"].split("/")[-1]
+                    fixed = "Object.assign({project_id:'" + safe_pid + "'}," + json.dumps(
+                        a.get("body") or {}) + ")"
                     if a.get("fields"):
                         fields_js = "[" + ",".join("'" + f + "'" for f in a["fields"]) + "]"
-                        extra = ("Object.assign({project_id:'" + safe_pid + "'},promptFields("
-                                 + fields_js + "))")
+                        extra = "Object.assign(" + fixed + ",promptFields(" + fields_js + "))"
                     else:
-                        extra = "{project_id:'" + safe_pid + "'}"
+                        extra = fixed
                     conf = ("if(!confirm('" + _esc(a["label"]) + "?'))return;" if a.get("confirm") else "")
                     onclick = conf + "wact(this,'" + act + "'," + extra + ")"
                     actbtns.append(f'<button class="{cls}" onclick="{onclick}">{_esc(a["label"])}</button>')

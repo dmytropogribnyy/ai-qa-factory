@@ -23,6 +23,13 @@ from core.orchestration.db_validation import (
 )
 from core.orchestration.operator_executor import OperatorWorkspaceExecutor, ProducedArtifact
 from core.orchestration.providers import FixedClock, SequentialIds
+from core.orchestration.service_profiles import (
+    generate_bdd_suite,
+    measure_flakiness,
+    migrate_selenium_to_playwright,
+    run_bdd_suite,
+    validate_source_backed_article,
+)
 from core.orchestration.work_execution import WorkExecutionService
 from core.schemas.work_execution import ValidationOutcome
 
@@ -31,8 +38,8 @@ _PY = sys.executable
 
 # ---------------------------------------------------------------- 7.5 flaky-test stabilization
 def test_flaky_stabilization(tmp_path):
-    """A CONTROLLED intermittent fixture (labeled): deterministic 50% failure before a real repair,
-    0% after. Measured over repeated runs — not a portfolio metric."""
+    """Invoke the PRODUCTION ``measure_flakiness`` op over a CONTROLLED intermittent fixture (labeled):
+    genuinely flaky before a real repair, stable after. Real before/after — not a portfolio metric."""
     (tmp_path / "counter.txt").write_text("0", encoding="utf-8")
     flaky = (
         "from pathlib import Path\n"
@@ -42,22 +49,19 @@ def test_flaky_stabilization(tmp_path):
         "    assert _n() % 2 == 0   # deterministically fails on odd runs (controlled fixture)\n")
     (tmp_path / "test_flaky.py").write_text(flaky, encoding="utf-8")
 
-    def _run_n(times):
-        fails = 0
-        for _ in range(times):
-            p = subprocess.run([_PY, "-m", "pytest", "-q", "-p", "no:cacheprovider", "test_flaky.py"],
-                               cwd=str(tmp_path), capture_output=True, text=True, timeout=120, check=False)
-            fails += 1 if p.returncode != 0 else 0
-        return fails
+    def _run_once():
+        p = subprocess.run([_PY, "-m", "pytest", "-q", "-p", "no:cacheprovider", "test_flaky.py"],
+                           cwd=str(tmp_path), capture_output=True, text=True, timeout=120, check=False)
+        return p.returncode == 0
 
-    before = _run_n(6)
-    assert before > 0, "controlled fixture should be genuinely flaky before the repair"
-    # Real remediation: make it deterministic.
+    before = measure_flakiness(_run_once, runs=6)
+    assert before.classification == "flaky" and before.failures > 0 and not before.stabilized
+    # Real remediation: make it deterministic, then re-measure with the same production op.
     (tmp_path / "counter.txt").write_text("0", encoding="utf-8")
     (tmp_path / "test_flaky.py").write_text(
         "def test_intermittent():\n    assert True   # stabilized: deterministic\n", encoding="utf-8")
-    after = _run_n(6)
-    assert after == 0, "the repaired test must pass every run"
+    after = measure_flakiness(_run_once, runs=6)
+    assert after.classification == "stable" and after.failures == 0 and after.stabilized
 
 
 # ---------------------------------------------------------------- 7.3 safe read-only DB validation
@@ -95,8 +99,8 @@ def test_db_engine_readiness_is_honest():
 
 # ---------------------------------------------------------------- 7.2 migration (inventory + parity)
 def test_migration(tmp_path):
-    """Genuine Selenium->Playwright migration: inventory a legacy spec, generate a Playwright spec
-    that preserves the critical assertion, and prove parity of the covered behavior."""
+    """Invoke the PRODUCTION ``migrate_selenium_to_playwright`` op: inventory a legacy spec, generate
+    a Playwright spec that preserves the critical assertion, and prove parity of the covered behavior."""
     legacy = (
         "# legacy selenium-style suite\n"
         "def test_home_title(driver):\n"
@@ -105,45 +109,70 @@ def test_migration(tmp_path):
         "def test_login_link(driver):\n"
         "    driver.get(BASE)\n"
         "    assert driver.find_element('id','login')\n")
-    src = tmp_path / "legacy_test.py"
-    src.write_text(legacy, encoding="utf-8")
-    # Inventory: extract the test cases + their critical assertions.
-    import re
-    cases = re.findall(r"def (test_\w+)\(", src.read_text(encoding="utf-8"))
-    assert cases == ["test_home_title", "test_login_link"]
-    inventory = {"source": "selenium", "tests": cases, "critical": {"test_home_title": "title==QA Home"}}
-    # Generate a Playwright TS spec preserving the critical behavior.
-    spec = ('import { test, expect } from "@playwright/test";\n'
-            'test("home title (migrated)", async ({ page }) => {\n'
-            '  await page.goto("/");\n  await expect(page).toHaveTitle("QA Home");\n});\n')
-    out = tmp_path / "migrated.spec.ts"
-    out.write_text(spec, encoding="utf-8")
-    (tmp_path / "MIGRATION_INVENTORY.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
-    # Parity: every inventoried critical behavior is covered by the generated spec.
-    assert "toHaveTitle" in out.read_text(encoding="utf-8") and "QA Home" in out.read_text(encoding="utf-8")
-    assert len(cases) >= 1 and out.exists()
+    result = migrate_selenium_to_playwright(legacy)
+    assert result.inventory.tests == ["test_home_title", "test_login_link"]
+    assert result.inventory.critical == {"test_home_title": "title==QA Home"}
+    # The generated Playwright spec preserves the critical behaviour, and parity is proven.
+    assert "toHaveTitle" in result.playwright_spec and "QA Home" in result.playwright_spec
+    assert result.parity_ok and result.covered == ["test_home_title"] and not result.gaps
+    (tmp_path / "migrated.spec.ts").write_text(result.playwright_spec, encoding="utf-8")
+    (tmp_path / "MIGRATION_INVENTORY.json").write_text(
+        json.dumps(result.inventory.to_dict(), indent=2), encoding="utf-8")
 
 
 # ---------------------------------------------------------------- 7.10 technical writing
 def test_technical_writing(tmp_path):
-    """Source-backed technical artifact with a claim/citation map; no fabricated benchmarks. Labeled
-    as an ACCEPTANCE artifact, not client work."""
+    """Invoke the PRODUCTION ``validate_source_backed_article`` op: every factual claim carries a
+    citation and no fabricated benchmark percentages exist. Labeled as an ACCEPTANCE artifact."""
     sources = {
         "Playwright supports parallel test execution.": "https://playwright.dev/docs/test-parallel",
         "axe-core reports WCAG accessibility violations.": "https://github.com/dequelabs/axe-core",
     }
-    body = ["# ACCEPTANCE ARTIFACT (not client work) — Playwright + accessibility", ""]
+    body = ["# ACCEPTANCE ARTIFACT (not client work) - Playwright + accessibility", ""]
     for claim, url in sources.items():
         body.append(f"- {claim} [source]({url})")
     art = tmp_path / "article.md"
     art.write_text("\n".join(body) + "\n", encoding="utf-8")
-    text = art.read_text(encoding="utf-8")
-    # Every factual claim carries a citation; no invented benchmark numbers are present.
-    import re
-    for claim in sources:
-        assert claim in text and "[source](" in text
-    assert not re.search(r"\b\d{2,3}%\b", text), "no fabricated benchmark percentages"
-    assert "ACCEPTANCE ARTIFACT" in text
+
+    report = validate_source_backed_article(art.read_text(encoding="utf-8"), sources)
+    assert report.ok and report.cited == 2 and not report.uncited
+    assert not report.fabricated_benchmarks
+
+    # Negative: a fabricated benchmark percentage is caught by the same production op.
+    bad = validate_source_backed_article(
+        "Our suite is 98% faster than before.\n", {"claim": "https://example.test"})
+    assert not bad.ok and bad.fabricated_benchmarks == ["98%"] and bad.uncited
+
+
+# ---------------------------------------------------------------- 7.9 BDD (executable, item 22)
+def test_bdd(tmp_path):
+    """Invoke the PRODUCTION bounded BDD profile: turn business requirements into EXECUTABLE
+    scenarios, run them against a reference implementation, and prove requirement traceability."""
+    requirements = [
+        "the login should grant access when the password is correct",
+        "the login should deny access when the password is wrong",
+        "a note with no automatable shape",     # skipped: never a redundant non-executable feature
+    ]
+    suite = generate_bdd_suite("Login", requirements)
+    assert len(suite.scenarios) == 2 and "Feature: Login" in suite.gherkin()
+
+    # A tiny reference implementation the generated scenarios execute against.
+    def _login(password):
+        return password == "secret"
+
+    steps = {
+        "the login grant access": lambda sc: _login("secret") is True,
+        "the login deny access": lambda sc: _login("wrong") is False,
+    }
+    report = run_bdd_suite(suite, steps)
+    assert report.ok and report.passed == 2 and not report.failed
+    # Every executed scenario traces back to a business requirement.
+    assert all(name in report.traceability for name in steps)
+
+    # Negative: a wrong implementation genuinely fails the scenarios (not a rubber stamp).
+    bad = run_bdd_suite(suite, {"the login grant access": lambda sc: False,
+                                "the login deny access": lambda sc: False})
+    assert not bad.ok and set(bad.failed) == {"the login grant access", "the login deny access"}
 
 
 # ---------------------------------------------------------------- 7 (G) autonomous operator lifecycle
