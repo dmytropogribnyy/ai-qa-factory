@@ -219,6 +219,17 @@ def test_readonly_token_provider_requests_readonly_scopes_only(monkeypatch):
     assert GMAIL_READONLY_SCOPE in captured["scopes"] and GMAIL_SEND_SCOPE not in captured["scopes"]
 
 
+def test_granted_scope_blockers_fails_closed_on_known_partial_grant_only():
+    # The live-granted-scope check must fail closed on a KNOWN partial grant (Google granted fewer
+    # scopes than requested), but never false-fail when the granted set is UNKNOWN (empty/transient).
+    from core.scout.comms.gmail_oauth import granted_scope_blockers
+    partial = ["openid", "email"]                              # readonly missing (a real partial grant)
+    assert granted_scope_blockers(partial, scope_validator=_scope_blockers)  # blocked
+    full = [GMAIL_READONLY_SCOPE, "openid", "email"]
+    assert granted_scope_blockers(full, scope_validator=_scope_blockers) == []      # ok
+    assert granted_scope_blockers([], scope_validator=_scope_blockers) == []        # unknown -> tolerant
+
+
 def test_e2e_self_test_send_then_correlated_read_with_two_distinct_tokens():
     # A controlled injected-transport E2E of the exact self-test contract: the SEND identity
     # (dipptrue, send token) sends one message to the test alias; the READ identity (drdiplextech,

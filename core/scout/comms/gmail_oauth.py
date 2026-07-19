@@ -240,7 +240,10 @@ def authorize(*, client_config_path: str, token_store_path: str,
     os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
     flow = InstalledAppFlow.from_client_secrets_file(
         client_config_path, scopes=list(scopes or REQUESTED_SCOPES))
-    creds = flow.run_local_server(port=0, open_browser=open_browser)  # loopback, not out-of-band
+    # prompt="consent" forces Google to re-present the full consent screen and re-grant every
+    # requested scope; without it Google may silently return a PARTIAL prior grant (e.g. identity
+    # scopes only, dropping gmail.readonly), yielding a token that fails at API call time.
+    creds = flow.run_local_server(port=0, open_browser=open_browser, prompt="consent")
     return finalize_authorization(creds, build, token_store_path=token_store_path, audience=audience,
                                   expected_account=expected_account, scope_validator=scope_validator)
 
@@ -348,6 +351,29 @@ def build_token_provider(token_store_path: str,
             creds.refresh(Request())
         return creds.token
     return _provider
+
+
+def live_access_token_scopes(token_store_path: str, scopes: List[str]) -> List[str]:
+    """Return the ACTUAL scopes granted to the current access token, via Google's tokeninfo endpoint.
+    This is authoritative: Google's granular consent can grant FEWER scopes than requested, and the
+    stored file records what was requested — only the live token reveals what was truly granted. The
+    token value is sent only to Google's own validation endpoint; it is never returned or printed.
+    Returns [] if the scopes cannot be determined (caller must not treat that as proof of a scope)."""
+    try:
+        import json as _json
+        import urllib.request
+        token = build_token_provider(token_store_path, scopes)()
+        with urllib.request.urlopen(
+                "https://oauth2.googleapis.com/tokeninfo?access_token=" + token, timeout=20) as resp:
+            return sorted(_json.loads(resp.read().decode("utf-8")).get("scope", "").split())
+    except Exception:  # noqa: BLE001 - any failure is "unknown", never a false positive
+        return []
+
+
+def granted_scope_blockers(granted: List[str], *, scope_validator: Callable[[Any], List[str]]) -> List[str]:
+    """Apply a scope policy to the ACTUAL granted scopes. Empty granted (unknown) yields no blocker so
+    a transient tokeninfo failure never false-fails; a KNOWN partial grant fails closed."""
+    return scope_validator(granted) if granted else []
 
 
 def revoke_local_token(token_store_path: str) -> Dict[str, Any]:

@@ -384,6 +384,22 @@ def cmd_gmail_auth(args) -> int:
     except GmailConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    # Fail closed on a PARTIAL grant: verify the live access token actually carries the send scopes
+    # (Google's granular consent can grant fewer than requested). A missing scope removes the token.
+    from core.scout.comms.gmail import REQUIRED_GMAIL_SCOPES, gmail_scope_blockers
+    from core.scout.comms.gmail_oauth import (
+        granted_scope_blockers,
+        live_access_token_scopes,
+        revoke_local_token,
+    )
+    granted = live_access_token_scopes(cfg["token_json"], list(REQUIRED_GMAIL_SCOPES))
+    blockers = granted_scope_blockers(granted, scope_validator=gmail_scope_blockers)
+    if blockers:
+        revoke_local_token(cfg["token_json"])
+        print(f"ERROR: the granted token is missing/invalid scopes ({', '.join(blockers)}); local "
+              "token removed. Re-run and GRANT the 'Send email' permission on the consent screen.",
+              file=sys.stderr)
+        return 1
     print(f"Authorized account: {result['account']}  scopes: {', '.join(result['scopes'])}")
     if result["permissions"]["warning"]:
         print(f"WARNING: {result['permissions']['warning']}", file=sys.stderr)
@@ -448,6 +464,18 @@ def cmd_test_inbox_auth(args) -> int:
             expected_account=cfg["expected_account"])
     except GmailConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    # Fail closed on a PARTIAL grant: verify the live access token actually carries gmail.readonly
+    # (a common miss on Google's granular consent). A missing scope removes the token.
+    from core.scout.comms.gmail_oauth import granted_scope_blockers, live_access_token_scopes, revoke_local_token
+    from core.scout.comms.test_inbox import REQUIRED_TEST_INBOX_SCOPES, test_inbox_scope_blockers
+    granted = live_access_token_scopes(cfg["token_json"], list(REQUIRED_TEST_INBOX_SCOPES))
+    blockers = granted_scope_blockers(granted, scope_validator=test_inbox_scope_blockers)
+    if blockers:
+        revoke_local_token(cfg["token_json"])
+        print(f"ERROR: the granted token is missing/invalid scopes ({', '.join(blockers)}); local "
+              "token removed. Re-run and CHECK the 'Read your email messages' permission.",
+              file=sys.stderr)
         return 1
     print(f"Authorized read-only test inbox: {result['account']}  "
           f"scopes: {', '.join(result['scopes'])}")
