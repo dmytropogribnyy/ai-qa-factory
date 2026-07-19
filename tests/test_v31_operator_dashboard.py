@@ -390,6 +390,29 @@ def test_scout_campaigns_page_renders(tmp_path):
         server.shutdown()
 
 
+def test_v32_capability_access_and_gap_surfaces(tmp_path):
+    # v3.2 J: capability matrix, access bootstrap, and tool-gap are surfaced via the existing
+    # Tools/Settings (no new cluttered page) + JSON endpoints — no secrets shown.
+    server, url = _dash(tmp_path)
+    try:
+        _, services, _ = _get(url + "/api/services")
+        sj = json.loads(services)
+        assert sj["schema"].startswith("service-capability") and sj["service_count"] >= 12
+        _, access, _ = _get(url + "/api/access")
+        aj = json.loads(access)
+        assert aj["any_secret_shown"] is False and aj["count"] >= 5
+        assert "ghp_" not in access and "token=" not in access.lower()
+        _, gap, _ = _get(url + "/api/toolgap?service=playwright_framework")
+        assert json.loads(gap)["service_id"] == "playwright_framework"
+        # Tools page carries the Service capabilities section; Settings carries Access & Integrations.
+        _, tools, _ = _get(url + "/tools")
+        assert "Service capabilities" in tools and "<main>" in tools
+        _, settings, _ = _get(url + "/settings")
+        assert "Access &amp; Integrations" in settings
+    finally:
+        server.shutdown()
+
+
 def test_unified_scout_pages_use_shared_layout(tmp_path):
     # P1: /scout, /results, /company, /projects render in the shared layout, preserving the
     # regression-locked Scout phrases.
