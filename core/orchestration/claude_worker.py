@@ -138,11 +138,15 @@ class ClaudeCodeWorker:
     executor_id = "worker:claude-code"
 
     def __init__(self, *, which=shutil.which, run=subprocess.run, popen=subprocess.Popen,
-                 env: Optional[Dict[str, str]] = None) -> None:
+                 env: Optional[Dict[str, str]] = None, os_name: Optional[str] = None) -> None:
         self._which = which
         self._run = run
         self._popen = popen
         self._env = env if env is not None else dict(os.environ)
+        # Injectable OS name so a test can exercise the Windows resolver branch WITHOUT patching the
+        # global os.name (which would make pathlib construct a WindowsPath on Linux and crash). The
+        # branch is logical only; the Path objects stay the real platform's type.
+        self._os_name = os_name if os_name is not None else os.name
 
     # Windows shell wrappers npm installs alongside the native binary. Invoking these via subprocess
     # goes through cmd.exe/powershell, which re-parses the multi-line ``-p`` prompt and corrupts it,
@@ -163,7 +167,7 @@ class ClaudeCodeWorker:
             p = Path(override)
             if not p.is_file():
                 return None, f"AIQA_CLAUDE_BIN is set but is not a file: {override}"
-            if os.name == "nt" and p.suffix.lower() in self._WIN_WRAPPER_SUFFIXES:
+            if self._os_name == "nt" and p.suffix.lower() in self._WIN_WRAPPER_SUFFIXES:
                 return None, ("AIQA_CLAUDE_BIN points to a shell wrapper "
                               f"({p.suffix}); set it to the native claude.exe (a .cmd/.bat/.ps1 "
                               "wrapper corrupts the multi-line prompt via cmd.exe)")
@@ -171,7 +175,7 @@ class ClaudeCodeWorker:
         found = self._which("claude")
         if not found:
             return None, ""                              # simply not installed (detect() handles it)
-        if os.name != "nt":
+        if self._os_name != "nt":
             return str(found), ""                        # POSIX shim exec's the native binary cleanly
         fp = Path(found)
         if fp.suffix.lower() in self._WIN_WRAPPER_SUFFIXES:
@@ -350,10 +354,11 @@ class ClaudeCodeWorker:
 
 
 def worker_readiness(*, which=shutil.which, run=subprocess.run,
-                     env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                     env: Optional[Dict[str, str]] = None,
+                     os_name: Optional[str] = None) -> Dict[str, Any]:
     """Read-only Claude Worker readiness for the dashboard (Ready / Needs Operator / Unavailable).
     Bounded (one `--version` probe); never executes a Work Order and never a shell wrapper."""
-    d = ClaudeCodeWorker(which=which, run=run, env=env).detect()
+    d = ClaudeCodeWorker(which=which, run=run, env=env, os_name=os_name).detect()
     return {"component": "claude_worker", "readiness": d.get("readiness", "Unavailable"),
             "version": d.get("version", ""), "reason": d.get("reason", ""),
             "action": d.get("action", ""),

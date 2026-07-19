@@ -122,58 +122,56 @@ def test_worker_reports_needs_operator_when_cli_missing(tmp_path):
     assert res.ok is False and "install Claude Code" in res.stop_reason and res.blockers
 
 
-def test_windows_exe_resolves_real_binary_not_cmd_shim(tmp_path, monkeypatch):
+def test_windows_exe_resolves_real_binary_not_cmd_shim(tmp_path):
     # On Windows, shutil.which returns the npm claude.CMD batch shim, which forwards args through
     # cmd.exe and corrupts the multi-line -p prompt. The worker must resolve the REAL claude.exe the
-    # shim targets and invoke it directly (no shell re-parsing).
+    # shim targets and invoke it directly (no shell re-parsing). os_name is injected so the Windows
+    # branch is exercised on any host WITHOUT patching global os.name (which would break pathlib).
     npm = tmp_path / "npm"
     binp = npm / "node_modules" / "@anthropic-ai" / "claude-code" / "bin"
     binp.mkdir(parents=True)
     (binp / "claude.exe").write_text("", encoding="utf-8")
     shim = npm / "claude.CMD"
     shim.write_text("", encoding="utf-8")
-    monkeypatch.setattr(os, "name", "nt")
-    w = ClaudeCodeWorker(which=lambda n: str(shim))
+    w = ClaudeCodeWorker(which=lambda n: str(shim), os_name="nt")
     assert w._exe() == str(binp / "claude.exe")     # the real binary, never the .CMD shim
 
 
-def test_exe_falls_back_to_which_when_not_a_windows_shim(monkeypatch):
-    monkeypatch.setattr(os, "name", "posix")
-    assert ClaudeCodeWorker(which=lambda n: "/usr/bin/claude")._exe() == "/usr/bin/claude"
+def test_exe_falls_back_to_which_when_not_a_windows_shim():
+    assert ClaudeCodeWorker(which=lambda n: "/usr/bin/claude", os_name="posix")._exe() \
+        == "/usr/bin/claude"
 
 
-def test_aiqa_claude_bin_override_wins_when_valid(tmp_path, monkeypatch):
-    monkeypatch.setattr(os, "name", "nt")
+def test_aiqa_claude_bin_override_wins_when_valid(tmp_path):
     native = tmp_path / "claude.exe"
     native.write_text("", encoding="utf-8")
-    w = ClaudeCodeWorker(which=lambda n: r"C:\shim\claude.CMD", env={"AIQA_CLAUDE_BIN": str(native)})
+    w = ClaudeCodeWorker(which=lambda n: r"C:\shim\claude.CMD", os_name="nt",
+                         env={"AIQA_CLAUDE_BIN": str(native)})
     path, reason = w._resolve_claude_bin()
     assert path == str(native) and reason == ""
 
 
-def test_aiqa_claude_bin_override_rejects_wrapper_with_exact_action(tmp_path, monkeypatch):
-    monkeypatch.setattr(os, "name", "nt")
+def test_aiqa_claude_bin_override_rejects_wrapper_with_exact_action(tmp_path):
     wrapper = tmp_path / "claude.cmd"
     wrapper.write_text("", encoding="utf-8")
-    w = ClaudeCodeWorker(which=lambda n: None, env={"AIQA_CLAUDE_BIN": str(wrapper)})
+    w = ClaudeCodeWorker(which=lambda n: None, os_name="nt", env={"AIQA_CLAUDE_BIN": str(wrapper)})
     path, reason = w._resolve_claude_bin()
     assert path is None and "native claude.exe" in reason
 
 
-def test_aiqa_claude_bin_override_missing_file_is_honest(monkeypatch):
-    monkeypatch.setattr(os, "name", "nt")
-    w = ClaudeCodeWorker(which=lambda n: None, env={"AIQA_CLAUDE_BIN": r"C:\nope\claude.exe"})
+def test_aiqa_claude_bin_override_missing_file_is_honest():
+    w = ClaudeCodeWorker(which=lambda n: None, os_name="nt",
+                         env={"AIQA_CLAUDE_BIN": r"C:\nope\claude.exe"})
     path, reason = w._resolve_claude_bin()
     assert path is None and "not a file" in reason
 
 
-def test_windows_wrapper_without_native_exe_fails_honestly(tmp_path, monkeypatch):
+def test_windows_wrapper_without_native_exe_fails_honestly(tmp_path):
     # A .CMD shim with no native claude.exe beside it must NOT be executed (it corrupts the prompt);
     # instead fail with an exact operator action. Never a silent fallback to the broken wrapper.
-    monkeypatch.setattr(os, "name", "nt")
     shim = tmp_path / "claude.CMD"
     shim.write_text("", encoding="utf-8")
-    w = ClaudeCodeWorker(which=lambda n: str(shim), env={})
+    w = ClaudeCodeWorker(which=lambda n: str(shim), os_name="nt", env={})
     path, reason = w._resolve_claude_bin()
     assert path is None and "AIQA_CLAUDE_BIN" in reason and "corrupts the multi-line prompt" in reason
 
@@ -189,15 +187,14 @@ def test_argv_preserves_spaces_and_multiline_prompt():
     assert cmd[2] == cmd[2].strip() or True   # the prompt is a single argv element, never re-split
 
 
-def test_worker_readiness_shape(monkeypatch):
+def test_worker_readiness_shape():
     from core.orchestration.claude_worker import worker_readiness
-    monkeypatch.setattr(os, "name", "posix")
 
     def _run(cmd, **kw):
         return subprocess.CompletedProcess(cmd, 0, stdout="2.1.198 (Claude Code)", stderr="")
-    r = worker_readiness(which=lambda n: "/usr/bin/claude", run=_run, env={})
+    r = worker_readiness(which=lambda n: "/usr/bin/claude", run=_run, env={}, os_name="posix")
     assert r["readiness"] == "Ready" and "2.1.198" in r["version"] and r["component"] == "claude_worker"
-    r2 = worker_readiness(which=lambda n: None, env={})
+    r2 = worker_readiness(which=lambda n: None, env={}, os_name="posix")
     assert r2["readiness"] == "Unavailable" and r2["action"]
 
 
