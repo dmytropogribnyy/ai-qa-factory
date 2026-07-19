@@ -32,9 +32,10 @@ class ToolNeed:
         return asdict(self)
 
 
-# AccessBootstrap readiness values that mean a required access prerequisite is genuinely satisfied.
-_ACCESS_SATISFIED = {"Runtime Verified", "Fixture Verified", "Live Verified", "Runtime Available",
-                     "Authenticated", "Installed", "Connected"}
+# A required access prerequisite is "satisfied" ONLY when genuinely usable/verified. Merely
+# Installed / Connected / Runtime-Available (e.g. a driver present, a CLI on PATH, an MCP configured)
+# is NOT satisfied — capability readiness is per-requirement, not "installed == ready" (P0-C).
+_ACCESS_SATISFIED = {"Runtime Verified", "Fixture Verified", "Live Verified", "Authenticated"}
 
 
 @dataclass

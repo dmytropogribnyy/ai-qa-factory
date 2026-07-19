@@ -119,3 +119,34 @@ def test_technical_writing_has_no_client_access_prerequisite():
     # technical writing needs only operator review (no client-owned access), so access never blocks it.
     report = plan_tools("technical_writing", access=AccessBootstrap())
     assert report.access_gaps == []
+
+
+# ---------------------------------------------------------------- capability-specific readiness (P0-C)
+def test_docker_component_is_installed_not_runtime_from_cli_presence():
+    # Docker CLI on PATH == Installed only; never Runtime Verified/Available without a daemon probe.
+    import shutil
+
+    from core.orchestration.service_capability import detect_components
+    det = detect_components()
+    assert det["docker"] == ("Installed" if shutil.which("docker") else "Needs Client")
+
+
+def test_merely_installed_or_connected_access_does_not_satisfy_a_requirement():
+    # P0-C: "installed == ready" is rejected. A required access prerequisite that is only Installed
+    # or Connected (not genuinely verified/authenticated) stays a gap and keeps the service not-ready.
+    from core.orchestration.tool_broker import ToolBroker, ToolStatus
+
+    class _AllToolsReady(ToolBroker):
+        def discover(self):
+            return [ToolStatus(id=t, name=t, domain="", readiness="fixture-tested",
+                               capabilities=[], auth_requirement="", fallback="")
+                    for t in get_service("migration").required_tools]
+
+    for weak in ("Installed", "Connected", "Runtime Available"):
+        rep = plan_tools("migration", broker=_AllToolsReady(clock=lambda: ""),
+                         access=_FakeAccess({"client_repository": weak}))
+        assert not rep.ready and any(g["access_id"] == "client_repository" for g in rep.access_gaps), weak
+    # Only a genuinely-verified prerequisite satisfies it.
+    ok = plan_tools("migration", broker=_AllToolsReady(clock=lambda: ""),
+                    access=_FakeAccess({"client_repository": "Runtime Verified"}))
+    assert ok.ready and not ok.access_gaps

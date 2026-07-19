@@ -285,7 +285,10 @@ def detect_components() -> Dict[str, str]:
                 detected[eng] = "Needs Client" if v == "Client Validation Required" else v
     except Exception:
         pass
-    detected["docker"] = "Runtime Available" if shutil.which("docker") else "Needs Client"
+    # Docker CLI present == Installed ONLY. The presence of the `docker` binary does not imply the
+    # daemon is running or an image is usable; a container smoke would upgrade it to Runtime Verified.
+    # We keep this bounded (no daemon round-trip on the request path).
+    detected["docker"] = "Installed" if shutil.which("docker") else "Needs Client"
     return detected
 
 
