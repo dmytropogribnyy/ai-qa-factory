@@ -5,7 +5,8 @@ A pluggable autonomous-execution adapter over the installed Claude Code headless
 
 - NEVER uses --dangerously-skip-permissions; edits are gated with --permission-mode acceptEdits and
   an explicit --allowedTools list, confined to the project workspace (cwd).
-- accepts a structured Work Order, enforces a turn limit + timeout + optional budget, supports
+- accepts a structured Work Order, enforces a hard timeout + budget (`--max-budget-usd`) + allowed
+  tools + permission mode (there is no `--max-turns`), supports
   cancellation, records a resumable session id, and returns a structured result.
 - stdout/stderr are secret-redacted before persistence; the execution session is written atomically;
   produced artifacts are hashed by the existing lifecycle.
@@ -470,6 +471,12 @@ class ClaudeWorkerExecutor:
     @property
     def is_acceptance_fixture(self) -> bool:
         return bool(getattr(self._worker, "is_acceptance_fixture", False))
+
+    @property
+    def executes_client_code(self) -> bool:
+        # A real Claude worker runs the provider against the client workspace (client code); a
+        # deterministic acceptance fixture applies fixed edits and executes nothing untrusted.
+        return not self.is_acceptance_fixture
 
     @property
     def executor_id(self) -> str:

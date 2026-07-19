@@ -21,16 +21,51 @@ from core.orchestration.work_execution import WorkExecutionService
 _REPO = Path(__file__).resolve().parents[1]
 
 
+def _approved_ws(tmp_path, pid="p", reviewer="op"):
+    ClientWorkService(FixedClock(), SequentialIds(), output_dir=str(tmp_path)).analyze(
+        "Fix a defect and add a regression test.", pid)
+    WorkExecutionService(FixedClock(), SequentialIds(), output_dir=str(tmp_path)).approve(
+        pid, reviewer=reviewer)
+    return tmp_path / pid / "40_ark_work"
+
+
 def test_untrusted_workspace_is_refused_with_exact_action(tmp_path):
     d = assess_execution_trust(str(tmp_path / "ws"))
     assert d.trusted is False and TRUST_MARKER in d.action and TRUSTED_ROOTS_ENV in d.action
 
 
-def test_marker_makes_workspace_trusted(tmp_path):
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / TRUST_MARKER).write_text("{}", encoding="utf-8")
+def test_empty_or_forged_marker_is_untrusted(tmp_path):
+    # A bare/empty/forged marker file (as a client checkout could pre-create) must NOT grant trust.
+    ws = tmp_path / "p" / "40_ark_work"
+    ws.mkdir(parents=True)
+    for body in ("{}", "not json", '{"approved_for_execution": false}',
+                 '{"approved_for_execution": true}',                      # no reviewer
+                 '{"approved_for_execution": true, "reviewer": "x"}'):     # no canonical APPROVAL/state
+        (ws / TRUST_MARKER).write_text(body, encoding="utf-8")
+        assert assess_execution_trust(str(ws)).trusted is False, body
+
+
+def test_genuine_approval_is_trusted(tmp_path):
+    ws = _approved_ws(tmp_path)
+    assert (ws / TRUST_MARKER).is_file()
     assert assess_execution_trust(str(ws)).trusted is True
+
+
+def test_forged_marker_without_matching_canonical_approval_is_untrusted(tmp_path):
+    # Genuine approval by "op", but a forged marker claims a different reviewer -> inconsistent -> deny.
+    ws = _approved_ws(tmp_path, reviewer="op")
+    (ws / TRUST_MARKER).write_text(
+        '{"approved_for_execution": true, "reviewer": "attacker", "project_id": "p"}', encoding="utf-8")
+    assert assess_execution_trust(str(ws)).trusted is False
+
+
+def test_marker_project_mismatch_is_untrusted(tmp_path):
+    ws = _approved_ws(tmp_path, pid="p")
+    import json as _j
+    m = _j.loads((ws / TRUST_MARKER).read_text(encoding="utf-8"))
+    m["project_id"] = "other"                                  # workspace binding broken
+    (ws / TRUST_MARKER).write_text(_j.dumps(m), encoding="utf-8")
+    assert assess_execution_trust(str(ws)).trusted is False
 
 
 def test_trusted_root_env_makes_workspace_trusted(tmp_path):
@@ -38,15 +73,6 @@ def test_trusted_root_env_makes_workspace_trusted(tmp_path):
     ws.mkdir(parents=True)
     d = assess_execution_trust(str(ws), env={TRUSTED_ROOTS_ENV: str(tmp_path / "root")})
     assert d.trusted is True
-
-
-def test_approve_writes_the_trust_marker(tmp_path):
-    ClientWorkService(FixedClock(), SequentialIds(), output_dir=str(tmp_path)).analyze(
-        "Fix a defect and add a regression test.", "p")
-    WorkExecutionService(FixedClock(), SequentialIds(), output_dir=str(tmp_path)).approve(
-        "p", reviewer="op")
-    assert (tmp_path / "p" / "40_ark_work" / TRUST_MARKER).is_file()
-    assert assess_execution_trust(str(tmp_path / "p" / "40_ark_work")).trusted is True
 
 
 def test_preflight_passes_outside_a_repo(tmp_path):
@@ -79,6 +105,33 @@ def test_stripped_env_removes_credentials_keeps_runtime():
     assert out["AIQA_CLAUDE_BIN"] == "/x/claude.exe" and out["PLAYWRIGHT_TEST_RUNTIME"] == "/rt"
     for leaked in ("AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "MY_PASSWORD", "SESSION_COOKIE"):
         assert leaked not in out
+
+
+def test_direct_service_validate_refuses_untrusted_client_code(tmp_path):
+    # Enforcement is at the EXECUTION BOUNDARY: a direct service call with a client-code executor is
+    # refused on an untrusted workspace, even bypassing the CLI/Dashboard.
+    import sys as _sys
+
+    from core.orchestration.claude_worker import ClaudeWorkerExecutor, FixtureClaudeWorker
+    from core.orchestration.operator_executor import CommandValidationExecutor
+    from core.orchestration.work_execution import WorkExecutionError
+    ClientWorkService(FixedClock(), SequentialIds(), output_dir=str(tmp_path)).analyze(
+        "Fix a defect.", "np")
+    svc = WorkExecutionService(FixedClock(), SequentialIds(), output_dir=str(tmp_path))
+    svc.approve("np", reviewer="op")
+    ws = tmp_path / "np" / "40_ark_work"
+    (ws / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    # A deterministic fixture worker (executes_client_code=False) is exempt and advances to VERIFYING.
+    svc.execute("np", ClaudeWorkerExecutor(FixtureClaudeWorker(edits={"calc.py":
+                "def add(a, b):\n    return a + b\n"})))
+    # Now forge the workspace as untrusted by removing the validated marker.
+    (ws / TRUST_MARKER).unlink()
+    val = CommandValidationExecutor([_sys.executable, "-c", "pass"])   # executes_client_code=True
+    try:
+        svc.validate("np", val)
+        assert False, "validate must refuse client-code execution on an untrusted workspace"
+    except WorkExecutionError as exc:
+        assert "untrusted" in str(exc).lower()
 
 
 def test_cli_worker_start_refuses_untrusted_and_creates_nothing(tmp_path):

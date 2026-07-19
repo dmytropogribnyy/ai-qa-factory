@@ -166,6 +166,34 @@ def test_only_one_active_worker_per_project(tmp_path):
         server.shutdown()
 
 
+def test_background_worker_exception_surfaces_actionable_blocker(tmp_path):
+    # A crash in the background runner must NOT be silently swallowed: it becomes a bounded, redacted,
+    # actionable blocker (no traceback over HTTP), and the lifecycle moves to BLOCKED.
+    _seed_ready(tmp_path)
+    server, url = _dash(tmp_path)
+    token = server.scout_csrf_token
+
+    class _Boom:
+        is_acceptance_fixture = True
+        executes_client_code = False
+        executor_id = "worker:boom"
+
+        def execute(self, ctx):
+            raise RuntimeError("simulated worker crash")
+
+    dashboard._worker_executor_factory = lambda *, resume, cancel: _Boom()
+    try:
+        s, _ = _post(url + "/api/work/worker-start", token, {"project_id": "alpha", "confirm": True})
+        assert s == 202
+        final = _await_worker(url, token, "alpha")
+        assert final["lifecycle"]["status"] == "BLOCKED"
+        blockers = final["lifecycle"]["blockers"]
+        assert any("RuntimeError" in b for b in blockers)          # actionable, not a silent BLOCKED
+        assert not any("Traceback" in b for b in blockers)         # no traceback leaked via HTTP
+    finally:
+        server.shutdown()
+
+
 def test_worker_cancel_writes_marker(tmp_path):
     _seed_ready(tmp_path)
     server, url = _dash(tmp_path)

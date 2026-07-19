@@ -38,7 +38,8 @@ as a live capability.
   (loopback Host + Origin + CSRF; no command/argv over HTTP; DNS-rebinding refused on reads too). It
   embeds no chat/editor/terminal and never executes arbitrary code.
 - The Claude worker is never exposed as arbitrary HTTP execution; it runs a validated Work Order,
-  bounded (turns + timeout + confined workspace), never with `--dangerously-skip-permissions`.
+  bounded (budget + timeout + allowed tools + permission mode + confined workspace), never with
+  `--dangerously-skip-permissions` (the installed CLI has no `--max-turns`).
 - **Database mutation** requires explicit authorization and is never the default; read-only validation
   refuses any mutation keyword.
 - **Public Scout** never solves/bypasses a CAPTCHA and never retries after denial; public-target

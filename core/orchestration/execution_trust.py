@@ -39,14 +39,27 @@ class TrustDecision:
         return {"trusted": str(self.trusted), "reason": self.reason, "action": self.action}
 
 
+def _read_json(path: Path) -> Dict:
+    import json
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def assess_execution_trust(workspace: str, *, env: Optional[Dict[str, str]] = None) -> TrustDecision:
-    """Trusted only when the operator has approved this workspace for execution (the TRUST_MARKER is
-    written by ``WorkExecutionService.approve``), or when it resolves under a configured trusted root.
-    Otherwise untrusted, with an exact operator action. Never executes untrusted code by default."""
+    """Trusted only when the operator has genuinely approved THIS project for execution. A bare file
+    named ``EXECUTION_APPROVED.json`` is NOT enough (a client checkout could pre-create it): the marker
+    must be structured (``approved_for_execution=true`` + a non-empty reviewer + the project id) AND
+    consistent with the canonical control-plane records — ``APPROVAL.json`` (same reviewer, approved)
+    and a genuine approval transition to ``READY_TO_EXECUTE`` by that reviewer in the work-run state
+    history. Alternatively an operator-configured ``AIQA_TRUSTED_ROOTS`` root (outside client content)
+    grants trust. Otherwise untrusted, with an exact action. Never trusts a self-asserted client file."""
     env = env if env is not None else dict(os.environ)
     ws = Path(workspace)
-    if (ws / TRUST_MARKER).is_file():
-        return TrustDecision(True, "operator-approved for execution (marker present)")
+
+    # Operator control-plane override (outside editable client content).
     roots = [r for r in env.get(TRUSTED_ROOTS_ENV, "").split(os.pathsep) if r.strip()]
     try:
         wsr = ws.resolve()
@@ -56,10 +69,33 @@ def assess_execution_trust(workspace: str, *, env: Optional[Dict[str, str]] = No
                 return TrustDecision(True, f"under a configured {TRUSTED_ROOTS_ENV} root")
     except OSError:
         pass
-    return TrustDecision(
+
+    _deny = TrustDecision(
         False, "workspace is not operator-approved for execution",
-        f"approve this project for execution (writes {TRUST_MARKER}) or add a trusted root to "
-        f"{TRUSTED_ROOTS_ENV}; untrusted client code is not executed outside isolation")
+        f"approve this project (writes a validated {TRUST_MARKER} bound to APPROVAL.json + the "
+        f"work-run state) or add a trusted root to {TRUSTED_ROOTS_ENV}; a self-asserted marker file "
+        "is not trusted and untrusted client code is not executed outside isolation")
+
+    marker = _read_json(ws / TRUST_MARKER)
+    if marker.get("approved_for_execution") is not True:
+        return _deny                                          # missing / empty {} / malformed / false
+    reviewer = str(marker.get("reviewer") or "").strip()
+    if not reviewer:
+        return _deny
+    # Project/workspace binding: ws is <output>/<project_id>/40_ark_work.
+    if str(marker.get("project_id") or "") != ws.parent.name:
+        return _deny
+    # Consistency with the canonical approval record (same reviewer, genuinely approved).
+    approval = _read_json(ws / "APPROVAL.json")
+    if approval.get("approved") is not True or str(approval.get("reviewer") or "") != reviewer:
+        return _deny
+    # Consistency with the canonical state machine: a real approval transition by this reviewer.
+    state = _read_json(ws / "WORK_RUN_STATE.json")
+    history = state.get("history", []) if isinstance(state.get("history"), list) else []
+    if not any(isinstance(h, dict) and h.get("to_state") == "READY_TO_EXECUTE"
+               and reviewer in str(h.get("actor", "")) for h in history):
+        return _deny
+    return TrustDecision(True, "operator-approved (marker consistent with APPROVAL.json + state)")
 
 
 @dataclass

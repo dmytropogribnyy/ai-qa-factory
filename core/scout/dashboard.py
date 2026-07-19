@@ -513,8 +513,16 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                         executor = _worker_executor_factory(
                             resume=(action == "worker-resume"), cancel=cancel)
                         WorkExecutionService(output_dir=service.output_dir).execute(pid, executor)
-                    except Exception:
-                        pass                       # the lifecycle records BLOCKED; never crash the server
+                    except Exception as exc:       # never crash the server; NEVER silently swallow
+                        # Surface a bounded, secret-redacted error (type + message, no traceback) as an
+                        # actionable lifecycle blocker so worker-status shows why, not a silent state.
+                        try:
+                            from core.orchestration.content_safety import redact_intake_text
+                            red = redact_intake_text(f"{type(exc).__name__}: {exc}").text[:300]
+                            WorkExecutionService(output_dir=service.output_dir) \
+                                .record_background_failure(pid, red)
+                        except Exception:
+                            pass
                     finally:
                         with _ACTIVE_WORKERS_GUARD:
                             cur_info = _ACTIVE_WORKERS.get(key)

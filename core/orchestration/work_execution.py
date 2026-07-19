@@ -185,6 +185,25 @@ class WorkExecutionService:
         self._write(self._ws(pid) / "WORK_RUN_STATE.json",
                     json.dumps(state.to_dict(), indent=2, sort_keys=True))
 
+    def _enforce_execution_boundary(self, pid: str, executor: Any) -> None:
+        """Fail-closed trust + private-work-dir preflight at the ACTUAL execution boundary — enforced
+        for any executor that runs client code (``executes_client_code``), regardless of whether the
+        caller is the CLI, the Dashboard, or a direct service/adapter call. Fixture/manual-recording
+        executors (which run no untrusted code) are exempt. Never simulates isolation."""
+        if not getattr(executor, "executes_client_code", False):
+            return
+        from core.orchestration.execution_trust import (
+            assess_execution_trust,
+            preflight_work_isolation,
+        )
+        ws = str(self._ws(pid))
+        trust = assess_execution_trust(ws)
+        if not trust.trusted:
+            raise WorkExecutionError(f"refused (untrusted repository): {trust.reason}. {trust.action}")
+        pf = preflight_work_isolation(ws)
+        if not pf.ok:
+            raise WorkExecutionError(f"refused (work-isolation preflight): {pf.reason}. {pf.action}")
+
     def _context(self, pid: str) -> ExecutionContext:
         wp = self._read_json(self._ws(pid) / "WORK_PACKET.json")
         reqs = [self._req(r) for r in wp.get("requirements", [])]
@@ -216,8 +235,9 @@ class WorkExecutionService:
         # refuses running client code in a workspace the operator has not approved.
         from core.orchestration.execution_trust import TRUST_MARKER
         self._write(self._ws(pid) / TRUST_MARKER, json.dumps(
-            {"approved_for_execution": True, "reviewer": reviewer, "at": self._clock.now_iso(),
-             "note": "operator-approved; execution of client code in this workspace is permitted"},
+            {"approved_for_execution": True, "reviewer": reviewer, "project_id": pid,
+             "at": self._clock.now_iso(),
+             "note": "operator-approved; bound to APPROVAL.json + the READY_TO_EXECUTE transition"},
             indent=2, sort_keys=True))
         self._save_state(pid, state)
         return state
@@ -228,6 +248,7 @@ class WorkExecutionService:
             state = self._sm.transition(state, "READY_TO_EXECUTE", "repair/resume requested", "cli")
         if state.status != "READY_TO_EXECUTE":
             raise WorkExecutionError(f"cannot start execution from state {state.status} (approve first)")
+        self._enforce_execution_boundary(pid, executor)   # fail-closed trust + isolation preflight
         eid = getattr(executor, "executor_id", "executor")
         state = self._sm.transition(state, "EXECUTING", "execution started", eid)
         self._save_state(pid, state)                      # persist BEFORE running the executor
@@ -253,6 +274,36 @@ class WorkExecutionService:
         state = self._sm.transition(state, to, "execution produced artifacts", eid)
         self._save_state(pid, state)
         return state, outcome
+
+    def record_background_failure(self, pid: str, error: str) -> None:
+        """Make a background-worker failure OBSERVABLE and fail-closed: persist a bounded,
+        secret-redacted blocker (type + message only, never a traceback) so ``status`` surfaces an
+        actionable blocker instead of a silent state, and move the run to BLOCKED when permitted.
+        The caller must pass an already-redacted, bounded reason."""
+        from core.orchestration.work_state_manager import InvalidTransitionError
+        from core.schemas.work_run_state import TERMINAL_STATES
+        reason = (error or "background worker failed").strip()[:300]
+        try:
+            state = self._load_state(pid)
+        except WorkExecutionError:
+            return
+        prog = self._read_json(self._ws(pid) / "EXECUTION_PROGRESS.json")
+        outcome = prog.get("outcome", {}) if isinstance(prog, dict) else {}
+        outcome.setdefault("blockers", [])
+        if reason not in outcome["blockers"]:
+            outcome["blockers"].append(reason)
+        prog["outcome"] = outcome
+        prog["background_error"] = reason
+        prog["failed_at"] = self._clock.now_iso()
+        self._write(self._ws(pid) / "EXECUTION_PROGRESS.json",
+                    json.dumps(prog, indent=2, sort_keys=True))
+        if state.status not in TERMINAL_STATES and state.status != "BLOCKED":
+            try:
+                state = self._sm.transition(state, "BLOCKED",
+                                            f"background worker failure: {reason}"[:200], "worker")
+                self._save_state(pid, state)
+            except InvalidTransitionError:
+                pass
 
     def recover_interrupted(self, pid: str) -> Optional[WorkRunState]:
         """Reconcile a worker that died mid-run. ``execute`` persists EXECUTING before running the
@@ -287,6 +338,7 @@ class WorkExecutionService:
         state = self._load_state(pid)
         if state.status != "VERIFYING":
             raise WorkExecutionError(f"cannot validate from state {state.status}")
+        self._enforce_execution_boundary(pid, executor)   # fail-closed trust + isolation preflight
         eid = getattr(executor, "executor_id", "executor")
         result = executor.validate(self._context(pid))
         self._write(self._ws(pid) / "TEST_RESULTS.json",

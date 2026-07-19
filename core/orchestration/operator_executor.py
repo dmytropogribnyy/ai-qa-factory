@@ -49,6 +49,7 @@ class OperatorWorkspaceExecutor:
     """
 
     is_acceptance_fixture = False
+    executes_client_code = False   # records operator-authored artifacts; runs no client command itself
 
     def __init__(self, produced: List[ProducedArtifact], validator: Optional[Validator] = None,
                  executor_id: str = "operator:claude-code",
@@ -109,6 +110,7 @@ class CommandValidationExecutor:
     """
 
     is_acceptance_fixture = False
+    executes_client_code = True    # runs an operator/client command in the workspace (client code)
 
     def __init__(self, command: Union[str, Sequence[str]], executor_id: str = "operator:validate",
                  timeout_s: int = 900) -> None:
