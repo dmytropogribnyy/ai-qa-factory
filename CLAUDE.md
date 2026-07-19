@@ -29,12 +29,31 @@ universal orchestration + MCP-consumption layer (ARK). Read `docs/PRODUCT_VISION
 Report real command output. Do not claim success without it. Commit/push only when the
 human explicitly authorises it.
 
-## Current phase
+## Current phase (v3.2 — Autonomous AI QA Operator Pro)
 
-Phase 8.0 and Phase 8.1 are **complete**. `python main.py work` is **implemented** — it is
-deterministic and **planning-only**: no live MCP discovery, no browser, no network, no external
-execution. Phase 8.2 is planned (contracts/docs only). Use `docs/PHASE_CONTRACTS.md` for the
-authoritative implementation boundary of any phase.
+Two distinct surfaces exist; keep them straight:
+
+- **ARK orchestration planning** — `python main.py work` remains **deterministic and planning-only**
+  (Phase 8.0/8.1): no live MCP discovery, no browser, no network, no external execution. Phase 8.2
+  stays contracts/docs only. `docs/PHASE_CONTRACTS.md` is the authoritative boundary for that surface.
+- **Client-work execution lifecycle (v3.0.0 → v3.2, IMPLEMENTED)** — the `analyze-job` +
+  `client-work` commands and the operator Dashboard drive a **real persisted lifecycle**
+  (`core/orchestration/work_execution.py`): INTAKE → FEASIBILITY → approve → EXECUTION → VERIFYING →
+  review → DELIVERY_PREPARED, with content-hash integrity gates. Execution can be driven by a
+  **bounded, operator-gated Claude Code worker** (`core/orchestration/claude_worker.py`,
+  `ClaudeWorkerExecutor`): it builds the Work Order only from persisted state, is confined to the
+  project workspace, honours a hard timeout + `--max-budget-usd`, supports cancel/resume, and
+  resolves a native `claude.exe` (never the arg-mangling npm `.CMD` shim). A deterministic
+  `FixtureClaudeWorker` drives the same lifecycle in CI; a live provider run is operator-gated
+  (`AIQA_CLAUDE_LIVE`, clean non-nested shell — see `docs/LIVE_CLAUDE_ACCEPTANCE_V32.md`).
+
+Boundaries that remain in force for the implemented surface: **operator approval** gates significant
+execution; **external/client access** (repos, DBs, accounts, CI providers, Gmail send) is gated and
+never auto-authorised; execution is confined and, for arbitrary client repos, **trusted/approved-repo
+only** (untrusted execution is refused, not sandboxed-by-simulation — see `docs/PRODUCT_CONTRACT_V32.md`).
+Scout autonomous sourcing is **not live** without a configured trusted discovery provider (fixture/file
+seeds are not discovery). Current product name/version: **AI QA Factory v3.2 (Autonomous AI QA
+Operator Pro)**.
 
 ## Prospect QA Radar / Super Scout (Phase 8.2+)
 
