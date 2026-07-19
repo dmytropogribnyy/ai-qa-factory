@@ -35,7 +35,18 @@ validation, blockers, approvals, delivery) — never chat, terminal, or editor c
 | `/settings`, `/docs` | Workspace/density/Scout defaults/Gmail status; local documentation |
 
 `/` shows the Scout run view when the dashboard is bound to an active Scout run (preserved v3.0.x
-behavior); it is the Overview inbox in operator-home mode.
+behavior); it is the Overview inbox in operator-home mode. `/scout`, `/results`, `/company` and
+`/projects` render in the same shared layout; **Results** has text/contact-state/severity filters
+(URL-persisted).
+
+**Interactions.** Overview, Work list, and project detail do bounded same-origin polling: a *Live /
+Last updated* indicator plus an "Updates available — Refresh" banner when persisted state changes.
+Polling never auto-reloads, so it never interrupts the intake form or a reviewer prompt; manual
+**Refresh** is always available. Project detail uses accessible **tabs** (Summary/Plan/Results/
+Delivery) with keyboard navigation and a `?tab=` deep link. Lifecycle-action buttons are disabled
+while a mutation is in flight (double-submit safe). **Open in VS Code** uses a correctly-encoded
+cross-platform `vscode://file/` URI; **Copy Work Order** / **Copy Workspace Path** remain as
+fallbacks with visible copy feedback.
 
 ## What the Dashboard does and does NOT execute
 
