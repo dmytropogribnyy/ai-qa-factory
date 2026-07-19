@@ -4,7 +4,7 @@ Client work runs in **Claude Code**. The Factory analyzes first and never starts
 before you approve.
 
 > **Email identities:** for any client signup / email-verification / magic-link / password-reset
-> testing, use the operator-owned **Gmail QA Test Inbox** (`drdiplextexh@gmail.com`, read-only) per
+> testing, use the operator-owned **Gmail QA Test Inbox** (`drdiplextech@gmail.com`, read-only) per
 > the canonical `docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md`. Client communication and Scout outreach
 > use `dipptrue@gmail.com`. Automated inbox assertions require an explicitly authorized flow.
 

@@ -43,7 +43,7 @@ def test_env_example_is_v32_and_honest():
 # --- canonical email identity/scope/role consistency (cannot drift) -------------------------------
 _POLICY = "docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md"
 _SEND_ACCOUNT = "dipptrue@gmail.com"
-_TEST_ACCOUNT = "drdiplextexh@gmail.com"
+_TEST_ACCOUNT = "drdiplextech@gmail.com"
 _SEND_SCOPE = "gmail.send"
 _READ_SCOPE = "gmail.readonly"
 
@@ -57,7 +57,7 @@ def test_canonical_email_policy_pins_the_two_identities_and_scopes():
     # The hard separation rule (send can't read; read can't send) is stated.
     assert "can never read" in low and "can never send" in low
     # The plus-alias template and the bounded (non-generic) retrieval rule are stated.
-    assert "drdiplextexh+" in t and "{project_id}" in t
+    assert "drdiplextech+" in t and "{project_id}" in t
     assert "not" in low and "generic" in low            # "not a general mailbox reader"
     # All ten required sections are present (numbered headings 1..10).
     for n in range(1, 11):

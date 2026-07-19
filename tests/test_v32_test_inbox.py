@@ -28,7 +28,7 @@ from core.scout.comms.test_inbox import test_inbox_config_from_env as _cfg_from_
 from core.scout.comms.test_inbox import test_inbox_scope_blockers as _scope_blockers
 from core.scout.comms.test_inbox import test_inbox_status as _status
 
-_MAILBOX = "drdiplextexh@gmail.com"
+_MAILBOX = "drdiplextech@gmail.com"
 _SENDER = "dipptrue@gmail.com"
 _READONLY = [GMAIL_READONLY_SCOPE, "openid", "email"]
 
@@ -70,7 +70,7 @@ def test_readonly_scope_policy_forbids_send_and_requires_readonly():
 # --- alias slug validation + fallback ------------------------------------------------------------
 def test_alias_building_and_slug_validation():
     assert build_test_alias(TEST_ALIAS_TEMPLATE_DEFAULT, "aiqa-selftest") == \
-        "drdiplextexh+aiqa-selftest@gmail.com"
+        "drdiplextech+aiqa-selftest@gmail.com"
     # A target that rejects plus addressing falls back to the base mailbox.
     assert build_test_alias(TEST_ALIAS_TEMPLATE_DEFAULT, "aiqa-selftest", plus_addressing=False) == \
         _MAILBOX
@@ -157,12 +157,12 @@ def _msg(mid, to, frm, subject, snippet):
 
 
 def test_correlated_search_returns_only_the_matching_message():
-    alias = "drdiplextexh+aiqa-selftest@gmail.com"
+    alias = "drdiplextech+aiqa-selftest@gmail.com"
     calls = {}
     store = {
         "m1": _msg("m1", alias, _SENDER, "AIQA self-test 42", "hello"),
         # An UNCORRELATED message (different recipient) that the list step might over-return:
-        "m2": _msg("m2", "drdiplextexh+other@gmail.com", _SENDER, "unrelated", "secret personal note")}
+        "m2": _msg("m2", "drdiplextech+other@gmail.com", _SENDER, "unrelated", "secret personal note")}
 
     def _list(token, query, n):
         calls["query"] = query
@@ -176,7 +176,7 @@ def test_correlated_search_returns_only_the_matching_message():
 
 def test_reader_refuses_a_foreign_recipient_it_is_not_a_generic_reader():
     r = _reader(lambda *a: [], lambda *a: {})
-    for foreign in ["victim@gmail.com", "drdiplextexh@evil.com", "attacker+drdiplextexh@gmail.com"]:
+    for foreign in ["victim@gmail.com", "drdiplextech@evil.com", "attacker+drdiplextech@gmail.com"]:
         with pytest.raises(InboxError):
             r.correlated_search(alias=foreign)
 
@@ -184,13 +184,13 @@ def test_reader_refuses_a_foreign_recipient_it_is_not_a_generic_reader():
 def test_reader_fails_closed_when_scopes_insufficient():
     r = _reader(lambda *a: ["m1"], lambda *a: {}, status_ok=False)
     with pytest.raises(InboxError):
-        r.correlated_search(alias="drdiplextexh+x@gmail.com")
+        r.correlated_search(alias="drdiplextech+x@gmail.com")
 
 
 def test_reader_fails_closed_when_identity_unproven():
     r = _reader(lambda *a: [], lambda *a: {}, identity="someone-else@gmail.com")
     with pytest.raises(InboxError):
-        r.correlated_search(alias="drdiplextexh+x@gmail.com")
+        r.correlated_search(alias="drdiplextech+x@gmail.com")
 
 
 def test_readonly_token_provider_requests_readonly_scopes_only(monkeypatch):
@@ -221,7 +221,7 @@ def test_readonly_token_provider_requests_readonly_scopes_only(monkeypatch):
 
 def test_e2e_self_test_send_then_correlated_read_with_two_distinct_tokens():
     # A controlled injected-transport E2E of the exact self-test contract: the SEND identity
-    # (dipptrue, send token) sends one message to the test alias; the READ identity (drdiplextexh,
+    # (dipptrue, send token) sends one message to the test alias; the READ identity (drdiplextech,
     # a DISTINCT read-only token) retrieves only that correlated message. No network, no real token.
     from core.scout.comms.gmail import GmailProvider
     from core.scout.comms.providers import ACCEPTED, SendEnvelope

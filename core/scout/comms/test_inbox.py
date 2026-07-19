@@ -2,7 +2,7 @@
 
 The SECOND email identity, strictly separate from the Scout SEND provider (core/scout/comms/gmail.py):
 
-  * identity ``drdiplextexh@gmail.com`` (+ per-project ``drdiplextexh+<slug>@gmail.com`` aliases);
+  * identity ``drdiplextech@gmail.com`` (+ per-project ``drdiplextech+<slug>@gmail.com`` aliases);
   * a SEPARATE token store authorized for ``gmail.readonly + openid + email`` ONLY — the read token
     can never send, and the send token can never read (the two scope policies list each other's core
     scope as *forbidden*, so a single mixed token fails BOTH policies);
@@ -47,8 +47,8 @@ FORBIDDEN_TEST_INBOX_SCOPES = frozenset({
     "https://www.googleapis.com/auth/gmail.insert", "https://www.googleapis.com/auth/gmail.settings.basic"})
 _EMAIL_SCOPES = frozenset({"email", "https://www.googleapis.com/auth/userinfo.email"})
 
-TEST_INBOX_EXPECTED_DEFAULT = "drdiplextexh@gmail.com"
-TEST_ALIAS_TEMPLATE_DEFAULT = "drdiplextexh+{project_id}@gmail.com"
+TEST_INBOX_EXPECTED_DEFAULT = "drdiplextech@gmail.com"
+TEST_ALIAS_TEMPLATE_DEFAULT = "drdiplextech+{project_id}@gmail.com"
 GMAIL_LIST_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 GMAIL_GET_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}"
 _MAX_CORRELATED_RESULTS = 10          # hard cap; a correlated flow yields one/a few messages
@@ -97,7 +97,7 @@ def safe_project_slug(project_id: str) -> str:
 
 
 def build_test_alias(template: str, project_id: str, *, plus_addressing: bool = True) -> str:
-    """Build ``drdiplextexh+<slug>@gmail.com`` from a validated slug. With ``plus_addressing=False``
+    """Build ``drdiplextech+<slug>@gmail.com`` from a validated slug. With ``plus_addressing=False``
     (a target that rejects plus addressing) fall back to the base mailbox address."""
     if "{project_id}" not in (template or ""):
         raise TestAliasError("alias template must contain the {project_id} placeholder")

@@ -250,7 +250,7 @@ class AccessBootstrap:
             g_ready, "gmail.send, openid, email", "operator", g_note, g_action,
             secret_ref="GMAIL_OAUTH_CLIENT_JSON, GMAIL_OAUTH_TOKEN_JSON"))
 
-        # --- Gmail QA Test Inbox: the SECOND, distinct identity (drdiplextexh@gmail.com), authorized
+        # --- Gmail QA Test Inbox: the SECOND, distinct identity (drdiplextech@gmail.com), authorized
         # read-only (gmail.readonly + openid + email) for correlated test-flow retrieval ONLY. Its
         # readiness is derived INDEPENDENTLY from its own client/token/scopes/refresh/account, and it
         # fails closed on a mixed token (send scope), a wrong account, or a token FILE shared with the

@@ -8,7 +8,7 @@ python main.py dashboard            # http://127.0.0.1:8765  (Ctrl+C to stop)
 ```
 
 > **Access & Integrations** shows the two distinct email identities — **Gmail Scout Send**
-> (`dipptrue@gmail.com`, `gmail.send`) and **Gmail QA Test Inbox** (`drdiplextexh@gmail.com`,
+> (`dipptrue@gmail.com`, `gmail.send`) and **Gmail QA Test Inbox** (`drdiplextech@gmail.com`,
 > `gmail.readonly`) — each with independent readiness. The canonical policy is
 > `docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md`. The Dashboard never exposes a generic mailbox browser.
 

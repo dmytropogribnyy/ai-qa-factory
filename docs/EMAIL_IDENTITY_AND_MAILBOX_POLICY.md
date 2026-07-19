@@ -13,8 +13,8 @@ Dmytro Pogribnyy has explicitly authorized publishing these identities in the re
 | Identity | Purpose | External visibility | OAuth / access |
 |---|---|---|---|
 | `Dmytro Pogribnyy <dipptrue@gmail.com>` | Scout sender after per-message approval; reply-to; operator notifications; manual client communication; controlled self-test recipient | Visible to approved recipients | **Separate SEND token:** `gmail.send + openid + email` only |
-| `drdiplextexh@gmail.com` | Technical QA test inbox for explicitly authorized client/staging signup, verification, magic-link and password-reset flows | Test identity only; never the public Scout sender | **Separate TEST-INBOX token:** `gmail.readonly + openid + email` only |
-| `drdiplextexh+<safe-project-slug>@gmail.com` | Per-project test alias routed to the technical inbox | Visible only to the authorized target being tested | Same test-inbox token; fall back to the base address if a target rejects plus addressing |
+| `drdiplextech@gmail.com` | Technical QA test inbox for explicitly authorized client/staging signup, verification, magic-link and password-reset flows | Test identity only; never the public Scout sender | **Separate TEST-INBOX token:** `gmail.readonly + openid + email` only |
+| `drdiplextech+<safe-project-slug>@gmail.com` | Per-project test alias routed to the technical inbox | Visible only to the authorized target being tested | Same test-inbox token; fall back to the base address if a target rejects plus addressing |
 | prospect/client contact email | Recipient of one specific reviewed outreach draft | One exact recipient only | Never a global config value; allowlist + current revision + human approval |
 | client-provided staging mailbox | Preferred when the client provides one | Client-scoped | **Needs Client** until supplied and authorized |
 | Upwork messaging | Client/prospect conversation inside Upwork | Upwork only | Manual only; never Gmail automation or unofficial Upwork automation |
@@ -29,8 +29,8 @@ critical path.
 - **Operator notifications / reply-to:** `dipptrue@gmail.com`.
 - **Manual client communication:** `dipptrue@gmail.com` (or Upwork messaging, manual).
 - **QA test flows** (signup, email verification, magic links, password reset): the test inbox
-  `drdiplextexh@gmail.com`, normally via a per-project alias `drdiplextexh+<slug>@gmail.com`.
-- **Controlled self-test:** send from `dipptrue@gmail.com` → `drdiplextexh+aiqa-selftest@gmail.com`.
+  `drdiplextech@gmail.com`, normally via a per-project alias `drdiplextech+<slug>@gmail.com`.
+- **Controlled self-test:** send from `dipptrue@gmail.com` → `drdiplextech+aiqa-selftest@gmail.com`.
 - **Upwork:** manual, inside Upwork only.
 
 ## 3. Separate tokens & scopes (hard rule)
@@ -53,12 +53,12 @@ Enforced in `core/scout/comms/gmail.py` (`gmail_scope_blockers`) and
 
 ## 4. Plus-alias behavior & base-address fallback
 
-- Template: `AIQA_TEST_ALIAS_TEMPLATE=drdiplextexh+{project_id}@gmail.com`.
+- Template: `AIQA_TEST_ALIAS_TEMPLATE=drdiplextech+{project_id}@gmail.com`.
 - The `{project_id}` slug is validated **before** interpolation (`safe_project_slug`): 1–40 chars of
   `a-z`, `0-9`, single interior dashes; no dots, `+`, `@`, spaces, leading/trailing/double dashes,
   or non-ASCII. A malformed project id **fails closed** with an exact operator action — it is never
   interpolated into an address.
-- If a target rejects plus addressing, fall back to the **base** `drdiplextexh@gmail.com`
+- If a target rejects plus addressing, fall back to the **base** `drdiplextech@gmail.com`
   (`build_test_alias(..., plus_addressing=False)`).
 
 ## 5. Local secret-file locations, redaction & no-commit rules
@@ -85,11 +85,11 @@ python main.py scout gmail-auth \
   --client-config "$GMAIL_OAUTH_CLIENT_JSON" --token-store "$GMAIL_OAUTH_TOKEN_JSON" \
   --expected-account dipptrue@gmail.com
 
-# Authorize the READ-ONLY test inbox (DISTINCT token; select drdiplextexh@gmail.com). Passing the
+# Authorize the READ-ONLY test inbox (DISTINCT token; select drdiplextech@gmail.com). Passing the
 # send token lets the tool refuse a shared/mixed token store:
 python main.py scout test-inbox-auth \
   --client-config "$GMAIL_TEST_OAUTH_CLIENT_JSON" --token-store "$GMAIL_TEST_OAUTH_TOKEN_JSON" \
-  --send-token-store "$GMAIL_OAUTH_TOKEN_JSON" --expected-account drdiplextexh@gmail.com
+  --send-token-store "$GMAIL_OAUTH_TOKEN_JSON" --expected-account drdiplextech@gmail.com
 
 # Per-identity readiness (no secret is shown):
 python main.py scout gmail-status
@@ -134,8 +134,8 @@ Dashboard/HTTP. Every retrieval (`TestInboxReader.correlated_search`) is constra
 ## 10. Live acceptance, revocation & re-authorization
 
 - **Controlled live acceptance:** authorize the send token (`dipptrue@gmail.com`) and the separate
-  read-only token (`drdiplextexh@gmail.com`); after Dmytro's exact confirmation, send **one** harmless
-  self-test `dipptrue@gmail.com → drdiplextexh+aiqa-selftest@gmail.com`; retrieve only that correlated
+  read-only token (`drdiplextech@gmail.com`); after Dmytro's exact confirmation, send **one** harmless
+  self-test `dipptrue@gmail.com → drdiplextech+aiqa-selftest@gmail.com`; retrieve only that correlated
   message through the test-inbox adapter; record bounded redacted evidence of genuine send + receive;
   contact no prospect; then keep outreach disabled (`PROSPECT_RADAR_EXTERNAL_SEND_DISABLED=1`).
 - **If Google browser consent is required**, setup pauses at exactly that step with one precise

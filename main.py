@@ -701,7 +701,7 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("--token-store", dest="token_store", help="Gmail OAuth token store path")
     scout_cmd.add_argument("--expected-account", dest="expected_account",
                            help="Authorized Gmail account (default dipptrue@gmail.com; "
-                                "drdiplextexh@gmail.com for the read-only test inbox)")
+                                "drdiplextech@gmail.com for the read-only test inbox)")
     # v3.2 — read-only technical test-inbox authorization (a DISTINCT token from the send store).
     scout_cmd.add_argument("--send-token-store", dest="send_token_store",
                            help="test-inbox-auth: the SEND token path, so the test-inbox token can be "

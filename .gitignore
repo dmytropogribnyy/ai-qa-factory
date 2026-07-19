@@ -7,10 +7,14 @@
 
 # ── Gmail OAuth client config + token stores (v2.0.1 — never commit) ───────────
 .secrets/
+.aiqa/
+**/.aiqa/
 *.gmail-token.json
 client_secret*.json
 gmail-token*.json
 **/gmail/token.json
+**/send_token.json
+**/test_inbox_token.json
 
 # ── Playwright auth state (Phase 4E — must never be committed) ────────────────
 .auth/
