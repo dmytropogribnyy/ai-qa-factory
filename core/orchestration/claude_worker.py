@@ -171,11 +171,13 @@ class ClaudeCodeWorker:
         tokens: Optional[int] = None
         cost: Optional[float] = None
         raw_out, raw_err = "", ""
+        parsed = _ResultJson()
         if not det.get("available"):
             stop_reason = "claude CLI unavailable (Needs Operator: install + authenticate)"
         else:
             returncode, raw_out, raw_err, stop_reason = self._run_controlled(cmd, ws, order, cancel)
-            session_id, tokens, cost = _parse_result_json(raw_out)
+            parsed = _parse_result_json(raw_out)
+            session_id, tokens, cost = parsed.session_id, parsed.tokens, parsed.cost
         duration = (datetime.now(timezone.utc) - started).total_seconds()
         # Redact + persist bounded evidence.
         ev_dir = ws / "evidence" / "worker"
@@ -185,7 +187,19 @@ class ClaudeCodeWorker:
         after = self._snapshot(ws)
         files_changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k)
                                and not k.startswith("evidence/worker/"))
+        # A run is only genuinely OK when the process completed AND the headless JSON result was a
+        # real, non-error completion. When the provider instead returns prose (e.g. an interactive
+        # permission prompt that was not auto-granted) --output-format json yields no result object;
+        # we must NOT report success in that case (honest failure, not a false green).
         ok = bool(det.get("available")) and returncode == 0 and stop_reason == "completed"
+        if ok and det.get("available"):
+            if parsed.is_error:
+                ok = False
+                stop_reason = parsed.error or "provider returned an error result"
+            elif not parsed.has_result:
+                ok = False
+                stop_reason = ("no valid JSON result from the provider (possible un-granted "
+                               "permission prompt or interruption); no completion recorded")
         result = WorkerResult(
             ok=ok, executor=self.executor_id, version=version, mode=order.mode,
             session_id=session_id, returncode=returncode, files_changed=files_changed,
@@ -249,12 +263,16 @@ class ClaudeCodeWorker:
         except (OSError, ValueError):
             return {}
 
-    @staticmethod
-    def _snapshot(ws: Path) -> Dict[str, str]:
+    # Agent/tooling scaffold directories that are never a client deliverable and must not count as
+    # produced artifacts (e.g. the operator's global memory hook writes .remember/ into the cwd).
+    _SCAFFOLD = frozenset({".git", "node_modules", ".remember", ".claude", "__pycache__"})
+
+    @classmethod
+    def _snapshot(cls, ws: Path) -> Dict[str, str]:
         import hashlib
         out: Dict[str, str] = {}
         for f in ws.rglob("*"):
-            if f.is_file() and ".git" not in f.parts and "node_modules" not in f.parts:
+            if f.is_file() and not (set(f.parts) & cls._SCAFFOLD):
                 try:
                     out[str(f.relative_to(ws)).replace("\\", "/")] = hashlib.sha256(
                         f.read_bytes()).hexdigest()
@@ -280,25 +298,56 @@ class ClaudeCodeWorker:
         os.replace(tmp, path)                       # atomic
 
 
-def _parse_result_json(stdout: str):
-    """Best-effort parse of the headless JSON result for session id + usage (never a secret)."""
+@dataclass
+class _ResultJson:
+    session_id: str = ""
+    tokens: Optional[int] = None
+    cost: Optional[float] = None
+    has_result: bool = False        # a real headless result object was parsed
+    is_error: bool = False          # the provider reported an error (e.g. budget/permission)
+    error: str = ""
+
+
+def _parse_result_json(stdout: str) -> "_ResultJson":
+    """Parse the headless JSON result for session id + usage + error state (never a secret). Robust
+    to trailing/leading non-JSON noise: scans candidate objects and keeps the one that looks like the
+    result. When ``--output-format json`` produced no result object (e.g. the provider returned prose
+    for an un-granted permission prompt), ``has_result`` stays False so the caller fails honestly."""
     txt = (stdout or "").strip()
-    start = txt.rfind("{")
-    if start == -1:
-        return "", None, None
+    obj = None
+    # Try the whole blob, then progressively later '{' positions (handles a leading banner) and each
+    # line, keeping the last object that carries result-shaped fields.
+    candidates = []
     try:
-        obj = json.loads(txt[start:])
+        candidates.append(json.loads(txt))
     except ValueError:
-        try:
-            obj = json.loads(txt)
-        except ValueError:
-            return "", None, None
+        pass
+    for line in reversed(txt.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                candidates.append(json.loads(line))
+            except ValueError:
+                continue
+    for cand in candidates:
+        if isinstance(cand, dict) and (cand.get("session_id") or cand.get("type") == "result"
+                                       or "usage" in cand):
+            obj = cand
+            break
+    if obj is None:
+        return _ResultJson()
     sid = str(obj.get("session_id") or obj.get("sessionId") or "")
     usage = obj.get("usage") or {}
     tokens = usage.get("output_tokens") or usage.get("total_tokens")
     cost = obj.get("total_cost_usd") or obj.get("cost_usd")
-    return sid, (int(tokens) if isinstance(tokens, (int, float)) else None), \
-        (float(cost) if isinstance(cost, (int, float)) else None)
+    is_error = bool(obj.get("is_error")) or str(obj.get("subtype", "")).startswith("error")
+    errs = obj.get("errors") or []
+    error = "; ".join(str(e) for e in errs) if errs else (
+        str(obj.get("subtype", "")) if is_error else "")
+    return _ResultJson(
+        session_id=sid, tokens=(int(tokens) if isinstance(tokens, (int, float)) else None),
+        cost=(float(cost) if isinstance(cost, (int, float)) else None),
+        has_result=True, is_error=is_error, error=error)
 
 
 _ORDER_NS = __import__("uuid").UUID("7b1e2c9a-4d3f-5a6b-8c7d-9e0f1a2b3c4d")

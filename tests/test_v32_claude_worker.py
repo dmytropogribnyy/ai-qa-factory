@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -121,6 +122,39 @@ def test_worker_reports_needs_operator_when_cli_missing(tmp_path):
     assert res.ok is False and "unavailable" in res.stop_reason and res.blockers
 
 
+def test_worker_fails_honestly_when_provider_returns_prose_not_json(tmp_path):
+    # An un-granted permission prompt returns prose, not a JSON result: NEVER a false green.
+    def _popen(argv, **kw):
+        return _FakePopen(argv, out="I need approval to edit calc.py. Please approve the write.", **kw)
+
+    res = _worker(_popen).run(_ORDER, str(tmp_path / "ws"))
+    assert res.ok is False and "no valid JSON result" in res.stop_reason and res.blockers
+
+
+def test_worker_fails_on_error_result(tmp_path):
+    err = ('{"type":"result","subtype":"error_max_budget_usd","is_error":true,'
+           '"session_id":"s","errors":["Reached maximum budget ($0.3)"]}')
+
+    def _popen(argv, **kw):
+        return _FakePopen(argv, out=err, **kw)
+
+    res = _worker(_popen).run(_ORDER, str(tmp_path / "ws"))
+    assert res.ok is False and "budget" in res.stop_reason.lower() and res.blockers
+
+
+def test_worker_ignores_scaffold_dirs_in_files_changed(tmp_path):
+    # The operator's global memory hook can write .remember/ into the cwd; it is never a deliverable.
+    def _popen(argv, **kw):
+        p = _FakePopen(argv, **kw)
+        scaffold = Path(kw["cwd"]) / ".remember"
+        scaffold.mkdir(parents=True, exist_ok=True)
+        (scaffold / "log.txt").write_text("noise", encoding="utf-8")
+        return p
+
+    res = _worker(_popen).run(_ORDER, str(tmp_path / "ws"))
+    assert not any(".remember" in f for f in res.files_changed)
+
+
 def test_fixture_worker_is_labeled_and_not_live(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -137,23 +171,36 @@ _LIVE = os.environ.get("AIQA_CLAUDE_LIVE") == "1" and shutil.which("claude") is 
 
 
 @pytest.mark.skipif(not _LIVE, reason="live Claude run is operator-gated (set AIQA_CLAUDE_LIVE=1 "
-                                      "in a clean, non-nested shell)")
+                                      "in a clean, NON-NESTED shell — inside a parent Claude Code "
+                                      "session the operator's hooks force an interactive permission "
+                                      "prompt and acceptEdits does not apply)")
 def test_live_claude_worker_repairs_a_fixture(tmp_path):
+    # Model/budget are operator-configurable so the run stays cheap: a one-line fix on haiku costs
+    # ~$0.06. Opus needs a larger budget because first-turn cache creation alone exceeds $0.30.
+    model = os.environ.get("AIQA_CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+    budget = float(os.environ.get("AIQA_CLAUDE_BUDGET", "0.60"))
     ws = tmp_path / "live"
     ws.mkdir()
     (ws / "calc.py").write_text("def add(a, b):\n    return a - b  # bug\n", encoding="utf-8")
     (ws / "test_calc.py").write_text(
         "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n", encoding="utf-8")
-    before = subprocess.run([os.sys.executable, "-m", "pytest", "-q", "test_calc.py"], cwd=str(ws),
+    before = subprocess.run([sys.executable, "-m", "pytest", "-q", "test_calc.py"], cwd=str(ws),
                             capture_output=True, text=True, timeout=120, check=False)
     assert before.returncode != 0, "the fixture must genuinely fail before the repair"
-    order = WorkOrder(project_id="live", objective="Fix add() in calc.py so add(2,3)==5.",
-                      acceptance="pytest -q passes", allowed_tools=["Edit", "Read"],
-                      max_budget_usd=0.50, timeout_s=240)
+    order = WorkOrder(project_id="live", objective=(
+        "The test in test_calc.py fails because add() in calc.py subtracts. Fix calc.py so add "
+        "returns a+b. Edit only calc.py."), acceptance="pytest -q passes",
+        allowed_tools=["Edit", "Read"], model=model, max_budget_usd=budget, timeout_s=240)
     res = ClaudeCodeWorker().run(order, str(ws))
     assert res.ok, res.stop_reason
-    after = subprocess.run([os.sys.executable, "-m", "pytest", "-q", "test_calc.py"], cwd=str(ws),
+    assert "calc.py" in res.files_changed and res.session_id
+    after = subprocess.run([sys.executable, "-m", "pytest", "-q", "test_calc.py"], cwd=str(ws),
                            capture_output=True, text=True, timeout=120, check=False)
     assert after.returncode == 0, after.stdout + after.stderr
-    # Resume across a fresh process reads the persisted session.
+    # The session + evidence are persisted, and a fresh worker resumes from the persisted session id.
     assert (ws / "EXECUTION_SESSION.json").exists()
+    assert (ws / "evidence" / "worker" / "stdout.txt").exists()
+    prior = ClaudeCodeWorker._read_session_static(ws)
+    resumed = ClaudeCodeWorker().run(order, str(ws),
+                                     resume_session=str(prior.get("session_id") or ""))
+    assert resumed.ok, resumed.stop_reason
