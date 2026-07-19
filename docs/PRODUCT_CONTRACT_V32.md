@@ -71,9 +71,13 @@ live call. Reproduce in a clean shell: `pytest -k live_claude_worker` with `AIQA
   `REPAIR_REQUIRED`; the operator (CLI `client-work worker-resume` / a guarded Dashboard action)
   starts the next bounded execution. There is no self-looping "run until green" agent, and the
   product does not claim one.
-- **Language scope.** The lifecycle is language-agnostic; deterministic acceptance uses a Python
-  project, and real **TypeScript/Playwright execution** is separately proven by the browser-acceptance
-  CI job (`test_v3_genuine_execution_ab.py` runs real `playwright test` on a generated framework).
+- **Integrated TS/Playwright acceptance.** One multi-file TypeScript/Playwright project (a `tests/util.ts`
+  helper imported by `tests/home.spec.ts`, a cross-file defect) is driven through the SAME production
+  lifecycle with a deterministic fixture worker and **real `playwright test`** validation — failing
+  before, operator-triggered repair, passing after, review, prepared delivery (multi-file manifest +
+  per-file hash), and fresh-process resume. `tests/test_v32_integrated_playwright_lifecycle.py`
+  (browser-acceptance job; no paid provider call in CI). A deterministic Python variant
+  (`tests/test_v32_golden_multifile_lifecycle.py`) covers the same lifecycle in the core job.
 - **Live provider.** A live `ClaudeWorkerExecutor` run is operator-gated (`AIQA_CLAUDE_LIVE`, clean
   non-nested shell); CI never makes a paid live call.
 
