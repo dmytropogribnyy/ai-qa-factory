@@ -783,8 +783,8 @@ function startCampaign(){{
                     f'<span class="chip">Campaigns {ov.counts.get("campaigns", 0)}</span>'
                     f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
                     f'<h2>Needs your attention</h2>{att}'
-                    f'<h2>Active work</h2>{work_tbl}'
-                    f'<h2>Scout</h2>{camp_tbl}')
+                    f'<h2>Active work</h2><div class="scrollx">{work_tbl}</div>'
+                    f'<h2>Scout</h2><div class="scrollx">{camp_tbl}</div>')
             return _page("AI QA Factory — Overview", "/", body)
 
         _WORK_VIEWS = (("all", "All Work"), ("needs_attention", "Needs Attention"),
@@ -831,7 +831,7 @@ function startCampaign(){{
                       "else{alert(j.error||'refused');}}).catch(e=>alert(''+e));}")
             body = (f'<h1>Work</h1><div class="row">{views}'
                     f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
-                    f'{table}{create}')
+                    f'<div class="scrollx">{table}</div>{create}')
             return _page("AI QA Factory — Work", "/work", body, script)
 
         def _work_detail_json(self, pid):
@@ -931,7 +931,8 @@ function startCampaign(){{
             body = (f'<h1>Scout campaigns</h1><div class="row">'
                     f'<a class="chip" href="/scout">Scout home</a>'
                     f'<a class="chip" href="/results">Results</a>'
-                    f'<span class="chip">Active {len(ov.active_campaigns)}</span></div>{table}'
+                    f'<span class="chip">Active {len(ov.active_campaigns)}</span></div>'
+                    f'<div class="scrollx">{table}</div>'
                     f'<p class="muted">Campaign start + Pause/Resume/Stop Safely/Cancel controls are '
                     f'on <a href="/scout">Scout home</a> (bounded, read-only; nothing is sent).</p>')
             return _page("AI QA Factory — Scout campaigns", "/scout", body)
@@ -973,7 +974,8 @@ function startCampaign(){{
             table = (f'<table><caption>Recent state transitions</caption><tr><th>Time</th><th>Actor</th>'
                      f'<th>Action</th><th>Project</th><th>Result</th></tr>{rows}</table>' if rows
                      else '<div class="card empty muted">No activity yet.</div>')
-            return _page("AI QA Factory — Activity", "/activity", f"<h1>Activity</h1>{table}")
+            return _page("AI QA Factory — Activity", "/activity",
+                         f'<h1>Activity</h1><div class="scrollx">{table}</div>')
 
         def _settings_page(self) -> str:
             from core.orchestration.tool_broker import ToolBroker
@@ -1059,7 +1061,7 @@ function startCampaign(){{
             body = (f'<h1>Tools</h1><p class="muted">Honest tool readiness (no live MCP/network call). '
                     f'A test file is never a runtime binding; a binding present is "Binding Available"; '
                     f'a checked runtime is "Runtime Available"; nothing is "Live Verified" without a '
-                    f'real live acceptance.</p>{table}')
+                    f'real live acceptance.</p><div class="scrollx">{table}</div>')
             return _page("AI QA Factory — Tools · Tool readiness", "/tools", body)
 
         def _docs_page(self) -> str:
@@ -1115,10 +1117,13 @@ header.top .brand{font-weight:700} header.top nav{display:flex;gap:4px;margin-le
 header.top nav a{padding:6px 12px;border-radius:6px;color:var(--muted)}
 header.top nav a[aria-current="page"]{background:var(--surface-2);color:var(--text);font-weight:600}
 main{max-width:var(--maxw);margin:0 auto;padding:var(--pad)}
+html,body{max-width:100%;overflow-x:hidden}
+header.top .wrap{flex-wrap:wrap} header.top nav{flex-wrap:wrap}
+.scrollx{overflow-x:auto;max-width:100%;margin-bottom:var(--gap)}
 h1{font-size:22px;margin:.2rem 0 1rem} h2{font-size:16px;margin:1.4rem 0 .6rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);margin-bottom:var(--gap)}
 .muted{color:var(--muted)} .row{display:flex;gap:var(--gap);flex-wrap:wrap;align-items:center}
-table{display:block;overflow-x:auto;max-width:100%;border-collapse:collapse;width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
+table{border-collapse:collapse;width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
 caption{text-align:left;color:var(--muted);padding:6px 2px;font-size:13px}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;height:var(--row)}
 th{background:var(--surface-2);color:var(--muted);font-weight:600}
