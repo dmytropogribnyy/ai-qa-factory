@@ -107,7 +107,9 @@ def test_capture_dashboard_screenshots(tmp_path):
         "settings": "/settings",
     }
     mobile = {"overview": "/", "scout-home": "/scout", "work-list": "/work",
-              "project-detail": "/work/alpha"}
+              "project-detail": "/work/alpha", "nav-more": "/tools"}
+    # Representative Light-theme pages (dark is the default; these prove the toggle looks right).
+    light = {"overview": "/", "work-list": "/work", "tools": "/tools"}
     captured = []
     try:
         with sync_playwright() as p:
@@ -115,19 +117,30 @@ def test_capture_dashboard_screenshots(tmp_path):
             page = browser.new_page(viewport={"width": 1280, "height": 900})
             for name, path in desktop.items():
                 page.goto(url + path, wait_until="load")
-                out = _OUT / f"desktop-{name}.png"
+                page.evaluate("() => window.scrollTo(0, 0)")   # reset scroll before capture
+                out = _OUT / f"desktop-dark-{name}.png"
                 page.screenshot(path=str(out), full_page=True)
                 captured.append(out)
             page.close()
+            lp = browser.new_page(viewport={"width": 1280, "height": 900})
+            lp.add_init_script("try{localStorage.setItem('aiqa_theme','light');}catch(e){}")
+            for name, path in light.items():
+                lp.goto(url + path, wait_until="load")
+                lp.evaluate("() => window.scrollTo(0, 0)")
+                out = _OUT / f"desktop-light-{name}.png"
+                lp.screenshot(path=str(out), full_page=True)
+                captured.append(out)
+            lp.close()
             mp = browser.new_page(viewport={"width": 390, "height": 844})
             for name, path in mobile.items():
                 mp.goto(url + path, wait_until="load")
-                out = _OUT / f"mobile-{name}.png"
+                mp.evaluate("() => window.scrollTo(0, 0)")
+                out = _OUT / f"mobile-dark-{name}.png"
                 mp.screenshot(path=str(out), full_page=True)
                 captured.append(out)
             browser.close()
     finally:
         server.shutdown()
-    assert len(captured) == len(desktop) + len(mobile)
+    assert len(captured) == len(desktop) + len(light) + len(mobile)
     for f in captured:
         assert f.exists() and f.stat().st_size > 0, f
