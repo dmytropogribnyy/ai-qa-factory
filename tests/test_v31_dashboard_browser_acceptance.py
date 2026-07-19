@@ -76,6 +76,34 @@ def _serious(violations):
     return [v for v in violations if v.get("impact") in ("serious", "critical")]
 
 
+def test_pro_dark_default_toggle_persist_and_axe_both_themes(tmp_path):
+    # v3.2 Section 6: dark is the first-run default; an accessible toggle switches + persists Light
+    # (no flash: data-theme is set before paint); axe stays clean in BOTH themes.
+    _seed(tmp_path)
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    axe = Axe()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url + "/", wait_until="load")
+            assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "dark"
+            dark = _serious(axe.run(page).get("violations", []))
+            assert not dark, [v["id"] for v in dark]
+            # Toggle to Light.
+            page.get_by_role("button", name="Toggle dark or light theme").click()
+            assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "light"
+            light = _serious(axe.run(page).get("violations", []))
+            assert not light, [v["id"] for v in light]
+            # Persistence + no dark flash: a fresh navigation keeps Light set before paint.
+            page.goto(url + "/work", wait_until="commit")
+            assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "light"
+            assert page.evaluate("() => localStorage.getItem('aiqa_theme')") == "light"
+            browser.close()
+    finally:
+        server.shutdown()
+
+
 def test_all_primary_pages_have_no_serious_axe_violations(tmp_path):
     _seed(tmp_path)
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)

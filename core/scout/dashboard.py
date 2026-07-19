@@ -1465,22 +1465,34 @@ def _esc(s: str) -> str:
 
 # --- v3.1 design system (local CSS tokens; no external assets) ---------------------------------
 _TOKENS_CSS = """
+/* Pro Dark design system (dark is the first-run default; Light is an explicit override). Semantic
+   tokens; gold accent used sparingly for primary actions, selected nav, active tabs, and focus. */
 :root{
- --bg:#f6f7f9; --surface:#fff; --surface-2:#eef1f4; --border:#d7dbe0; --text:#1a1d21;
- --muted:#4d565f; --primary:#1257c9; --primary-ink:#fff; --ok:#136c33; --attention:#7a5000;
- --danger:#a11208; --focus:#1257c9;
+ --bg:#0A0F1E; --surface:#151922; --surface-2:#1A2236; --elevated:#1A2236; --border:#1F2940;
+ --input:#151922; --text:#F4EDD9; --muted:#9AA3B8; --link:#7FB0FF; --badge-bg:#1A2236;
+ --primary:#D4AF37; --primary-ink:#0A0F1E; --accent:#D4AF37; --focus:#D4AF37;
+ --ok:#3FB950; --success:#3FB950; --attention:#E3B341; --warning:#E3B341;
+ --danger:#EF5757; --error:#EF5757; --information:#58A6FF; --disabled:#5A6373; --code:#0E1424;
  --radius:8px; --pad:16px; --gap:12px; --maxw:1200px; --row:40px;
  --font:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+}
+:root[data-theme="light"]{
+ --bg:#F4EDD9; --surface:#FBF7EC; --surface-2:#EBE3CE; --elevated:#FFFFFF; --border:#E2DAC6;
+ --input:#FFFFFF; --text:#151922; --muted:#5B6470; --link:#0B5FBF; --badge-bg:#EBE3CE;
+ --primary:#0A0F1E; --primary-ink:#F4EDD9; --accent:#9A7B1E; --focus:#9A7B1E;
+ --ok:#1A7F37; --success:#1A7F37; --attention:#8A5A00; --warning:#8A5A00;
+ --danger:#B42318; --error:#B42318; --information:#0B5FBF; --disabled:#9AA3B0; --code:#EEE7D6;
 }
 :root[data-density="compact"]{ --pad:10px; --gap:8px; --row:32px; }
 *{box-sizing:border-box}
 body{font-family:var(--font);margin:0;background:var(--bg);color:var(--text);line-height:1.5}
-a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
+a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
 header.top{background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
 header.top .wrap{max-width:var(--maxw);margin:0 auto;display:flex;align-items:center;gap:var(--gap);padding:10px var(--pad)}
 header.top .brand{font-weight:700} header.top nav{display:flex;gap:4px;margin-left:8px}
 header.top nav a{padding:6px 12px;border-radius:6px;color:var(--muted)}
-header.top nav a[aria-current="page"]{background:var(--surface-2);color:var(--text);font-weight:600}
+header.top nav a[aria-current="page"]{background:var(--surface-2);color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--accent)}
+header.top .brand{color:var(--text)} header.top .brand::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--accent);margin-right:7px;vertical-align:middle}
 main{max-width:var(--maxw);margin:0 auto;padding:var(--pad)}
 html,body{max-width:100%;overflow-x:hidden}
 header.top .wrap{flex-wrap:wrap} header.top nav{flex-wrap:wrap}
@@ -1493,22 +1505,26 @@ caption{text-align:left;color:var(--muted);padding:6px 2px;font-size:13px}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;height:var(--row)}
 th{background:var(--surface-2);color:var(--muted);font-weight:600}
 tr:last-child td{border-bottom:none}
-.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--surface-2)}
-.badge.ok{color:var(--ok);border-color:#a6e3b8} .badge.attention{color:var(--attention);border-color:#e6cf7a}
-.badge.blocked,.badge.danger{color:var(--danger);border-color:#f2b8b1} .badge.done{color:var(--muted)}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--badge-bg);color:var(--muted)}
+.badge.ok{color:var(--ok)} .badge.attention{color:var(--attention)}
+.badge.blocked,.badge.danger{color:var(--error)} .badge.done{color:var(--muted)}
 .btn{display:inline-block;padding:8px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:14px}
-.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
-.btn.danger{border-color:#f2b8b1;color:var(--danger)}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink);font-weight:600}
+.btn.danger{border-color:var(--error);color:var(--error)}
+.btn:disabled{opacity:.55;cursor:not-allowed}
 .btn:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .chip{display:inline-flex;gap:6px;align-items:center;padding:2px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;font-size:12px}
 .empty{padding:2rem;text-align:center;color:var(--muted)}
 input,select{padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--surface);color:var(--text)}
-pre{background:var(--surface-2);padding:.7rem;border-radius:6px;overflow:auto;white-space:pre-wrap;font-size:12px}
+pre,code{background:var(--code);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{padding:.7rem;border-radius:6px;overflow:auto;white-space:pre-wrap;font-size:12px;border:1px solid var(--border)}
+code{padding:1px 5px;border-radius:4px;font-size:12px}
 details>summary{cursor:pointer;color:var(--muted)}
-.skeleton{background:linear-gradient(90deg,var(--surface-2),#e9edf1,var(--surface-2));border-radius:6px;height:14px}
+.skeleton{background:var(--surface-2);border-radius:6px;height:14px}
+.theme-toggle{margin-left:auto;background:none;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:6px 10px;cursor:pointer;font-size:13px}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:1rem 0 0;flex-wrap:wrap}
 .tabs [role=tab]{padding:8px 14px;border:1px solid transparent;border-bottom:none;background:none;cursor:pointer;color:var(--muted);border-radius:6px 6px 0 0;font-size:14px}
-.tabs [role=tab][aria-selected=true]{background:var(--surface);border-color:var(--border);color:var(--text);font-weight:600;margin-bottom:-1px}
+.tabs [role=tab][aria-selected=true]{background:var(--surface);border-color:var(--border);color:var(--text);font-weight:600;margin-bottom:-1px;box-shadow:inset 0 -2px 0 var(--accent)}
 [role=tabpanel]{padding-top:.8rem} [role=tabpanel][hidden]{display:none}
 .copyok{color:var(--ok)}
 .only-mobile{display:none}
@@ -1528,18 +1544,36 @@ def _nav_html(active: str) -> str:
         cur = ' aria-current="page"' if href == active else ""
         links.append(f'<a href="{href}"{cur}>{label}</a>')
     more = "".join(f'<a href="{h}">{lbl}</a>' for lbl, h in _MORE)
+    toggle = ('<button type="button" class="theme-toggle" onclick="toggleTheme()" '
+              'aria-label="Toggle dark or light theme"><span id="themelabel">Dark</span></button>')
     return (f'<header class="top"><div class="wrap"><span class="brand">AI QA Factory</span>'
             f'<nav aria-label="Primary">{"".join(links)}'
             f'<details style="position:relative"><summary class="btn" style="padding:6px 12px">More</summary>'
             f'<div class="card" style="position:absolute;right:0;min-width:180px;z-index:10">{more}</div>'
-            f'</details></nav></div></header>')
+            f'</details></nav>{toggle}</div></header>')
+
+
+# No-flash: set the theme from the app-specific local key BEFORE first paint (dark is the default).
+# The theme lives only in localStorage - never in project state and never sent to the backend.
+_THEME_HEAD_JS = ("(function(){try{var t=localStorage.getItem('aiqa_theme')||'dark';"
+                  "document.documentElement.setAttribute('data-theme',t);}catch(e){"
+                  "document.documentElement.setAttribute('data-theme','dark');}})();")
+_THEME_TOGGLE_JS = ("function _applyThemeLabel(){var t=document.documentElement."
+                    "getAttribute('data-theme')||'dark';var l=document.getElementById('themelabel');"
+                    "if(l)l.textContent=t==='light'?'Light':'Dark';}"
+                    "function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme')"
+                    "==='light'?'light':'dark';var next=cur==='light'?'dark':'light';"
+                    "document.documentElement.setAttribute('data-theme',next);"
+                    "try{localStorage.setItem('aiqa_theme',next);}catch(e){}_applyThemeLabel();}"
+                    "_applyThemeLabel();")
 
 
 def _page(title: str, active: str, body: str, script: str = "") -> str:
-    scr = f"<script>{script}</script>" if script else ""
+    scr = f"<script>{_THEME_TOGGLE_JS}{script}</script>"
     return (f"<!doctype html><html lang=en><head><meta charset=utf-8>"
             f'<meta name="viewport" content="width=device-width, initial-scale=1">'
-            f"<title>{_esc(title)}</title><style>{_TOKENS_CSS}</style></head><body>"
+            f"<title>{_esc(title)}</title><script>{_THEME_HEAD_JS}</script>"
+            f"<style>{_TOKENS_CSS}</style></head><body>"
             f"{_nav_html(active)}<main>{body}</main>{scr}</body></html>")
 
 
