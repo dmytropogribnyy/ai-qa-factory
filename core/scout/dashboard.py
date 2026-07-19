@@ -34,6 +34,22 @@ _MAX_START_BODY_BYTES = 64 * 1024
 _MAX_BRIEF_BYTES = 60 * 1024
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
+# Per-project mutation locks so concurrent double-submits are serialized (v3.1 P1). Shared across
+# the per-request WorkExecutionService instances in this process.
+import threading as _threading  # noqa: E402
+
+_WORK_LOCKS: dict = {}
+_WORK_LOCKS_GUARD = _threading.Lock()
+
+
+def _work_lock(key: str):
+    with _WORK_LOCKS_GUARD:
+        lk = _WORK_LOCKS.get(key)
+        if lk is None:
+            lk = _threading.Lock()
+            _WORK_LOCKS[key] = lk
+        return lk
+
 
 def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token: str,
                   operator_home: bool = False):
@@ -130,7 +146,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/work" or path == "/work/":
                 return self._html(200, self._work_list_page(q))
             if path.startswith("/work/"):
-                return self._html(200, self._work_detail_page(path[len("/work/"):]))
+                return self._html(200, self._work_detail_page(path[len("/work/"):], q))
             if path == "/scout":
                 return self._html(200, self._overview_html())    # the Scout run/home view
             if path == "/scout/campaigns":
@@ -259,35 +275,38 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
                 return self._json(200, {"ok": True, "action": action,
                                         "project_id": res.project_id})
-            svc = WorkExecutionService(output_dir=service.output_dir)
-            try:
-                if action == "approve":
-                    st = svc.approve(pid, reviewer=reviewer or "operator", note=note)
-                elif action == "review":
-                    st = svc.review(pid, reviewer=reviewer or "operator", approved=True, note=note)
-                elif action == "review-reject":
-                    st = svc.review(pid, reviewer=reviewer or "operator", approved=False, note=note)
-                elif action == "prepare-delivery":
-                    svc.prepare_delivery(pid)
-                    st = svc.status(pid)
-                    return self._json(200, {"ok": True, "action": action, "project_id": pid,
-                                            "status": st.status})
-                elif action == "reopen-delivery":
-                    if not reason.strip():
-                        return self._json(400, {"ok": False, "error": "reason is required"})
-                    entry = svc.reopen_delivery(pid, reviewer=reviewer or "operator", reason=reason)
-                    return self._json(200, {"ok": True, "action": action, "project_id": pid,
-                                            "status": svc.status(pid).status, "outcome": entry["outcome"]})
-                elif action == "mark-delivered":
-                    st = svc.mark_delivered(pid, note=note)
-                else:
-                    return self._json(404, {"ok": False, "error": "unknown work action"})
-            except (WorkExecutionError, InvalidTransitionError) as exc:
-                return self._json(409, {"ok": False, "action": action, "project_id": pid,
-                                        "error": str(exc)})
-            v = svc.status(pid)
-            return self._json(200, {"ok": True, "action": action, "project_id": pid,
-                                    "status": v.status, "next_action": v.next_action})
+            # Serialize conflicting lifecycle mutations per project so a double-submit cannot race
+            # (the state machine already prevents duplicate history / an incorrect transition).
+            with _work_lock(f"{service.output_dir}::{pid}"):
+                svc = WorkExecutionService(output_dir=service.output_dir)
+                try:
+                    if action == "approve":
+                        svc.approve(pid, reviewer=reviewer or "operator", note=note)
+                    elif action == "review":
+                        svc.review(pid, reviewer=reviewer or "operator", approved=True, note=note)
+                    elif action == "review-reject":
+                        svc.review(pid, reviewer=reviewer or "operator", approved=False, note=note)
+                    elif action == "prepare-delivery":
+                        svc.prepare_delivery(pid)
+                        return self._json(200, {"ok": True, "action": action, "project_id": pid,
+                                                "status": svc.status(pid).status})
+                    elif action == "reopen-delivery":
+                        if not reason.strip():
+                            return self._json(400, {"ok": False, "error": "reason is required"})
+                        entry = svc.reopen_delivery(pid, reviewer=reviewer or "operator", reason=reason)
+                        return self._json(200, {"ok": True, "action": action, "project_id": pid,
+                                                "status": svc.status(pid).status,
+                                                "outcome": entry["outcome"]})
+                    elif action == "mark-delivered":
+                        svc.mark_delivered(pid, note=note)
+                    else:
+                        return self._json(404, {"ok": False, "error": "unknown work action"})
+                except (WorkExecutionError, InvalidTransitionError) as exc:
+                    return self._json(409, {"ok": False, "action": action, "project_id": pid,
+                                            "error": str(exc)})
+                v = svc.status(pid)
+                return self._json(200, {"ok": True, "action": action, "project_id": pid,
+                                        "status": v.status, "next_action": v.next_action})
 
         # --- guarded campaign start (v3.0.0 M4b) -----------------------------------------------
         def _campaign_start(self):
@@ -765,14 +784,49 @@ function startCampaign(){{
 
         # --- v3.1 operator dashboard pages (Overview / Work / Activity / Settings) -------------
         def _work_actions_script(self) -> str:
-            return ("const CSRF=" + json.dumps(csrf_token) + ";\n"
-                    "function wact(action, extra){const b=Object.assign({},extra||{});"
-                    "fetch('/api/work/'+action,{method:'POST',headers:{'Content-Type':'application/json',"
-                    "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json()).then(j=>{"
-                    "if(j.ok){location.reload();}else{alert((j.error||'refused'));}}).catch(e=>alert(''+e));}\n"
-                    "function copyText(id){const el=document.getElementById(id);"
-                    "navigator.clipboard&&navigator.clipboard.writeText(el.textContent).then("
-                    "()=>{},()=>{});}\n")
+            return (
+                "const CSRF=" + json.dumps(csrf_token) + ";\n"
+                "function setStatus(m,ok){var s=document.getElementById('copystatus');"
+                "if(s){s.textContent=m;s.className=ok?'copyok':'muted';}}\n"
+                # Double-submit safe: the initiating button is disabled while the mutation is in
+                # flight and only re-enabled on failure (success reloads).
+                "function wact(btn,action,extra){if(btn){if(btn.dataset.busy)return;"
+                "btn.dataset.busy='1';btn.disabled=true;}var b=Object.assign({},extra||{});"
+                "fetch('/api/work/'+action,{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json()).then(function(j){"
+                "if(j.ok){location.reload();}else{alert(j.error||'refused');"
+                "if(btn){btn.disabled=false;delete btn.dataset.busy;}}}).catch(function(e){"
+                "alert(''+e);if(btn){btn.disabled=false;delete btn.dataset.busy;}});}\n"
+                "function copyText(id){var el=document.getElementById(id);var t=el?el.textContent:'';"
+                "if(navigator.clipboard&&navigator.clipboard.writeText){"
+                "navigator.clipboard.writeText(t).then(function(){setStatus('Copied \\u2713',true);},"
+                "function(){setStatus('Copy failed \\u2014 select the text manually',false);});}"
+                "else{setStatus('Copy not supported \\u2014 select the text manually',false);}}\n")
+
+        def _poll_html(self) -> str:
+            return ('<div class="row" style="font-size:12px"><span id="pollstate" class="muted" '
+                    'aria-live="polite">Live</span><span class="muted">·</span>'
+                    '<span class="muted">Last updated <span id="lastupd">just now</span></span>'
+                    '<span id="pollbanner" hidden> · <a href="#" '
+                    'onclick="location.reload();return false">Updates available — Refresh</a></span></div>')
+
+        def _poll_script(self, endpoint: str, sig_keys: str) -> str:
+            # Bounded same-origin polling: refresh a freshness indicator and flag when the persisted
+            # state changed; it NEVER auto-reloads (so typing / confirm dialogs are never interrupted)
+            # - the operator clicks Refresh. Pauses when the tab is hidden.
+            return (
+                "(function(){var base=null;var url=" + json.dumps(endpoint) + ";"
+                "function sig(j){try{return JSON.stringify((" + sig_keys + ")(j));}catch(e){return '';}}"
+                "function tick(){if(document.hidden)return;"
+                "fetch(url,{headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
+                "var s=sig(j);if(base===null)base=s;"
+                "var d=new Date();var lu=document.getElementById('lastupd');"
+                "if(lu)lu.textContent=d.toLocaleTimeString();"
+                "var ps=document.getElementById('pollstate');if(ps)ps.textContent='Live';"
+                "if(s!==base){var b=document.getElementById('pollbanner');if(b)b.hidden=false;}"
+                "}).catch(function(){var p=document.getElementById('pollstate');"
+                "if(p)p.textContent='offline (retrying)';});}"
+                "setInterval(tick,10000);tick();})();\n")
 
         def _operator_overview_page(self) -> str:
             ov = self._read_model().overview()
@@ -805,10 +859,15 @@ function startCampaign(){{
                     f'<span class="chip">Needs attention {ov.counts.get("attention", 0)}</span>'
                     f'<span class="chip">Campaigns {ov.counts.get("campaigns", 0)}</span>'
                     f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                    f'{self._poll_html()}'
                     f'<h2>Needs your attention</h2>{att}'
                     f'<h2>Active work</h2><div class="scrollx">{work_tbl}</div>'
                     f'<h2>Scout</h2><div class="scrollx">{camp_tbl}</div>')
-            return _page("AI QA Factory — Overview", "/", body)
+            script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
+                      + self._poll_script("/api/overview",
+                                          "function(j){return [(j.counts||{}).attention,"
+                                          "(j.attention||[]).map(function(a){return a.project_id+a.status})]}"))
+            return _page("AI QA Factory — Overview", "/", body, script)
 
         _WORK_VIEWS = (("all", "All Work"), ("needs_attention", "Needs Attention"),
                        ("ready_to_execute", "Ready to Execute"), ("in_progress", "In Progress"),
@@ -854,7 +913,12 @@ function startCampaign(){{
                       "else{alert(j.error||'refused');}}).catch(e=>alert(''+e));}")
             body = (f'<h1>Work</h1><div class="row">{views}'
                     f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                    f'{self._poll_html()}'
                     f'<div class="scrollx">{table}</div>{create}')
+            # Poll the current view; the banner never auto-reloads, so the Create-work form is safe.
+            script = (script + self._poll_script(
+                "/api/work?view=" + view,
+                "function(j){return (j.projects||[]).map(function(p){return p.project_id+p.status})}"))
             return _page("AI QA Factory — Work", "/work", body, script)
 
         def _work_detail_json(self, pid):
@@ -862,16 +926,21 @@ function startCampaign(){{
             d = ProjectDetailBuilder(service.output_dir).detail(pid)
             return d or {"error": "not found", "project_id": pid}
 
-        def _work_detail_page(self, pid) -> str:
+        _DETAIL_TABS = (("summary", "Summary"), ("plan", "Plan"), ("results", "Results"),
+                        ("delivery", "Delivery"))
+
+        def _work_detail_page(self, pid, q=None) -> str:
             from core.dashboard.actions import ProjectDetailBuilder
             b = ProjectDetailBuilder(service.output_dir)
             d = b.detail(pid)
             if d is None:
                 return _page("Project not found", "/work",
                              '<h1>Project not found</h1><p><a href="/work">&larr; Work</a></p>')
+            q = q or {}
+            sel = (q.get("tab") or ["summary"])[0]
+            if sel not in [t[0] for t in self._DETAIL_TABS]:
+                sel = "summary"
             h = d["header"]
-            # The project id is a safe name ([A-Za-z0-9._-]); embed it in single-quoted JS so the
-            # onclick attribute (double-quoted) is never broken and nothing can be injected.
             safe_pid = "".join(c for c in pid if c.isalnum() or c in "._-")
             actbtns = []
             for a in d["allowed_actions"]:
@@ -885,10 +954,10 @@ function startCampaign(){{
                     else:
                         extra = "{project_id:'" + safe_pid + "'}"
                     conf = ("if(!confirm('" + _esc(a["label"]) + "?'))return;" if a.get("confirm") else "")
-                    onclick = conf + "wact('" + act + "'," + extra + ")"
+                    onclick = conf + "wact(this,'" + act + "'," + extra + ")"
                     actbtns.append(f'<button class="{cls}" onclick="{onclick}">{_esc(a["label"])}</button>')
                 elif a["id"] == "open_vscode":
-                    actbtns.append(f'<a class="{cls}" href="vscode://file/{_esc(d["workspace_path"])}">'
+                    actbtns.append(f'<a class="{cls}" href="{_esc(_vscode_file_uri(d["workspace_path"]))}">'
                                    f'{_esc(a["label"])}</a>')
                 elif a["id"] == "copy_work_order":
                     actbtns.append('<button class="btn" onclick="copyText(\'workorder\')">'
@@ -901,41 +970,69 @@ function startCampaign(){{
             header = (f'<p><a href="/work">&larr; Work</a></p><h1>{_esc(h["title"])}</h1>'
                       f'<div class="row">{_badge(h["stage"])} {_badge(h["health"], h["health"])} '
                       f'<span class="muted">{_esc(h["source"])} · {h["progress"]}%</span></div>'
-                      f'<div class="row" style="margin:.6rem 0">{"".join(actbtns)}</div>')
+                      f'{self._poll_html()}'
+                      f'<div class="row" style="margin:.6rem 0">{"".join(actbtns)}'
+                      f'<span id="copystatus" class="muted" aria-live="polite"></span></div>')
             summary = d["summary"]
             blockers = "".join(f"<li>{_esc(x)}</li>" for x in summary["blockers"]) or "<li class=muted>none</li>"
-            tabs = (
-                '<h2>Summary</h2><div class="card">'
-                f'<p><strong>Next:</strong> {_esc(summary["next_action"])}</p>'
-                f'<p><strong>Validation:</strong> {summary["tests_passed"]}/{summary["tests_run"]} · '
-                f'evidence {summary["evidence_count"]}</p>'
-                f'<p><strong>Blockers:</strong></p><ul>{blockers}</ul></div>'
-                '<h2>Plan</h2><div class="card">'
-                f'<p><strong>Intent:</strong> {_esc(d["plan"]["client_intent"])}</p>'
-                f'<p><strong>Verdict:</strong> {_badge(d["plan"]["verdict"] or "n/a")}</p>'
-                f'<details><summary>Requirements & questions</summary>'
-                f'<ul>{"".join(f"<li>{_esc(r)}</li>" for r in d["plan"]["requirements"]) or "<li class=muted>none</li>"}</ul>'
-                f'</details></div>'
-                '<h2>Results</h2><div class="card">'
-                f'<p>Validation: {_badge("PASS" if d["results"]["validation_passed"] else "pending", "ok" if d["results"]["validation_passed"] else "")}</p>'
-                f'<p class="muted">Artifacts: {_esc(", ".join(str(a) for a in d["results"]["artifacts"]) or "none")}</p>'
-                f'<details open><summary>Evidence ({len(d["results"]["evidence"])})</summary>'
-                f'<ul>{"".join(self._evidence_li(e) for e in d["results"]["evidence"]) or "<li class=muted>none</li>"}</ul>'
-                f'</details></div>'
-                '<h2>Delivery</h2><div class="card">'
-                f'<p>State: {_badge(d["delivery"]["status"], "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
-                f'<p class="muted">Reviewed by {_esc(d["delivery"]["reviewed_by"] or "—")} · '
-                f'digest {_esc((d["delivery"]["manifest_digest"] or "—")[:23])}</p>'
-                f'<details><summary>Included files ({len(d["delivery"]["included_files"])})</summary>'
-                f'<ul>{"".join(f"<li>{_esc(x)}</li>" for x in d["delivery"]["included_files"]) or "<li class=muted>not prepared</li>"}</ul>'
-                f'</details>'
-                '<p class="muted">mark-delivered records your manual send; the Dashboard sends nothing.</p></div>'
-                f'<div style="display:none"><pre id="wspath">{_esc(d["workspace_path"])}</pre>'
-                f'<pre id="workorder">{_esc(b.work_order(pid) or "")}</pre></div>')
-            script = (self._work_actions_script() +
-                      "function promptFields(names){var o={};for(var i=0;i<names.length;i++){"
-                      "var v=prompt(names[i]);if(v===null)throw 'cancelled';o[names[i]]=v;}return o;}")
-            return _page(f"AI QA Factory — {pid}", "/work", header + tabs, script)
+            panel = {
+                "summary": (
+                    '<div class="card">'
+                    f'<p><strong>Next:</strong> {_esc(summary["next_action"])}</p>'
+                    f'<p><strong>Validation:</strong> {summary["tests_passed"]}/{summary["tests_run"]} · '
+                    f'evidence {summary["evidence_count"]}</p>'
+                    f'<p><strong>Blockers:</strong></p><ul>{blockers}</ul></div>'),
+                "plan": (
+                    '<div class="card">'
+                    f'<p><strong>Intent:</strong> {_esc(d["plan"]["client_intent"])}</p>'
+                    f'<p><strong>Verdict:</strong> {_badge(d["plan"]["verdict"] or "n/a")}</p>'
+                    f'<details><summary>Requirements &amp; questions</summary>'
+                    f'<ul>{"".join(f"<li>{_esc(r)}</li>" for r in d["plan"]["requirements"]) or "<li class=muted>none</li>"}</ul>'
+                    f'</details></div>'),
+                "results": (
+                    '<div class="card">'
+                    f'<p>Validation: {_badge("PASS" if d["results"]["validation_passed"] else "pending", "ok" if d["results"]["validation_passed"] else "")}</p>'
+                    f'<p class="muted">Artifacts: {_esc(", ".join(str(a) for a in d["results"]["artifacts"]) or "none")}</p>'
+                    f'<details open><summary>Evidence ({len(d["results"]["evidence"])})</summary>'
+                    f'<ul>{"".join(self._evidence_li(e) for e in d["results"]["evidence"]) or "<li class=muted>none</li>"}</ul>'
+                    f'</details></div>'),
+                "delivery": (
+                    '<div class="card">'
+                    f'<p>State: {_badge(d["delivery"]["status"], "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
+                    f'<p class="muted">Reviewed by {_esc(d["delivery"]["reviewed_by"] or "—")} · '
+                    f'digest {_esc((d["delivery"]["manifest_digest"] or "—")[:23])}</p>'
+                    f'<details><summary>Included files ({len(d["delivery"]["included_files"])})</summary>'
+                    f'<ul>{"".join(f"<li>{_esc(x)}</li>" for x in d["delivery"]["included_files"]) or "<li class=muted>not prepared</li>"}</ul>'
+                    f'</details>'
+                    '<p class="muted">mark-delivered records your manual send; the Dashboard sends nothing.</p></div>'),
+            }
+            tablist = ('<div class="tabs" role="tablist" aria-label="Project sections">' + "".join(
+                f'<button role="tab" id="tab-{tid}" aria-controls="panel-{tid}" '
+                f'aria-selected="{"true" if tid == sel else "false"}" '
+                f'tabindex="{"0" if tid == sel else "-1"}" onclick="selTab(\'{tid}\')">{label}</button>'
+                for tid, label in self._DETAIL_TABS) + '</div>')
+            panels = "".join(
+                f'<div role="tabpanel" id="panel-{tid}" aria-labelledby="tab-{tid}" '
+                f'{"" if tid == sel else "hidden"}>{panel[tid]}</div>' for tid, _l in self._DETAIL_TABS)
+            hidden = (f'<div style="display:none"><pre id="wspath">{_esc(d["workspace_path"])}</pre>'
+                      f'<pre id="workorder">{_esc(b.work_order(pid) or "")}</pre></div>')
+            script = (
+                self._work_actions_script() +
+                "function promptFields(names){var o={};for(var i=0;i<names.length;i++){"
+                "var v=prompt(names[i]);if(v===null)throw 'cancelled';o[names[i]]=v;}return o;}\n"
+                "function selTab(id){document.querySelectorAll('[role=tab]').forEach(function(t){"
+                "var on=t.id==='tab-'+id;t.setAttribute('aria-selected',on?'true':'false');"
+                "t.tabIndex=on?0:-1;});document.querySelectorAll('[role=tabpanel]').forEach(function(p){"
+                "p.hidden=p.id!=='panel-'+id;});var u=new URL(location);u.searchParams.set('tab',id);"
+                "history.replaceState(null,'',u);}\n"
+                "var tl=document.querySelector('[role=tablist]');if(tl){tl.addEventListener('keydown',"
+                "function(e){var ts=[].slice.call(document.querySelectorAll('[role=tab]'));"
+                "var i=ts.findIndex(function(t){return t.getAttribute('aria-selected')==='true';});"
+                "if(e.key==='ArrowRight'||e.key==='ArrowLeft'){var n=(i+(e.key==='ArrowRight'?1:"
+                "ts.length-1))%ts.length;var id=ts[n].id.replace('tab-','');selTab(id);ts[n].focus();"
+                "e.preventDefault();}});}\n" +
+                self._poll_script("/api/work/" + safe_pid, "function(j){return [j.header&&j.header.status]}"))
+            return _page(f"AI QA Factory — {pid}", "/work", header + tablist + panels + hidden, script)
 
         def _scout_campaigns_page(self) -> str:
             ov = self._read_model().overview()
@@ -1164,6 +1261,11 @@ input,select{padding:6px 8px;border:1px solid var(--border);border-radius:6px;fo
 pre{background:var(--surface-2);padding:.7rem;border-radius:6px;overflow:auto;white-space:pre-wrap;font-size:12px}
 details>summary{cursor:pointer;color:var(--muted)}
 .skeleton{background:linear-gradient(90deg,var(--surface-2),#e9edf1,var(--surface-2));border-radius:6px;height:14px}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:1rem 0 0;flex-wrap:wrap}
+.tabs [role=tab]{padding:8px 14px;border:1px solid transparent;border-bottom:none;background:none;cursor:pointer;color:var(--muted);border-radius:6px 6px 0 0;font-size:14px}
+.tabs [role=tab][aria-selected=true]{background:var(--surface);border-color:var(--border);color:var(--text);font-weight:600;margin-bottom:-1px}
+[role=tabpanel]{padding-top:.8rem} [role=tabpanel][hidden]{display:none}
+.copyok{color:var(--ok)}
 """
 
 _NAV = (("Overview", "/"), ("Scout", "/scout"), ("Work", "/work"))
@@ -1194,6 +1296,20 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
 
 def _badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{_esc(text)}</span>'
+
+
+def _vscode_file_uri(path: str) -> str:
+    """A correctly-encoded cross-platform ``vscode://file/`` URI (v3.1 P1).
+
+    Normalizes Windows separators to ``/`` and percent-encodes the path (spaces -> %20), keeping
+    ``/`` and the drive-letter ``:``. Windows ``D:\\1QA AI\\proj`` -> ``vscode://file/D:/1QA%20AI/proj``;
+    POSIX ``/home/u/proj`` -> ``vscode://file/home/u/proj``.
+    """
+    from urllib.parse import quote
+    p = str(path).replace("\\", "/")
+    if not p.startswith("/"):
+        p = "/" + p
+    return "vscode://file" + quote(p, safe="/:@")
 
 
 def _gmail_compose_url(to: str, subject: str, body: str) -> str:

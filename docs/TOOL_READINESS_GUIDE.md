@@ -11,12 +11,14 @@ or open the dashboard **Tool Readiness** page (`/tools`).
 
 ## Availability domains
 
-- **INTERNAL_RUNNER** - built into the repo (the API runner, the Playwright runner). Its readiness
-  comes from a real **production binding** (an importable module + a callable adapter + a bounded
-  health check), never from a test file. The API runner is `fixture-tested` (its health check parses
-  a fixture OpenAPI and generates stubs in-process); the Playwright runner is `health-checked` (its
-  in-repo binding is present) with the browser runtime (Node/Chromium) reported separately and never
-  claimed `live-accepted`. Without its binding, an internal tool stays `declared`.
+- **INTERNAL_RUNNER** - built into the repo. Its readiness comes from a real **production binding**
+  (an importable module + a callable adapter + a bounded health check), never from a test file.
+  The **API Contract Importer & Test Generator** is `fixture-tested` / *Fixture Verified* — its health
+  check parses a fixture OpenAPI and generates test stubs in-process; it **imports contracts and
+  generates tests, it does not execute live API endpoints**. The Playwright runner is `health-checked`
+  / *Binding Available* (its in-repo binding is present) with the browser runtime (Node/Chromium)
+  reported separately and never claimed `live-accepted`. Without its binding, an internal tool stays
+  `declared`.
 - **LOCAL_FACTORY_TOOL** - a local binary the standalone runtime uses (git, gh, python, ruff, node,
   playwright). Health-checked by presence on PATH.
 - **CLAUDE_SESSION_TOOL** - an MCP available to Claude Code in your IDE session (e.g. GitHub MCP,

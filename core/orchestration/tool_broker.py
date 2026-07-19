@@ -109,8 +109,10 @@ _CATALOGUE: List[ToolProfile] = [
                 setup="connect the Chrome DevTools MCP in Claude Code (/mcp)"),
     ToolProfile("context7", "Context7 docs MCP", DOMAIN_SESSION, "mcp", ["documentation"],
                 setup="connect Context7 in Claude Code for current official library docs"),
-    ToolProfile("api_runner_internal", "Internal API runner", DOMAIN_INTERNAL, "internal",
-                ["api_testing", "openapi"], notes="in-repo OpenAPI/endpoint test runner"),
+    ToolProfile("api_runner_internal", "API Contract Importer & Test Generator", DOMAIN_INTERNAL,
+                "internal", ["api_testing", "openapi"],
+                notes="imports an OpenAPI/Postman contract and generates Playwright API test stubs "
+                      "(planning artifacts); it does NOT execute live API endpoints"),
     ToolProfile("postman_mcp", "Postman MCP", DOMAIN_EXTERNAL_SETUP, "mcp", ["api_testing", "postman"],
                 fallback_id="api_runner_internal", setup="connect Postman MCP + authorize your workspace"),
     ToolProfile("sentry_mcp", "Sentry MCP", DOMAIN_EXTERNAL_SETUP, "mcp", ["error_analysis"],

@@ -102,8 +102,9 @@ def _api_runner_health(module: Any) -> Tuple[bool, str]:
     gen = APITestGenerator().generate(report)
     if gen.total_test_stubs < 1:
         return False, "generator produced no test stubs for a safe endpoint"
-    return True, ("APIContractImporter parsed a fixture OpenAPI (1 safe endpoint) and "
-                  "APITestGenerator produced stubs in-process")
+    return True, ("Fixture Verified: APIContractImporter parsed a fixture OpenAPI (1 safe endpoint) "
+                  "and APITestGenerator produced test stubs in-process. This imports contracts and "
+                  "generates tests; it does not execute live API endpoints.")
 
 
 def _playwright_runner_health(module: Any) -> Tuple[bool, str]:

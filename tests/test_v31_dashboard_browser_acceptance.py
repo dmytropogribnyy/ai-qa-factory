@@ -131,6 +131,66 @@ def test_ui_guarded_mutation_advances_lifecycle(tmp_path):
         server.shutdown()
 
 
+def test_project_detail_tabs_selection_and_keyboard(tmp_path):
+    # P1: accessible tabs - exactly one visible panel, click + arrow-key selection, deep link.
+    _seed(tmp_path)
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url + "/work/alpha", wait_until="load")
+            # Exactly one tabpanel visible initially (Summary).
+            visible = page.eval_on_selector_all(
+                "[role=tabpanel]", "els => els.filter(e => !e.hidden).map(e => e.id)")
+            assert visible == ["panel-summary"]
+            assert page.get_by_role("tab", name="Summary").get_attribute("aria-selected") == "true"
+            # Click the Plan tab -> only Plan visible.
+            page.get_by_role("tab", name="Plan").click()
+            visible = page.eval_on_selector_all(
+                "[role=tabpanel]", "els => els.filter(e => !e.hidden).map(e => e.id)")
+            assert visible == ["panel-plan"]
+            assert "tab=plan" in page.url          # deep-link/query is updated
+            # Arrow-key navigation moves selection (Plan -> Results).
+            page.get_by_role("tab", name="Plan").focus()
+            page.keyboard.press("ArrowRight")
+            visible = page.eval_on_selector_all(
+                "[role=tabpanel]", "els => els.filter(e => !e.hidden).map(e => e.id)")
+            assert visible == ["panel-results"]
+            # A deep link selects the tab server-side.
+            page.goto(url + "/work/alpha?tab=delivery", wait_until="load")
+            visible = page.eval_on_selector_all(
+                "[role=tabpanel]", "els => els.filter(e => !e.hidden).map(e => e.id)")
+            assert visible == ["panel-delivery"]
+            browser.close()
+    finally:
+        server.shutdown()
+
+
+def test_vscode_handoff_link_is_encoded_on_detail(tmp_path):
+    _seed(tmp_path)
+    # Drive the project to READY_TO_EXECUTE so the "Open in VS Code" handoff is offered.
+    import json as _json
+    ws = tmp_path / "alpha" / "40_ark_work"
+    state = _json.loads((ws / "WORK_RUN_STATE.json").read_text(encoding="utf-8"))
+    # It is DELIVERY_PREPARED from _seed; use a fresh project at READY_TO_EXECUTE instead.
+    ClientWorkService(FixedClock(), SequentialIds(), output_dir=str(tmp_path)).analyze(_BRIEF, "exec1")
+    svc = WorkExecutionService(FixedClock(), SequentialIds(), output_dir=str(tmp_path))
+    svc.approve("exec1", reviewer="op")   # -> READY_TO_EXECUTE
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url + "/work/exec1", wait_until="load")
+            href = page.get_by_role("link", name="Open in VS Code").get_attribute("href")
+            assert href.startswith("vscode://file/") and " " not in href and "\\" not in href
+            browser.close()
+    finally:
+        server.shutdown()
+    assert state["status"] == "DELIVERY_PREPARED"
+
+
 def test_narrow_viewport_has_no_horizontal_overflow(tmp_path):
     _seed(tmp_path)
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
