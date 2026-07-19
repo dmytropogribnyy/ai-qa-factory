@@ -137,6 +137,10 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/services":
                 from core.orchestration.service_capability import snapshot as _svc_snap
                 return self._json(200, _svc_snap())
+            if path == "/api/toolgap":
+                from core.orchestration.tool_gap import plan_tools, snapshot as _gap_snap
+                sid = (q.get("service") or [""])[0]
+                return self._json(200, plan_tools(sid).to_dict() if sid else _gap_snap())
             if path == "/tools":
                 return self._html(200, self._tools_page())
             if path == "/api/projects":
