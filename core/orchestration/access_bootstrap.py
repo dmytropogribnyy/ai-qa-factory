@@ -126,6 +126,27 @@ class AccessBootstrap:
              "`claude -p \"ok\" --output-format json --max-budget-usd 0.05`"
              if claude_v else "install Claude Code and authenticate")))
 
+        # Honest Claude WORKER readiness (Ready / Needs Operator / Unavailable): reflects what the
+        # production ClaudeWorkerExecutor can actually do — it resolves a NATIVE claude executable
+        # (never a .cmd/.bat/.ps1 wrapper, which corrupts the multi-line prompt on Windows). Reuses
+        # the version probe above; no extra subprocess.
+        w_path, w_reason = self._claude_worker_bin()
+        if w_path and claude_v:
+            w_ready, w_note, w_action = "Ready", f"native worker executable resolved ({claude_v})", ""
+        elif w_path and not claude_v:
+            w_ready = NEEDS_OPERATOR
+            w_note, w_action = "executable resolved but `claude --version` did not run", \
+                "verify the Claude Code install + authentication"
+        elif w_reason:
+            w_ready, w_note, w_action = NEEDS_OPERATOR, w_reason, w_reason
+        else:
+            w_ready, w_note, w_action = UNAVAILABLE, "no Claude executable found", \
+                "install Claude Code (or set AIQA_CLAUDE_BIN to the native claude.exe)"
+        out.append(Integration(
+            "claude_worker", "Claude Worker (autonomous)",
+            "production ClaudeWorkerExecutor: edits files, returns JSON + session id, budget/timeout, resume",
+            w_ready, "local", "operator", w_note, w_action, secret_ref="AIQA_CLAUDE_BIN"))
+
         docker_v = probes["docker"]
         out.append(Integration(
             "docker", "Docker", "reproducible test environments + containerized DB smoke",
@@ -179,6 +200,15 @@ class AccessBootstrap:
                 cid, name, purpose, DECLARED, "session", "operator",
                 "declared; connect in Claude Code (/mcp) to use",
                 "connect the MCP in Claude Code (/mcp) if a task needs it"))
+        # Desktop Commander is OPTIONAL operator tooling for Claude Code in VS Code (launching
+        # bounded processes / file ops). AI QA Factory, ClaudeWorkerExecutor, CI and the Dashboard
+        # work fully WITHOUT it; it is never a runtime dependency and never exposes shell via the UI.
+        out.append(Integration(
+            "desktop_commander", "Desktop Commander MCP",
+            "optional operator tooling (bounded process/file ops in Claude Code); NOT a dependency",
+            DECLARED, "session (local scope)", "operator",
+            "optional; verify with `claude mcp list` / `/mcp` (connected + healthy) if you use it",
+            "if desired: verify it is connected in Claude Code; AI QA Factory does not require it"))
 
         # --- Gmail test identity (read-only readiness; never sends) ---
         gmail = self._gmail_status()
@@ -235,6 +265,15 @@ class AccessBootstrap:
             out.append(Integration(cid, name, purpose, NEEDS_CLIENT, scope, "client",
                                    "not provided", action))
         return out
+
+    def _claude_worker_bin(self):
+        """Resolve the native worker executable via the worker's own portable resolver (same
+        which/env), so the dashboard's worker readiness matches what execution will actually use."""
+        try:
+            from core.orchestration.claude_worker import ClaudeCodeWorker
+            return ClaudeCodeWorker(which=self._which, env=self._env)._resolve_claude_bin()
+        except Exception:
+            return None, ""
 
     def _gmail_status(self) -> Dict[str, Any]:
         try:

@@ -1647,9 +1647,9 @@ function startCampaign(){{
 
             def _kind(r):
                 return {"Runtime Verified": "ok", "Authenticated": "ok", "Live Verified": "ok",
-                        "Installed": "", "Connected": "", "Needs Operator": "attention",
-                        "Needs Client": "attention", "Blocked": "blocked",
-                        "Unavailable": "blocked"}.get(r, "")
+                        "Ready": "ok", "Installed": "", "Connected": "", "Declared": "",
+                        "Needs Operator": "attention", "Needs Client": "attention",
+                        "Blocked": "blocked", "Unavailable": "blocked"}.get(r, "")
 
             def _envvars(i):
                 ref = (i.get("secret_ref") or "").strip()

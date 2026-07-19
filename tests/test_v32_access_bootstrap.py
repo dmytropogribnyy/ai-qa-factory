@@ -97,3 +97,18 @@ def test_upwork_intake_is_manual_only():
     for banned in ("scraping", "unofficial API", "automated browser form submission"):
         assert banned in u.check_result
     assert "manual" in u.setup_action.lower()
+
+
+def test_claude_worker_readiness_reflects_native_resolution():
+    # A native (non-wrapper) executable + a working version probe => the worker is Ready.
+    ready = _by_id(_boot(present=("claude",), claude="2.1.198 (Claude Code)").inspect())["claude_worker"]
+    assert ready.readiness == "Ready" and ready.owner == "operator"
+    # No claude at all => Unavailable with an exact action (never a false Ready).
+    gone = _by_id(_boot().inspect())["claude_worker"]
+    assert gone.readiness == "Unavailable" and gone.setup_action
+
+
+def test_desktop_commander_is_optional_operator_tooling():
+    dc = _by_id(_boot().inspect())["desktop_commander"]
+    assert dc.owner == "operator" and dc.readiness == "Declared"
+    assert "NOT a dependency" in dc.purpose and "does not require" in dc.setup_action

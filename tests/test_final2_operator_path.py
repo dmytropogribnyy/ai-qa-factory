@@ -160,6 +160,10 @@ def test_cli_send_path_uses_gmail_with_exact_payload(tmp_path, monkeypatch):
                                    identity_prover=lambda: _EXPECTED))
         return reg
     monkeypatch.setattr("core.scout.comms.runtime.build_runtime_provider_registry", fake_factory)
+    # Freeze cmd_send's clock to the seed time so the approval-TTL check is deterministic (otherwise
+    # the fixed-timestamp approval "expires" once wall-clock passes its 24h window — a latent
+    # time-bomb unrelated to what this test asserts about the Gmail payload).
+    monkeypatch.setattr("core.scout.comms.cli._now", lambda: _NOW)
     from argparse import Namespace
     args = Namespace(db=db_path, draft_revision=rid, provider="gmail_personal", approve_send=True,
                      approval_id=f"ap-{rid}", reviewer="human", confirm_recipient=_RECIP, output="outputs")

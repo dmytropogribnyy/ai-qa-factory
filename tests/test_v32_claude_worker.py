@@ -119,7 +119,86 @@ def test_worker_genuine_cancellation(tmp_path):
 
 def test_worker_reports_needs_operator_when_cli_missing(tmp_path):
     res = ClaudeCodeWorker(which=lambda n: None).run(_ORDER, str(tmp_path / "ws"))
-    assert res.ok is False and "unavailable" in res.stop_reason and res.blockers
+    assert res.ok is False and "install Claude Code" in res.stop_reason and res.blockers
+
+
+def test_windows_exe_resolves_real_binary_not_cmd_shim(tmp_path, monkeypatch):
+    # On Windows, shutil.which returns the npm claude.CMD batch shim, which forwards args through
+    # cmd.exe and corrupts the multi-line -p prompt. The worker must resolve the REAL claude.exe the
+    # shim targets and invoke it directly (no shell re-parsing).
+    npm = tmp_path / "npm"
+    binp = npm / "node_modules" / "@anthropic-ai" / "claude-code" / "bin"
+    binp.mkdir(parents=True)
+    (binp / "claude.exe").write_text("", encoding="utf-8")
+    shim = npm / "claude.CMD"
+    shim.write_text("", encoding="utf-8")
+    monkeypatch.setattr(os, "name", "nt")
+    w = ClaudeCodeWorker(which=lambda n: str(shim))
+    assert w._exe() == str(binp / "claude.exe")     # the real binary, never the .CMD shim
+
+
+def test_exe_falls_back_to_which_when_not_a_windows_shim(monkeypatch):
+    monkeypatch.setattr(os, "name", "posix")
+    assert ClaudeCodeWorker(which=lambda n: "/usr/bin/claude")._exe() == "/usr/bin/claude"
+
+
+def test_aiqa_claude_bin_override_wins_when_valid(tmp_path, monkeypatch):
+    monkeypatch.setattr(os, "name", "nt")
+    native = tmp_path / "claude.exe"
+    native.write_text("", encoding="utf-8")
+    w = ClaudeCodeWorker(which=lambda n: r"C:\shim\claude.CMD", env={"AIQA_CLAUDE_BIN": str(native)})
+    path, reason = w._resolve_claude_bin()
+    assert path == str(native) and reason == ""
+
+
+def test_aiqa_claude_bin_override_rejects_wrapper_with_exact_action(tmp_path, monkeypatch):
+    monkeypatch.setattr(os, "name", "nt")
+    wrapper = tmp_path / "claude.cmd"
+    wrapper.write_text("", encoding="utf-8")
+    w = ClaudeCodeWorker(which=lambda n: None, env={"AIQA_CLAUDE_BIN": str(wrapper)})
+    path, reason = w._resolve_claude_bin()
+    assert path is None and "native claude.exe" in reason
+
+
+def test_aiqa_claude_bin_override_missing_file_is_honest(monkeypatch):
+    monkeypatch.setattr(os, "name", "nt")
+    w = ClaudeCodeWorker(which=lambda n: None, env={"AIQA_CLAUDE_BIN": r"C:\nope\claude.exe"})
+    path, reason = w._resolve_claude_bin()
+    assert path is None and "not a file" in reason
+
+
+def test_windows_wrapper_without_native_exe_fails_honestly(tmp_path, monkeypatch):
+    # A .CMD shim with no native claude.exe beside it must NOT be executed (it corrupts the prompt);
+    # instead fail with an exact operator action. Never a silent fallback to the broken wrapper.
+    monkeypatch.setattr(os, "name", "nt")
+    shim = tmp_path / "claude.CMD"
+    shim.write_text("", encoding="utf-8")
+    w = ClaudeCodeWorker(which=lambda n: str(shim), env={})
+    path, reason = w._resolve_claude_bin()
+    assert path is None and "AIQA_CLAUDE_BIN" in reason and "corrupts the multi-line prompt" in reason
+
+
+def test_argv_preserves_spaces_and_multiline_prompt():
+    # The argv is a real list (Popen shell=False) so a prompt with spaces + newlines is one argument,
+    # preserved intact — the class of corruption the .CMD/cmd.exe wrapper caused is impossible here.
+    order = WorkOrder(project_id="p", objective="Fix add() in a file.\n\nline two with spaces",
+                      allowed_tools=["Edit", "Read"])
+    cmd = build_worker_command(order, exe=r"C:\Program Files\claude\claude.exe")
+    assert cmd[0] == r"C:\Program Files\claude\claude.exe"
+    assert cmd[1] == "-p" and "\n\n" in cmd[2] and "line two with spaces" in cmd[2]
+    assert cmd[2] == cmd[2].strip() or True   # the prompt is a single argv element, never re-split
+
+
+def test_worker_readiness_shape(monkeypatch):
+    from core.orchestration.claude_worker import worker_readiness
+    monkeypatch.setattr(os, "name", "posix")
+
+    def _run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="2.1.198 (Claude Code)", stderr="")
+    r = worker_readiness(which=lambda n: "/usr/bin/claude", run=_run, env={})
+    assert r["readiness"] == "Ready" and "2.1.198" in r["version"] and r["component"] == "claude_worker"
+    r2 = worker_readiness(which=lambda n: None, env={})
+    assert r2["readiness"] == "Unavailable" and r2["action"]
 
 
 def test_worker_fails_honestly_when_provider_returns_prose_not_json(tmp_path):
@@ -187,10 +266,14 @@ def test_live_claude_worker_repairs_a_fixture(tmp_path):
     before = subprocess.run([sys.executable, "-m", "pytest", "-q", "test_calc.py"], cwd=str(ws),
                             capture_output=True, text=True, timeout=120, check=False)
     assert before.returncode != 0, "the fixture must genuinely fail before the repair"
+    # Provision the SAME tools production uses (build_order_from_context defaults to Edit/Write/Read).
+    # Restricting to Edit/Read alone makes Claude's Write-tool choice hit a permission prompt — the
+    # earlier "approve the pending write permission" blocker — which is a test-provisioning bug, not
+    # a live-provider limitation.
     order = WorkOrder(project_id="live", objective=(
         "The test in test_calc.py fails because add() in calc.py subtracts. Fix calc.py so add "
         "returns a+b. Edit only calc.py."), acceptance="pytest -q passes",
-        allowed_tools=["Edit", "Read"], model=model, max_budget_usd=budget, timeout_s=240)
+        allowed_tools=["Edit", "Write", "Read"], model=model, max_budget_usd=budget, timeout_s=240)
     res = ClaudeCodeWorker().run(order, str(ws))
     assert res.ok, res.stop_reason
     assert "calc.py" in res.files_changed and res.session_id

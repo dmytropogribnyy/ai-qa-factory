@@ -137,26 +137,76 @@ class ClaudeCodeWorker:
     is_acceptance_fixture = False
     executor_id = "worker:claude-code"
 
-    def __init__(self, *, which=shutil.which, run=subprocess.run, popen=subprocess.Popen) -> None:
+    def __init__(self, *, which=shutil.which, run=subprocess.run, popen=subprocess.Popen,
+                 env: Optional[Dict[str, str]] = None) -> None:
         self._which = which
         self._run = run
         self._popen = popen
+        self._env = env if env is not None else dict(os.environ)
+
+    # Windows shell wrappers npm installs alongside the native binary. Invoking these via subprocess
+    # goes through cmd.exe/powershell, which re-parses the multi-line ``-p`` prompt and corrupts it,
+    # so the CLI silently ignores ``--permission-mode`` / ``--output-format`` and drops into an
+    # interactive "approve the pending write" prose flow (proven by an A/B test: native exe passes,
+    # .CMD shim fails, all else identical). We therefore never execute these for the worker.
+    _WIN_WRAPPER_SUFFIXES = (".cmd", ".bat", ".ps1")
+
+    def _resolve_claude_bin(self) -> tuple[Optional[str], str]:
+        """Portably resolve a NATIVE Claude executable to invoke directly (no shell re-parsing).
+        Order: (1) an explicit ``AIQA_CLAUDE_BIN`` operator override (validated); (2) ``which`` on
+        POSIX (its shim exec's the native binary cleanly); (3) on Windows, the native ``claude.exe``
+        that the resolved npm wrapper targets. Never hard-codes a user path and never executes an
+        arbitrary batch file. Returns ``(path, "")`` on success, or ``(None, reason)`` with an exact
+        operator action when no trusted native executable can be resolved."""
+        override = (self._env.get("AIQA_CLAUDE_BIN") or "").strip()
+        if override:
+            p = Path(override)
+            if not p.is_file():
+                return None, f"AIQA_CLAUDE_BIN is set but is not a file: {override}"
+            if os.name == "nt" and p.suffix.lower() in self._WIN_WRAPPER_SUFFIXES:
+                return None, ("AIQA_CLAUDE_BIN points to a shell wrapper "
+                              f"({p.suffix}); set it to the native claude.exe (a .cmd/.bat/.ps1 "
+                              "wrapper corrupts the multi-line prompt via cmd.exe)")
+            return str(p), ""
+        found = self._which("claude")
+        if not found:
+            return None, ""                              # simply not installed (detect() handles it)
+        if os.name != "nt":
+            return str(found), ""                        # POSIX shim exec's the native binary cleanly
+        fp = Path(found)
+        if fp.suffix.lower() in self._WIN_WRAPPER_SUFFIXES:
+            native = fp.parent / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
+            if native.is_file():
+                return str(native), ""                   # derived from where `which` found the wrapper
+            return None, ("resolved a Windows shell wrapper "
+                          f"(claude{fp.suffix}) that corrupts the multi-line prompt via cmd.exe, and "
+                          "the native claude.exe was not found beside it; set AIQA_CLAUDE_BIN to the "
+                          "native Anthropic claude executable")
+        return str(found), ""                            # `which` already returned a native executable
 
     def _exe(self) -> Optional[str]:
-        # Resolve the real executable (on Windows shutil.which returns the npm claude.CMD shim;
-        # subprocess must invoke the resolved path/name, not the bare "claude").
-        return self._which("claude")
+        return self._resolve_claude_bin()[0]
 
     def detect(self) -> Dict[str, Any]:
-        exe = self._exe()
+        """Honest worker readiness: ``Ready`` (a native executable resolves and ``--version`` runs),
+        ``Needs Operator`` (installed but not worker-usable, e.g. a Windows wrapper without the native
+        exe, or ``--version`` fails), or ``Unavailable`` (not installed). Never runs a shell wrapper."""
+        exe, reason = self._resolve_claude_bin()
         if not exe:
-            return {"available": False, "version": ""}
+            return {"available": False, "version": "", "exe": "",
+                    "readiness": ("Needs Operator" if reason else "Unavailable"),
+                    "reason": reason, "action": (reason or "install Claude Code and authenticate")}
         try:
             p = self._run([exe, "--version"], capture_output=True, text=True, timeout=15,
                           check=False)
-            return {"available": p.returncode == 0, "version": (p.stdout or "").strip()}
-        except (OSError, subprocess.SubprocessError):
-            return {"available": False, "version": ""}
+            ok = p.returncode == 0
+            return {"available": ok, "version": (p.stdout or "").strip(), "exe": exe,
+                    "readiness": ("Ready" if ok else "Needs Operator"),
+                    "reason": ("" if ok else "`claude --version` did not succeed"),
+                    "action": ("" if ok else "verify the Claude Code install + authentication")}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"available": False, "version": "", "exe": exe, "readiness": "Needs Operator",
+                    "reason": f"{type(exc).__name__}", "action": "verify the Claude Code install"}
 
     def run(self, order: WorkOrder, workspace: str, *, resume_session: str = "",
             cancel: Optional[threading.Event] = None) -> WorkerResult:
@@ -173,7 +223,8 @@ class ClaudeCodeWorker:
         raw_out, raw_err = "", ""
         parsed = _ResultJson()
         if not det.get("available"):
-            stop_reason = "claude CLI unavailable (Needs Operator: install + authenticate)"
+            stop_reason = (det.get("reason") or det.get("action")
+                           or "claude CLI unavailable (Needs Operator: install + authenticate)")
         else:
             returncode, raw_out, raw_err, stop_reason = self._run_controlled(cmd, ws, order, cancel)
             parsed = _parse_result_json(raw_out)
@@ -296,6 +347,17 @@ class ClaudeCodeWorker:
         tmp.write_text(json.dumps(session, indent=2, sort_keys=True), encoding="utf-8")
         import os
         os.replace(tmp, path)                       # atomic
+
+
+def worker_readiness(*, which=shutil.which, run=subprocess.run,
+                     env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Read-only Claude Worker readiness for the dashboard (Ready / Needs Operator / Unavailable).
+    Bounded (one `--version` probe); never executes a Work Order and never a shell wrapper."""
+    d = ClaudeCodeWorker(which=which, run=run, env=env).detect()
+    return {"component": "claude_worker", "readiness": d.get("readiness", "Unavailable"),
+            "version": d.get("version", ""), "reason": d.get("reason", ""),
+            "action": d.get("action", ""),
+            "exe_kind": (Path(d["exe"]).suffix.lower() or ".exe") if d.get("exe") else ""}
 
 
 @dataclass
