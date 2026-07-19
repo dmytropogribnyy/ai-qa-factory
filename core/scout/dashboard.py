@@ -1056,10 +1056,11 @@ function startCampaign(){{
                      f'any_live_accepted={data["any_live_accepted"]})</caption>'
                      f'<tr><th>Tool</th><th>Capability</th><th>Level</th><th>Readiness</th>'
                      f'<th>Reason</th><th>Setup action</th></tr>{rows}</table>')
-            body = (f'<h1>Tools</h1><p class="muted">A test file is never a runtime binding; a binding '
-                    f'present is "Binding Available"; a checked runtime is "Runtime Available"; nothing '
-                    f'is "Live Verified" without a real live acceptance.</p>{table}')
-            return _page("AI QA Factory — Tools", "/tools", body)
+            body = (f'<h1>Tools</h1><p class="muted">Honest tool readiness (no live MCP/network call). '
+                    f'A test file is never a runtime binding; a binding present is "Binding Available"; '
+                    f'a checked runtime is "Runtime Available"; nothing is "Live Verified" without a '
+                    f'real live acceptance.</p>{table}')
+            return _page("AI QA Factory — Tools · Tool readiness", "/tools", body)
 
         def _docs_page(self) -> str:
             docs = [("Product contract", "PRODUCT_CONTRACT_V3.md"),
