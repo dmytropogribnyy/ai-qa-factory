@@ -79,6 +79,11 @@ def _try_radar(tmp_path):
 
 
 def test_capture_dashboard_screenshots(tmp_path):
+    # Start from a clean directory so stale PNGs from an earlier local run can never inflate the
+    # captured/reported count. The hosted CI artifact reflects exactly what this run produces.
+    import shutil
+    if _OUT.exists():
+        shutil.rmtree(_OUT)
     _OUT.mkdir(parents=True, exist_ok=True)
     _seed(tmp_path)
     summary = _try_radar(tmp_path)

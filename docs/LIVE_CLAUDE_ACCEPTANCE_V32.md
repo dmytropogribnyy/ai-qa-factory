@@ -1,10 +1,19 @@
 # Live Claude worker acceptance (v3.2, items 15-17)
 
 This records the **genuine live-provider evidence** for the bounded autonomous worker and the exact
-operator command to reproduce the full production-adapter acceptance. It is honest about what ran
-live here versus what requires a clean (non-nested) operator shell.
+operator command to reproduce the full production-adapter acceptance. Two distinct claims are kept
+separate on purpose:
 
-## What was proven live in this environment
+| Claim | Status |
+|---|---|
+| **Direct Claude CLI provider command** (the exact argv `build_worker_command` produces) | **Live Verified** — a real failing fixture was repaired below |
+| **Production `ClaudeWorkerExecutor` full clean-shell acceptance** (adapter → lifecycle → resume) | **Needs Operator** — until `test_live_claude_worker_repairs_a_fixture` passes in a clean, non-nested shell |
+
+The full production adapter is **not** described as Live Verified before that gated test succeeds:
+inside a parent Claude Code session the operator's hooks force an interactive permission prompt, so
+`acceptEdits` cannot apply non-interactively (details below).
+
+## What was proven live in this environment (direct CLI → Live Verified)
 
 A real failing fixture was repaired by the **live, non-fixture** Claude Code CLI (the same command
 `build_worker_command` produces), fail-before / pass-after:

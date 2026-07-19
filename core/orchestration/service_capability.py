@@ -182,13 +182,21 @@ SERVICE_CAPABILITIES: List[ServiceCapability] = [
        "scenario -> automated test -> evidence traceability without redundant non-executable features.",
        [PLAN_ONLY, AUTONOMOUS_LOCAL], ["requirements / acceptance criteria"], ["python", "node"],
        ["client requirements"],
-       "Fixture Verified",
+       "Partially Verified",          # internal profile is verified; the real Cucumber runtime is not
        ["tests/test_v32_service_acceptance.py::bdd (production service_profiles.generate_bdd_suite + "
         "run_bdd_suite: requirements -> executable scenarios -> pass/fail + traceability)"],
-       ["avoid redundant feature files with no executable value"],
+       ["the internal Python profile is a bounded callback runner; the actual Cucumber/client "
+        "framework is NOT verified here and stays Needs Client until run on the client's stack"],
        "generate executable scenarios from the requirements; real client work needs the client repo",
        "provide the requirements + the target framework to generate executable BDD scenarios",
-       required_access_ids=["client_repository"]),
+       required_access_ids=["client_repository"],
+       components=[
+           _Cmp("bdd_internal", "Internal executable BDD profile", "Fixture Verified",
+                "service_profiles.generate_bdd_suite + run_bdd_suite genuinely execute scenarios "
+                "with requirement traceability", ""),
+           _Cmp("cucumber", "Cucumber / client framework", "Needs Client",
+                "the real Cucumber runtime is not provisioned or run here",
+                "provide the client's Cucumber/BDD framework to run scenarios on the real stack")]),
     _C("website_qa", "Website QA check",
        "Critical navigation/flows, forms (no unauthorized submission), responsive behavior, browser "
        "runtime errors, broken assets, accessibility, safe performance diagnostics, severity + repro.",

@@ -1702,17 +1702,20 @@ function startCampaign(){{
     return _Handler
 
 
+# The campaign form uses the shared design-system classes/tokens (a themed .card, tokenised
+# textarea/inputs/checkbox, and a .btn primary) so nothing is a default-white control in Dark mode.
+# Layout (max-width, field widths) and every safety statement are preserved (no redesign).
 _START_PANEL_HTML = """<h2>Start a bounded read-only campaign</h2>
-<div style="border:1px solid #ccc;padding:1rem;border-radius:6px;max-width:640px">
+<div class="card" style="max-width:640px">
 <p>Runs the existing bounded, read-only Scout engine over 1&ndash;10 <strong>public https</strong>
 seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. Non-public / private
 / loopback targets are rejected.</p>
 <p><label>Public seed URLs (one per line):<br>
-<textarea id="seeds" rows="4" style="width:100%" placeholder="https://example.com/"></textarea></label></p>
+<textarea id="seeds" rows="4" placeholder="https://example.com/"></textarea></label></p>
 <p><label>Campaign name: <input id="campaign" value="adhoc"></label>
 &nbsp;<label>Max pages/site: <input id="maxpages" type="number" value="5" min="1" max="50" style="width:5rem"></label></p>
 <p><label><input type="checkbox" id="confirm"> I confirm this is an authorized, bounded, read-only scan.</label></p>
-<p><button onclick="startCampaign()">Start campaign</button></p>
+<p><button class="btn primary" onclick="startCampaign()">Start campaign</button></p>
 </div>"""
 
 
@@ -1773,7 +1776,11 @@ tr:last-child td{border-bottom:none}
 .btn:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .chip{display:inline-flex;gap:6px;align-items:center;padding:2px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;font-size:12px}
 .empty{padding:2rem;text-align:center;color:var(--muted)}
-input,select{padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--surface);color:var(--text)}
+input,select,textarea{padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--input);color:var(--text);font-family:inherit;max-width:100%}
+textarea{width:100%;resize:vertical}
+input[type=checkbox]{accent-color:var(--accent);width:auto;vertical-align:middle}
+::placeholder{color:var(--muted);opacity:1}
+textarea:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 pre,code{background:var(--code);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 pre{padding:.7rem;border-radius:6px;overflow:auto;white-space:pre-wrap;font-size:12px;border:1px solid var(--border)}
 code{padding:1px 5px;border-radius:4px;font-size:12px}

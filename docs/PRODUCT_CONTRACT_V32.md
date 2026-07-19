@@ -48,8 +48,12 @@ as a live capability.
 ## Live provider execution (honest)
 
 The Claude Code CLI is detected (v2.1.198) and the bounded worker adapter is implemented and
-fixture/injected verified. A genuine live headless run is **operator-gated**: attempted from within
-this session on Windows via the npm shim it did not complete within the 180s bound (a nested-
-recursion runtime blocker, not an auth blocker). Verify in a clean shell:
-`claude -p "<work order>" --output-format json --max-turns 4 --permission-mode acceptEdits
---allowedTools Edit Read` (or run `pytest -k live_claude_worker` with `AIQA_CLAUDE_LIVE=1`).
+fixture/injected verified. The **direct Claude CLI provider command is Live Verified** (a real
+failing fixture was repaired: fail-before/pass-after, real session id + cost). The **full production
+`ClaudeWorkerExecutor` clean-shell acceptance is Needs Operator** until its gated test passes: inside
+a parent Claude Code session the operator's hooks force an interactive permission prompt, so
+`acceptEdits` does not apply non-interactively. Verify in a clean, NON-NESTED shell with flags that
+the installed CLI supports (verified via `claude --help`, consistent with `build_worker_command`):
+`claude -p "<work order>" --output-format json --permission-mode acceptEdits --allowedTools Edit Read
+--max-budget-usd 0.60` (or run `pytest -k live_claude_worker` with `AIQA_CLAUDE_LIVE=1`; see
+`docs/LIVE_CLAUDE_ACCEPTANCE_V32.md`).

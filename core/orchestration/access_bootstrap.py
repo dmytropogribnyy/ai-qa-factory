@@ -121,8 +121,9 @@ class AccessBootstrap:
             "claude_code", "Claude Code CLI", "autonomous bounded execution worker",
             INSTALLED if claude_v else NEEDS_OPERATOR, "local", "operator",
             (f"detected: {claude_v}" if claude_v else "claude CLI not detected"),
-            ("verify auth + a tiny headless run: "
-             "`claude -p \"ok\" --output-format json --max-turns 1`"
+            ("verify auth + a tiny bounded headless run (flags verified via `claude --help`, "
+             "consistent with the worker): "
+             "`claude -p \"ok\" --output-format json --max-budget-usd 0.05`"
              if claude_v else "install Claude Code and authenticate")))
 
         docker_v = probes["docker"]

@@ -220,6 +220,36 @@ def test_vscode_handoff_link_is_encoded_on_detail(tmp_path):
     assert state["status"] == "DELIVERY_PREPARED"
 
 
+def test_scout_form_is_themed_and_axe_clean_both_themes(tmp_path):
+    # v3.2 item 3: the Scout campaign form (textarea / inputs / checkbox / Start button) uses the
+    # design-system tokens — no default-white control in Dark — and is axe-clean in BOTH themes,
+    # with every safety statement preserved.
+    _seed(tmp_path)
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    axe = Axe()
+    _WHITE = ("rgb(255, 255, 255)", "rgba(0, 0, 0, 0)")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url + "/scout", wait_until="load")
+            assert page.locator("#seeds").count() == 1 and page.locator("#confirm").count() == 1
+            assert "never sends email, submits forms, solves CAPTCHAs" in page.content()  # safety kept
+            # Dark: the textarea + Start button are NOT default white.
+            ta_bg = page.evaluate("()=>getComputedStyle(document.getElementById('seeds')).backgroundColor")
+            btn_bg = page.evaluate(
+                "()=>getComputedStyle(document.querySelector('.card .btn.primary')).backgroundColor")
+            assert ta_bg not in _WHITE and btn_bg not in _WHITE, (ta_bg, btn_bg)
+            for _ in range(2):
+                serious = _serious(axe.run(page).get("violations", []))
+                assert not serious, [v["id"] for v in serious]
+                page.evaluate("()=>localStorage.setItem('aiqa_theme','light')")
+                page.reload(wait_until="load")
+            browser.close()
+    finally:
+        server.shutdown()
+
+
 def test_legacy_run_bound_root_is_themed_and_axe_clean(tmp_path):
     # v3.2 item 26/31: the legacy run-bound Scout root (rendered at / when a Scout run is attached)
     # is Pro-Dark themed (no default-white controls), free of serious/critical a11y violations in

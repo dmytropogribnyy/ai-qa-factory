@@ -70,6 +70,17 @@ class WorkExecutionService:
     def _ws(self, pid: str) -> Path:
         return self._out / self._safe_pid(pid) / _ARK
 
+    def workspace_dir(self, pid: str) -> Path:
+        """The confined project workspace. Validates the project id via the single
+        ``validate_project_id`` contract FIRST (raises ``WorkExecutionError`` for any unsafe id),
+        so a caller never composes an output path from an unvalidated id."""
+        return self._ws(pid)
+
+    def project_exists(self, pid: str) -> bool:
+        """True only for a genuinely-existing project. Validates the id first (raises for unsafe),
+        so this can gate a write without ever constructing a path from an unvalidated id."""
+        return (self._ws(pid) / "WORK_RUN_STATE.json").exists()
+
     def _confine(self, ws: Path, rel: str) -> Path:
         """Resolve ``rel`` under the workspace, refusing any path that escapes it (traversal-safe)."""
         target = (ws / rel).resolve()

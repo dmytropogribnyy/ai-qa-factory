@@ -328,12 +328,14 @@ def run_client_work(args) -> int:
         elif args.action in ("worker-start", "worker-resume"):
             # Bounded autonomous execution via the real Claude Code worker, built ONLY from the
             # persisted project state. Confined to the workspace; never a prompt/command from a caller.
+            # The project id is validated by workspace_dir BEFORE any path op (rejects traversal,
+            # separators, absolute paths, Windows reserved names, control chars).
             from core.orchestration.claude_worker import ClaudeWorkerExecutor
-            ws = Path(get_settings().output_dir) / pid / "40_ark_work"
+            ws = svc.workspace_dir(pid)                       # validates id first (raises for unsafe)
             (ws / "WORKER_CANCEL.json").unlink(missing_ok=True)   # clear any stale cancel marker
             executor = ClaudeWorkerExecutor(resume=(args.action == "worker-resume"),
                                             timeout_s=int(getattr(args, "timeout", 300) or 300))
-            state, outcome = svc.execute(pid, executor)
+            state, outcome = svc.execute(pid, executor)      # requires the project to exist + approval
             if outcome.blockers:
                 print("Worker BLOCKED: " + "; ".join(outcome.blockers), file=_sys.stderr)
                 return 2
@@ -341,8 +343,8 @@ def run_client_work(args) -> int:
                   f"State {state.status}. Now: validate (a real command), then review.")
         elif args.action == "worker-status":
             import json as _json
-            ws = Path(get_settings().output_dir) / pid / "40_ark_work"
-            v = svc.status(pid)
+            v = svc.status(pid)                              # validates id + requires the project exists
+            ws = svc.workspace_dir(pid)                       # confined workspace (already validated)
             print(f"Project {pid}: {v.status} ({v.progress}%). Next: {v.next_action}")
             sess_path = ws / "EXECUTION_SESSION.json"
             if sess_path.exists():
@@ -357,8 +359,13 @@ def run_client_work(args) -> int:
         elif args.action == "worker-cancel":
             import json as _json
             from datetime import datetime, timezone
-            ws = Path(get_settings().output_dir) / pid / "40_ark_work"
-            ws.mkdir(parents=True, exist_ok=True)
+            # Validate the id AND require the project to genuinely exist before writing anything, so a
+            # rejected/nonexistent request never creates a workspace, marker, or any other file.
+            if not svc.project_exists(pid):
+                print(f"ERROR: no such project '{pid}' (nothing to cancel; run analyze-job first)",
+                      file=_sys.stderr)
+                return 2
+            ws = svc.workspace_dir(pid)                       # confined workspace (already validated)
             (ws / "WORKER_CANCEL.json").write_text(
                 _json.dumps({"requested_at": datetime.now(timezone.utc).isoformat()}),
                 encoding="utf-8")

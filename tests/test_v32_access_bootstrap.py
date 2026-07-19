@@ -81,6 +81,16 @@ def test_gmail_test_inbox_names_exact_env_vars_read_only_when_unauthenticated():
     assert "=" not in g.secret_ref and "ghp_" not in g.setup_action
 
 
+def test_no_obsolete_claude_flags_in_any_instruction():
+    # The Claude verify hint must use ONLY flags the installed CLI supports (verified via
+    # `claude --help`), consistent with build_worker_command; --max-turns does NOT exist.
+    items = _by_id(_boot(present=("claude",), claude="2.1.198 (Claude Code)").inspect())
+    for it in items.values():
+        assert "--max-turns" not in it.setup_action and "--max-turns" not in it.check_result
+    verify = items["claude_code"].setup_action
+    assert "--output-format" in verify and "--max-budget-usd" in verify
+
+
 def test_upwork_intake_is_manual_only():
     u = _by_id(_boot().inspect())["upwork_intake"]
     assert u.owner == "operator" and u.readiness == RUNTIME_VERIFIED

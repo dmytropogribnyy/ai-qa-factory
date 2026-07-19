@@ -60,8 +60,12 @@ def test_snapshot_v2_schema_and_no_overstated_rows():
     # These two multi-provider rows must never present as Live/Fixture Verified in the aggregate.
     assert by_id["cicd"]["readiness"] == "Partially Verified"
     assert by_id["docker_aws"]["readiness"] == "Partially Verified"
-    # bdd is now genuinely executable, not merely Declared.
-    assert by_id["bdd"]["readiness"] == "Fixture Verified"
+    # bdd is genuinely executable (internal profile) but the row is NOT overstated as fully verified:
+    # the real Cucumber runtime is Needs Client, so the aggregate is Partially Verified.
+    assert by_id["bdd"]["readiness"] == "Partially Verified"
+    bdd_comps = {c["component_id"]: c["readiness"] for c in by_id["bdd"]["components"]}
+    assert bdd_comps["bdd_internal"] == "Fixture Verified"
+    assert bdd_comps["cucumber"] == "Needs Client"
     # n8n/Make stays Needs Client (item 23).
     assert by_id["workflow_automation"]["readiness"] == "Needs Client"
 
