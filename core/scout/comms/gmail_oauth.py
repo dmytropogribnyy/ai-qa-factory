@@ -233,6 +233,11 @@ def authorize(*, client_config_path: str, token_store_path: str,
             "Gmail OAuth requires the optional Google client libraries "
             "(pip install -r requirements-gmail.txt)") from exc
     audience = parse_client_config(client_config_path)["client_id"]
+    # Google canonicalizes the short "email" scope to ".../userinfo.email"; oauthlib treats that
+    # substitution as a scope change and raises during token exchange. We re-validate the granted
+    # scopes AUTHORITATIVELY in finalize_authorization (accepting the canonical email form and
+    # refusing any forbidden scope), so relaxing oauthlib's own redundant check is safe here.
+    os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
     flow = InstalledAppFlow.from_client_secrets_file(
         client_config_path, scopes=list(scopes or REQUESTED_SCOPES))
     creds = flow.run_local_server(port=0, open_browser=open_browser)  # loopback, not out-of-band
