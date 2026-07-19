@@ -60,7 +60,10 @@ class WorkExecutionService:
     # --- workspace + safe persistence ------------------------------------------------------------
     @staticmethod
     def _safe_pid(pid: str) -> str:
-        if not pid or "/" in pid or "\\" in pid or ".." in pid or os.path.isabs(pid):
+        # One shared project-id contract at every boundary (workspace/state/artifacts/evidence/
+        # validation/delivery) - OS-independent, incl. Windows reserved names.
+        from core.orchestration.providers import validate_project_id
+        if not validate_project_id(pid):
             raise WorkExecutionError(f"unsafe project id: {pid!r}")
         return pid
 

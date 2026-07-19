@@ -122,7 +122,8 @@ class ProjectDetailBuilder:
         header = {"project_id": pid, "title": wp.get("title") or fr.get("client_intent") or pid,
                   "source": wp.get("source_platform") or "manual", "stage": stage_label(state.status),
                   "status": state.status, "health": ("attention" if blockers else health_of(state.status)),
-                  "progress": view.progress}
+                  "progress": view.progress, "updated_at": state.updated_at,
+                  "activity_count": len(state.history)}
         summary = {"status": state.status, "stage": stage_label(state.status),
                    "next_action": view.next_action, "progress": view.progress, "blockers": blockers,
                    "acceptance_criteria": fr.get("acceptance_criteria", []),

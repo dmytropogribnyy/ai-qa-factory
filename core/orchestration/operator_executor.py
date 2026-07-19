@@ -205,12 +205,16 @@ class CommandValidationExecutor:
         err_trunc = self._write_bounded(vdir / "stderr.txt", f"$ {self._display}", red_err.text)
         rel = f"evidence/validation/{vid}"
         passed = rc == 0
+        argv_redacted = self._safe_argv != self._argv
+        redacted_fields = sorted(f for f, on in (("argv", argv_redacted), ("stdout", red_out.secrets_found),
+                                                 ("stderr", red_err.secrets_found)) if on)
         metadata = {
             "validation_id": vid, "project_id": ctx.project_id, "executor_id": self.executor_id,
-            "argv": list(self._safe_argv), "cwd": ".", "cwd_confined_to_workspace": True,
+            "cwd": ".", "cwd_confined_to_workspace": True,
             "started_at": started, "finished_at": finished, "timeout_s": self._timeout,
             "exit_code": rc, "timed_out": timed_out, "spawn_error": spawn_error, "passed": passed,
-            "redacted": bool(red_out.secrets_found or red_err.secrets_found),
+            "redacted": bool(redacted_fields), "redacted_fields": redacted_fields,
+            "argv": list(self._safe_argv), "argv_redacted": argv_redacted,
             "stdout": {"path": f"{rel}/stdout.txt", "truncated": out_trunc,
                        "redacted": red_out.secrets_found,
                        "sha256": self._sha256(vdir / "stdout.txt")},
@@ -218,7 +222,7 @@ class CommandValidationExecutor:
                        "redacted": red_err.secrets_found,
                        "sha256": self._sha256(vdir / "stderr.txt")},
             "note": "validation-attempt provenance; no environment variables are persisted; "
-                    "stdout/stderr are secret-redacted before writing",
+                    "argv/stdout/stderr/spawn_error are secret-redacted before writing",
         }
         import json as _json
         (vdir / "metadata.json").write_text(_json.dumps(metadata, indent=2, sort_keys=True),

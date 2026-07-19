@@ -32,6 +32,8 @@ _MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
 _MAX_START_BODY_BYTES = 64 * 1024
 # The largest pasted client brief accepted by the dashboard intake (also bounded by the body cap).
 _MAX_BRIEF_BYTES = 60 * 1024
+# The client-work workspace subdirectory (matches core.orchestration.work_execution._ARK).
+_ARK_DIR = "40_ark_work"
 # Hard cap on how many body bytes we will drain before giving up (prevents a huge-Content-Length
 # read while still fully draining ordinary oversized requests so the socket is not half-closed).
 _DRAIN_CAP_BYTES = 2 * 1024 * 1024
@@ -267,17 +269,48 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                               if generated else pid.strip())
                 if not validate_project_id(project_id):
                     return self._json(400, {"ok": False, "error": "invalid project id (use "
-                                            "[A-Za-z0-9._-], max 64, no separators/traversal)"})
-                try:
-                    res = ClientWorkService(ClockProvider(), IdProvider(),
-                                            output_dir=service.output_dir).analyze(
-                        brief, project_id=project_id,
-                        source_platform=str(body.get("source_platform") or "manual"),
-                        fresh_only=generated)
-                except Exception as exc:
-                    return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
-                return self._json(200, {"ok": True, "action": action,
-                                        "project_id": res.project_id})
+                                            "[A-Za-z0-9._-], max 64, no separators/traversal, "
+                                            "no Windows reserved names)"})
+                source_platform = str(body.get("source_platform") or "manual")
+                import hashlib
+                fingerprint = hashlib.sha256(
+                    (redact_intake_text(brief).text + "\x00" + source_platform).encode("utf-8")
+                ).hexdigest()
+                # Serialize + idempotency per project (v3.2 5.2): a double-submit or a concurrent
+                # identical request never creates two analyses or overwrites progressed state.
+                with _work_lock(f"{service.output_dir}::{project_id}"):
+                    ws = Path(service.output_dir) / project_id / _ARK_DIR
+                    fp_path = ws / "INTAKE_FINGERPRINT.json"
+                    if (ws / "WORK_RUN_STATE.json").exists():
+                        prior = {}
+                        try:
+                            prior = json.loads(fp_path.read_text(encoding="utf-8"))
+                        except (OSError, ValueError):
+                            prior = {}
+                        if prior.get("fingerprint") == fingerprint:
+                            return self._json(200, {"ok": True, "action": action,
+                                                    "project_id": project_id, "idempotent": True})
+                        return self._json(409, {"ok": False, "action": action,
+                                                "project_id": project_id,
+                                                "error": "a different project already exists with "
+                                                "this id (input fingerprint differs)"})
+                    try:
+                        res = ClientWorkService(ClockProvider(), IdProvider(),
+                                                output_dir=service.output_dir).analyze(
+                            brief, project_id=project_id, source_platform=source_platform,
+                            fresh_only=generated)
+                    except Exception as exc:
+                        return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+                    try:
+                        ws.mkdir(parents=True, exist_ok=True)
+                        from datetime import datetime, timezone
+                        fp_path.write_text(json.dumps(
+                            {"fingerprint": fingerprint, "at": datetime.now(timezone.utc).isoformat()},
+                            indent=2, sort_keys=True), encoding="utf-8")
+                    except OSError:
+                        pass
+                    return self._json(200, {"ok": True, "action": action,
+                                            "project_id": res.project_id})
             # Serialize conflicting lifecycle mutations per project so a double-submit cannot race
             # (the state machine already prevents duplicate history / an incorrect transition).
             with _work_lock(f"{service.output_dir}::{pid}"):
@@ -878,9 +911,13 @@ function startCampaign(){{
                     f'<h2>Active work</h2><div class="scrollx">{work_tbl}</div>'
                     f'<h2>Scout</h2><div class="scrollx">{camp_tbl}</div>')
             script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
-                      + self._poll_script("/api/overview",
-                                          "function(j){return [(j.counts||{}).attention,"
-                                          "(j.attention||[]).map(function(a){return a.project_id+a.status})]}"))
+                      + self._poll_script(
+                          "/api/overview",
+                          "function(j){return [(j.attention||[]).map(function(a){return a.project_id"
+                          "+'|'+a.status+'|'+a.next_action}),(j.active_work||[]).map(function(p){"
+                          "return p.project_id+'|'+p.status+'|'+p.progress+'|'+p.next_action}),"
+                          "(j.active_campaigns||[]).map(function(c){return c.campaign_id+'|'+c.status"
+                          "+'|'+c.progress})]}"))
             return _page("AI QA Factory — Overview", "/", body, script)
 
         _WORK_VIEWS = (("all", "All Work"), ("needs_attention", "Needs Attention"),
@@ -900,39 +937,58 @@ function startCampaign(){{
                 return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a>'
                         f'<div class="muted">{_esc(p["project_id"])}</div></td>'
                         f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
-                        f'<td>{_esc(p["next_action"])}</td><td class="muted">{_esc(p["updated"])}</td></tr>')
-            rows = "".join(_row(p) for p in data["projects"])
-            table = (f'<table><caption>{data["total"]} project(s) — view: {_esc(view)}</caption>'
-                     f'<tr><th>Project</th><th>Stage</th><th>Health</th><th>Next action</th>'
-                     f'<th>Updated</th></tr>{rows}</table>' if rows
-                     else '<div class="card empty">No projects in this view. '
-                          '<a href="/work?view=all">Clear filter</a></div>')
+                        f'<td>{_esc(p["next_action"])}</td>'
+                        f'<td class="muted">{_esc(_fmt_ts(p["updated"]))}</td></tr>')
+
+            def _card(p):
+                return (f'<li><div class="card"><h3><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></h3>'
+                        f'<div class="muted meta">{_esc(p["project_id"])}</div>'
+                        f'<div class="row" style="margin:.4rem 0">{_badge(p["stage"])} '
+                        f'{_badge(p["health"], p["health"])}</div>'
+                        f'<div><strong>Next:</strong> {_esc(p["next_action"])}</div>'
+                        f'<div class="muted meta">Updated {_esc(_fmt_ts(p["updated"]))}</div></div></li>')
+
+            if data["projects"]:
+                rows = "".join(_row(p) for p in data["projects"])
+                desktop = (f'<div class="scrollx only-desktop"><table><caption>{data["total"]} '
+                           f'project(s) — view: {_esc(view)}</caption><tr><th>Project</th><th>Stage</th>'
+                           f'<th>Health</th><th>Next action</th><th>Updated</th></tr>{rows}</table></div>')
+                cards = ('<ul class="cards only-mobile" aria-label="Projects">'
+                         + "".join(_card(p) for p in data["projects"]) + "</ul>")
+                table = desktop + cards
+            else:
+                table = ('<div class="card empty">No projects in this view. '
+                         '<a href="/work?view=all">Clear filter</a></div>')
             create = (
                 '<details class="card"><summary>Create work from a pasted client brief</summary>'
                 '<p class="muted">Analysis only — nothing is executed. This reuses analyze-job.</p>'
                 '<p><label>Project name (optional)<br><input id="cw_pid" placeholder="my-project"></label></p>'
                 '<p><label>Source platform (optional)<br><input id="cw_src" placeholder="upwork / direct"></label></p>'
                 '<p><label>Client brief<br><textarea id="cw_brief" rows="5" style="width:100%"></textarea></label></p>'
-                '<p><button class="btn primary" onclick="createWork()">Analyze brief</button></p>'
+                '<p><button class="btn primary" onclick="createWork(this)">Analyze brief</button></p>'
                 '<p class="muted">No Upwork API — paste the brief and (optionally) a source reference.</p>'
                 '</details>')
             script = (self._work_actions_script() +
-                      "function createWork(){var b=document.getElementById('cw_brief').value.trim();"
+                      "function createWork(btn){var b=document.getElementById('cw_brief').value.trim();"
                       "if(!b){alert('paste a client brief');return;}"
+                      "if(btn){if(btn.dataset.busy)return;btn.dataset.busy='1';btn.disabled=true;}"
                       "fetch('/api/work/analyze',{method:'POST',headers:{'Content-Type':'application/json',"
                       "'X-Scout-CSRF':CSRF},body:JSON.stringify({text:b,"
                       "project_id:document.getElementById('cw_pid').value.trim(),"
                       "source_platform:document.getElementById('cw_src').value.trim()})})"
-                      ".then(r=>r.json()).then(j=>{if(j.ok){location.href='/work/'+j.project_id;}"
-                      "else{alert(j.error||'refused');}}).catch(e=>alert(''+e));}")
+                      ".then(r=>r.json()).then(function(j){if(j.ok){location.href='/work/'+j.project_id;}"
+                      "else{alert(j.error||'refused');if(btn){btn.disabled=false;delete btn.dataset.busy;}}})"
+                      ".catch(function(e){alert(''+e);if(btn){btn.disabled=false;delete btn.dataset.busy;}});}")
             body = (f'<h1>Work</h1><div class="row">{views}'
                     f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
                     f'{self._poll_html()}'
-                    f'<div class="scrollx">{table}</div>{create}')
+                    f'{table}{create}')
             # Poll the current view; the banner never auto-reloads, so the Create-work form is safe.
+            # The signature notices same-status changes (progress/updated/blockers/evidence/next).
             script = (script + self._poll_script(
                 "/api/work?view=" + view,
-                "function(j){return (j.projects||[]).map(function(p){return p.project_id+p.status})}"))
+                "function(j){return (j.projects||[]).map(function(p){return p.project_id+'|'+p.status"
+                "+'|'+p.progress+'|'+p.updated+'|'+p.blockers+'|'+p.evidence_count+'|'+p.next_action})}"))
             return _page("AI QA Factory — Work", "/work", body, script)
 
         def _work_detail_json(self, pid):
@@ -1045,7 +1101,12 @@ function startCampaign(){{
                 "if(e.key==='ArrowRight'||e.key==='ArrowLeft'){var n=(i+(e.key==='ArrowRight'?1:"
                 "ts.length-1))%ts.length;var id=ts[n].id.replace('tab-','');selTab(id);ts[n].focus();"
                 "e.preventDefault();}});}\n" +
-                self._poll_script("/api/work/" + safe_pid, "function(j){return [j.header&&j.header.status]}"))
+                self._poll_script(
+                    "/api/work/" + safe_pid,
+                    "function(j){var h=j.header||{},s=j.summary||{},d=j.delivery||{},r=j.results||{};"
+                    "return [h.status,h.progress,h.updated_at,h.activity_count,s.next_action,"
+                    "(s.blockers||[]).length,s.tests_passed,s.tests_run,s.evidence_count,"
+                    "r.validation_passed,d.status,d.manifest_digest]}"))
             return _page(f"AI QA Factory — {pid}", "/work", header + tablist + panels + hidden, script)
 
         def _scout_home_page(self) -> str:
@@ -1450,6 +1511,10 @@ details>summary{cursor:pointer;color:var(--muted)}
 .tabs [role=tab][aria-selected=true]{background:var(--surface);border-color:var(--border);color:var(--text);font-weight:600;margin-bottom:-1px}
 [role=tabpanel]{padding-top:.8rem} [role=tabpanel][hidden]{display:none}
 .copyok{color:var(--ok)}
+.only-mobile{display:none}
+.cards{list-style:none;margin:0;padding:0} .cards li{margin-bottom:var(--gap)}
+.cards .card h3{font-size:15px;margin:0 0 .3rem} .cards .meta{font-size:12px}
+@media (max-width:640px){ .only-desktop{display:none} .only-mobile{display:block} }
 """
 
 _NAV = (("Overview", "/"), ("Scout", "/scout"), ("Work", "/work"))
@@ -1480,6 +1545,18 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
 
 def _badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{_esc(text)}</span>'
+
+
+def _fmt_ts(iso: str) -> str:
+    """Format an ISO timestamp consistently as 'YYYY-MM-DD HH:MM UTC' (falls back to the raw value)."""
+    if not iso:
+        return "—"
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except (ValueError, TypeError):
+        return str(iso)[:19]
 
 
 _SEV_RANK = {"critical": 5, "high": 4, "medium": 3, "moderate": 3, "low": 2, "info": 1,

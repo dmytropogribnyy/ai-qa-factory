@@ -248,6 +248,59 @@ def test_analyze_collision_generates_distinct_ids(tmp_path):
         server.shutdown()
 
 
+def test_analyze_same_id_same_fingerprint_is_idempotent(tmp_path):
+    # v3.2 5.2: re-analyzing the same explicit id + same input returns the existing project and
+    # does NOT rewrite progressed state.
+    server, url = _dash(tmp_path)
+    try:
+        s1, j1 = _post(url + "/api/work/analyze", server.scout_csrf_token,
+                       {"text": _BRIEF, "project_id": "same"})
+        assert s1 == 200 and j1["ok"] and not j1.get("idempotent")
+        # Progress the project past intake so a re-analyze would be destructive if it re-ran.
+        WorkExecutionService(FixedClock(), SequentialIds(), output_dir=str(tmp_path)).approve(
+            "same", reviewer="op")
+        state_before = json.loads(
+            (tmp_path / "same" / "40_ark_work" / "WORK_RUN_STATE.json").read_text(encoding="utf-8"))
+        s2, j2 = _post(url + "/api/work/analyze", server.scout_csrf_token,
+                       {"text": _BRIEF, "project_id": "same"})
+        assert s2 == 200 and j2["ok"] and j2["idempotent"] is True
+        state_after = json.loads(
+            (tmp_path / "same" / "40_ark_work" / "WORK_RUN_STATE.json").read_text(encoding="utf-8"))
+        assert state_after["status"] == state_before["status"] == "READY_TO_EXECUTE"
+    finally:
+        server.shutdown()
+
+
+def test_analyze_same_id_different_fingerprint_conflicts(tmp_path):
+    server, url = _dash(tmp_path)
+    try:
+        _post(url + "/api/work/analyze", server.scout_csrf_token,
+              {"text": _BRIEF, "project_id": "conf"})
+        s, j = _post(url + "/api/work/analyze", server.scout_csrf_token,
+                     {"text": "A totally different client brief for API testing.",
+                      "project_id": "conf"})
+        assert s == 409 and not j["ok"] and "fingerprint" in j["error"]
+    finally:
+        server.shutdown()
+
+
+def test_analyze_concurrent_identical_requests_resolve_to_one_project(tmp_path):
+    import concurrent.futures
+    server, url = _dash(tmp_path)
+    try:
+        def _go(_):
+            return _post(url + "/api/work/analyze", server.scout_csrf_token,
+                         {"text": _BRIEF, "project_id": "race"})
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+            results = list(ex.map(_go, range(4)))
+        codes = [s for s, _ in results]
+        assert all(c == 200 for c in codes)               # no conflict/overwrite among identical
+        assert all(j["project_id"] == "race" for _, j in results)
+        assert sum(1 for _, j in results if not j.get("idempotent")) == 1   # exactly one created it
+    finally:
+        server.shutdown()
+
+
 def test_unknown_project_detail_is_not_found(tmp_path):
     server, url = _dash(tmp_path)
     try:

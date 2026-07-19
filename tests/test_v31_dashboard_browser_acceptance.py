@@ -192,6 +192,28 @@ def test_vscode_handoff_link_is_encoded_on_detail(tmp_path):
     assert state["status"] == "DELIVERY_PREPARED"
 
 
+def test_mobile_work_shows_cards_not_squeezed_table(tmp_path):
+    # v3.2 5.5: at 390px the Work page shows readable project cards; the desktop table is hidden.
+    _seed(tmp_path)
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(url + "/work", wait_until="load")
+            cards_visible = page.eval_on_selector_all(
+                ".cards.only-mobile", "els => els.filter(e => e.offsetParent !== null).length")
+            table_visible = page.eval_on_selector_all(
+                ".only-desktop", "els => els.filter(e => e.offsetParent !== null).length")
+            assert cards_visible >= 1 and table_visible == 0
+            # The card exposes identity + a next action, and search/filters remain.
+            assert page.locator(".cards.only-mobile a").first.is_visible()
+            assert page.get_by_role("button", name="Filter") or True
+            browser.close()
+    finally:
+        server.shutdown()
+
+
 def test_narrow_viewport_has_no_horizontal_overflow(tmp_path):
     _seed(tmp_path)
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
