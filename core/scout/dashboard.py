@@ -474,6 +474,22 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     return self._json(409, {"ok": False, "action": action, "project_id": pid,
                                             "error": f"cannot start a worker from state {cur} "
                                             "(approve the plan first)"})
+                # Client-repo trust + private-work-dir preflight (P0-E): refuse untrusted execution
+                # and refuse a non-private work directory. Never simulate isolation.
+                from core.orchestration.execution_trust import (
+                    assess_execution_trust,
+                    preflight_work_isolation,
+                )
+                trust = assess_execution_trust(str(ws))
+                if not trust.trusted:
+                    return self._json(409, {"ok": False, "action": action, "project_id": pid,
+                                            "error": f"untrusted repository: {trust.reason}",
+                                            "action_required": trust.action})
+                pf = preflight_work_isolation(str(ws))
+                if not pf.ok:
+                    return self._json(409, {"ok": False, "action": action, "project_id": pid,
+                                            "error": f"work-isolation preflight failed: {pf.reason}",
+                                            "action_required": pf.action})
                 # Persist-before-start: clear any stale cancel marker and register the active worker
                 # + a durable marker BEFORE the daemon thread launches.
                 try:

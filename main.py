@@ -288,6 +288,11 @@ def run_client_work(args) -> int:
             except ValidationCommandError as exc:
                 print(f"ERROR: invalid validation command: {exc}", file=_sys.stderr)
                 return 1
+            from core.orchestration.execution_trust import assess_execution_trust
+            _t = assess_execution_trust(str(svc.workspace_dir(pid)))
+            if not _t.trusted:
+                print(f"REFUSED (untrusted repository): {_t.reason}. {_t.action}", file=_sys.stderr)
+                return 2
             state, result = svc.validate(pid, executor)
             print(f"Validation for {pid}: {'PASS' if result.passed else 'FAIL'} "
                   f"({result.tests_passed}/{result.tests_run}). State {state.status}. "
@@ -331,7 +336,20 @@ def run_client_work(args) -> int:
             # The project id is validated by workspace_dir BEFORE any path op (rejects traversal,
             # separators, absolute paths, Windows reserved names, control chars).
             from core.orchestration.claude_worker import ClaudeWorkerExecutor
+            from core.orchestration.execution_trust import (
+                assess_execution_trust,
+                preflight_work_isolation,
+            )
             ws = svc.workspace_dir(pid)                       # validates id first (raises for unsafe)
+            trust = assess_execution_trust(str(ws))
+            if not trust.trusted:
+                print(f"REFUSED (untrusted repository): {trust.reason}. {trust.action}",
+                      file=_sys.stderr)
+                return 2
+            pf = preflight_work_isolation(str(ws))
+            if not pf.ok:
+                print(f"REFUSED (work-isolation preflight): {pf.reason}. {pf.action}", file=_sys.stderr)
+                return 2
             (ws / "WORKER_CANCEL.json").unlink(missing_ok=True)   # clear any stale cancel marker
             executor = ClaudeWorkerExecutor(resume=(args.action == "worker-resume"),
                                             timeout_s=int(getattr(args, "timeout", 300) or 300))

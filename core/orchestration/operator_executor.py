@@ -186,8 +186,12 @@ class CommandValidationExecutor:
         rc: Union[int, None] = None
         out, err = "", ""
         try:
+            # Execute the (possibly untrusted) client validation command with a credential-stripped
+            # environment so it cannot read operator secrets from env (P0-E; not a full sandbox).
+            from core.orchestration.execution_trust import stripped_subprocess_env
             proc = subprocess.run(self._argv, cwd=str(ws), capture_output=True,  # noqa: S603
-                                  text=True, timeout=self._timeout, check=False)
+                                  text=True, timeout=self._timeout, check=False,
+                                  env=stripped_subprocess_env())
             rc, out, err = proc.returncode, self._decode(proc.stdout), self._decode(proc.stderr)
         except subprocess.TimeoutExpired as exc:
             timed_out = True

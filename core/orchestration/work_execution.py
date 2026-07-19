@@ -197,6 +197,13 @@ class WorkExecutionService:
         self._write(self._ws(pid) / "APPROVAL.json",
                     json.dumps({"reviewer": reviewer, "note": note, "approved": True,
                                 "at": self._clock.now_iso()}, indent=2, sort_keys=True))
+        # Operator approval also marks this workspace as TRUSTED for execution (P0-E): the trust gate
+        # refuses running client code in a workspace the operator has not approved.
+        from core.orchestration.execution_trust import TRUST_MARKER
+        self._write(self._ws(pid) / TRUST_MARKER, json.dumps(
+            {"approved_for_execution": True, "reviewer": reviewer, "at": self._clock.now_iso(),
+             "note": "operator-approved; execution of client code in this workspace is permitted"},
+            indent=2, sort_keys=True))
         self._save_state(pid, state)
         return state
 

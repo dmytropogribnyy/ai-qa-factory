@@ -47,16 +47,16 @@ as a live capability.
 
 ## Live provider execution (honest)
 
-The Claude Code CLI is detected (v2.1.198) and the bounded worker adapter is implemented and
-fixture/injected verified. The **direct Claude CLI provider command is Live Verified** (a real
-failing fixture was repaired: fail-before/pass-after, real session id + cost). The **full production
-`ClaudeWorkerExecutor` clean-shell acceptance is Needs Operator** until its gated test passes: inside
-a parent Claude Code session the operator's hooks force an interactive permission prompt, so
-`acceptEdits` does not apply non-interactively. Verify in a clean, NON-NESTED shell with flags that
-the installed CLI supports (verified via `claude --help`, consistent with `build_worker_command`):
-`claude -p "<work order>" --output-format json --permission-mode acceptEdits --allowedTools Edit Read
---max-budget-usd 0.60` (or run `pytest -k live_claude_worker` with `AIQA_CLAUDE_LIVE=1`; see
-`docs/LIVE_CLAUDE_ACCEPTANCE_V32.md`).
+The Claude Code CLI is detected (v2.1.198) and the bounded worker adapter is implemented. Both the
+**direct Claude CLI provider command** AND the **full production `ClaudeWorkerExecutor` clean-shell
+acceptance** are **Live Verified** (operator-run): a real failing fixture is repaired — fail-before /
+pass-after, real session id + cost, budget/timeout honoured, resume through a fresh worker. The
+original failure was root-caused by an A/B test to the Windows npm `claude.CMD` shim (cmd.exe corrupts
+the multi-line `-p` prompt); the worker now resolves the **native `claude.exe`** directly (never a
+`.cmd/.bat/.ps1` wrapper), with an optional validated `AIQA_CLAUDE_BIN` override and an honest failure
+when no native executable can be resolved. This run stays **operator-gated** — CI never makes a paid
+live call. Reproduce in a clean shell: `pytest -k live_claude_worker` with `AIQA_CLAUDE_LIVE=1`
+(see `docs/LIVE_CLAUDE_ACCEPTANCE_V32.md`).
 
 ## Autonomous execution scope & honesty (v3.2)
 
@@ -75,3 +75,23 @@ the installed CLI supports (verified via `claude --help`, consistent with `build
   CI job (`test_v3_genuine_execution_ab.py` runs real `playwright test` on a generated framework).
 - **Live provider.** A live `ClaudeWorkerExecutor` run is operator-gated (`AIQA_CLAUDE_LIVE`, clean
   non-nested shell); CI never makes a paid live call.
+
+## Client-repository trust & isolation (v3.2, P0-E)
+
+Path confinement prevents the worker/validation from *writing* outside the project workspace, but it
+does **not** sandbox code that npm/pytest *execute*. v3.2 therefore does **not** claim to safely
+execute arbitrary untrusted repositories. The honest, tested bounded gate (never simulated isolation):
+
+- **Trusted/approved-repository-only execution.** Client code runs only in a workspace the operator
+  has approved for execution (the `EXECUTION_APPROVED.json` marker written by `approve`) or that is
+  under a configured `AIQA_TRUSTED_ROOTS` root. Untrusted execution is **refused** with an exact
+  action in both the **CLI** (`client-work worker-start`/`validate`) and the **Dashboard** worker
+  action — it is never silently run.
+- **Private-work-dir preflight (fail closed).** Before execution, a preflight requires the work
+  directory to be private — outside any tracked git repo, or git-ignored (`git check-ignore`). A
+  directory tracked by a public repo is refused, so real client artifacts/evidence never enter the
+  public source repo or hosted CI. (The default `outputs/<project>/…` tree is git-ignored.)
+- **Credential-stripped subprocess env.** The validation subprocess runs with credential-like
+  environment variables removed (`*KEY*/*TOKEN*/*SECRET*/*PASSWORD*/*SESSION*/*AUTH*` …), so executed
+  code cannot read operator secrets from the environment. This is defense-in-depth, **not** a full
+  sandbox — true isolation (Docker/WSL/Windows-Sandbox with resource/network policy) is future work.
