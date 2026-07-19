@@ -17,7 +17,7 @@ from core.orchestration.operator_executor import OperatorWorkspaceExecutor, Prod
 from core.orchestration.providers import FixedClock, SequentialIds
 from core.orchestration.work_execution import WorkExecutionService
 from core.schemas.work_execution import ValidationOutcome
-from core.scout.dashboard import start_dashboard
+from core.scout.dashboard import _theme_legacy, start_dashboard
 from core.scout.service import ScoutService
 
 _BRIEF = "Reproduce and fix a defect in a small Python module and add a regression test."
@@ -161,6 +161,25 @@ def test_work_mutation_requires_csrf(tmp_path):
             assert e.code == 403 and "CSRF" in e.read().decode("utf-8")
     finally:
         server.shutdown()
+
+
+def test_theme_legacy_injects_shared_tokens_into_legacy_pages():
+    # A legacy run-bound Scout page (inline light-only style, no Pro Dark shell) is themed with the
+    # shared tokens + persisted-theme init, injected AFTER the page style so it wins (no white in Dark).
+    legacy = ("<!doctype html><html lang=en><head><meta charset=utf-8><title>x</title>"
+              "<style>body{font-family:system-ui,Arial,sans-serif;margin:2rem}"
+              "td,th{border:1px solid #ccc}</style></head><body>hi</body></html>")
+    out = _theme_legacy(legacy)
+    assert "--l-bg" in out and "data-theme" in out and "aiqa_theme" in out
+    # Injected after the page's own <style> so the dark tokens/control theming take precedence.
+    assert out.index("--l-bg") > out.index("border:1px solid #ccc")
+    assert "width=device-width" in out            # a viewport is added for responsive legacy pages
+
+
+def test_theme_legacy_leaves_pro_dark_pages_untouched():
+    prodark = ('<!doctype html><html lang=en><head><meta charset=utf-8></head><body>'
+               '<header class="top">nav</header></body></html>')
+    assert _theme_legacy(prodark) == prodark      # idempotent: never double-themes the shell
 
 
 def test_work_mutation_refuses_dns_rebinding_and_cross_origin(tmp_path):

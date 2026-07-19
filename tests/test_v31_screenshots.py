@@ -101,15 +101,17 @@ def test_capture_dashboard_screenshots(tmp_path):
     desktop = {
         "overview": "/", "scout-home": "/scout", "scout-campaigns": "/scout/campaigns",
         "results": "/results?sev=", "company": f"/company?id={cid}" if cid else "/company?id=unknown",
-        "work-list": "/work", "project-summary": "/work/alpha?tab=summary",
+        "work-list": "/work", "projects": "/projects", "project-summary": "/work/alpha?tab=summary",
         "project-plan": "/work/alpha?tab=plan", "project-results": "/work/alpha?tab=results",
         "project-delivery": "/work/alpha?tab=delivery", "tools": "/tools", "activity": "/activity",
-        "settings": "/settings",
+        "settings": "/settings", "docs": "/docs",
     }
-    mobile = {"overview": "/", "scout-home": "/scout", "work-list": "/work",
-              "project-detail": "/work/alpha", "nav-more": "/tools"}
+    mobile = {"overview": "/", "scout-home": "/scout", "work-list": "/work", "projects": "/projects",
+              "project-detail": "/work/alpha", "docs": "/docs", "nav-more": "/tools"}
     # Representative Light-theme pages (dark is the default; these prove the toggle looks right).
-    light = {"overview": "/", "work-list": "/work", "tools": "/tools"}
+    # Includes /projects and /docs, and /scout to prove the themed LEGACY root in Light too.
+    light = {"overview": "/", "work-list": "/work", "tools": "/tools", "projects": "/projects",
+             "docs": "/docs", "scout-home": "/scout"}
     captured = []
     try:
         with sync_playwright() as p:
@@ -144,3 +146,16 @@ def test_capture_dashboard_screenshots(tmp_path):
     assert len(captured) == len(desktop) + len(light) + len(mobile)
     for f in captured:
         assert f.exists() and f.stat().st_size > 0, f
+    # Emit a labeled inventory so a reviewer knows every shot uses Demo / Acceptance Fixture data
+    # (project "alpha" + a self-labeled demo campaign) — never real client data.
+    inventory = ["# Dashboard screenshots — Demo / Acceptance Fixture data (NOT real client data)",
+                 "",
+                 "Captured by tests/test_v31_screenshots.py in CI's browser job on the candidate SHA.",
+                 "Seeded from project `alpha` and a self-labeled demo campaign.", "",
+                 "## Desktop (Dark — default theme)"]
+    inventory += [f"- desktop-dark-{n}.png — `{p}`" for n, p in desktop.items()]
+    inventory += ["", "## Desktop (Light — explicit toggle)"]
+    inventory += [f"- desktop-light-{n}.png — `{p}`" for n, p in light.items()]
+    inventory += ["", "## Mobile (390px, Dark)"]
+    inventory += [f"- mobile-dark-{n}.png — `{p}`" for n, p in mobile.items()]
+    (_OUT / "README.md").write_text("\n".join(inventory) + "\n", encoding="utf-8")

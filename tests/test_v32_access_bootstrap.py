@@ -68,3 +68,22 @@ def test_claude_and_mcp_states():
     items = _by_id(_boot(present=("claude",), claude="2.1.198 (Claude Code)").inspect())
     assert items["claude_code"].readiness == "Installed" and "2.1.198" in items["claude_code"].check_result
     assert items["github_mcp"].readiness == "Declared"    # a connector is never auto-authenticated
+
+
+def test_gmail_test_inbox_names_exact_env_vars_read_only_when_unauthenticated():
+    # No OAuth configured -> Needs Operator with the EXACT env-var names (names only, never values).
+    g = _by_id(_boot().inspect())["gmail_test"]
+    assert g.readiness == "Needs Operator" and g.owner == "operator"
+    assert "read-only" in g.name.lower() and "never sends" in g.purpose.lower()
+    assert "GMAIL_OAUTH_CLIENT_JSON" in g.setup_action and "GMAIL_OAUTH_TOKEN_JSON" in g.setup_action
+    assert "GMAIL_OAUTH_CLIENT_JSON" in g.secret_ref and "GMAIL_OAUTH_TOKEN_JSON" in g.secret_ref
+    # The setup action names variables, never a value.
+    assert "=" not in g.secret_ref and "ghp_" not in g.setup_action
+
+
+def test_upwork_intake_is_manual_only():
+    u = _by_id(_boot().inspect())["upwork_intake"]
+    assert u.owner == "operator" and u.readiness == RUNTIME_VERIFIED
+    for banned in ("scraping", "unofficial API", "automated browser form submission"):
+        assert banned in u.check_result
+    assert "manual" in u.setup_action.lower()

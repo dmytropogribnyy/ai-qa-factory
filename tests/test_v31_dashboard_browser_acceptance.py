@@ -220,6 +220,44 @@ def test_vscode_handoff_link_is_encoded_on_detail(tmp_path):
     assert state["status"] == "DELIVERY_PREPARED"
 
 
+def test_legacy_run_bound_root_is_themed_and_axe_clean(tmp_path):
+    # v3.2 item 26/31: the legacy run-bound Scout root (rendered at / when a Scout run is attached)
+    # is Pro-Dark themed (no default-white controls), free of serious/critical a11y violations in
+    # BOTH themes, and has no horizontal overflow at 390px.
+    from core.scout.store import RunStore
+    store = RunStore(str(tmp_path), "run-legacy")
+    store.reset()
+    store.save_state({
+        "run_id": "run-legacy", "status": "RUNNING", "mode": "OBSERVE_ONLY",
+        "prospects": {"p1": {"url": "https://example.test/", "status": "MANUAL_ACTION_REQUIRED",
+                             "priority": "high", "verified_defects": 2}}})
+    service = ScoutService(str(tmp_path))
+    service.attach("run-legacy")
+    server, url = start_dashboard(service, operator_home=True)
+    axe = Axe()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url + "/", wait_until="load")
+            html = page.content()
+            assert 'header class="top"' not in html and "<main>" not in html  # the LEGACY root
+            assert "--l-bg" in html and "Prospects" in html   # themed legacy run-bound view
+            bg = page.evaluate("()=>getComputedStyle(document.body).backgroundColor")
+            assert bg not in ("rgba(0, 0, 0, 0)", "rgb(255, 255, 255)"), bg  # not default white
+            for theme in ("dark", "light"):
+                serious = _serious(axe.run(page).get("violations", []))
+                assert not serious, (theme, [v["id"] for v in serious])
+                page.evaluate("(t)=>localStorage.setItem('aiqa_theme',t)", "light")
+                page.reload(wait_until="load")
+            mob = browser.new_page(viewport={"width": 390, "height": 844})
+            mob.goto(url + "/", wait_until="load")
+            assert mob.evaluate("()=>document.documentElement.scrollWidth<=window.innerWidth+1")
+            browser.close()
+    finally:
+        server.shutdown()
+
+
 def test_mobile_work_shows_cards_not_squeezed_table(tmp_path):
     # v3.2 5.5: at 390px the Work page shows readable project cards; the desktop table is hidden.
     _seed(tmp_path)

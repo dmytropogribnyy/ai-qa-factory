@@ -120,7 +120,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 self.wfile.write(body)
 
         def _html(self, status: int, html: str) -> None:
-            body = html.encode("utf-8")
+            body = _theme_legacy(html).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -1614,10 +1614,23 @@ function startCampaign(){{
 
             def _kind(r):
                 return {"Live Verified": "ok", "Fixture Verified": "ok", "Runtime Verified": "ok",
+                        "Runtime Available": "", "Partially Verified": "attention",
                         "Needs Client": "attention", "Needs Operator": "attention",
                         "Blocked": "blocked", "Unavailable": "blocked"}.get(r, "")
+
+            def _components(s):
+                comps = s.get("components") or []
+                if not comps:
+                    return ""
+                items = "".join(
+                    f'<li>{_esc(c["name"])} — {_badge(c["readiness"], _kind(c["readiness"]))}'
+                    f'{(" · " + _esc(c["evidence"])) if c.get("evidence") else ""}</li>'
+                    for c in comps)
+                return (f'<details><summary class="muted">per-provider readiness '
+                        f'({len(comps)})</summary><ul>{items}</ul></details>')
             rows = "".join(
-                f'<tr><td>{_esc(s["name"])}</td><td>{_badge(s["readiness"], _kind(s["readiness"]))}</td>'
+                f'<tr><td>{_esc(s["name"])}{_components(s)}</td>'
+                f'<td>{_badge(s["readiness"], _kind(s["readiness"]))}</td>'
                 f'<td class="muted">{_esc(", ".join(s["modes"]))}</td>'
                 f'<td class="muted">{_esc(s["operator_action_if_blocked"])}</td></tr>' for s in svcs)
             table = (f'<table><caption>Advertised QA services — honest readiness (real acceptance vs '
@@ -1625,7 +1638,8 @@ function startCampaign(){{
                      f'<th>If blocked</th></tr>{rows}</table>')
             return (f'<h2>Service capabilities</h2><p class="muted">What the product genuinely supports '
                     f'when the client supplies the repository, environment, accounts, and '
-                    f'authorization. Nothing unverified is shown as Live.</p>'
+                    f'authorization. A multi-provider row is never shown as Live/Fixture Verified when '
+                    f'only one provider is verified — expand it for the honest per-provider readiness.</p>'
                     f'<div class="scrollx">{table}</div>')
 
         def _access_section(self) -> str:
@@ -1636,8 +1650,29 @@ function startCampaign(){{
                         "Installed": "", "Connected": "", "Needs Operator": "attention",
                         "Needs Client": "attention", "Blocked": "blocked",
                         "Unavailable": "blocked"}.get(r, "")
+
+            def _envvars(i):
+                ref = (i.get("secret_ref") or "").strip()
+                return (f'<br><span class="muted">env (names only): <code>{_esc(ref)}</code></span>'
+                        if ref else "")
+            # Operator Actions Required, derived from the ACTUAL AccessBootstrap state: every
+            # operator-owned integration that is not yet ready, with its exact action + env-var names.
+            _NEEDS = {"Needs Operator", "Blocked", "Unavailable"}
+            todo = [i for i in items if i["owner"] == "operator" and i["readiness"] in _NEEDS]
+            if todo:
+                actions = "".join(
+                    f'<li><strong>{_esc(i["name"])}</strong> — {_esc(i["setup_action"])}'
+                    f'{_envvars(i)}</li>' for i in todo)
+                todo_html = (f'<div class="card"><h3>Operator actions required ({len(todo)})</h3>'
+                             f'<ul>{actions}</ul>'
+                             f'<p class="muted">Set only env-var NAMES here — never paste secret '
+                             f'values into the repo, logs, screenshots, state, or evidence.</p></div>')
+            else:
+                todo_html = ('<p class="muted">No operator actions outstanding — all operator-owned '
+                             'integrations are ready.</p>')
             rows = "".join(
-                f'<tr><td>{_esc(i["name"])}</td><td>{_badge(i["readiness"], _kind(i["readiness"]))}</td>'
+                f'<tr><td>{_esc(i["name"])}{_envvars(i)}</td>'
+                f'<td>{_badge(i["readiness"], _kind(i["readiness"]))}</td>'
                 f'<td class="muted">{_esc(i["purpose"])}</td><td>{_esc(i["owner"])}</td>'
                 f'<td class="muted">{_esc(i["required_scope"])}</td>'
                 f'<td class="muted">{_esc(i["setup_action"] or i["check_result"])}</td></tr>'
@@ -1648,9 +1683,9 @@ function startCampaign(){{
             return (f'<div class="card"><h2>Access &amp; Integrations</h2>'
                     f'<p class="muted">Real local readiness (cached; probes never block a request). '
                     f'Secrets are referenced by env-var name only, never shown or persisted. '
-                    f'Client-owned items stay Needs Client. '
+                    f'Client-owned items stay Needs Client; Upwork intake is always manual. '
                     f'<a href="/settings?refresh=1">Refresh readiness</a></p>'
-                    f'<div class="scrollx">{table}</div></div>')
+                    f'{todo_html}<div class="scrollx">{table}</div></div>')
 
         def _docs_page(self) -> str:
             docs = [("Product contract", "PRODUCT_CONTRACT_V3.md"),
@@ -1755,6 +1790,50 @@ details>summary{cursor:pointer;color:var(--muted)}
 .cards .card h3{font-size:15px;margin:0 0 .3rem} .cards .meta{font-size:12px}
 @media (max-width:640px){ .only-desktop{display:none} .only-mobile{display:block} }
 """
+
+# Legacy run-bound Scout pages predate the Pro Dark shell and hardcode light colours (#ccc/#f4f4f4/
+# #eef). Rather than a risky rewrite of each, we inject the shared tokens + control theming AFTER the
+# page's own <style> (so it wins) and honour the persisted theme. Layout is preserved (no redesign):
+# only colours, borders, code blocks, and form controls are themed so nothing is default-white in Dark.
+_LEGACY_THEME_CSS = """
+:root{--l-bg:#0A0F1E;--l-surface:#151922;--l-surface2:#1A2236;--l-border:#1F2940;--l-text:#F4EDD9;
+ --l-muted:#9AA3B8;--l-link:#7FB0FF;--l-code:#0E1424;--l-primary:#D4AF37;--l-primary-ink:#0A0F1E;}
+:root[data-theme="light"]{--l-bg:#F4EDD9;--l-surface:#FBF7EC;--l-surface2:#EBE3CE;--l-border:#E2DAC6;
+ --l-text:#151922;--l-muted:#5B6470;--l-link:#0B5FBF;--l-code:#EEE7D6;--l-primary:#0A0F1E;
+ --l-primary-ink:#F4EDD9;}
+body{background:var(--l-bg);color:var(--l-text)}
+a{color:var(--l-link)}
+table{background:var(--l-surface)}
+td,th{border-color:var(--l-border) !important;color:var(--l-text)}
+th{background:var(--l-surface2)}
+code,pre{background:var(--l-code) !important;color:var(--l-text)}
+.mode{background:var(--l-surface2) !important;color:var(--l-text)}
+button,input,select,textarea{background:var(--l-surface);color:var(--l-text);
+ border:1px solid var(--l-border);border-radius:6px;padding:.4rem .6rem;font:inherit}
+input[type=checkbox]{accent-color:var(--l-primary);width:auto;padding:0}
+button{cursor:pointer}
+::placeholder{color:var(--l-muted)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,
+a:focus-visible{outline:3px solid var(--l-primary);outline-offset:2px}
+/* Responsive: legacy pages predate mobile layout. Keep wide tables scrollable within the viewport
+   (never forcing page overflow) and tighten the body margin on small screens. */
+html,body{max-width:100%;overflow-x:hidden}
+table{display:block;overflow-x:auto;max-width:100%}
+input,textarea,select{max-width:100%}
+@media (max-width:640px){body{margin:1rem}}
+"""
+
+
+def _theme_legacy(html: str) -> str:
+    """Inject the shared theme into a legacy page (one that is not built by the Pro Dark ``_page``
+    shell), so its controls are never default-white in Dark mode. Idempotent + safe: only touches
+    pages without the shared header and with a </head> to inject before."""
+    if 'header class="top"' in html or "</head>" not in html or "data-theme" in html:
+        return html
+    inject = (f'<script>{_THEME_HEAD_JS}</script><style>{_LEGACY_THEME_CSS}</style>'
+              '<meta name="viewport" content="width=device-width, initial-scale=1">')
+    return html.replace("</head>", inject + "</head>", 1)
+
 
 _NAV = (("Overview", "/"), ("Scout", "/scout"), ("Work", "/work"))
 _MORE = (("Tools", "/tools"), ("Activity", "/activity"), ("Settings", "/settings"),

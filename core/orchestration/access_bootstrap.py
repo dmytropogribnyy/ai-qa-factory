@@ -188,10 +188,21 @@ class AccessBootstrap:
         else:
             g_ready, g_note = AUTHENTICATED, "OAuth token present (read-only verification only)"
         out.append(Integration(
-            "gmail_test", "Gmail test inbox", "authorized test identity (read-only; never sends)",
+            "gmail_test", "Gmail test inbox (read-only)",
+            "authorized read-only test identity for inbox checks (never sends)",
             g_ready, "gmail.readonly (test identity)", "operator", g_note,
-            "" if g_ready == AUTHENTICATED else "see docs/GMAIL_PROVIDER_SETUP.md (test inbox only)",
-            secret_ref="GMAIL_OAUTH_TOKEN_JSON"))
+            "" if g_ready == AUTHENTICATED else
+            ("set env GMAIL_OAUTH_CLIENT_JSON (OAuth client) + GMAIL_OAUTH_TOKEN_JSON (authorized "
+             "token) — names only, never values; see docs/GMAIL_PROVIDER_SETUP.md (read-only test "
+             "inbox)"),
+            secret_ref="GMAIL_OAUTH_CLIENT_JSON, GMAIL_OAUTH_TOKEN_JSON"))
+
+        # --- Upwork / direct client intake is ALWAYS manual (item 34) ---
+        out.append(Integration(
+            "upwork_intake", "Upwork / direct client intake", "manual job intake (paste text or file)",
+            RUNTIME_VERIFIED, "manual", "operator",
+            "manual only — no scraping, no unofficial API, no automated browser form submission",
+            "paste the job text into `analyze-job` (or the dashboard intake); intake is always manual"))
 
         # --- client-provided access (never local; typed access ids the Tool-Gap report resolves) ---
         for cid, name, purpose, scope, action in (
