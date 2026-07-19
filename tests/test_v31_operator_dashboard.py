@@ -296,6 +296,38 @@ def test_evidence_preview_is_safe(tmp_path):
         server.shutdown()
 
 
+def _get_raw(base, path, host):
+    conn_host, port = base.replace("http://", "").split(":")
+    conn = http.client.HTTPConnection(conn_host, int(port), timeout=5)
+    conn.request("GET", path, headers={"Host": host})
+    resp = conn.getresponse()
+    body = resp.read().decode("utf-8")
+    conn.close()
+    return resp.status, body
+
+
+def test_get_routes_refuse_dns_rebinding(tmp_path):
+    # P0-3: a non-loopback Host must not receive tokens, project data, evidence, or artifacts.
+    _seed_ready_for_review(tmp_path)
+    server, url = _dash(tmp_path)
+    real_host = url.replace("http://", "")
+    try:
+        for path in ["/api/csrf", "/api/work", "/api/overview", "/api/work/alpha",
+                     "/work-evidence?project=alpha&path=fix.py", "/company?id=x", "/artifact?path=x"]:
+            status, body = _get_raw(url, path, "attacker.example")
+            assert status == 403 and "loopback" in body, path
+            assert "csrf" not in body.lower() and "alpha" not in body
+        # Normal loopback Host variants still work.
+        for host in (real_host, f"localhost:{real_host.split(':')[1]}"):
+            status, _ = _get_raw(url, "/api/csrf", host)
+            assert status == 200
+        # IPv6 loopback Host is accepted by the guard.
+        status, _ = _get_raw(url, "/api/csrf", f"[::1]:{real_host.split(':')[1]}")
+        assert status == 200
+    finally:
+        server.shutdown()
+
+
 def test_scout_campaigns_page_renders(tmp_path):
     server, url = _dash(tmp_path)
     try:

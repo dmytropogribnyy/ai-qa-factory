@@ -77,6 +77,10 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             parsed = urlsplit(self.path)
             path = parsed.path
             q = parse_qs(parsed.query)
+            # DNS-rebinding defense for READS too: a request whose Host is not loopback must never
+            # receive CSRF tokens, project data, evidence, contacts, or artifacts (v3.1 P0-3).
+            if not self._host_is_loopback():
+                return self._json(403, {"error": "non-loopback Host header refused"})
             if path == "/health":
                 return self._json(200, {"status": "ok", "product": SCOUT_PRODUCT_NAME,
                                         "version": SCOUT_VERSION, "run_id": service.run_id,

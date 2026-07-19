@@ -139,6 +139,35 @@ def test_secret_bearing_argv_is_redacted_in_evidence(tmp_path):
     assert token not in (vdir / "metadata.json").read_text(encoding="utf-8")
 
 
+def test_stdout_stderr_secret_canary_never_persisted_anywhere(tmp_path):
+    # P0-2: a command that prints a GitHub-like token to BOTH stdout and stderr must not leave the
+    # raw token ANYWHERE in the project workspace (evidence, metadata, TEST_RESULTS, EVIDENCE_INDEX,
+    # manifests, reports). The redacted diagnostic text is preserved.
+    token = "ghp_" + "b" * 36
+    svc = _start(tmp_path, "p")
+    code = (f"import sys; print('stdout has {token} here'); "
+            f"print('stderr has {token} too', file=sys.stderr)")
+    _, result = svc.validate("p", CommandValidationExecutor([_PY, "-c", code]))
+    vid = result.details["validation_id"]
+    vdir = _ws(tmp_path, "p") / "evidence" / "validation" / vid
+    assert token not in (vdir / "stdout.txt").read_text(encoding="utf-8")
+    assert token not in (vdir / "stderr.txt").read_text(encoding="utf-8")
+    assert "[REDACTED_github_token]" in (vdir / "stdout.txt").read_text(encoding="utf-8")
+    meta = json.loads((vdir / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["redacted"] is True and meta["stdout"]["redacted"] is True
+    # Scan the ENTIRE project workspace: the raw token appears in no persisted file.
+    ws_root = tmp_path / "p"
+    leaked = []
+    for f in ws_root.rglob("*"):
+        if f.is_file():
+            try:
+                if token in f.read_text(encoding="utf-8", errors="strict"):
+                    leaked.append(str(f.relative_to(ws_root)))
+            except (OSError, UnicodeDecodeError):
+                continue
+    assert leaked == [], f"raw token leaked into: {leaked}"
+
+
 def test_no_environment_secrets_are_persisted(tmp_path, monkeypatch):
     canary = "canary-secret-value-1234567890"
     monkeypatch.setenv("FACTORY_TEST_CANARY", canary)

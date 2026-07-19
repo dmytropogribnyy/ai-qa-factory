@@ -195,8 +195,14 @@ class CommandValidationExecutor:
         except OSError as exc:
             spawn_error = f"{type(exc).__name__}: {exc}"
         finished = datetime.now(timezone.utc).isoformat()
-        out_trunc = self._write_bounded(vdir / "stdout.txt", f"$ {self._display}", out)
-        err_trunc = self._write_bounded(vdir / "stderr.txt", f"$ {self._display}", err)
+        # Redact secret-like content from BOTH streams before anything is persisted as evidence
+        # (reusing the single intake redactor). Useful non-secret diagnostics are preserved.
+        from core.orchestration.content_safety import redact_intake_text
+        red_out = redact_intake_text(out)
+        red_err = redact_intake_text(err)
+        spawn_error = redact_intake_text(spawn_error).text if spawn_error else ""
+        out_trunc = self._write_bounded(vdir / "stdout.txt", f"$ {self._display}", red_out.text)
+        err_trunc = self._write_bounded(vdir / "stderr.txt", f"$ {self._display}", red_err.text)
         rel = f"evidence/validation/{vid}"
         passed = rc == 0
         metadata = {
@@ -204,11 +210,15 @@ class CommandValidationExecutor:
             "argv": list(self._safe_argv), "cwd": ".", "cwd_confined_to_workspace": True,
             "started_at": started, "finished_at": finished, "timeout_s": self._timeout,
             "exit_code": rc, "timed_out": timed_out, "spawn_error": spawn_error, "passed": passed,
+            "redacted": bool(red_out.secrets_found or red_err.secrets_found),
             "stdout": {"path": f"{rel}/stdout.txt", "truncated": out_trunc,
+                       "redacted": red_out.secrets_found,
                        "sha256": self._sha256(vdir / "stdout.txt")},
             "stderr": {"path": f"{rel}/stderr.txt", "truncated": err_trunc,
+                       "redacted": red_err.secrets_found,
                        "sha256": self._sha256(vdir / "stderr.txt")},
-            "note": "validation-attempt provenance; no environment variables are persisted",
+            "note": "validation-attempt provenance; no environment variables are persisted; "
+                    "stdout/stderr are secret-redacted before writing",
         }
         import json as _json
         (vdir / "metadata.json").write_text(_json.dumps(metadata, indent=2, sort_keys=True),
