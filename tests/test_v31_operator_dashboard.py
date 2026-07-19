@@ -390,6 +390,21 @@ def test_scout_campaigns_page_renders(tmp_path):
         server.shutdown()
 
 
+def test_access_and_settings_respond_quickly_cached(tmp_path):
+    # v3.2 latency regression (Windows): readiness subprocess probes must be cached/parallel so a
+    # request never blocks on their sum. Repeated /settings + /api/access respond well under 5s.
+    import time
+    server, url = _dash(tmp_path)
+    try:
+        for path in ["/settings", "/api/access", "/settings", "/api/access", "/tools"]:
+            t0 = time.time()
+            with urllib.request.urlopen(url + path, timeout=5) as r:
+                assert r.status == 200
+            assert time.time() - t0 < 4.5, f"{path} too slow: {time.time() - t0:.1f}s"
+    finally:
+        server.shutdown()
+
+
 def test_v32_capability_access_and_gap_surfaces(tmp_path):
     # v3.2 J: capability matrix, access bootstrap, and tool-gap are surfaced via the existing
     # Tools/Settings (no new cluttered page) + JSON endpoints — no secrets shown.

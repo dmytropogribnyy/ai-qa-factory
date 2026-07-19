@@ -56,6 +56,29 @@ def _work_lock(key: str):
         return lk
 
 
+# Bounded cache for the Access & Identity snapshot so a page/API request never blocks on the sum of
+# several subprocess version probes (the readiness rarely changes within a session). An explicit
+# refresh recomputes it. Computed at most once per _ACCESS_TTL_S, guarded for thread safety.
+_ACCESS_CACHE: dict = {"snap": None, "at": 0.0}
+_ACCESS_CACHE_GUARD = _threading.Lock()
+_ACCESS_TTL_S = 120.0
+
+
+def cached_access_snapshot(refresh: bool = False) -> dict:
+    import time as _time
+    now = _time.time()
+    with _ACCESS_CACHE_GUARD:
+        fresh = _ACCESS_CACHE["snap"] is not None and (now - _ACCESS_CACHE["at"]) < _ACCESS_TTL_S
+        if fresh and not refresh:
+            return _ACCESS_CACHE["snap"]
+    from core.orchestration.access_bootstrap import AccessBootstrap
+    snap = AccessBootstrap().snapshot()
+    with _ACCESS_CACHE_GUARD:
+        _ACCESS_CACHE["snap"] = snap
+        _ACCESS_CACHE["at"] = now
+    return snap
+
+
 def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token: str,
                   operator_home: bool = False):
     class _Handler(BaseHTTPRequestHandler):
@@ -168,10 +191,12 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/activity":
                 return self._json(200, self._activity_json((q.get("project") or [""])[0]))
             if path == "/settings":
+                if (q.get("refresh") or [""])[0]:
+                    cached_access_snapshot(refresh=True)   # explicit operator refresh
                 return self._html(200, self._settings_page())
             if path == "/api/access":
-                from core.orchestration.access_bootstrap import AccessBootstrap
-                return self._json(200, AccessBootstrap().snapshot())
+                return self._json(200, cached_access_snapshot(
+                    refresh=bool((q.get("refresh") or [""])[0])))
             if path == "/docs":
                 return self._html(200, self._docs_page())
             if path == "/api/results":
@@ -1462,8 +1487,7 @@ function startCampaign(){{
                     f'<div class="scrollx">{table}</div>')
 
         def _access_section(self) -> str:
-            from core.orchestration.access_bootstrap import AccessBootstrap
-            items = AccessBootstrap().snapshot()["integrations"]
+            items = cached_access_snapshot()["integrations"]
 
             def _kind(r):
                 return {"Runtime Verified": "ok", "Authenticated": "ok", "Live Verified": "ok",
@@ -1480,8 +1504,10 @@ function startCampaign(){{
                      f'</caption><tr><th>Integration</th><th>Readiness</th><th>Purpose</th><th>Owner</th>'
                      f'<th>Required scope</th><th>Setup / Verify</th></tr>{rows}</table>')
             return (f'<div class="card"><h2>Access &amp; Integrations</h2>'
-                    f'<p class="muted">Real local readiness. Secrets are referenced by env-var name '
-                    f'only, never shown or persisted. Client-owned items stay Needs Client.</p>'
+                    f'<p class="muted">Real local readiness (cached; probes never block a request). '
+                    f'Secrets are referenced by env-var name only, never shown or persisted. '
+                    f'Client-owned items stay Needs Client. '
+                    f'<a href="/settings?refresh=1">Refresh readiness</a></p>'
                     f'<div class="scrollx">{table}</div></div>')
 
         def _docs_page(self) -> str:

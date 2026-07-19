@@ -75,22 +75,46 @@ class AccessBootstrap:
     def _bin(self, name: str) -> bool:
         return bool(self._which(name))
 
+    def _probe_versions(self) -> Dict[str, Optional[str]]:
+        """Run the (bounded) version/status probes CONCURRENTLY so a request never blocks on the sum
+        of several subprocess calls."""
+        import concurrent.futures
+        jobs = {
+            "node": (["node", "--version"], 5),
+            "claude": (["claude", "--version"], 6),
+            "docker": (["docker", "--version"], 5),
+            "gh": (["gh", "auth", "status"], 6),
+        }
+        results: Dict[str, Optional[str]] = {k: None for k in jobs}
+
+        def _one(name_cmd):
+            name, (cmd, to) = name_cmd
+            if not self._bin(cmd[0]):
+                return name, None
+            return name, self._run(cmd, to)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+            for name, val in ex.map(_one, jobs.items()):
+                results[name] = val
+        return results
+
     def inspect(self) -> List[Integration]:
         out: List[Integration] = []
+        probes = self._probe_versions()
 
         # --- local runtimes ---
         out.append(Integration(
             "python", "Python runtime", "run tests, static analysis, and the local pipeline",
             RUNTIME_VERIFIED, "local", "local", "python is executing this process", ""))
 
-        node_v = self._run(["node", "--version"], 8) if self._bin("node") else None
+        node_v = probes["node"]
         out.append(Integration(
             "node", "Node.js", "run the generated TypeScript Playwright framework",
             INSTALLED if node_v else UNAVAILABLE, "local", "local",
             f"node {node_v}" if node_v else "node not on PATH",
             "" if node_v else "install Node.js LTS"))
 
-        claude_v = self._run(["claude", "--version"], 10) if self._bin("claude") else None
+        claude_v = probes["claude"]
         out.append(Integration(
             "claude_code", "Claude Code CLI", "autonomous bounded execution worker",
             INSTALLED if claude_v else NEEDS_OPERATOR, "local", "operator",
@@ -99,7 +123,7 @@ class AccessBootstrap:
              "`claude -p \"ok\" --output-format json --max-turns 1`"
              if claude_v else "install Claude Code and authenticate")))
 
-        docker_v = self._run(["docker", "--version"], 8) if self._bin("docker") else None
+        docker_v = probes["docker"]
         out.append(Integration(
             "docker", "Docker", "reproducible test environments + containerized DB smoke",
             INSTALLED if docker_v else UNAVAILABLE, "local", "local",
@@ -131,7 +155,7 @@ class AccessBootstrap:
             "git", "Git", "repository operations", RUNTIME_VERIFIED if self._bin("git") else UNAVAILABLE,
             "local", "local", "git on PATH" if self._bin("git") else "not on PATH",
             "" if self._bin("git") else "install Git"))
-        gh_auth = self._run(["gh", "auth", "status"], 8) if self._bin("gh") else None
+        gh_auth = probes["gh"]
         gh_ready = bool(gh_auth) and "Logged in" in (gh_auth or "")
         out.append(Integration(
             "github", "GitHub (gh CLI)", "repo/PR/Actions access + hosted CI",
