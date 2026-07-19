@@ -350,7 +350,15 @@ class ClaudeCodeWorker:
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(json.dumps(session, indent=2, sort_keys=True), encoding="utf-8")
         import os
-        os.replace(tmp, path)                       # atomic
+        import time as _t
+        for _attempt in range(12):                  # atomic; retry the Windows concurrent-reader race
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if _attempt == 11:
+                    raise
+                _t.sleep(0.02)
 
 
 def worker_readiness(*, which=shutil.which, run=subprocess.run,

@@ -28,6 +28,21 @@ _PROGRESS = {"READY_TO_EXECUTE": 60, "EXECUTING": 75, "EXECUTION_PARTIAL": 75, "
              "CANCELLED": 100}
 
 
+def _atomic_replace(tmp: Path, path: Path, *, attempts: int = 12, delay: float = 0.02) -> None:
+    """``os.replace`` that is robust on Windows, where the call fails with ``PermissionError`` if the
+    destination is momentarily open by a concurrent READER (e.g. the Dashboard polling worker-status
+    while a background worker saves state). Retry briefly instead of losing the state write."""
+    import time
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
 class WorkExecutionError(Exception):
     pass
 
@@ -158,7 +173,7 @@ class WorkExecutionService:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
+        _atomic_replace(tmp, path)
 
     def _load_state(self, pid: str) -> WorkRunState:
         p = self._ws(pid) / "WORK_RUN_STATE.json"
