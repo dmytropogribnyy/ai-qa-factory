@@ -32,6 +32,9 @@ _MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
 _MAX_START_BODY_BYTES = 64 * 1024
 # The largest pasted client brief accepted by the dashboard intake (also bounded by the body cap).
 _MAX_BRIEF_BYTES = 60 * 1024
+# Hard cap on how many body bytes we will drain before giving up (prevents a huge-Content-Length
+# read while still fully draining ordinary oversized requests so the socket is not half-closed).
+_DRAIN_CAP_BYTES = 2 * 1024 * 1024
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
 # Per-project mutation locks so concurrent double-submits are serialized (v3.1 P1). Shared across
@@ -134,7 +137,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/projects":
                 return self._json(200, self._projects_snapshot())
             if path == "/projects":
-                return self._html(200, self._projects_html())
+                return self._html(200, self._projects_page())
             # v3.1 operator dashboard read-model routes
             if path == "/api/overview":
                 return self._json(200, self._read_model().overview().to_dict())
@@ -148,7 +151,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path.startswith("/work/"):
                 return self._html(200, self._work_detail_page(path[len("/work/"):], q))
             if path == "/scout":
-                return self._html(200, self._overview_html())    # the Scout run/home view
+                return self._html(200, self._scout_home_page())
             if path == "/scout/campaigns":
                 return self._html(200, self._scout_campaigns_page())
             if path == "/activity":
@@ -162,9 +165,9 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/results":
                 return self._json(200, self._results_snapshot())
             if path == "/results":
-                return self._html(200, self._results_html())
+                return self._html(200, self._results_page(q))
             if path == "/company":
-                return self._html(200, self._company_html((q.get("id") or [""])[0]))
+                return self._html(200, self._company_page((q.get("id") or [""])[0]))
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/work-evidence":
@@ -338,12 +341,20 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 return None
-            if length <= 0 or length > _MAX_START_BODY_BYTES:
+            if length <= 0:
                 return None
+            # Always DRAIN the declared body (bounded) before any rejection so an oversized/invalid
+            # request never leaves the client writing into a half-closed socket (Windows WinError
+            # 10053). Beyond a hard drain cap we stop reading (a huge Content-Length is abusive).
             try:
-                raw = self.rfile.read(length)
+                raw = self.rfile.read(min(length, _DRAIN_CAP_BYTES))
+            except OSError:
+                return None
+            if length > _MAX_START_BODY_BYTES:
+                return None            # oversized (drained what we safely could)
+            try:
                 data = json.loads(raw.decode("utf-8"))
-            except (ValueError, OSError):
+            except ValueError:
                 return None
             if not isinstance(data, dict):
                 return None
@@ -524,8 +535,11 @@ Review items: {s['review_items']} — APIs: <a href="/api/presend">presend</a>,
                     contacts = db.query("SELECT normalized_value, status FROM contacts WHERE company_id=?",
                                         (cid,))
                     n = db.query("SELECT COUNT(*) AS n FROM findings WHERE company_id=?", (cid,))[0]["n"]
+                    sevs = [r["severity"] for r in db.query(
+                        "SELECT severity FROM findings WHERE company_id=?", (cid,)) if r["severity"]]
                     out.append({"company_id": cid, "name": c["canonical_name"],
                                 "domain": c["primary_domain"], "findings": n,
+                                "max_severity": _max_severity(sevs),
                                 "contact": (contacts[0]["normalized_value"] if contacts else ""),
                                 "contact_status": (contacts[0]["status"] if contacts else "")})
                 return {"companies": out, "count": len(out)}
@@ -1034,6 +1048,60 @@ function startCampaign(){{
                 self._poll_script("/api/work/" + safe_pid, "function(j){return [j.header&&j.header.status]}"))
             return _page(f"AI QA Factory — {pid}", "/work", header + tablist + panels + hidden, script)
 
+        def _scout_home_page(self) -> str:
+            # The operator Scout home in the shared layout, reusing the SAME ScoutService status and
+            # the SAME guarded /api/control + /api/campaign/start endpoints (no second service/state).
+            status = service.status()
+            st = status.get("state", {})
+            mode = status.get("mode", "IDLE")
+            controllable = bool(status.get("controllable"))
+            running = bool(status.get("running"))
+            prospects = st.get("prospects", {})
+            if controllable:
+                controls = ('<button class="btn" onclick="ctl(\'pause\')">Pause</button>'
+                            '<button class="btn" onclick="ctl(\'resume\')">Resume</button>'
+                            '<button class="btn" onclick="ctl(\'cancel\')">Stop Safely</button>'
+                            '<button class="btn danger" onclick="ctl(\'kill\')">Cancel (kill)</button>')
+            else:
+                controls = (f'<em class="muted">Controls unavailable — this run is '
+                            f'<strong>{_esc(mode)}</strong> (read-only).</em>')
+            prows = "".join(
+                f'<tr><td>{_esc(pid)}</td><td class="muted">{_esc(p.get("url", ""))}</td>'
+                f'<td>{_badge(p.get("status", ""))}</td><td>{_esc(p.get("priority", ""))}</td>'
+                f'<td>{_esc(p.get("verified_defects", 0))}</td></tr>'
+                for pid, p in sorted(prospects.items()))
+            table = (f'<table><caption>Prospects in this run</caption><tr><th>ID</th><th>URL</th>'
+                     f'<th>Status</th><th>Priority</th><th>Defects</th></tr>{prows}</table>'
+                     if prows else '<div class="card empty muted">No prospects in this run.</div>')
+            start_panel = "" if running else _START_PANEL_HTML
+            body = (f'<h1>Scout</h1><p class="muted">{_esc(SCOUT_PRODUCT_NAME)} — bounded, read-only '
+                    f'discovery + QA. Nothing is scanned or sent without your explicit action.</p>'
+                    f'<div class="card"><p>Run <code>{_esc(status.get("run_id", ""))}</code> · mode '
+                    f'{_badge(mode)} · status {_badge(st.get("status", "n/a"))}</p>'
+                    f'<div class="row">{controls}</div></div>'
+                    f'<div class="row"><a class="chip" href="/scout/campaigns">Campaigns</a>'
+                    f'<a class="chip" href="/results">Results</a></div>'
+                    f'<div class="scrollx">{table}</div>{start_panel}')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";\n"
+                "function ctl(a){fetch('/api/control?action='+a,{method:'POST',"
+                "headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
+                "if(!j.ok)alert('control refused: '+(j.message||j.error));location.reload();});}\n"
+                "function startCampaign(){var seeds=(document.getElementById('seeds').value||'')"
+                ".split(/[\\n,]+/).map(function(s){return s.trim();}).filter(Boolean);"
+                "if(!seeds.length){alert('enter at least one public https URL');return;}"
+                "if(!document.getElementById('confirm').checked){alert('please confirm the bounded "
+                "read-only scan');return;}var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():"
+                "String(Date.now())+Math.random();"
+                "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
+                "campaign:document.getElementById('campaign').value||'adhoc',"
+                "max_pages:parseInt(document.getElementById('maxpages').value||'5',10)})})"
+                ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
+                "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
+                "alert('start failed: '+e);});}\n")
+            return _page("AI QA Factory — Scout", "/scout", body, script)
+
         def _scout_campaigns_page(self) -> str:
             ov = self._read_model().overview()
             # Reuse the unified project index for scout campaigns (no second store).
@@ -1056,6 +1124,122 @@ function startCampaign(){{
                     f'<p class="muted">Campaign start + Pause/Resume/Stop Safely/Cancel controls are '
                     f'on <a href="/scout">Scout home</a> (bounded, read-only; nothing is sent).</p>')
             return _page("AI QA Factory — Scout campaigns", "/scout", body)
+
+        # --- Scout data pages, unified into the shared layout (reuse existing data) -----------
+        def _results_page(self, q) -> str:
+            snap = self._results_snapshot()
+            companies = snap.get("companies", [])
+            qtext = (q.get("q") or [""])[0].strip().lower()
+            fcontact = (q.get("contact") or [""])[0].strip()
+            fsev = (q.get("sev") or [""])[0].strip().lower()
+            sev_min = _SEV_RANK.get(fsev, 0)
+
+            def _keep(c):
+                if qtext and qtext not in (str(c["name"]) + " " + str(c["domain"])).lower():
+                    return False
+                if fcontact and str(c.get("contact_status", "")) != fcontact:
+                    return False
+                if sev_min and _SEV_RANK.get(str(c.get("max_severity", "")).lower(), 0) < sev_min:
+                    return False
+                return True
+
+            filtered = [c for c in companies if _keep(c)]
+            contact_states = sorted({str(c.get("contact_status", "")) for c in companies if c.get("contact_status")})
+            rows = "".join(
+                f'<tr><td><a href="/company?id={_esc(c["company_id"])}">{_esc(c["name"] or c["company_id"])}</a></td>'
+                f'<td class="muted">{_esc(c["domain"])}</td>'
+                f'<td>{_badge(c.get("max_severity") or "none", _sev_badge_kind(c.get("max_severity", "")))}</td>'
+                f'<td>{_esc(c["findings"])}</td><td class="muted">{_esc(c["contact"])}</td>'
+                f'<td>{_badge(c["contact_status"] or "—")}</td></tr>' for c in filtered)
+            table = (f'<table><caption>{len(filtered)} of {len(companies)} companies</caption>'
+                     f'<tr><th>Company</th><th>Domain</th><th>Max severity</th><th>Findings</th>'
+                     f'<th>Public contact</th><th>Contact state</th></tr>{rows}</table>' if rows
+                     else '<div class="card empty muted">No companies match these filters. '
+                          '<a href="/results">Clear filters</a>.</div>')
+            sev_opts = "".join(
+                f'<option value="{s}"{" selected" if fsev == s else ""}>{s.title()}</option>'
+                for s in ("", "low", "medium", "high", "critical"))
+            con_opts = '<option value="">Any contact state</option>' + "".join(
+                f'<option value="{_esc(s)}"{" selected" if fcontact == s else ""}>{_esc(s)}</option>'
+                for s in contact_states)
+            active = []
+            if qtext:
+                active.append(f'<span class="chip">search: {_esc(qtext)}</span>')
+            if fcontact:
+                active.append(f'<span class="chip">contact: {_esc(fcontact)}</span>')
+            if fsev:
+                active.append(f'<span class="chip">severity ≥ {_esc(fsev)}</span>')
+            chips = (f'<div class="row">{"".join(active)}<a class="chip" href="/results">Clear all</a></div>'
+                     if active else "")
+            form = (
+                '<form class="card" method="get" action="/results" role="search">'
+                '<div class="row">'
+                f'<label>Search<br><input name="q" value="{_esc((q.get("q") or [""])[0])}" '
+                'placeholder="company or domain"></label>'
+                f'<label>Contact state<br><select name="contact">{con_opts}</select></label>'
+                f'<label>Min severity<br><select name="sev">{sev_opts}</select></label>'
+                '<span style="align-self:end"><button class="btn primary" type="submit">Filter</button> '
+                '<a class="btn" href="/results">Reset</a></span></div></form>')
+            body = (f'<h1>Results</h1><div class="row"><a class="chip" href="/scout">Scout home</a>'
+                    f'<a class="chip" href="/scout/campaigns">Campaigns</a></div>'
+                    f'{form}{chips}<div class="scrollx">{table}</div>'
+                    '<p class="muted">Read-only. No outreach is sent from here.</p>')
+            return _page("AI QA Factory — Results", "/scout", body)
+
+        def _company_page(self, cid: str) -> str:
+            d = self._company_detail(cid)
+            if d is None:
+                return _page("Company not found", "/scout",
+                             '<h1>Company not found</h1><p>Unknown company id, or no data for this run '
+                             'yet.</p><p><a href="/results">&larr; Results</a></p>')
+            frows = "".join(
+                f'<tr><td>{_esc(f["capability"])}</td>'
+                f'<td>{_badge(f["severity"], _sev_badge_kind(f.get("severity", "")))}</td>'
+                f'<td>{_esc(f["title"])}</td><td class="muted">{_esc(f["verification_state"])}</td>'
+                f'<td>{_esc(f["client_safe"])}</td></tr>' for f in d["findings"])
+            contact, prov, draft = d["contact"], d["provenance"], d["draft"]
+            recip = contact.get("normalized_value", "")
+            compose = _gmail_compose_url(recip, draft.get("subject", ""), draft.get("body", ""))
+            gmail_action = (f'<a class="btn" href="{_esc(compose)}" target="_blank" rel="noopener">'
+                            "Open in Gmail</a>" if recip and draft else "<em>no draft/contact yet</em>")
+            body = (
+                f'<p><a href="/results">&larr; Results</a></p>'
+                f'<h1>{_esc(d["company"].get("canonical_name") or cid)}</h1>'
+                f'<p class="muted">domain {_esc(d["company"].get("primary_domain"))}</p>'
+                f'<h2>Findings</h2><div class="scrollx"><table><caption>{len(d["findings"])} finding(s)</caption>'
+                f'<tr><th>Capability</th><th>Severity</th><th>Title</th><th>Verification</th>'
+                f'<th>Client-safe</th></tr>{frows or "<tr><td colspan=5 class=muted>none</td></tr>"}</table></div>'
+                '<h2>Public contact + provenance</h2><div class="card">'
+                f'<p>Contact: <code>{_esc(recip)}</code> ({_esc(contact.get("status"))}) · '
+                f'source {_esc(prov.get("source_category"))} · published '
+                f'{_esc(prov.get("publicly_published_for_contact"))} · verified '
+                f'{_esc(prov.get("last_verified_at"))}</p>'
+                f'<p class="muted">source URL: {_esc(prov.get("source_url"))}</p></div>'
+                '<h2>Draft (edit in Gmail; nothing is sent from here)</h2><div class="card">'
+                f'<p><strong>Subject:</strong> {_esc(draft.get("subject", "(none)"))}</p>'
+                f'<pre>{_esc(draft.get("body", "(no draft)"))}</pre>'
+                f'<p>{gmail_action} <span class="muted">— then send manually in Gmail and mark the '
+                'company contacted. Live API send stays the optional, one-at-a-time scout send CLI '
+                'path.</span></p></div>')
+            return _page(f"AI QA Factory — {cid}", "/scout", body)
+
+        def _projects_page(self) -> str:
+            snap = self._projects_snapshot()
+            rows = "".join(
+                f'<tr><td>{_esc(p["project_id"])}</td><td>{_badge(p["type"])}</td>'
+                f'<td>{_esc(p["title"])}</td><td>{_badge(p["lifecycle_state"])}</td>'
+                f'<td>{_esc(p["progress"])}%</td><td>{_esc(len(p["blockers"]))}</td>'
+                f'<td>{_esc(p["evidence_count"])}</td>'
+                f'<td class="muted">{_esc(p["operator_next_action"])}</td></tr>'
+                for p in snap.get("projects", []))
+            table = (f'<table><caption>{snap.get("project_count", 0)} projects + campaigns</caption>'
+                     f'<tr><th>Project</th><th>Type</th><th>Title</th><th>State</th><th>Progress</th>'
+                     f'<th>Blockers</th><th>Evidence</th><th>Next action</th></tr>{rows}</table>'
+                     if rows else '<div class="card empty muted">None yet.</div>')
+            body = (f'<h1>Projects</h1><p class="muted">Client-work projects and Scout campaigns from '
+                    f'the existing project state (read-only). See also <a href="/work">Work</a>.</p>'
+                    f'<div class="scrollx">{table}</div>')
+            return _page("AI QA Factory — Projects", "/work", body)
 
         def _evidence_li(self, e) -> str:
             rel = e.get("relative_path", "")
@@ -1296,6 +1480,24 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
 
 def _badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{_esc(text)}</span>'
+
+
+_SEV_RANK = {"critical": 5, "high": 4, "medium": 3, "moderate": 3, "low": 2, "info": 1,
+             "informational": 1}
+
+
+def _max_severity(severities) -> str:
+    best, best_rank = "", 0
+    for s in severities:
+        r = _SEV_RANK.get(str(s).strip().lower(), 0)
+        if r > best_rank:
+            best, best_rank = str(s), r
+    return best
+
+
+def _sev_badge_kind(sev: str) -> str:
+    r = _SEV_RANK.get(str(sev).strip().lower(), 0)
+    return "blocked" if r >= 4 else ("attention" if r == 3 else "")
 
 
 def _vscode_file_uri(path: str) -> str:

@@ -46,7 +46,8 @@ pytestmark = [
 ]
 
 _PRIMARY_PAGES = ["/", "/work", "/work/alpha", "/tools", "/activity", "/settings", "/docs",
-                  "/scout/campaigns"]
+                  "/scout", "/scout/campaigns", "/results", "/projects", "/company?id=unknown",
+                  "/results?q=x&sev=high"]
 
 
 def _passing(_c):

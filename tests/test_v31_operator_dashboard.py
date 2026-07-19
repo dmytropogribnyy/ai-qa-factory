@@ -335,3 +335,22 @@ def test_scout_campaigns_page_renders(tmp_path):
         assert status == 200 and "Scout campaigns" in body and "<main>" in body
     finally:
         server.shutdown()
+
+
+def test_unified_scout_pages_use_shared_layout(tmp_path):
+    # P1: /scout, /results, /company, /projects render in the shared layout, preserving the
+    # regression-locked Scout phrases.
+    server, url = _dash(tmp_path)
+    try:
+        s, scout, _ = _get(url + "/scout")
+        assert s == 200 and "<main>" in scout and "Prospect QA Scout" in scout
+        assert "Stop Safely" in scout or "Controls unavailable" in scout
+        s, results, _ = _get(url + "/results")
+        assert s == 200 and "<main>" in results and "results" in results.lower()
+        assert 'role="search"' in results          # Results filters are present
+        s, projects, _ = _get(url + "/projects")
+        assert s == 200 and "<main>" in projects and "projects" in projects.lower()
+        s, company, _ = _get(url + "/company?id=unknown")
+        assert s == 200 and "<main>" in company
+    finally:
+        server.shutdown()
