@@ -45,6 +45,23 @@ def generate_project_id(seed_text: str, ids: "IdProvider", prefix: str = "") -> 
     return f"{slugify(base)}-{ids.short_id()}"
 
 
+# One public project-id contract, reused by the CLI and the Dashboard (no separate rules).
+_PROJECT_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def validate_project_id(pid: str) -> bool:
+    """A safe project id: [A-Za-z0-9._-]{1,64}, no traversal/separator/absolute/control chars."""
+    import os
+    return (
+        bool(pid)
+        and _PROJECT_ID_RE.fullmatch(pid) is not None
+        and ".." not in pid
+        and "/" not in pid and "\\" not in pid
+        and not os.path.isabs(pid)
+        and not any(ord(c) < 0x20 or ord(c) == 0x7F for c in pid)
+    )
+
+
 class FixedClock(ClockProvider):
     """Deterministic clock returning a fixed ISO timestamp."""
 

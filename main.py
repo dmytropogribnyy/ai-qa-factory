@@ -31,14 +31,8 @@ _PROJECT_ID_RE = __import__("re").compile(r"[A-Za-z0-9._-]{1,64}")
 
 
 def _valid_project_id(pid: str) -> bool:
-    import os
-    return (
-        bool(pid)
-        and _PROJECT_ID_RE.fullmatch(pid) is not None
-        and ".." not in pid
-        and "/" not in pid and "\\" not in pid
-        and not os.path.isabs(pid)
-    )
+    from core.orchestration.providers import validate_project_id
+    return validate_project_id(pid)
 
 
 def run_work(args) -> int:

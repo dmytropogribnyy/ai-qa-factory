@@ -10,6 +10,8 @@ import json
 import urllib.error
 import urllib.request
 
+import pytest
+
 from core.orchestration.client_work import ClientWorkService
 from core.orchestration.operator_executor import OperatorWorkspaceExecutor, ProducedArtifact
 from core.orchestration.providers import FixedClock, SequentialIds
@@ -190,6 +192,58 @@ def test_analyze_creates_a_project_from_pasted_brief(tmp_path):
                           {"text": _BRIEF, "project_id": "fromdash", "source_platform": "manual"})
         assert status == 200 and j["ok"] and j["project_id"] == "fromdash"
         assert (tmp_path / "fromdash" / "40_ark_work" / "WORK_RUN_STATE.json").exists()
+    finally:
+        server.shutdown()
+
+
+def test_analyze_generates_safe_id_when_omitted(tmp_path):
+    # P0-1: an omitted/blank project name generates a safe id exactly as the CLI does.
+    from core.orchestration.providers import validate_project_id
+    server, url = _dash(tmp_path)
+    try:
+        status, j = _post(url + "/api/work/analyze", server.scout_csrf_token,
+                          {"text": _BRIEF, "project_id": "", "source_platform": "direct"})
+        assert status == 200 and j["ok"]
+        pid = j["project_id"]
+        assert validate_project_id(pid) and "/" not in pid and ".." not in pid
+        assert (tmp_path / pid / "40_ark_work" / "WORK_RUN_STATE.json").exists()
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize("bad_pid", ["../evil", "a/b", "..", "c\\d", "/abs/path", "x" * 65,
+                                     "bad id", "ctrl\x01char", "d:evil"])
+def test_analyze_refuses_unsafe_project_ids(tmp_path, bad_pid):
+    # P0-1: traversal, separators, absolute paths, invalid chars, oversized, control chars.
+    server, url = _dash(tmp_path)
+    try:
+        status, j = _post(url + "/api/work/analyze", server.scout_csrf_token,
+                          {"text": _BRIEF, "project_id": bad_pid})
+        assert status == 400 and not j["ok"] and "project id" in j["error"].lower()
+        # Nothing escaped the output dir.
+        assert not (tmp_path.parent / "evil").exists()
+    finally:
+        server.shutdown()
+
+
+def test_analyze_rejects_oversized_brief(tmp_path):
+    server, url = _dash(tmp_path)
+    try:
+        status, j = _post(url + "/api/work/analyze", server.scout_csrf_token,
+                          {"text": "x" * 70000, "project_id": "big"})
+        # Either the body cap (400 invalid/oversized) or the explicit brief bound rejects it.
+        assert status == 400 and not j.get("ok", False)
+    finally:
+        server.shutdown()
+
+
+def test_analyze_collision_generates_distinct_ids(tmp_path):
+    # P0-1: two omitted-id analyses of the same brief do not collide (distinct generated ids).
+    server, url = _dash(tmp_path)
+    try:
+        _, j1 = _post(url + "/api/work/analyze", server.scout_csrf_token, {"text": _BRIEF})
+        _, j2 = _post(url + "/api/work/analyze", server.scout_csrf_token, {"text": _BRIEF})
+        assert j1["ok"] and j2["ok"] and j1["project_id"] != j2["project_id"]
     finally:
         server.shutdown()
 

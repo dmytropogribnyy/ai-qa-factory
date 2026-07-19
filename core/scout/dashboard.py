@@ -30,6 +30,8 @@ _CONTENT_TYPES = {".json": "application/json", ".png": "image/png", ".md": "text
 _MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
 # The largest JSON body accepted by the start endpoint (requests are tiny).
 _MAX_START_BODY_BYTES = 64 * 1024
+# The largest pasted client brief accepted by the dashboard intake (also bounded by the body cap).
+_MAX_BRIEF_BYTES = 60 * 1024
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
 
@@ -221,17 +223,34 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             from core.orchestration.work_execution import WorkExecutionError, WorkExecutionService
             from core.orchestration.work_state_manager import InvalidTransitionError
             if action == "analyze":
-                # Read-only intake (analysis only; nothing is executed). Reuses ClientWorkService.
+                # Read-only intake (analysis only; nothing is executed). Uses the SAME project-id
+                # contract as the CLI: generate a safe id when omitted, else validate strictly.
+                from core.orchestration.client_work import ClientWorkService
+                from core.orchestration.content_safety import redact_intake_text
+                from core.orchestration.providers import (
+                    ClockProvider,
+                    IdProvider,
+                    generate_project_id,
+                    validate_project_id,
+                )
                 brief = str(body.get("text") or "").strip()
                 if not brief:
                     return self._json(400, {"ok": False, "error": "a client brief is required"})
-                from core.orchestration.client_work import ClientWorkService
-                from core.orchestration.providers import ClockProvider, IdProvider
+                if len(brief.encode("utf-8")) > _MAX_BRIEF_BYTES:
+                    return self._json(400, {"ok": False,
+                                            "error": f"brief exceeds {_MAX_BRIEF_BYTES} bytes"})
+                generated = not pid.strip()
+                project_id = (generate_project_id(redact_intake_text(brief).text, IdProvider())
+                              if generated else pid.strip())
+                if not validate_project_id(project_id):
+                    return self._json(400, {"ok": False, "error": "invalid project id (use "
+                                            "[A-Za-z0-9._-], max 64, no separators/traversal)"})
                 try:
                     res = ClientWorkService(ClockProvider(), IdProvider(),
                                             output_dir=service.output_dir).analyze(
-                        brief, project_id=(pid or None),
-                        source_platform=str(body.get("source_platform") or "manual"))
+                        brief, project_id=project_id,
+                        source_platform=str(body.get("source_platform") or "manual"),
+                        fresh_only=generated)
                 except Exception as exc:
                     return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
                 return self._json(200, {"ok": True, "action": action,
