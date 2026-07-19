@@ -1745,7 +1745,17 @@ def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 
     write_ownership_record(out_dir, bound_port, token)
     import threading
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    # Precompute the Access readiness snapshot off the request path (non-blocking) so a /settings or
+    # /api/access request almost never pays the cold-cache subprocess-probe cost.
+    threading.Thread(target=lambda: _safe_warm_access(), daemon=True).start()
     return server, f"http://{bound_host}:{bound_port}"
+
+
+def _safe_warm_access() -> None:
+    try:
+        cached_access_snapshot()
+    except Exception:
+        pass
 
 
 def csrf_token_path(output_dir: str, port: int) -> Path:

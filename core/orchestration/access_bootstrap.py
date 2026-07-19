@@ -79,11 +79,13 @@ class AccessBootstrap:
         """Run the (bounded) version/status probes CONCURRENTLY so a request never blocks on the sum
         of several subprocess calls."""
         import concurrent.futures
+        # Bounded to 3s each and run CONCURRENTLY, so the cold-cache first hit stays well under a
+        # typical 5s request timeout even on a slow runner (total ~= the slowest single probe).
         jobs = {
-            "node": (["node", "--version"], 5),
-            "claude": (["claude", "--version"], 6),
-            "docker": (["docker", "--version"], 5),
-            "gh": (["gh", "auth", "status"], 6),
+            "node": (["node", "--version"], 3),
+            "claude": (["claude", "--version"], 3),
+            "docker": (["docker", "--version"], 3),
+            "gh": (["gh", "auth", "status"], 3),
         }
         results: Dict[str, Optional[str]] = {k: None for k in jobs}
 
