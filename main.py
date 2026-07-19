@@ -624,7 +624,7 @@ def main(argv: list[str] | None = None) -> int:
         "radar-demo", "send", "outreach-control", "comms-status", "mcp-audit",
         "draft-create", "draft-preview", "draft-edit", "draft-approve", "draft-reject",
         "draft-revoke", "draft-status", "gmail-auth", "gmail-status",
-        "gmail-revoke-local-token", "provider-status"])
+        "gmail-revoke-local-token", "provider-status", "test-inbox-auth", "test-inbox-status"])
     scout_cmd.add_argument("--seeds", help="Comma-separated public URLs (run; or dashboard "
                                            "to start an active run)")
     scout_cmd.add_argument("--url", help="Single public URL (smoke)")
@@ -700,7 +700,12 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("--client-config", dest="client_config", help="Gmail OAuth client JSON path")
     scout_cmd.add_argument("--token-store", dest="token_store", help="Gmail OAuth token store path")
     scout_cmd.add_argument("--expected-account", dest="expected_account",
-                           help="Authorized Gmail account (default dipptrue@gmail.com)")
+                           help="Authorized Gmail account (default dipptrue@gmail.com; "
+                                "drdiplextexh@gmail.com for the read-only test inbox)")
+    # v3.2 — read-only technical test-inbox authorization (a DISTINCT token from the send store).
+    scout_cmd.add_argument("--send-token-store", dest="send_token_store",
+                           help="test-inbox-auth: the SEND token path, so the test-inbox token can be "
+                                "verified to be a DISTINCT file (identities must not collapse)")
 
     args = parser.parse_args(argv)
 

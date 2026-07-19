@@ -3,6 +3,11 @@
 Client work runs in **Claude Code**. The Factory analyzes first and never starts implementation
 before you approve.
 
+> **Email identities:** for any client signup / email-verification / magic-link / password-reset
+> testing, use the operator-owned **Gmail QA Test Inbox** (`drdiplextexh@gmail.com`, read-only) per
+> the canonical `docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md`. Client communication and Scout outreach
+> use `dipptrue@gmail.com`. Automated inbox assertions require an explicitly authorized flow.
+
 ## 1. Intake + feasibility (read-only)
 
 Paste the job (text, URL, budget, deadline, attachments) and say *"only analyze"*, or run:

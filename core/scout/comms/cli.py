@@ -404,6 +404,58 @@ def cmd_gmail_revoke_local_token(args) -> int:
     return 0
 
 
+# --- Technical QA test inbox (read-only; the SECOND, distinct identity) ----------------------------
+
+def _test_inbox_config(args) -> dict:
+    from core.scout.comms.test_inbox import test_inbox_config_from_env
+    cfg = test_inbox_config_from_env()
+    if getattr(args, "client_config", None):
+        cfg["client_json"] = args.client_config
+    if getattr(args, "token_store", None):
+        cfg["token_json"] = args.token_store
+    if getattr(args, "expected_account", None):
+        cfg["expected_account"] = args.expected_account
+    if getattr(args, "send_token_store", None):
+        cfg["send_token_json"] = args.send_token_store
+    return cfg
+
+
+def cmd_test_inbox_status(args) -> int:
+    from core.scout.comms.test_inbox import test_inbox_status
+    status = test_inbox_status(_test_inbox_config(args))
+    print("Gmail QA Test Inbox status (read-only; no token values shown):")
+    for k in ("readiness", "client_config_present", "token_present", "refreshable",
+              "distinct_token_store", "authorized_account", "expected_account", "scopes_ok",
+              "expected_account_claim_match", "scopes"):
+        print(f"  {k:26} {status[k]}")
+    return 0
+
+
+def cmd_test_inbox_auth(args) -> int:
+    from core.scout.comms.gmail import GmailConfigError
+    from core.scout.comms.test_inbox import authorize_test_inbox
+    cfg = _test_inbox_config(args)
+    if not cfg["client_json"] or not cfg["token_json"]:
+        print("ERROR: --client-config and --token-store are required (or set "
+              "GMAIL_TEST_OAUTH_CLIENT_JSON / GMAIL_TEST_OAUTH_TOKEN_JSON). The token store MUST be a "
+              "distinct file from the send token — see docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md",
+              file=sys.stderr)
+        return 1
+    try:
+        result = authorize_test_inbox(
+            client_config_path=cfg["client_json"], token_store_path=cfg["token_json"],
+            send_token_store_path=cfg.get("send_token_json", ""),
+            expected_account=cfg["expected_account"])
+    except GmailConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"Authorized read-only test inbox: {result['account']}  "
+          f"scopes: {', '.join(result['scopes'])}")
+    if result["permissions"]["warning"]:
+        print(f"WARNING: {result['permissions']['warning']}", file=sys.stderr)
+    return 0
+
+
 def cmd_provider_status(args) -> int:
     from core.scout.comms.gmail_oauth import gmail_status
     print("Providers (readiness; none live-accepted without a recorded controlled acceptance):")
@@ -427,4 +479,5 @@ def run_comms_cli(args) -> int:
             "draft-status": cmd_draft_status, "gmail-auth": cmd_gmail_auth,
             "gmail-status": cmd_gmail_status, "gmail-revoke-local-token": cmd_gmail_revoke_local_token,
             "provider-status": cmd_provider_status,
+            "test-inbox-auth": cmd_test_inbox_auth, "test-inbox-status": cmd_test_inbox_status,
             }[args.action](args)

@@ -7,6 +7,11 @@ It is one application (`core/scout/dashboard.py`), extended in v3.1 — not a ne
 python main.py dashboard            # http://127.0.0.1:8765  (Ctrl+C to stop)
 ```
 
+> **Access & Integrations** shows the two distinct email identities — **Gmail Scout Send**
+> (`dipptrue@gmail.com`, `gmail.send`) and **Gmail QA Test Inbox** (`drdiplextexh@gmail.com`,
+> `gmail.readonly`) — each with independent readiness. The canonical policy is
+> `docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md`. The Dashboard never exposes a generic mailbox browser.
+
 ## Dashboard vs Claude Code vs Core
 
 - **Dashboard** — operator control: status, approvals, filtering, evidence review, delivery control,

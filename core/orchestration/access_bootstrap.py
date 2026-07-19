@@ -243,11 +243,56 @@ class AccessBootstrap:
                 "identity proof is verified at send time", "none — never auto-sends; send is " \
                 "approval-gated and identity-proven at send time"
         out.append(Integration(
-            "gmail_send", "Gmail (approval-gated send provider)",
+            "gmail_send", "Gmail Scout Send (approval-gated send provider)",
             "authorized external email SEND after explicit operator approval; never auto-sends "
-            "(scopes gmail.send + openid + email — NOT a read-only inbox)",
+            "(scopes gmail.send + openid + email — NOT a read-only inbox); see "
+            "docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md",
             g_ready, "gmail.send, openid, email", "operator", g_note, g_action,
             secret_ref="GMAIL_OAUTH_CLIENT_JSON, GMAIL_OAUTH_TOKEN_JSON"))
+
+        # --- Gmail QA Test Inbox: the SECOND, distinct identity (drdiplextexh@gmail.com), authorized
+        # read-only (gmail.readonly + openid + email) for correlated test-flow retrieval ONLY. Its
+        # readiness is derived INDEPENDENTLY from its own client/token/scopes/refresh/account, and it
+        # fails closed on a mixed token (send scope), a wrong account, or a token FILE shared with the
+        # send store. It can never send; the send token can never read. Bounded correlated retrieval
+        # only — never a generic mailbox browser. (See docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md.)
+        ti = self._test_inbox_status()
+        _TI_SETUP = ("see docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md; names only "
+                     "(GMAIL_TEST_OAUTH_CLIENT_JSON, GMAIL_TEST_OAUTH_TOKEN_JSON, "
+                     "GMAIL_TEST_EXPECTED_ACCOUNT)")
+        if not ti.get("distinct_token_store", True):
+            t_ready, t_note, t_action = BLOCKED, \
+                "the test-inbox token store is the SAME file as the send token (identities collapsed)", \
+                f"point GMAIL_TEST_OAUTH_TOKEN_JSON at a DISTINCT file — {_TI_SETUP}"
+        elif not ti.get("client_config_present"):
+            t_ready, t_note, t_action = NEEDS_OPERATOR, "no OAuth client configured", \
+                f"set GMAIL_TEST_OAUTH_CLIENT_JSON (may reuse the Desktop client) — {_TI_SETUP}"
+        elif not ti.get("token_present"):
+            t_ready, t_note, t_action = NEEDS_OPERATOR, "OAuth client present; not yet authorized", \
+                f"authorize the read-only test inbox (loopback) — {_TI_SETUP}"
+        elif not ti.get("scopes_ok"):
+            t_ready, t_note, t_action = NEEDS_OPERATOR, \
+                "token lacks gmail.readonly + openid + email (or carries a forbidden send/modify scope)", \
+                f"re-authorize read-only; a mixed send+read token is refused — {_TI_SETUP}"
+        elif not ti.get("refreshable"):
+            t_ready, t_note, t_action = NEEDS_OPERATOR, "token has no refresh token", \
+                f"re-authorize to obtain a refreshable token — {_TI_SETUP}"
+        elif not ti.get("expected_account_claim_match"):
+            t_ready, t_note, t_action = NEEDS_OPERATOR, \
+                "authorized account claim does not match the expected test account", \
+                f"authorize {ti.get('expected_account')} (GMAIL_TEST_EXPECTED_ACCOUNT) — {_TI_SETUP}"
+        else:
+            t_ready, t_note, t_action = CONNECTED, \
+                "authorized (read-only scopes + refreshable + distinct store + account-claim match); " \
+                "a live id-token identity proof is verified at retrieval time", \
+                "none — bounded correlated retrieval only; never a generic mailbox browser"
+        out.append(Integration(
+            "gmail_test_inbox", "Gmail QA Test Inbox (read-only)",
+            "read-only retrieval of correlated signup/verification/magic-link/reset messages for an "
+            "explicitly authorized test flow (scopes gmail.readonly + openid + email — never sends; "
+            "bounded correlated reads only, no generic mailbox browser)",
+            t_ready, "gmail.readonly, openid, email", "operator", t_note, t_action,
+            secret_ref="GMAIL_TEST_OAUTH_CLIENT_JSON, GMAIL_TEST_OAUTH_TOKEN_JSON"))
 
         # --- Upwork / direct client intake is ALWAYS manual (item 34) ---
         out.append(Integration(
@@ -301,6 +346,13 @@ class AccessBootstrap:
             from core.scout.comms.gmail import gmail_config_from_env
             from core.scout.comms.gmail_oauth import gmail_status
             return gmail_status(gmail_config_from_env(self._env)) or {}
+        except Exception:
+            return {}
+
+    def _test_inbox_status(self) -> Dict[str, Any]:
+        try:
+            from core.scout.comms.test_inbox import test_inbox_config_from_env, test_inbox_status
+            return test_inbox_status(test_inbox_config_from_env(self._env)) or {}
         except Exception:
             return {}
 
