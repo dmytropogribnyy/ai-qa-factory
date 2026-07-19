@@ -910,8 +910,8 @@ table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #ccc;padding
             s = self._comms_summary()
             m = s.get("metrics", {})
             enabled = s["outreach_global"] == "ENABLED" and s["outreach_kill"] != "KILLED"
-            banner = ("<span style='color:#a00'>OUTREACH ENABLED</span>" if enabled
-                      else "<span style='color:#070'>OUTREACH DISABLED (default)</span>")
+            banner = ("<span class='danger-ctl'>OUTREACH ENABLED</span>" if enabled
+                      else "<span class='ok-ctl'>OUTREACH DISABLED (default)</span>")
             return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <title>{SCOUT_PRODUCT_NAME} — Communication</title>
 <style>body{{font-family:system-ui,Arial,sans-serif;margin:2rem;max-width:1000px}}
@@ -964,7 +964,7 @@ was sent (any_real_send={_esc(s['any_real_send'])}).</p>
                     '<button onclick="ctl(\'pause\')">Pause</button>'
                     '<button onclick="ctl(\'resume\')">Resume</button>'
                     '<button onclick="ctl(\'cancel\')">Stop Safely</button>'
-                    '<button onclick="ctl(\'kill\')" style="color:#a00">Cancel (kill)</button>'
+                    '<button onclick="ctl(\'kill\')" class="danger-ctl">Cancel (kill)</button>'
                 )
             else:
                 controls = ("<em>Controls unavailable — this run is "
@@ -1797,10 +1797,11 @@ details>summary{cursor:pointer;color:var(--muted)}
 # only colours, borders, code blocks, and form controls are themed so nothing is default-white in Dark.
 _LEGACY_THEME_CSS = """
 :root{--l-bg:#0A0F1E;--l-surface:#151922;--l-surface2:#1A2236;--l-border:#1F2940;--l-text:#F4EDD9;
- --l-muted:#9AA3B8;--l-link:#7FB0FF;--l-code:#0E1424;--l-primary:#D4AF37;--l-primary-ink:#0A0F1E;}
+ --l-muted:#9AA3B8;--l-link:#7FB0FF;--l-code:#0E1424;--l-primary:#D4AF37;--l-primary-ink:#0A0F1E;
+ --l-danger:#EF5757;--l-ok:#3FB950;}
 :root[data-theme="light"]{--l-bg:#F4EDD9;--l-surface:#FBF7EC;--l-surface2:#EBE3CE;--l-border:#E2DAC6;
  --l-text:#151922;--l-muted:#5B6470;--l-link:#0B5FBF;--l-code:#EEE7D6;--l-primary:#0A0F1E;
- --l-primary-ink:#F4EDD9;}
+ --l-primary-ink:#F4EDD9;--l-danger:#B42318;--l-ok:#1A7F37;}
 body{background:var(--l-bg);color:var(--l-text)}
 a{color:var(--l-link)}
 table{background:var(--l-surface)}
@@ -1808,6 +1809,11 @@ td,th{border-color:var(--l-border) !important;color:var(--l-text)}
 th{background:var(--l-surface2)}
 code,pre{background:var(--l-code) !important;color:var(--l-text)}
 .mode{background:var(--l-surface2) !important;color:var(--l-text)}
+/* Theme-aware status colours (accessible contrast on both surfaces) replacing hardcoded #a00/#070. */
+.danger-ctl{color:var(--l-danger) !important}
+.ok-ctl{color:var(--l-ok) !important}
+.banner{background:var(--l-surface2) !important;border-color:var(--l-border) !important;
+ color:var(--l-text) !important}
 button,input,select,textarea{background:var(--l-surface);color:var(--l-text);
  border:1px solid var(--l-border);border-radius:6px;padding:.4rem .6rem;font:inherit}
 input[type=checkbox]{accent-color:var(--l-primary);width:auto;padding:0}
