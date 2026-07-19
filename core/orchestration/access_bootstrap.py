@@ -1,0 +1,196 @@
+"""Access & Identity Bootstrap (v3.2 Section 8).
+
+Inspects ACTUAL local readiness for the runtimes/integrations autonomous execution needs, WITHOUT
+printing or persisting any secret. Every integration gets an honest readiness state, its purpose,
+the required scope, the owner (operator vs client), a bounded verification result, and a precise
+Setup/Verify action. Secrets are referenced only by environment-variable NAME, never by value.
+"""
+from __future__ import annotations
+
+import importlib.util
+import os
+import shutil
+import subprocess
+from dataclasses import asdict, dataclass
+from typing import Any, Callable, Dict, List, Optional
+
+# Extended readiness states (Section 8).
+DECLARED = "Declared"
+INSTALLED = "Installed"
+CONNECTED = "Connected"
+AUTHENTICATED = "Authenticated"
+RUNTIME_VERIFIED = "Runtime Verified"
+FIXTURE_VERIFIED = "Fixture Verified"
+LIVE_VERIFIED = "Live Verified"
+NEEDS_OPERATOR = "Needs Operator"
+NEEDS_CLIENT = "Needs Client"
+BLOCKED = "Blocked"
+UNAVAILABLE = "Unavailable"
+
+
+@dataclass
+class Integration:
+    id: str
+    name: str
+    purpose: str
+    readiness: str
+    required_scope: str
+    owner: str                    # operator | client | local
+    check_result: str
+    setup_action: str
+    secret_ref: str = ""          # env-var NAME only, never a value
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+def _default_module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _run(cmd: List[str], timeout: int = 8) -> Optional[str]:
+    """Run a bounded version/status command; return trimmed stdout+stderr or None. Never returns a
+    secret (callers only pass ``--version`` / status commands that do not echo secrets)."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603
+        out = ((p.stdout or "") + (p.stderr or "")).strip()
+        return out if p.returncode == 0 else (out or None)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+class AccessBootstrap:
+    def __init__(self, *, which: Callable[[str], Any] = shutil.which,
+                 run: Callable[[List[str], int], Optional[str]] = None,
+                 module_available: Optional[Callable[[str], bool]] = None,
+                 env: Optional[Dict[str, str]] = None) -> None:
+        self._which = which
+        self._run = run or (lambda cmd, timeout=8: _run(cmd, timeout))
+        self._mod = module_available or _default_module_available
+        self._env = env if env is not None else dict(os.environ)
+
+    def _bin(self, name: str) -> bool:
+        return bool(self._which(name))
+
+    def inspect(self) -> List[Integration]:
+        out: List[Integration] = []
+
+        # --- local runtimes ---
+        out.append(Integration(
+            "python", "Python runtime", "run tests, static analysis, and the local pipeline",
+            RUNTIME_VERIFIED, "local", "local", "python is executing this process", ""))
+
+        node_v = self._run(["node", "--version"], 8) if self._bin("node") else None
+        out.append(Integration(
+            "node", "Node.js", "run the generated TypeScript Playwright framework",
+            INSTALLED if node_v else UNAVAILABLE, "local", "local",
+            f"node {node_v}" if node_v else "node not on PATH",
+            "" if node_v else "install Node.js LTS"))
+
+        claude_v = self._run(["claude", "--version"], 10) if self._bin("claude") else None
+        out.append(Integration(
+            "claude_code", "Claude Code CLI", "autonomous bounded execution worker",
+            INSTALLED if claude_v else NEEDS_OPERATOR, "local", "operator",
+            (f"detected: {claude_v}" if claude_v else "claude CLI not detected"),
+            ("verify auth + a tiny headless run: "
+             "`claude -p \"ok\" --output-format json --max-turns 1`"
+             if claude_v else "install Claude Code and authenticate")))
+
+        docker_v = self._run(["docker", "--version"], 8) if self._bin("docker") else None
+        out.append(Integration(
+            "docker", "Docker", "reproducible test environments + containerized DB smoke",
+            INSTALLED if docker_v else UNAVAILABLE, "local", "local",
+            (docker_v or "docker not on PATH"),
+            "" if docker_v else "install Docker Desktop / engine"))
+
+        # --- browser + accessibility ---
+        pw = self._mod("playwright")
+        out.append(Integration(
+            "playwright_python", "Playwright (Python)", "real Chromium acceptance + audits",
+            INSTALLED if pw else NEEDS_OPERATOR, "local", "operator",
+            "importable" if pw else "not installed",
+            "" if pw else "pip install playwright && python -m playwright install chromium"))
+        axe = self._mod("axe_core_python")
+        out.append(Integration(
+            "axe", "axe-core (Python)", "accessibility acceptance",
+            INSTALLED if axe else NEEDS_OPERATOR, "local", "operator",
+            "importable" if axe else "not installed",
+            "" if axe else "pip install axe-core-python"))
+        rt = self._env.get("PLAYWRIGHT_TEST_RUNTIME", "")
+        out.append(Integration(
+            "playwright_npm", "@playwright/test runtime", "execute the generated TS framework",
+            INSTALLED if rt else NEEDS_OPERATOR, "local", "operator",
+            (f"runtime dir set: {os.path.basename(rt)}" if rt else "not provisioned"),
+            "" if rt else "provision an npm @playwright/test runtime (CI does this in browser job)"))
+
+        # --- version control / CI ---
+        out.append(Integration(
+            "git", "Git", "repository operations", RUNTIME_VERIFIED if self._bin("git") else UNAVAILABLE,
+            "local", "local", "git on PATH" if self._bin("git") else "not on PATH",
+            "" if self._bin("git") else "install Git"))
+        gh_auth = self._run(["gh", "auth", "status"], 8) if self._bin("gh") else None
+        gh_ready = bool(gh_auth) and "Logged in" in (gh_auth or "")
+        out.append(Integration(
+            "github", "GitHub (gh CLI)", "repo/PR/Actions access + hosted CI",
+            AUTHENTICATED if gh_ready else (INSTALLED if self._bin("gh") else UNAVAILABLE),
+            "repo, workflow", "operator",
+            ("authenticated" if gh_ready else ("gh present, not authenticated"
+                                               if self._bin("gh") else "gh not on PATH")),
+            "" if gh_ready else "run `gh auth login` (never commit a PAT)",
+            secret_ref="GH_TOKEN"))
+
+        # --- session/connector integrations (never auto-authorized) ---
+        for cid, name, purpose in (
+                ("github_mcp", "GitHub MCP", "repo/PR/CI via Claude session"),
+                ("chrome_devtools_mcp", "Chrome DevTools MCP", "browser/perf via Claude session"),
+                ("context7_mcp", "Context7 MCP", "current official library docs"),
+                ("lovable_mcp", "Lovable MCP", "optional one-time visual critique")):
+            out.append(Integration(
+                cid, name, purpose, DECLARED, "session", "operator",
+                "declared; connect in Claude Code (/mcp) to use",
+                "connect the MCP in Claude Code (/mcp) if a task needs it"))
+
+        # --- Gmail test identity (read-only readiness; never sends) ---
+        gmail = self._gmail_status()
+        if not gmail.get("client_config_present"):
+            g_ready, g_note = NEEDS_OPERATOR, "no OAuth client configured"
+        elif not gmail.get("token_present"):
+            g_ready, g_note = NEEDS_OPERATOR, "not authorized"
+        else:
+            g_ready, g_note = AUTHENTICATED, "OAuth token present (read-only verification only)"
+        out.append(Integration(
+            "gmail_test", "Gmail test inbox", "authorized test identity (read-only; never sends)",
+            g_ready, "gmail.readonly (test identity)", "operator", g_note,
+            "" if g_ready == AUTHENTICATED else "see docs/GMAIL_PROVIDER_SETUP.md (test inbox only)",
+            secret_ref="GMAIL_OAUTH_TOKEN_JSON"))
+
+        # --- client-provided access (never local) ---
+        out.append(Integration(
+            "client_test_account", "Client test/staging account", "authorized client QA execution",
+            NEEDS_CLIENT, "client-defined", "client",
+            "not provided", "client provides a dedicated test/staging account + scope"))
+        out.append(Integration(
+            "client_database", "Client database (read-only)", "safe read-only DB validation",
+            NEEDS_CLIENT, "read-only connection", "client",
+            "not provided", "client provides a read-only DB connection (or a Docker DB)"))
+        out.append(Integration(
+            "client_oauth_tenant", "Client OAuth test tenant", "authorized auth-flow testing",
+            NEEDS_CLIENT, "test tenant", "client",
+            "not provided", "client provides an OAuth test tenant / bounded pre-authorized session"))
+        return out
+
+    def _gmail_status(self) -> Dict[str, Any]:
+        try:
+            from core.scout.comms.gmail import gmail_config_from_env
+            from core.scout.comms.gmail_oauth import gmail_status
+            return gmail_status(gmail_config_from_env(self._env)) or {}
+        except Exception:
+            return {}
+
+    def snapshot(self) -> Dict[str, Any]:
+        items = self.inspect()
+        return {"schema": "access-bootstrap/v1", "count": len(items),
+                "any_secret_shown": False, "integrations": [i.to_dict() for i in items]}

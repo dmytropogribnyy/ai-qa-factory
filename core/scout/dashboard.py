@@ -134,6 +134,9 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._json(200, self._comms_summary())
             if path == "/api/tools":
                 return self._json(200, self._tools_snapshot())
+            if path == "/api/services":
+                from core.orchestration.service_capability import snapshot as _svc_snap
+                return self._json(200, _svc_snap())
             if path == "/tools":
                 return self._html(200, self._tools_page())
             if path == "/api/projects":
@@ -162,6 +165,9 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._json(200, self._activity_json((q.get("project") or [""])[0]))
             if path == "/settings":
                 return self._html(200, self._settings_page())
+            if path == "/api/access":
+                from core.orchestration.access_bootstrap import AccessBootstrap
+                return self._json(200, AccessBootstrap().snapshot())
             if path == "/docs":
                 return self._html(200, self._docs_page())
             if path == "/api/results":
@@ -1358,7 +1364,8 @@ function startCampaign(){{
                 '<div class="card"><h2>Scout defaults (bounded, read-only)</h2>'
                 '<p class="muted">1–10 public https seeds · static browser · concurrency 1 · read-only.</p></div>'
                 f'<div class="card"><h2>Gmail</h2><p>Setup status: {_badge(gmail_state)} '
-                '<span class="muted">(no secret is shown; live send is a separate opt-in CLI path)</span></p></div>')
+                '<span class="muted">(no secret is shown; live send is a separate opt-in CLI path)</span></p></div>'
+                f'{self._access_section()}')
             script = ("function setDensity(d){document.documentElement.setAttribute('data-density',d);"
                       "try{localStorage.setItem('qa_density',d);}catch(e){}}"
                       "try{var d=localStorage.getItem('qa_density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}")
@@ -1426,8 +1433,52 @@ function startCampaign(){{
             body = (f'<h1>Tools</h1><p class="muted">Honest tool readiness (no live MCP/network call). '
                     f'A test file is never a runtime binding; a binding present is "Binding Available"; '
                     f'a checked runtime is "Runtime Available"; nothing is "Live Verified" without a '
-                    f'real live acceptance.</p><div class="scrollx">{table}</div>')
+                    f'real live acceptance.</p><div class="scrollx">{table}</div>'
+                    f'{self._service_capability_section()}')
             return _page("AI QA Factory — Tools · Tool readiness", "/tools", body)
+
+        def _service_capability_section(self) -> str:
+            from core.orchestration.service_capability import snapshot as _svc_snap
+            svcs = _svc_snap()["services"]
+
+            def _kind(r):
+                return {"Live Verified": "ok", "Fixture Verified": "ok", "Runtime Verified": "ok",
+                        "Needs Client": "attention", "Needs Operator": "attention",
+                        "Blocked": "blocked", "Unavailable": "blocked"}.get(r, "")
+            rows = "".join(
+                f'<tr><td>{_esc(s["name"])}</td><td>{_badge(s["readiness"], _kind(s["readiness"]))}</td>'
+                f'<td class="muted">{_esc(", ".join(s["modes"]))}</td>'
+                f'<td class="muted">{_esc(s["operator_action_if_blocked"])}</td></tr>' for s in svcs)
+            table = (f'<table><caption>Advertised QA services — honest readiness (real acceptance vs '
+                     f'client-required)</caption><tr><th>Service</th><th>Readiness</th><th>Modes</th>'
+                     f'<th>If blocked</th></tr>{rows}</table>')
+            return (f'<h2>Service capabilities</h2><p class="muted">What the product genuinely supports '
+                    f'when the client supplies the repository, environment, accounts, and '
+                    f'authorization. Nothing unverified is shown as Live.</p>'
+                    f'<div class="scrollx">{table}</div>')
+
+        def _access_section(self) -> str:
+            from core.orchestration.access_bootstrap import AccessBootstrap
+            items = AccessBootstrap().snapshot()["integrations"]
+
+            def _kind(r):
+                return {"Runtime Verified": "ok", "Authenticated": "ok", "Live Verified": "ok",
+                        "Installed": "", "Connected": "", "Needs Operator": "attention",
+                        "Needs Client": "attention", "Blocked": "blocked",
+                        "Unavailable": "blocked"}.get(r, "")
+            rows = "".join(
+                f'<tr><td>{_esc(i["name"])}</td><td>{_badge(i["readiness"], _kind(i["readiness"]))}</td>'
+                f'<td class="muted">{_esc(i["purpose"])}</td><td>{_esc(i["owner"])}</td>'
+                f'<td class="muted">{_esc(i["required_scope"])}</td>'
+                f'<td class="muted">{_esc(i["setup_action"] or i["check_result"])}</td></tr>'
+                for i in items)
+            table = (f'<table><caption>Local runtimes + integrations (no secret is shown or stored)'
+                     f'</caption><tr><th>Integration</th><th>Readiness</th><th>Purpose</th><th>Owner</th>'
+                     f'<th>Required scope</th><th>Setup / Verify</th></tr>{rows}</table>')
+            return (f'<div class="card"><h2>Access &amp; Integrations</h2>'
+                    f'<p class="muted">Real local readiness. Secrets are referenced by env-var name '
+                    f'only, never shown or persisted. Client-owned items stay Needs Client.</p>'
+                    f'<div class="scrollx">{table}</div></div>')
 
         def _docs_page(self) -> str:
             docs = [("Product contract", "PRODUCT_CONTRACT_V3.md"),
