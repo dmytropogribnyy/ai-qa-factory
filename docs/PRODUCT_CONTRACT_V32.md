@@ -57,3 +57,21 @@ the installed CLI supports (verified via `claude --help`, consistent with `build
 `claude -p "<work order>" --output-format json --permission-mode acceptEdits --allowedTools Edit Read
 --max-budget-usd 0.60` (or run `pytest -k live_claude_worker` with `AIQA_CLAUDE_LIVE=1`; see
 `docs/LIVE_CLAUDE_ACCEPTANCE_V32.md`).
+
+## Autonomous execution scope & honesty (v3.2)
+
+- **Representative workload (multi-file), IMPLEMENTED.** The full persisted lifecycle handles a
+  multi-file project with a cross-file defect end to end — worker implementation, a structured
+  pre-approved validation command (operator policy, never HTTP), failing-before validation with
+  redacted evidence, operator-triggered resume/repair, passing-after validation, review, prepared
+  delivery with per-file hash + package-digest verification, and fresh-process resume. Proven
+  deterministically by `tests/test_v32_golden_multifile_lifecycle.py`.
+- **Repair is operator-triggered, NOT an autonomous loop.** A failed validation moves the project to
+  `REPAIR_REQUIRED`; the operator (CLI `client-work worker-resume` / a guarded Dashboard action)
+  starts the next bounded execution. There is no self-looping "run until green" agent, and the
+  product does not claim one.
+- **Language scope.** The lifecycle is language-agnostic; deterministic acceptance uses a Python
+  project, and real **TypeScript/Playwright execution** is separately proven by the browser-acceptance
+  CI job (`test_v3_genuine_execution_ab.py` runs real `playwright test` on a generated framework).
+- **Live provider.** A live `ClaudeWorkerExecutor` run is operator-gated (`AIQA_CLAUDE_LIVE`, clean
+  non-nested shell); CI never makes a paid live call.
