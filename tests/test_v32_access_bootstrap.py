@@ -70,15 +70,37 @@ def test_claude_and_mcp_states():
     assert items["github_mcp"].readiness == "Declared"    # a connector is never auto-authenticated
 
 
-def test_gmail_test_inbox_names_exact_env_vars_read_only_when_unauthenticated():
-    # No OAuth configured -> Needs Operator with the EXACT env-var names (names only, never values).
-    g = _by_id(_boot().inspect())["gmail_test"]
+def test_gmail_is_send_provider_not_readonly_and_readiness_is_not_token_presence():
+    # P0-B: Gmail is the approval-gated SEND provider (gmail.send + openid + email), NOT a read-only
+    # inbox. Unconfigured -> Needs Operator with the exact env-var NAMES only (never values).
+    g = _by_id(_boot().inspect())["gmail_send"]
     assert g.readiness == "Needs Operator" and g.owner == "operator"
-    assert "read-only" in g.name.lower() and "never sends" in g.purpose.lower()
-    assert "GMAIL_OAUTH_CLIENT_JSON" in g.setup_action and "GMAIL_OAUTH_TOKEN_JSON" in g.setup_action
+    assert "send" in g.name.lower() and "read-only" not in g.name.lower()
+    assert "gmail.send" in g.required_scope and "gmail.readonly" not in g.required_scope
+    assert "never auto-sends" in g.purpose.lower()
     assert "GMAIL_OAUTH_CLIENT_JSON" in g.secret_ref and "GMAIL_OAUTH_TOKEN_JSON" in g.secret_ref
-    # The setup action names variables, never a value.
     assert "=" not in g.secret_ref and "ghp_" not in g.setup_action
+
+
+def test_gmail_token_present_but_wrong_scopes_is_not_authenticated(monkeypatch):
+    # Token presence alone must NOT grant readiness: bad scopes -> Needs Operator with an exact action.
+    boot = _boot()
+    monkeypatch.setattr(boot, "_gmail_status", lambda: {
+        "client_config_present": True, "token_present": True, "scopes_ok": False,
+        "refreshable": True, "expected_account_claim_match": True})
+    g = _by_id(boot.inspect())["gmail_send"]
+    assert g.readiness == "Needs Operator" and "scope" in g.check_result.lower()
+
+
+def test_gmail_fully_authorized_offline_caps_at_connected_not_authenticated(monkeypatch):
+    # All offline checks pass, but identity is only proven by a LIVE id-token at send time, so the
+    # honest readiness is Connected, never Authenticated.
+    boot = _boot()
+    monkeypatch.setattr(boot, "_gmail_status", lambda: {
+        "client_config_present": True, "token_present": True, "scopes_ok": True,
+        "refreshable": True, "expected_account_claim_match": True})
+    g = _by_id(boot.inspect())["gmail_send"]
+    assert g.readiness == "Connected"
 
 
 def test_no_obsolete_claude_flags_in_any_instruction():

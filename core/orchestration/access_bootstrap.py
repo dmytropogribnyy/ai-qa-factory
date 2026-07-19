@@ -210,22 +210,43 @@ class AccessBootstrap:
             "optional; verify with `claude mcp list` / `/mcp` (connected + healthy) if you use it",
             "if desired: verify it is connected in Claude Code; AI QA Factory does not require it"))
 
-        # --- Gmail test identity (read-only readiness; never sends) ---
+        # --- Gmail is the approval-gated SEND provider (scopes gmail.send + openid + email; NOT a
+        # read-only inbox). Readiness derives from scope + refresh + expected-account validation, never
+        # from token-file presence alone. Offline it caps at Connected: full identity is only proven by
+        # a LIVE cryptographic id-token check at send time (verify_gmail_identity). Token VALUES are
+        # never read here. (P0-B: previously mislabelled read-only/gmail.readonly/Authenticated.)
         gmail = self._gmail_status()
+        _SETUP = ("see docs/GMAIL_PROVIDER_SETUP.md; names only, never token values "
+                  "(GMAIL_OAUTH_CLIENT_JSON, GMAIL_OAUTH_TOKEN_JSON, GMAIL_EXPECTED_ACCOUNT)")
         if not gmail.get("client_config_present"):
-            g_ready, g_note = NEEDS_OPERATOR, "no OAuth client configured"
+            g_ready, g_note, g_action = NEEDS_OPERATOR, "no OAuth client configured", \
+                f"set GMAIL_OAUTH_CLIENT_JSON — {_SETUP}"
         elif not gmail.get("token_present"):
-            g_ready, g_note = NEEDS_OPERATOR, "not authorized"
+            g_ready, g_note, g_action = NEEDS_OPERATOR, "OAuth client present; not yet authorized", \
+                f"authorize once (loopback) and set GMAIL_OAUTH_TOKEN_JSON — {_SETUP}"
+        elif not gmail.get("scopes_ok"):
+            g_ready, g_note, g_action = NEEDS_OPERATOR, \
+                "token lacks the required gmail.send + openid + email scopes (gmail.readonly is forbidden)", \
+                f"re-authorize with the send + identity scopes — {_SETUP}"
+        elif not gmail.get("refreshable"):
+            g_ready, g_note, g_action = NEEDS_OPERATOR, "token has no refresh token", \
+                f"re-authorize to obtain a refreshable token — {_SETUP}"
+        elif not gmail.get("expected_account_claim_match"):
+            g_ready, g_note, g_action = NEEDS_OPERATOR, \
+                "authorized account claim does not match the expected account", \
+                f"authorize the expected account (GMAIL_EXPECTED_ACCOUNT) — {_SETUP}"
         else:
-            g_ready, g_note = AUTHENTICATED, "OAuth token present (read-only verification only)"
+            # Scopes + refresh + account-claim all validate offline, but the account is only a
+            # CANDIDATE until a live id-token proof — so this is authorized, not identity-verified.
+            g_ready, g_note, g_action = CONNECTED, \
+                "authorized (send scopes + refreshable + account-claim match); a live id-token " \
+                "identity proof is verified at send time", "none — never auto-sends; send is " \
+                "approval-gated and identity-proven at send time"
         out.append(Integration(
-            "gmail_test", "Gmail test inbox (read-only)",
-            "authorized read-only test identity for inbox checks (never sends)",
-            g_ready, "gmail.readonly (test identity)", "operator", g_note,
-            "" if g_ready == AUTHENTICATED else
-            ("set env GMAIL_OAUTH_CLIENT_JSON (OAuth client) + GMAIL_OAUTH_TOKEN_JSON (authorized "
-             "token) — names only, never values; see docs/GMAIL_PROVIDER_SETUP.md (read-only test "
-             "inbox)"),
+            "gmail_send", "Gmail (approval-gated send provider)",
+            "authorized external email SEND after explicit operator approval; never auto-sends "
+            "(scopes gmail.send + openid + email — NOT a read-only inbox)",
+            g_ready, "gmail.send, openid, email", "operator", g_note, g_action,
             secret_ref="GMAIL_OAUTH_CLIENT_JSON, GMAIL_OAUTH_TOKEN_JSON"))
 
         # --- Upwork / direct client intake is ALWAYS manual (item 34) ---
