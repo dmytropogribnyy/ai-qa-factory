@@ -49,7 +49,6 @@ class OperatorWorkspaceExecutor:
     """
 
     is_acceptance_fixture = False
-    executes_client_code = False   # records operator-authored artifacts; runs no client command itself
 
     def __init__(self, produced: List[ProducedArtifact], validator: Optional[Validator] = None,
                  executor_id: str = "operator:claude-code",
@@ -58,6 +57,12 @@ class OperatorWorkspaceExecutor:
         self._validator = validator
         self.executor_id = executor_id
         self._notes = list(progress_notes or [])
+
+    @property
+    def executes_client_code(self) -> bool:
+        # Recording-only when there is no validator; but a validator callback runs arbitrary code over
+        # the workspace, so this adapter is code-running (and gated) whenever a validator is present.
+        return self._validator is not None
 
     def execute(self, ctx: ExecutionContext) -> ExecutionOutcome:
         ws = Path(ctx.workspace_dir)

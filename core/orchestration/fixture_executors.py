@@ -23,6 +23,7 @@ from core.schemas.work_execution import (
 
 class _BaseFixtureExecutor:
     is_acceptance_fixture = True
+    executes_client_code = False   # deterministic in-process fixtures; execute no untrusted client code
     executor_id = "fixture"
 
     @staticmethod

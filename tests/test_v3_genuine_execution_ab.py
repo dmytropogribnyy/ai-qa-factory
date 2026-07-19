@@ -201,6 +201,7 @@ def _run_generated_framework(project_dir: Path, fixture_url: str, timeout: int =
 class GeneratedPlaywrightFrameworkExecutor:
     """Authors a Playwright + TypeScript framework and EXECUTES it with the real runner."""
     is_acceptance_fixture = False
+    executes_client_code = True
     executor_id = "operator:genuine/playwright-framework"
 
     def __init__(self, fixture_url: str, runtime_dir: str, broken: bool = False) -> None:
@@ -299,6 +300,7 @@ def test_scenario_a_broken_generated_assertion_genuinely_fails(tmp_path):
 # --------------------------------------------------------------------------- B: real browser audit
 class RealAuditExecutor:
     is_acceptance_fixture = False
+    executes_client_code = True
     executor_id = "operator:genuine/qa-audit"
 
     def __init__(self, fixture_url: str) -> None:

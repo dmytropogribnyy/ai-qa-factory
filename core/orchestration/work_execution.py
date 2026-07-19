@@ -187,11 +187,20 @@ class WorkExecutionService:
 
     def _enforce_execution_boundary(self, pid: str, executor: Any) -> None:
         """Fail-closed trust + private-work-dir preflight at the ACTUAL execution boundary — enforced
-        for any executor that runs client code (``executes_client_code``), regardless of whether the
-        caller is the CLI, the Dashboard, or a direct service/adapter call. Fixture/manual-recording
-        executors (which run no untrusted code) are exempt. Never simulates isolation."""
-        if not getattr(executor, "executes_client_code", False):
-            return
+        for any executor that runs client code, regardless of whether the caller is the CLI, the
+        Dashboard, or a direct service/adapter call. FAIL-CLOSED: an executor must EXPLICITLY declare a
+        boolean ``executes_client_code`` capability — a missing/non-boolean capability is refused, not
+        assumed safe. Only an executor that explicitly declares ``False`` (a fixture / recording-only
+        adapter that runs no untrusted code) is exempt. Never simulates isolation."""
+        cap = getattr(executor, "executes_client_code", None)
+        if not isinstance(cap, bool):
+            raise WorkExecutionError(
+                "refused (fail-closed): executor "
+                f"{getattr(executor, 'executor_id', type(executor).__name__)!r} does not declare a "
+                "boolean executes_client_code capability; declare it explicitly (True runs client "
+                "code and is gated; False is a recording/fixture adapter)")
+        if not cap:
+            return                                            # explicitly declared recording/fixture
         from core.orchestration.execution_trust import (
             assess_execution_trust,
             preflight_work_isolation,
@@ -228,16 +237,19 @@ class WorkExecutionService:
             raise WorkExecutionError(f"cannot approve from state {state.status}")
         state = self._sm.transition(state, "READY_TO_EXECUTE", f"approved by {reviewer}: {note}"[:200],
                                     reviewer)
+        now = state.updated_at or self._clock.now_iso()   # SAME timestamp for grant + APPROVAL evidence
         self._write(self._ws(pid) / "APPROVAL.json",
-                    json.dumps({"reviewer": reviewer, "note": note, "approved": True,
-                                "at": self._clock.now_iso()}, indent=2, sort_keys=True))
-        # Operator approval also marks this workspace as TRUSTED for execution (P0-E): the trust gate
-        # refuses running client code in a workspace the operator has not approved.
-        from core.orchestration.execution_trust import TRUST_MARKER
+                    json.dumps({"reviewer": reviewer, "note": note, "approved": True, "at": now},
+                               indent=2, sort_keys=True))
+        # AUTHORITATIVE execution approval lives in the operator-only control store OUTSIDE the client
+        # work dir (P0-1); the workspace marker is EVIDENCE only. The grant is bound to the project,
+        # the resolved workspace, the approval timestamp, and the approval generation (state version).
+        from core.orchestration.execution_trust import TRUST_MARKER, grant_execution_authority
+        grant_execution_authority(str(self._ws(pid)), reviewer=reviewer, approval_at=now,
+                                  generation=state.state_version, env=dict(os.environ))
         self._write(self._ws(pid) / TRUST_MARKER, json.dumps(
-            {"approved_for_execution": True, "reviewer": reviewer, "project_id": pid,
-             "at": self._clock.now_iso(),
-             "note": "operator-approved; bound to APPROVAL.json + the READY_TO_EXECUTE transition"},
+            {"approved_for_execution": True, "reviewer": reviewer, "project_id": pid, "at": now,
+             "note": "EVIDENCE ONLY — authority is the control-store grant (execution_trust)"},
             indent=2, sort_keys=True))
         self._save_state(pid, state)
         return state

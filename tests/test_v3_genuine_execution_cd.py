@@ -47,6 +47,7 @@ def _drive(tmp_path, pid, brief, executor):
 # --------------------------------------------------------------------------- C: real bug fix
 class RealBugFixExecutor:
     is_acceptance_fixture = False
+    executes_client_code = True
     executor_id = "operator:genuine/bug-fix"
     _BUGGY = "def add(a, b):\n    return a - b  # defect\n"
     _FIXED = "def add(a, b):\n    return a + b\n"
@@ -140,6 +141,7 @@ def _http_status(url: str) -> int:
 
 class RealApiTestExecutor:
     is_acceptance_fixture = False
+    executes_client_code = True
     executor_id = "operator:genuine/api-testing"
 
     def execute(self, ctx: ExecutionContext) -> ExecutionOutcome:
