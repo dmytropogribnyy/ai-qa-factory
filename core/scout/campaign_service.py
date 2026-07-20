@@ -317,13 +317,19 @@ class CampaignService:
                                    understanding=understanding, findings=findings,
                                    contact=(contacts[0] if contacts else ""),
                                    router=self._llm_router())
+        from core.scout.outreach.fixability import classify_fixability
+        # Cold prospect: no repo/staging access yet, so nothing is 'fix_ready' (honest scoping).
+        fixability = classify_fixability(
+            [{"severity": f.get("severity"), "category": f.get("category"),
+              "title": f.get("title"), "business_impact": f.get("business_impact")}
+             for f in findings], access_available=False)
         return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
                 "scout_run": scout_run, "media": media, "network": network,
                 "findings": [{"severity": f.get("severity"), "category": f.get("category"),
                               "title": f.get("title"), "business_impact": f.get("business_impact"),
                               "url": f.get("url"), "evidence_refs": f.get("evidence_refs", [])}
                              for f in findings],
-                "contacts": contacts, "draft": draft}
+                "contacts": contacts, "draft": draft, "fixability": fixability}
 
     def _llm_router(self):
         """Lazy, cached LLMRouter. Returns None in mock mode so drafts stay deterministic ($0).

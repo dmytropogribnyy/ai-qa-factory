@@ -1826,6 +1826,7 @@ function startCampaign(){{
             draft = det.get("draft") or {}
             media = det.get("media") or []
             network = det.get("network") or {}
+            fixability = det.get("fixability") or {}
             scout_run = det.get("scout_run") or ""
             status = (entry or {}).get("analysis_status", "")
             reason = (entry or {}).get("reason", "")
@@ -1912,6 +1913,30 @@ function startCampaign(){{
                           'Run a live, bounded analysis to populate evidence.</div>')
             body += (f'<div class="card"><h2>Problems found</h2><div class="scrollx">{prob_table}</div>'
                      f'</div>')
+
+            # Fixability (stage 3 — paid fix scoping). Conservative: nothing is "ready" for a cold
+            # prospect (no access yet); this is what we could offer to fix ourselves.
+            fx_items = fixability.get("items") or []
+            _FX_LABEL = {"fix_ready": "fix ready", "fix_after_access": "fix after access",
+                         "out_of_scope": "out of scope"}
+            if fx_items:
+                fx_rows = "".join(
+                    f'<tr><td>{_badge(_FX_LABEL.get(i.get("fix_tier"), i.get("fix_tier","")))}</td>'
+                    f'<td class="muted">{_esc(i.get("category") or "—")}</td>'
+                    f'<td>{_esc(i.get("title") or "—")}</td>'
+                    f'<td class="muted">{_esc(i.get("fix_reason") or "")}</td></tr>' for i in fx_items)
+                fx_html = (f'<p class="muted">{_esc(fixability.get("summary",""))}</p>'
+                           f'<div class="scrollx"><table><caption>Fixability ({len(fx_items)})'
+                           f'</caption><tr><th>Tier</th><th>Type</th><th>Issue</th><th>Why</th></tr>'
+                           f'{fx_rows}</table></div>')
+            else:
+                fx_html = ('<div class="empty muted">No findings to scope yet. After a bounded QA '
+                           'analysis, this shows what we could fix ourselves (paid, stage 3).</div>')
+            body += ('<div class="card"><h2>Fixability — what we could fix (stage 3, paid)</h2>'
+                     + fx_html +
+                     '<p class="muted">Conservative + honest: nothing is "ready" for a cold prospect '
+                     '(no repo/staging access yet). We never promise a fix outside proven '
+                     'capability.</p></div>')
 
             # Captured evidence media: screenshots inline, video playable, other files downloadable.
             def _art_url(rel: str) -> str:
@@ -2386,9 +2411,12 @@ def _client_work_brief(domain: str, findings: list) -> str:
             lines.append(row + (f" — {impact}" if impact else ""))
     else:
         lines.append("- (no public findings captured yet; start with a deeper bounded QA audit)")
+    from core.scout.outreach.fixability import classify_fixability
+    fx = classify_fixability(findings or [], access_available=False)
     lines += ["", "Requested scope: a deeper QA audit of the key user journeys with reproducible "
               "evidence, severity, and a prioritized fix list. Access (repo / staging / credentials) "
-              "to be provided by the client."]
+              "to be provided by the client.",
+              "", f"Stage-3 (optional paid fix) scoping: {fx['summary']}"]
     return "\n".join(lines)
 
 
