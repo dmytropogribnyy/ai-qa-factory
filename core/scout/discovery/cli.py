@@ -80,7 +80,7 @@ def cmd_campaign_demo(args) -> int:
 
 
 def cmd_campaign_plan(args) -> int:
-    provider_id, registry = _file_provider(args)
+    provider_id, registry = _discovery_registry(args)
     if registry is None:
         return 1
     try:
@@ -100,19 +100,55 @@ def cmd_campaign_plan(args) -> int:
     return 0
 
 
+def _discovery_registry(args, required: bool = True):
+    """Choose the discovery provider registry: live Tavily (`--live-provider tavily`) or file import.
+    The live provider fails closed without approval/credential; no fixture fallback is used."""
+    if getattr(args, "live_provider", "") == "tavily":
+        from core.scout.discovery.live_registry import build_tavily_registry
+        try:
+            _, registry = build_tavily_registry(
+                live_approved=getattr(args, "approve_live_discovery", False),
+                max_results=getattr(args, "tavily_max_results", 10),
+                max_requests=getattr(args, "tavily_max_requests", 8),
+                cost_ceiling_usd=getattr(args, "cost_ceiling", 0.0),
+                include_domains=_split(getattr(args, "include_domains", "")),
+                exclude_domains=_split(getattr(args, "exclude_domains", "")),
+                keywords=_split(getattr(args, "keywords", "")))
+        except DiscoveryError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return "", None
+        return "tavily", registry
+    return _file_provider(args, required=required)
+
+
 def cmd_campaign_run(args) -> int:
-    provider_id, registry = _file_provider(args)
+    provider_id, registry = _discovery_registry(args)
     if registry is None:
         return 1
+    from core.scout.discovery.run_lock import CampaignBusy, CampaignRunLock
     try:
         cfg = _build_config(args, [provider_id])
         store = RunStore(cfg.output_dir, cfg.campaign_id)
-        engine = DiscoveryEngine(cfg, registry, store, sample=getattr(args, "sample", None))
-        state = engine.run()
+        # Overlap guard: never start a second run of the SAME campaign (e.g. a scheduled run firing
+        # while a manual one is in progress). Fresh-process resume is preserved.
+        with CampaignRunLock(cfg.output_dir, cfg.campaign_id):
+            engine = DiscoveryEngine(cfg, registry, store, sample=getattr(args, "sample", None))
+            state = engine.run()
+    except CampaignBusy as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
     except (DiscoveryError, DiscoveryConfigError) as exc:
         print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     _print_state(state)
+    # Cross-campaign registry: record unique domains + skip anything already analyzed (no re-analysis).
+    from core.scout.discovery.live_registry import reconcile_with_registry
+    recon = reconcile_with_registry(state, campaign_id=cfg.campaign_id, provider_id=provider_id,
+                                    output_dir=cfg.output_dir)
+    (store.root / "REGISTRY_RECONCILIATION.json").write_text(
+        json.dumps(recon, indent=2, sort_keys=True), encoding="utf-8")
+    print(f"Global registry: total={recon['registry_total']}  new={len(recon['newly_discovered'])}  "
+          f"already_analyzed_skipped={len(recon['skipped_already_analyzed'])}")
     return 0
 
 

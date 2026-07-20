@@ -685,6 +685,17 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("--approve-live-discovery", dest="approve_live_discovery",
                            action="store_true",
                            help="Explicitly approve configured live providers (never required by tests)")
+    # v3.3 — live seedless discovery (Tavily). Observe-only; requires --approve-live-discovery + key.
+    scout_cmd.add_argument("--live-provider", dest="live_provider", choices=["tavily"],
+                           help="Use a real live discovery provider for campaign-plan/run (tavily)")
+    scout_cmd.add_argument("--include-domains", dest="include_domains", default="",
+                           help="Comma-separated domains to include (live discovery)")
+    scout_cmd.add_argument("--exclude-domains", dest="exclude_domains", default="",
+                           help="Comma-separated domains to exclude (live discovery)")
+    scout_cmd.add_argument("--tavily-max-requests", dest="tavily_max_requests", type=int, default=8,
+                           help="Hard cap on Tavily search requests for the campaign (default 8)")
+    scout_cmd.add_argument("--tavily-max-results", dest="tavily_max_results", type=int, default=10,
+                           help="Hard cap on TOTAL Tavily results across the campaign (default 10)")
     # Final Phase I — pre-send pipeline + memory database options.
     scout_cmd.add_argument("--db", help="Memory database path (db-status/backup/restore/review-list)")
     scout_cmd.add_argument("--dest", help="Destination path (db-backup/db-restore)")

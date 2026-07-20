@@ -218,6 +218,11 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/access":
                 return self._json(200, cached_access_snapshot(
                     refresh=bool((q.get("refresh") or [""])[0])))
+            if path == "/api/discovery":
+                # v3.3 read-only live-discovery + analyzed-site history (no secret; loopback-only).
+                from core.scout.discovery.discovery_status import discovery_status
+                out_dir = getattr(service, "output_dir", "outputs")
+                return self._json(200, discovery_status(out_dir))
             if path == "/docs":
                 return self._html(200, self._docs_page())
             if path == "/api/results":
