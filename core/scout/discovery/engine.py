@@ -35,7 +35,15 @@ from core.scout.discovery.suppression import apply_suppression
 from core.scout.discovery.triage import TriageContext, assess_commercial, assess_technical
 from core.scout.engine import ScoutEngine
 from core.scout.report import build_report as build_scout_report
+from core.scout.run_counters import actionable_target_reached, counters_from_records
 from core.scout.store import RunStore
+
+
+def _default_actionable(rec: CandidateRecord, _scout_store: Any) -> bool:
+    """Default actionability: the explainable commercial priority is 'A'. Increment 2 replaces
+    this with a QA-finding-aware classifier (strong commercial fit AND an evidence-backed
+    medium/high public finding)."""
+    return (rec.commercial_scorecard or {}).get("priority") == "A"
 
 RUN_PLANNED, RUN_RUNNING, RUN_COMPLETED, RUN_FAILED = "PLANNED", "RUNNING", "COMPLETED", "FAILED"
 
@@ -49,7 +57,9 @@ class DiscoveryEngine:
                  store: RunStore, suppression_policies: Optional[List[SuppressionPolicy]] = None,
                  clock: Callable[[], str] = _now, profiler=None, scout_backend=None,
                  progress: Optional[Callable[[Dict], None]] = None,
-                 sample: Optional[int] = None) -> None:
+                 sample: Optional[int] = None,
+                 actionable_predicate: Optional[Callable[[CandidateRecord, Any], bool]] = None
+                 ) -> None:
         self.config = config
         self.registry = registry
         self.store = store
@@ -62,9 +72,17 @@ class DiscoveryEngine:
         # Optional explicit backend for promoted Scout runs (fixtures/E2E inject a host-mapped
         # backend; production leaves this None so the Scout engine builds its own real backend).
         self.scout_backend = scout_backend
+        # Predicate deciding whether a promoted+analyzed candidate is "actionable" (Priority A).
+        # Increment 2 replaces the default with a QA-finding-aware classifier; here it is the
+        # explainable commercial priority so the actionable-target stop is real and testable.
+        self.actionable_predicate = actionable_predicate or _default_actionable
         self._start = time.monotonic()
         self._budget = {"provider_calls": 0, "results": 0, "cost_usd": 0.0,
-                        "profiled": 0, "eligible": 0, "promoted": 0}
+                        "profiled": 0, "eligible": 0, "promoted": 0,
+                        "actionable": 0, "already_analyzed": 0, "failed": 0}
+        # Machine-readable reason the run finished (shown in the Dashboard). "" until set.
+        self._stop_reason = ""
+        self._consecutive_failures = 0
 
     # ------------------------------------------------------------------
     def plan(self) -> Dict[str, Any]:
@@ -135,6 +153,7 @@ class DiscoveryEngine:
             "status": RUN_COMPLETED, "finished_at": self.clock(),
             "budget": dict(self._budget),
             "counts": self._counts(records),
+            "stop_reason": self._stop_reason or "completed",
             "candidates": [r.to_dict() for r in records],
         })
         self.store.save_state(state)
@@ -155,12 +174,15 @@ class DiscoveryEngine:
         out: List[Any] = []
         for cell in cells:
             if self._over_time_budget():
+                self._stop_reason = self._stop_reason or "time_budget"
                 self._event("budget_stop", reason="time_budget")
                 break
             if self._budget["provider_calls"] >= cfg.max_provider_calls:
+                self._stop_reason = self._stop_reason or "max_provider_calls"
                 self._event("budget_stop", reason="max_provider_calls")
                 break
             if self._budget["results"] >= cfg.max_candidates:
+                self._stop_reason = self._stop_reason or "max_discovered"
                 self._event("budget_stop", reason="max_candidates")
                 break
             provider = self.registry.get(cell["provider_id"])
@@ -179,6 +201,7 @@ class DiscoveryEngine:
             # Cost ceiling (fail closed).
             cost = provider.metadata.cost_per_result_usd * len(results)
             if cfg.cost_ceiling_usd and self._budget["cost_usd"] + cost > cfg.cost_ceiling_usd:
+                self._stop_reason = self._stop_reason or "cost_ceiling"
                 self._event("budget_stop", reason="cost_ceiling", provider=cell["provider_id"])
                 break
             self._budget["cost_usd"] = round(self._budget["cost_usd"] + cost, 6)
@@ -226,9 +249,11 @@ class DiscoveryEngine:
         rankable = [r for r in eligible if r.promotion_decision != PROMO_HELD]
         rankable.sort(key=lambda r: (-r.commercial_score, r.candidate_id))
         rankable = rankable[: cfg.max_eligible]
+        # The QA-analysis budget is the effective promotion cap (never exceeds max_promoted).
+        qa_cap = min(cfg.max_promoted, cfg.max_qa_analyzed) if cfg.max_qa_analyzed else cfg.max_promoted
         promoted: List[CandidateRecord] = []
         for r in rankable:
-            if len(promoted) < cfg.max_promoted:
+            if len(promoted) < qa_cap:
                 r.promotion_decision = PROMO_PROMOTED
                 r.add_reason("promoted_top_n")
                 promoted.append(r)
@@ -240,6 +265,31 @@ class DiscoveryEngine:
     def _promote_into_scout(self, promoted: List[CandidateRecord]) -> None:
         cfg = self.config
         for idx, rec in enumerate(promoted, start=1):
+            # Actionable-target stop: finish as soon as enough Priority-A prospects are found so
+            # the run never continues indefinitely. A target of 0 disables this stop.
+            if actionable_target_reached(found=self._budget["actionable"],
+                                         target=cfg.actionable_target):
+                rec.promotion_decision = PROMO_NOT_PROMOTED
+                rec.add_reason("actionable_target_reached")
+                self._stop_reason = self._stop_reason or "actionable_target_reached"
+                self._event("actionable_target_reached", target=cfg.actionable_target)
+                continue
+            # Whole-run duration ceiling also bounds the QA phase (not only discovery).
+            if self._over_time_budget():
+                rec.promotion_decision = PROMO_NOT_PROMOTED
+                rec.add_reason("time_budget_reached")
+                self._stop_reason = self._stop_reason or "time_budget"
+                self._event("budget_stop", reason="time_budget_qa")
+                continue
+            # Consecutive-failure circuit breaker (0 => disabled).
+            if (cfg.max_consecutive_failures
+                    and self._consecutive_failures >= cfg.max_consecutive_failures):
+                rec.promotion_decision = PROMO_NOT_PROMOTED
+                rec.add_reason("max_consecutive_failures")
+                self._stop_reason = self._stop_reason or "max_consecutive_failures"
+                self._event("budget_stop", reason="max_consecutive_failures",
+                            failures=self._consecutive_failures)
+                continue
             scout_run_id = f"{cfg.campaign_id}-promo-{idx:02d}"
             scout_cfg = ScoutRunConfig(
                 campaign_name=cfg.campaign_id, seeds=[rec.normalized_url],
@@ -247,20 +297,39 @@ class DiscoveryEngine:
                 output_dir=cfg.output_dir, run_id=scout_run_id, resolve_dns=cfg.resolve_dns,
                 max_pages_per_site=cfg.max_pages_per_site)
             scout_store = RunStore(cfg.output_dir, scout_run_id)
-            # The Scout engine independently re-validates URL safety — a discovery candidate
-            # never bypasses Scout safety because a provider marked it trusted.
-            ScoutEngine(scout_cfg, scout_store, clock=self.clock,
-                        backend=self.scout_backend).run()
-            build_scout_report(scout_store, clock=self.clock)
+            try:
+                # The Scout engine independently re-validates URL safety — a discovery candidate
+                # never bypasses Scout safety because a provider marked it trusted.
+                ScoutEngine(scout_cfg, scout_store, clock=self.clock,
+                            backend=self.scout_backend).run()
+                build_scout_report(scout_store, clock=self.clock)
+            except Exception as exc:   # a failed QA run is counted honestly, never silently dropped
+                rec.promotion_decision = PROMO_NOT_PROMOTED
+                rec.add_reason("qa_run_failed")
+                self._budget["failed"] += 1
+                self._consecutive_failures += 1
+                self._event("qa_run_failed", candidate=rec.candidate_id, error=str(exc)[:160])
+                continue
+            self._consecutive_failures = 0            # a successful QA run resets the breaker
             rec.promoted_scout_run = scout_run_id
             self._budget["promoted"] += 1
+            if self.actionable_predicate(rec, scout_store):
+                self._budget["actionable"] += 1
+                rec.add_reason("actionable")
             self._event("promoted_to_scout", candidate=rec.candidate_id, scout_run=scout_run_id)
 
     # ------------------------------------------------------------------
     def _counts(self, records: List[CandidateRecord]) -> Dict[str, int]:
         def n(pred) -> int:
             return sum(1 for r in records if pred(r))
+        # Seven operator-facing counters (the honest funnel) merged with the detailed tallies.
+        operator = counters_from_records(
+            records, qa_analyzed=self._budget["promoted"],
+            actionable=self._budget["actionable"],
+            already_analyzed=self._budget["already_analyzed"],
+            failed=self._budget["failed"]).to_dict()
         return {
+            **operator,
             "candidates": len(records),
             "unique": n(lambda r: r.duplicate_status == "unique"),
             "duplicates": n(lambda r: r.duplicate_status in ("duplicate_url", "duplicate_domain")),
