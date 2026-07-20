@@ -60,6 +60,10 @@ def main(argv: list[str] | None = None) -> None:
         default=False,
         help="Run qa_factory_health tool and print result (no MCP transport needed)",
     )
+    parser.add_argument("--http", action="store_true", default=False,
+                        help="Serve over authenticated streamable-HTTP (needs AIQA_MCP_TOKEN)")
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host (default loopback)")
+    parser.add_argument("--port", type=int, default=8765, help="HTTP port (default 8765)")
     args = parser.parse_args(argv)
 
     if args.version:
@@ -87,7 +91,21 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps(result, indent=2))
         return
 
-    # Default: start MCP server
+    if args.http:
+        try:
+            from integrations.mcp.server import run_http_server
+            print(f"[mcp] serving authenticated streamable-HTTP on http://{args.host}:{args.port}/mcp",
+                  file=sys.stderr)
+            run_http_server(host=args.host, port=args.port)
+            return
+        except ImportError as exc:
+            print(f"[ERROR] {exc}\nInstall: pip install mcp uvicorn starlette", file=sys.stderr)
+            sys.exit(1)
+        except RuntimeError as exc:
+            print(f"[ERROR] {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    # Default: start MCP server over stdio
     try:
         import asyncio
         from integrations.mcp.server import run_server

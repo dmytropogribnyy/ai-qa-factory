@@ -25,13 +25,24 @@ Code / Cursor) **spawn this themselves** — there is no long-lived daemon.
 
 ## C. Transport selected
 
-- **Local + Claude clients → stdio (works now).** stdio is the safest supported transport and is
-  already verified end-to-end.
-- **ChatGPT → requires a REMOTE transport.** ChatGPT cannot connect to a local stdio process. No
-  tunnel client (cloudflared/ngrok) is installed on this machine, and Claude will **not** auto-install
-  one, open a public port, or change the firewall. Preparing the remote endpoint is an owner step
-  (see section M). The **one logical tool implementation** (ObserverAPI → Observer handlers) is reused
-  regardless of transport — a remote bridge must wrap the *existing* stdio server, never reimplement it.
+- **Local + Claude clients → stdio (works now).** Verified end-to-end.
+- **ChatGPT → authenticated streamable-HTTP (BUILT + verified locally).** The existing server now also
+  serves the SAME 26 tools over streamable-HTTP behind a **bearer token** (`AIQA_MCP_TOKEN`), bound to
+  `127.0.0.1` by default — one logical implementation, no second server. Verified: an authorized
+  client lists 26 tools and calls `observer_get_project_overview`; an unauthenticated request gets
+  **401**. Report: `outputs/mcp_acceptance/MCP_HTTP_ACCEPTANCE.md`.
+- **What Claude will NOT do automatically:** install a tunnel, open a public port, change the
+  firewall, or log into your ChatGPT account. Exposing the loopback endpoint over a public HTTPS URL
+  (a tunnel) and adding the connector in ChatGPT are **owner steps** (section M).
+
+## C1. Run the authenticated HTTP endpoint (loopback)
+
+```powershell
+# set a bearer token for this session (this script never prints it):
+$env:AIQA_MCP_TOKEN = [Convert]::ToBase64String((1..24 | % { Get-Random -Max 256 }))
+powershell -ExecutionPolicy Bypass -File tools\observer_mcp.ps1 -Action http-test   # verify
+powershell -ExecutionPolicy Bypass -File tools\observer_mcp.ps1 -Action http         # serve on 127.0.0.1:8765/mcp
+```
 
 ## D. Prerequisites
 
@@ -93,23 +104,27 @@ Never paste secrets into ChatGPT or this repo. The server reads no secrets for t
 
 ## M. Exact remaining ChatGPT owner-side actions
 
-ChatGPT needs a **remote** MCP endpoint. Two supported owner paths (pick per your ChatGPT plan/UI):
+The authenticated HTTP endpoint already works locally (section C/C1). Only **three owner steps** remain:
 
-1. **Reuse an existing remote MCP/tunnel** you already used with this ChatGPT account, pointed at a
-   bridge that runs the existing stdio server (e.g. a stdio→HTTP MCP bridge). Confirm the exact
-   command from that tool's official docs / `--help` — do not copy commands from memory.
-2. **Expose the existing stdio server over a temporary authenticated HTTPS MCP endpoint** using an
-   official stdio→HTTP MCP bridge + a tunnel (label it clearly *temporary*, never an unauthenticated
-   public port). Then, in ChatGPT:
-   - open **Settings → Apps / Connectors** (labels vary: *Advanced Settings*, *Developer mode*,
-     *Create app / Create custom connector*, *MCP server / Tunnel connection*);
-   - add the AI QA Factory MCP endpoint;
-   - **Scan / Refresh Tools** and confirm the `observer_*` tools appear;
-   - enable the app in a new conversation.
+**1. Publish a public HTTPS URL for the loopback endpoint (a tunnel).** No tunnel is installed;
+Claude will not auto-install or expose one (it publishes your read-only QA data). Install one you
+trust and point it at `http://127.0.0.1:8765`. Get the exact command from that tool's **official docs
+/ `--help`** (do not copy tunnel commands from memory), e.g. a cloudflared *quick tunnel* (label it
+clearly **temporary** — not a permanent production endpoint). Keep `AIQA_MCP_TOKEN` set so the public
+URL still requires the bearer token.
 
-Then the **live acceptance**: ask ChatGPT to call `observer_get_project_overview`, then
-`observer_list_campaigns`, and confirm no write/control tool is available. Only after ChatGPT itself
+**2. Add the connector in ChatGPT.** In your ChatGPT account (labels vary by plan — use what you
+actually see): **Settings → Apps / Connectors**, possibly under *Advanced Settings* / *Developer
+mode* → *Create app / Create custom connector / Add MCP server*. Enter:
+- **URL:** `https://<your-tunnel-domain>/mcp`
+- **Auth:** Bearer token = your `AIQA_MCP_TOKEN` (paste it in the ChatGPT connector auth field —
+  **never paste it into a normal chat message**).
+Then **Scan / Refresh Tools** and confirm the `observer_*` tools appear. Enable the app in a new
+conversation.
+
+**3. Live acceptance.** Ask ChatGPT to call `observer_get_project_overview`, then
+`observer_list_campaigns`, and confirm no write/control tool is offered. Only after ChatGPT itself
 returns real state is the status **"ChatGPT Observer MCP connected and live-accepted."**
 
-The exact UI labels depend on what your ChatGPT plan currently shows — use the options actually
-visible in your account as authoritative.
+> Claude prepared and verified everything up to the tunnel + ChatGPT UI. Steps 1–2 are owner-only
+> (they expose your data publicly and use your ChatGPT account); Claude does not perform them.

@@ -23,9 +23,10 @@
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet("doctor", "list", "test", "start", "stop")]
+  [ValidateSet("doctor", "list", "test", "start", "stop", "http", "http-test")]
   [string]$Action = "doctor",
-  [string]$OutputRoot = $env:AIQA_OUTPUT_ROOT
+  [string]$OutputRoot = $env:AIQA_OUTPUT_ROOT,
+  [int]$Port = 8765
 )
 
 $ErrorActionPreference = "Stop"
@@ -80,5 +81,26 @@ switch ($Action) {
   "stop" {
     Write-Host "[observer-mcp] The stdio MCP server is spawned per-client and exits when the client disconnects."
     Write-Host "[observer-mcp] There is no long-lived daemon to stop. For a manual '-Action start', press Ctrl+C."
+  }
+  "http" {
+    Assert-Python; Assert-Mcp
+    if (-not $env:AIQA_MCP_TOKEN) {
+      Write-Host "[observer-mcp] AIQA_MCP_TOKEN is not set (required - no open endpoint)." -ForegroundColor Yellow
+      Write-Host "[observer-mcp] Generate + set one for this session (the value is never printed by this script):"
+      Write-Host '    $env:AIQA_MCP_TOKEN = [Convert]::ToBase64String((1..24 | % {Get-Random -Max 256}))'
+      Fail "set AIQA_MCP_TOKEN, then re-run: -Action http"
+    }
+    $env:AIQA_OUTPUT_ROOT = $OutputRoot
+    Write-Host "[observer-mcp] Authenticated streamable-HTTP MCP on http://127.0.0.1:$Port/mcp (loopback)."
+    Write-Host "[observer-mcp] Bearer token = your AIQA_MCP_TOKEN. Expose publicly ONLY via your own tunnel."
+    Write-Host "[observer-mcp] Press Ctrl+C to stop."
+    & $Py $Server --http --host 127.0.0.1 --port $Port
+  }
+  "http-test" {
+    Assert-Python; Assert-Mcp
+    $env:AIQA_OUTPUT_ROOT = $OutputRoot
+    & $Py (Join-Path $Repo "tools\mcp_http_smoke.py") --output-root $OutputRoot
+    if ($LASTEXITCODE -ne 0) { Fail "HTTP MCP smoke FAILED - see outputs\mcp_acceptance\MCP_HTTP_ACCEPTANCE.md" }
+    Write-Host "[observer-mcp] HTTP smoke PASSED (authorized call ok, unauthenticated refused)." -ForegroundColor Green
   }
 }

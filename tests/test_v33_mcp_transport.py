@@ -8,10 +8,16 @@ reddens CI while still proving the boundary locally.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 
 import pytest
 
-pytest.importorskip("mcp", reason="mcp package not installed — stdio transport test skipped")
+# Function-level skip (NOT module-level importorskip): a module-level skip is counted during
+# collection before marker deselection, which trips the browser-acceptance zero-skip gate. With a
+# skipif marker, this test is simply DESELECTED by the browser job's -m filter (it has no browser
+# marker) and only skips in jobs that run it without mcp installed.
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("mcp") is None, reason="mcp package not installed")
 
 
 async def _smoke(output_root: str) -> dict:

@@ -244,6 +244,65 @@ def build_server() -> "Server":
     return server
 
 
+def build_http_app(token: str):
+    """Build a Starlette ASGI app serving the SAME MCP tools over authenticated streamable-HTTP.
+
+    Reuses build_server() — ONE logical tool implementation regardless of transport (no second
+    Observer/server). Every request must present `Authorization: Bearer <token>`; anything else gets
+    a 401. This is the transport a remote client (e.g. ChatGPT via a tunnel) uses; the Observer tools
+    remain read-only, redacted, and path-confined exactly as over stdio.
+    """
+    import contextlib
+
+    from mcp.server.streamable_http_manager import (  # type: ignore[import-untyped,import-not-found]
+        StreamableHTTPSessionManager,
+    )
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    server = build_server()
+    manager = StreamableHTTPSessionManager(app=server, json_response=False, stateless=False)
+
+    async def _mcp_asgi(scope, receive, send):
+        await manager.handle_request(scope, receive, send)
+
+    async def _guarded(scope, receive, send):
+        if scope.get("type") == "http":
+            headers = {k.decode().lower(): v.decode() for k, v in (scope.get("headers") or [])}
+            if not token or headers.get("authorization", "") != f"Bearer {token}":
+                await send({"type": "http.response.start", "status": 401,
+                            "headers": [(b"content-type", b"application/json")]})
+                await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
+                return
+        await _mcp_asgi(scope, receive, send)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        async with manager.run():
+            yield
+
+    return Starlette(routes=[Mount("/mcp", app=_guarded)], lifespan=lifespan)
+
+
+def run_http_server(host: str = "127.0.0.1", port: int = 8765, token: str = "") -> None:
+    """Serve the Observer MCP over authenticated streamable-HTTP (loopback by default).
+
+    Refuses to start without a bearer token, so there is never an open/unauthenticated endpoint.
+    Binding stays on 127.0.0.1 unless the operator explicitly passes a host; a public URL is the
+    operator's tunnel step, never done automatically here.
+    """
+    import os
+
+    import uvicorn
+
+    token = token or os.environ.get("AIQA_MCP_TOKEN", "")
+    if not token:
+        raise RuntimeError(
+            "AIQA_MCP_TOKEN is required to start the HTTP MCP server (refusing an open endpoint)")
+    app = build_http_app(token)
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
 async def run_server() -> None:
     """Start the MCP server over stdio. Requires mcp package."""
     server = build_server()
