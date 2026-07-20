@@ -82,3 +82,7 @@ real_sites/
 .vscode/settings.json
 .vscode/*.code-workspace
 .idea/
+
+# OpenAI tunnel-client binary (downloaded, not tracked)
+tools/tunnel-client.exe
+tools/tunnel-client*/

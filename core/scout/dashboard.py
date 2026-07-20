@@ -1369,8 +1369,11 @@ function startCampaign(){{
                      f'<th>Status</th><th>Priority</th><th>Defects</th></tr>{prows}</table>'
                      if prows else '<div class="card empty muted">No prospects in this run.</div>')
             start_panel = "" if running else _START_PANEL_HTML
-            body = (f'<h1>Scout</h1><p class="muted">{_esc(SCOUT_PRODUCT_NAME)} — bounded, read-only '
-                    f'discovery + QA. Nothing is scanned or sent without your explicit action.</p>'
+            body = (f'<h1>Manual URL Scan</h1><p class="muted">{_esc(SCOUT_PRODUCT_NAME)} — bounded, '
+                    f'read-only scan of URLs you paste. For automatic prospect discovery use '
+                    f'<a href="/scout/new">Discover Prospects</a>. Nothing is sent without your action.</p>'
+                    f'<div class="row"><a class="chip" href="/scout/new">Discover Prospects (adaptive)</a>'
+                    f'<a class="chip" href="/scout/history">History</a></div>'
                     f'<div class="card"><p>Run <code>{_esc(status.get("run_id", ""))}</code> · mode '
                     f'{_badge(mode)} · status {_badge(st.get("status", "n/a"))}</p>'
                     f'<div class="row">{controls}</div></div>'
@@ -1414,12 +1417,12 @@ function startCampaign(){{
             body = (f'<h1>Scout campaigns</h1><div class="row">'
                     f'<a class="chip" href="/scout/new">New adaptive campaign</a>'
                     f'<a class="chip" href="/scout/history">History</a>'
-                    f'<a class="chip" href="/scout">Scout home</a>'
+                    f'<a class="chip" href="/scout">Manual URL Scan</a>'
                     f'<a class="chip" href="/results">Results</a>'
                     f'<span class="chip">Active {len(ov.active_campaigns)}</span></div>'
                     f'<div class="scrollx">{table}</div>'
                     f'<p class="muted">Campaign start + Pause/Resume/Stop Safely/Cancel controls are '
-                    f'on <a href="/scout">Scout home</a> (bounded, read-only; nothing is sent).</p>')
+                    f'on <a href="/scout">Manual URL Scan</a> (bounded, read-only; nothing is sent).</p>')
             return _page("AI QA Factory — Scout campaigns", "/scout", body)
 
         # --- v3.3 adaptive Scout operator workflow -------------------------------------------
@@ -1494,7 +1497,7 @@ function startCampaign(){{
             body = (
                 '<h1>New Scout campaign</h1>'
                 '<div class="row"><a class="chip" href="/scout/history">History</a>'
-                '<a class="chip" href="/scout">Scout home</a></div>'
+                '<a class="chip" href="/scout">Manual URL Scan</a></div>'
                 '<div class="card"><label>Preset<br><select id="preset">' + opts + '</select></label>'
                 '<label> Session (budget)<br><select id="session"><option value="">preset default</option>'
                 + sess + '</select></label>'
@@ -1682,7 +1685,7 @@ function startCampaign(){{
                 f'<label>Min severity<br><select name="sev">{sev_opts}</select></label>'
                 '<span style="align-self:end"><button class="btn primary" type="submit">Filter</button> '
                 '<a class="btn" href="/results">Reset</a></span></div></form>')
-            body = (f'<h1>Results</h1><div class="row"><a class="chip" href="/scout">Scout home</a>'
+            body = (f'<h1>Results</h1><div class="row"><a class="chip" href="/scout">Manual URL Scan</a>'
                     f'<a class="chip" href="/scout/campaigns">Campaigns</a></div>'
                     f'{form}{chips}<div class="scrollx">{table}</div>'
                     '<p class="muted">Read-only. No outreach is sent from here.</p>')
@@ -2112,7 +2115,9 @@ def _theme_legacy(html: str) -> str:
     return html.replace("</head>", inject + "</head>", 1)
 
 
-_NAV = (("Overview", "/"), ("Scout", "/scout"), ("Work", "/work"))
+# "Scout" is the adaptive Discover Prospects workflow; the legacy seed scanner stays at /scout
+# (relabelled "Manual URL Scan"). The nav highlights Scout for any /scout* page.
+_NAV = (("Overview", "/"), ("Scout", "/scout/new"), ("Work", "/work"))
 _MORE = (("Tools", "/tools"), ("Activity", "/activity"), ("Settings", "/settings"),
          ("Documentation", "/docs"))
 
@@ -2120,7 +2125,8 @@ _MORE = (("Tools", "/tools"), ("Activity", "/activity"), ("Settings", "/settings
 def _nav_html(active: str) -> str:
     links = []
     for label, href in _NAV:
-        cur = ' aria-current="page"' if href == active else ""
+        is_cur = (href == active) or (href.startswith("/scout") and active.startswith("/scout"))
+        cur = ' aria-current="page"' if is_cur else ""
         links.append(f'<a href="{href}"{cur}>{label}</a>')
     more = "".join(f'<a href="{h}">{lbl}</a>' for lbl, h in _MORE)
     toggle = ('<button type="button" class="theme-toggle" onclick="toggleTheme()" '

@@ -90,6 +90,30 @@ Claude Code: `~/.claude.json`; Cursor: `~/.cursor/mcp.json`):
 - **Update after repo changes:** none needed — the client re-spawns the server each session; just
   re-run `-Action test` to reconfirm.
 
+## J1. Autostart at Windows logon (Task Scheduler)
+
+So the tunnel is up whenever you're logged in — no manual PowerShell, ChatGPT works without VS Code
+open. The secret lives ONLY in the user env var (HKCU), never in git/scripts/task-args/logs.
+
+```powershell
+# one-time: store the key in the USER environment (value not echoed by this)
+[Environment]::SetEnvironmentVariable('CONTROL_PLANE_API_KEY','<your key>','User')
+
+# register + manage the autostart (idempotent)
+powershell -ExecutionPolicy Bypass -File tools\observer_tunnel_autostart.ps1 -Action install
+powershell -ExecutionPolicy Bypass -File tools\observer_tunnel_autostart.ps1 -Action start
+powershell -ExecutionPolicy Bypass -File tools\observer_tunnel_autostart.ps1 -Action status
+powershell -ExecutionPolicy Bypass -File tools\observer_tunnel_autostart.ps1 -Action restart
+powershell -ExecutionPolicy Bypass -File tools\observer_tunnel_autostart.ps1 -Action stop
+powershell -ExecutionPolicy Bypass -File tools\observer_tunnel_autostart.ps1 -Action uninstall
+```
+- Task **"AI QA Factory Observer Tunnel"**: at logon +20s, hidden, non-admin (Limited), single
+  instance, restart-on-failure, working dir `C:\aiqa`. Task args carry only the launcher path.
+- `tools\start_observer_tunnel.ps1` is the launcher: it skips if `:8080/healthz` is already healthy
+  (no duplicate process), sets `AIQA_OUTPUT_ROOT=C:\aiqa\outputs`, and runs `tunnel-client run
+  --profile ai-qa-factory`. Logs: `%LOCALAPPDATA%\AIQA-Observer-Tunnel\` (outside the repo, no key).
+- Rollback: `-Action uninstall` removes the task (env var + tunnel profile left intact).
+
 ## K. Secrets
 
 Never paste secrets into ChatGPT or this repo. The server reads no secrets for the read-only tools.
