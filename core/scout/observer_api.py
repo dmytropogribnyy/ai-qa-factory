@@ -140,17 +140,109 @@ class ObserverAPI:
         return {"campaign_id": campaign_id, "run_state": p["run_state"],
                 "stop_reason": p["stop_reason"]}
 
+    _MAX_EVENTS = 200
+
+    def _events(self, campaign_id: str) -> List[Dict[str, Any]]:
+        try:
+            from core.scout.store import RunStore
+            return RunStore(self.output_dir, campaign_id).read_events()
+        except Exception:
+            return []
+
     def get_updates_since(self, campaign_id: str, cursor: str = "") -> Dict[str, Any]:
-        """Coarse incremental updates: returns the current snapshot + a stable content cursor only
-        when it changed since the caller's cursor (else an empty delta)."""
-        snap = self.svc.progress(campaign_id)
-        digest = hashlib.sha256(json.dumps(snap, sort_keys=True, default=str)
-                                .encode("utf-8")).hexdigest()[:16]
-        if cursor == digest:
-            return {"api_version": OBSERVER_API_VERSION, "cursor": digest, "changed": False,
-                    "snapshot": None}
-        return {"api_version": OBSERVER_API_VERSION, "cursor": digest, "changed": True,
-                "snapshot": redact(snap)}
+        """TRUE incremental event feed: returns only newly-persisted events after the cursor (an
+        index into the append-only campaign event log), each with a stable event id, bounded and
+        redacted. The new cursor is the caller's next starting index."""
+        events = self._events(campaign_id)
+        try:
+            start = max(0, int(cursor)) if cursor else 0
+        except (TypeError, ValueError):
+            start = 0
+        window = events[start:start + self._MAX_EVENTS]
+        out = []
+        for i, ev in enumerate(window, start=start):
+            out.append({"event_id": f"{campaign_id}#{i}", "at": ev.get("at"),
+                        "event_type": ev.get("event"),
+                        "target": ev.get("candidate") or ev.get("prospect") or "",
+                        "reason": ev.get("reason", ""),
+                        "detail": redact({k: v for k, v in ev.items()
+                                          if k not in ("at", "event")})})
+        return {"api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id,
+                "cursor": str(start + len(window)), "changed": bool(window),
+                "count": len(window), "has_more": (start + len(window)) < len(events),
+                "events": out}
+
+    def get_activity_log(self, campaign_id: str, *, limit: int = 200, offset: int = 0) -> Dict[str, Any]:
+        events = self._events(campaign_id)
+        page = events[offset:offset + max(1, min(limit, self._MAX_EVENTS))]
+        return {"api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id,
+                "total": len(events), "offset": offset, "activity": redact(page)}
+
+    # -- findings + evidence (campaign-scoped, path-confined) -------------------------------------
+    def _promoted_runs(self, campaign_id: str) -> List[str]:
+        state = self.svc._discovery_state(campaign_id) or {}
+        return [c.get("promoted_scout_run") for c in state.get("candidates", [])
+                if c.get("promoted_scout_run")]
+
+    def list_findings(self, campaign_id: str, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        from core.scout.priority import load_verified_findings
+        from core.scout.store import RunStore
+        rows: List[Dict[str, Any]] = []
+        for run_id in self._promoted_runs(campaign_id):
+            try:
+                for f in load_verified_findings(RunStore(self.output_dir, run_id)):
+                    rows.append({"finding_id": f.get("finding_id"), "scout_run": run_id,
+                                 "url": f.get("url"), "severity": f.get("severity"),
+                                 "category": f.get("category"), "title": f.get("title")})
+            except Exception:
+                continue
+        total = len(rows)
+        page = rows[offset:offset + max(1, min(limit, 500))]
+        return {"api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id, "total": total,
+                "offset": offset, "findings": redact(page)}
+
+    def get_finding(self, campaign_id: str, finding_id: str) -> Dict[str, Any]:
+        from core.scout.priority import load_verified_findings
+        from core.scout.store import RunStore
+        for run_id in self._promoted_runs(campaign_id):
+            try:
+                for f in load_verified_findings(RunStore(self.output_dir, run_id)):
+                    if f.get("finding_id") == finding_id:
+                        return {"api_version": OBSERVER_API_VERSION, "finding": redact(f)}
+            except Exception:
+                continue
+        return {"api_version": OBSERVER_API_VERSION, "error": "finding_not_found",
+                "finding_id": finding_id}
+
+    def get_evidence_manifest(self, campaign_id: str) -> Dict[str, Any]:
+        """List evidence artifacts for a campaign as RELATIVE paths under the evidence root."""
+        items = []
+        for run_id in self._promoted_runs(campaign_id):
+            run_dir = (self._evidence_root.parent / run_id)
+            if not run_dir.exists():
+                continue
+            for f in run_dir.rglob("*.json"):
+                try:
+                    rel = f.resolve().relative_to(self._root)
+                except ValueError:
+                    continue
+                items.append({"ref": str(rel).replace("\\", "/"), "bytes": f.stat().st_size})
+        return {"api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id,
+                "count": len(items), "evidence": items[:500]}
+
+    def get_evidence_item(self, ref: str) -> Dict[str, Any]:
+        """Return bounded metadata + integrity hash for one confined evidence artifact (never raw
+        arbitrary bytes; refuses any path escaping the output root)."""
+        p = (self._root / ref).resolve()
+        try:
+            p.relative_to(self._root)
+        except ValueError:
+            raise ObserverError("path escapes the output root") from None
+        if not p.is_file():
+            return {"api_version": OBSERVER_API_VERSION, "error": "not_found", "ref": ref}
+        data = p.read_bytes()[:200_000]
+        return {"api_version": OBSERVER_API_VERSION, "ref": ref, "bytes": p.stat().st_size,
+                "sha256": hashlib.sha256(data).hexdigest(), "truncated": p.stat().st_size > 200_000}
 
     # -- targets ---------------------------------------------------------------------------------
     def list_targets(self, *, filters: Optional[Dict[str, str]] = None, limit: int = 50,
@@ -186,11 +278,15 @@ class ObserverAPI:
         """Write a self-contained JSON + Markdown review bundle with a schema + integrity manifest."""
         prog = redact(self.svc.progress(campaign_id))
         brain = redact(self.svc._read(campaign_id, "BRAIN_DECISIONS.json") or {})
-        targets = redact(self.svc.history())
+        # Campaign-SCOPED targets only (no cross-campaign leakage into this campaign's bundle).
+        targets = redact([t for t in self.svc.history()
+                          if campaign_id in (t.get("campaign_ids") or [])])
         payload = {
             "schema": "ai-review-bundle/v1", "api_version": OBSERVER_API_VERSION,
             "exported_at": _now(), "campaign_id": campaign_id,
             "progress": prog, "brain_decisions": brain, "targets": targets,
+            "findings": self.list_findings(campaign_id).get("findings", []),
+            "evidence_manifest": self.get_evidence_manifest(campaign_id).get("evidence", []),
             "release_readiness": self.get_release_readiness(),
         }
         body = json.dumps(payload, indent=2, sort_keys=True)

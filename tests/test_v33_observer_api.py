@@ -58,13 +58,38 @@ def test_pagination_and_release_readiness(tmp_path, monkeypatch):
     assert rr["live_desktop_acceptance_required"] is True
 
 
-def test_cursor_incremental_updates(tmp_path, monkeypatch):
+def test_cursor_is_a_real_event_feed(tmp_path, monkeypatch):
     _, cid = _launch(tmp_path, monkeypatch)
     obs = ObserverAPI(str(tmp_path))
     first = obs.get_updates_since(cid, cursor="")
-    assert first["changed"] is True and first["cursor"]
+    # a completed discovery run persisted events; the feed returns them with stable ids
+    assert first["changed"] is True and int(first["cursor"]) == first["count"] >= 1
+    assert all("event_id" in e and "event_type" in e for e in first["events"])
+    # asking again from the new cursor yields no new events (true incremental, not a snapshot hash)
     again = obs.get_updates_since(cid, cursor=first["cursor"])
-    assert again["changed"] is False and again["snapshot"] is None    # no new state => empty delta
+    assert again["changed"] is False and again["count"] == 0
+
+
+def test_ai_review_bundle_is_campaign_scoped_and_relative(tmp_path, monkeypatch):
+    _, cid = _launch(tmp_path, monkeypatch)
+    obs = ObserverAPI(str(tmp_path))
+    out = obs.export_ai_review_bundle(cid)
+    data = json.loads(open(out["json"], encoding="utf-8").read())
+    # every target in the bundle belongs to THIS campaign (no cross-campaign leakage)
+    for t in data["targets"]:
+        assert cid in (t.get("campaign_ids") or [])
+    # evidence refs are relative (no absolute drive/root path leakage)
+    for e in data["evidence_manifest"]:
+        assert not str(e["ref"]).startswith(str(tmp_path))
+        assert ":" not in str(e["ref"])[:3]          # no 'C:' / 'D:' drive prefix
+
+
+def test_evidence_item_refuses_traversal(tmp_path, monkeypatch):
+    _, cid = _launch(tmp_path, monkeypatch)
+    obs = ObserverAPI(str(tmp_path))
+    with pytest.raises(ObserverError):
+        obs.get_evidence_item("../../../etc/passwd")
+    assert "findings" in obs.list_findings(cid)      # findings tool returns structured result
 
 
 def test_path_confinement_rejects_escape(tmp_path):
