@@ -12,6 +12,7 @@ import pytest
 
 from core.scout.presets import (
     CAMPAIGN_PRESETS,
+    DEFAULT_CAMPAIGN_PRESET,
     SESSION_PRESETS,
     build_config,
     get_campaign_preset,
@@ -67,7 +68,6 @@ def test_us_de_commercial_preset_matches_spec():
     assert set(c.lower() for c in p.countries) == {"us", "de"}
     assert set(lang.lower() for lang in p.languages) == {"en", "de"}
     assert p.min_commercial_threshold == 70
-    assert p.session_preset == "quick"
     assert p.rescan_interval_days == 30
     assert p.schedule_mode == "weekdays"
     assert p.schedule_time == "09:00"
@@ -76,6 +76,30 @@ def test_us_de_commercial_preset_matches_spec():
     for signal in ("pricing", "free trial", "book demo", "sign up", "shop", "cart",
                    "availability", "booking"):
         assert signal in p.keywords
+
+
+def test_default_is_a_real_production_preset_not_quick():
+    assert DEFAULT_CAMPAIGN_PRESET == "balanced-production"
+    p = get_campaign_preset(DEFAULT_CAMPAIGN_PRESET)
+    assert p.session_preset != "quick"       # production default is not a 20-minute smoke scan
+    assert p.is_smoke is False
+    assert p.strategy == "balanced"
+
+
+def test_production_presets_exist_with_strategies():
+    for key, strat in (("balanced-production", "balanced"),
+                       ("conservative-production", "conservative"),
+                       ("opportunity-production", "opportunity"),
+                       ("scheduled-daily", "balanced")):
+        assert CAMPAIGN_PRESETS[key].strategy == strat
+
+
+def test_build_config_carries_strategy_and_overrides():
+    cfg = build_config("balanced-production", provider_allowlist=["tavily"],
+                       overrides={"countries": ["us"], "strategy": "opportunity"})
+    assert cfg.strategy == "opportunity"     # override wins
+    assert cfg.countries == ["us"]
+    assert cfg.outcome_targets == {"actionable": 5}
 
 
 # --- build_config: preset + session -> bounded DiscoveryCampaignConfig --------------------------

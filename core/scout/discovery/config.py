@@ -79,6 +79,11 @@ class DiscoveryCampaignConfig:
     max_consecutive_failures: int = 0
     # Session preset key this config was built from (informational; "" when hand-built).
     session_preset: str = ""
+    # Adaptive strategy: conservative | balanced | opportunity (see core/scout/adaptive.py).
+    strategy: str = "balanced"
+    # Optional outcome targets (may stop a run EARLY once met) + diversity caps (0 == uncapped).
+    outcome_targets: Dict[str, int] = field(default_factory=dict)
+    diversity_caps: Dict[str, int] = field(default_factory=dict)
     time_budget_s: float = 120.0
     cost_ceiling_usd: float = 0.0
     # Promotion / Scout run settings.
@@ -124,6 +129,8 @@ class DiscoveryCampaignConfig:
             raise DiscoveryConfigError("cost_ceiling_usd cannot be negative")
         if self.browser_mode not in ("static", "playwright"):
             raise DiscoveryConfigError(f"unknown browser_mode: {self.browser_mode!r}")
+        if self.strategy not in ("conservative", "balanced", "opportunity"):
+            raise DiscoveryConfigError(f"unknown strategy: {self.strategy!r}")
         if not (1 <= self.max_pages_per_site <= 50):
             raise DiscoveryConfigError("max_pages_per_site must be within 1..50")
         self.allowed_local_hosts = frozenset(self.allowed_local_hosts)
