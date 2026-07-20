@@ -85,6 +85,20 @@ def test_unknown_campaign_and_target_return_structured(tmp_path, monkeypatch):
     assert finding.get("error") == "finding_not_found"
 
 
+def test_campaign_id_traversal_refused_no_dir_created(tmp_path, monkeypatch):
+    _launch(tmp_path, monkeypatch)
+    evil = "../../../../evil-" + "x"
+    # every campaign-scoped MCP tool refuses a traversal id with a structured error
+    for tool in ("observer_get_run_progress", "observer_get_campaign",
+                 "observer_get_run_stop_reason", "observer_export_ai_review_bundle",
+                 "observer_get_activity_log", "observer_list_findings"):
+        out = OBSERVER_HANDLERS[tool]({"campaign_id": evil})
+        assert out.get("status") == "error", tool
+    # and no directory was created outside/inside from the traversal id
+    assert not (tmp_path.parent / "evil-x").exists()
+    assert not list(tmp_path.rglob("evil-x"))
+
+
 def test_pagination_bounded(tmp_path, monkeypatch):
     _launch(tmp_path, monkeypatch)
     page = OBSERVER_HANDLERS["observer_list_campaigns"]({"limit": 1, "offset": 0})

@@ -53,12 +53,25 @@ class ObserverError(RuntimeError):
     pass
 
 
+# A campaign id must be a single safe path segment (no separators/traversal). Real ids are
+# generated as campaign-<slug>-<stamp>-<hex>, so this never rejects a legitimate id.
+_VALID_CAMPAIGN_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
 class ObserverAPI:
     def __init__(self, output_dir: str = "outputs") -> None:
         self.output_dir = output_dir
         self.svc = CampaignService(output_dir)
         self._root = Path(output_dir).resolve()
         self._evidence_root = (self._root / "scout").resolve()
+
+    def _cid(self, campaign_id: str) -> str:
+        """Validate a campaign id used as a path segment (fail closed on traversal/separators).
+        This is the authoritative boundary check for every campaign-scoped tool (MCP + direct)."""
+        cid = str(campaign_id or "")
+        if not _VALID_CAMPAIGN_ID.match(cid):
+            raise ObserverError("invalid campaign_id (must match [A-Za-z0-9._-]{1,128})")
+        return cid
 
     # -- path confinement ------------------------------------------------------------------------
     def _confine(self, rel_or_abs: str) -> Path:
@@ -130,12 +143,15 @@ class ObserverAPI:
                 "limit": limit, "campaigns": redact(rows)}
 
     def get_campaign(self, campaign_id: str) -> Dict[str, Any]:
+        campaign_id = self._cid(campaign_id)
         return redact({"api_version": OBSERVER_API_VERSION, **self.svc.progress(campaign_id)})
 
     def get_run_progress(self, campaign_id: str) -> Dict[str, Any]:
+        campaign_id = self._cid(campaign_id)
         return redact(self.svc.progress(campaign_id))
 
     def get_run_stop_reason(self, campaign_id: str) -> Dict[str, Any]:
+        campaign_id = self._cid(campaign_id)
         p = self.svc.progress(campaign_id)
         return {"campaign_id": campaign_id, "run_state": p["run_state"],
                 "stop_reason": p["stop_reason"]}
@@ -153,6 +169,7 @@ class ObserverAPI:
         """TRUE incremental event feed: returns only newly-persisted events after the cursor (an
         index into the append-only campaign event log), each with a stable event id, bounded and
         redacted. The new cursor is the caller's next starting index."""
+        campaign_id = self._cid(campaign_id)
         events = self._events(campaign_id)
         try:
             start = max(0, int(cursor)) if cursor else 0
@@ -173,6 +190,7 @@ class ObserverAPI:
                 "events": out}
 
     def get_activity_log(self, campaign_id: str, *, limit: int = 200, offset: int = 0) -> Dict[str, Any]:
+        campaign_id = self._cid(campaign_id)
         events = self._events(campaign_id)
         page = events[offset:offset + max(1, min(limit, self._MAX_EVENTS))]
         return {"api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id,
@@ -185,6 +203,7 @@ class ObserverAPI:
                 if c.get("promoted_scout_run")]
 
     def list_findings(self, campaign_id: str, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        campaign_id = self._cid(campaign_id)
         from core.scout.priority import load_verified_findings
         from core.scout.store import RunStore
         rows: List[Dict[str, Any]] = []
@@ -202,6 +221,7 @@ class ObserverAPI:
                 "offset": offset, "findings": redact(page)}
 
     def get_finding(self, campaign_id: str, finding_id: str) -> Dict[str, Any]:
+        campaign_id = self._cid(campaign_id)
         from core.scout.priority import load_verified_findings
         from core.scout.store import RunStore
         for run_id in self._promoted_runs(campaign_id):
@@ -216,6 +236,7 @@ class ObserverAPI:
 
     def get_evidence_manifest(self, campaign_id: str) -> Dict[str, Any]:
         """List evidence artifacts for a campaign as RELATIVE paths under the evidence root."""
+        campaign_id = self._cid(campaign_id)
         items = []
         for run_id in self._promoted_runs(campaign_id):
             run_dir = (self._evidence_root.parent / run_id)
@@ -276,6 +297,7 @@ class ObserverAPI:
     # -- AI review bundle (MCP-independent fallback) ---------------------------------------------
     def export_ai_review_bundle(self, campaign_id: str) -> Dict[str, str]:
         """Write a self-contained JSON + Markdown review bundle with a schema + integrity manifest."""
+        campaign_id = self._cid(campaign_id)
         prog = redact(self.svc.progress(campaign_id))
         brain = redact(self.svc._read(campaign_id, "BRAIN_DECISIONS.json") or {})
         # Campaign-SCOPED targets only (no cross-campaign leakage into this campaign's bundle).
@@ -292,7 +314,13 @@ class ObserverAPI:
         body = json.dumps(payload, indent=2, sort_keys=True)
         integrity = hashlib.sha256(body.encode("utf-8")).hexdigest()
         payload["integrity_sha256"] = integrity
-        out = self._root / "scout" / "_bundles" / campaign_id
+        out = (self._root / "scout" / "_bundles" / campaign_id).resolve()
+        # Defense in depth: refuse to create/write anywhere outside the evidence root even if id
+        # validation were ever bypassed.
+        try:
+            out.relative_to(self._evidence_root)
+        except ValueError:
+            raise ObserverError("bundle path escapes the evidence root") from None
         out.mkdir(parents=True, exist_ok=True)
         json_path = out / "AI_REVIEW_BUNDLE.json"
         json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
