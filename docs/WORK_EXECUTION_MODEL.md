@@ -1,8 +1,13 @@
 # Work Execution Model
 
-**Version:** 8.0.0 (foundation)
-**Status:** Planned. Phase 8.0 defines the state vocabulary and backend strategy as
-schemas + docs. No executor and no MCP calls exist yet.
+**Version:** 3.2 (implemented client-work lifecycle)
+**Status:** IMPLEMENTED for the client-work surface. The persisted, resumable lifecycle runs in
+`core/orchestration/work_execution.py` (`WorkExecutionService`) with content-hash integrity gates,
+and is driven by a pluggable executor: a deterministic `FixtureClaudeWorker` in CI and a bounded,
+operator-gated **Claude Code worker** (`ClaudeWorkerExecutor`) for real execution. This is distinct
+from the ARK `main.py work` planning command, which remains planning-only (Phase 8.0/8.1) with no
+executor and no live MCP calls. External/client access (repos, DBs, accounts, Gmail send, non-GitHub
+CI) is gated and never auto-authorised; arbitrary client-repo execution is trusted/approved-repo only.
 
 ---
 

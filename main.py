@@ -31,14 +31,8 @@ _PROJECT_ID_RE = __import__("re").compile(r"[A-Za-z0-9._-]{1,64}")
 
 
 def _valid_project_id(pid: str) -> bool:
-    import os
-    return (
-        bool(pid)
-        and _PROJECT_ID_RE.fullmatch(pid) is not None
-        and ".." not in pid
-        and "/" not in pid and "\\" not in pid
-        and not os.path.isabs(pid)
-    )
+    from core.orchestration.providers import validate_project_id
+    return validate_project_id(pid)
 
 
 def run_work(args) -> int:
@@ -195,9 +189,19 @@ def run_analyze_job(args) -> int:
         for x in r.reasons_to_reject:
             print(f"  - {x}")
     print(f"Workspace: {res.workspace_dir}")
+    # Chat-first: automatically show the Project Resource Readiness Checklist (no operator prompt).
+    _print_resource_readiness(res.workspace_dir)
     print("Analysis only - nothing executed. Review FEASIBILITY_SUMMARY.md / PROPOSAL_DRAFT.md, "
           "then approve to proceed.")
     return 0
+
+
+def _print_resource_readiness(workspace_dir) -> None:
+    """Print the persisted Resource Readiness summary (chat-first presentation of the JSON artifact)."""
+    from pathlib import Path as _P
+    md = _P(workspace_dir) / "RESOURCE_READINESS.md"
+    if md.is_file():
+        print("\n" + md.read_text(encoding="utf-8").rstrip())
 
 
 def _parse_artifacts(spec, kind, is_evidence=False):
@@ -242,6 +246,15 @@ def run_client_work(args) -> int:
             if v.blockers:
                 print("Blockers: " + ", ".join(v.blockers))
             print(f"Next: {v.next_action}")
+        elif args.action == "readiness":
+            # Display the canonical per-project Resource Readiness Checklist (chat-first; read-only).
+            ws = Path(get_settings().output_dir) / pid / "40_ark_work"
+            md = ws / "RESOURCE_READINESS.md"
+            if not md.is_file():
+                print(f"ERROR: no resource readiness for '{pid}' (run analyze-job first)",
+                      file=_sys.stderr)
+                return 1
+            print(md.read_text(encoding="utf-8").rstrip())
         elif args.action == "approve":
             if not (args.reviewer or "").strip():
                 print("ERROR: --reviewer is required to approve", file=_sys.stderr)
@@ -294,6 +307,11 @@ def run_client_work(args) -> int:
             except ValidationCommandError as exc:
                 print(f"ERROR: invalid validation command: {exc}", file=_sys.stderr)
                 return 1
+            from core.orchestration.execution_trust import assess_execution_trust
+            _t = assess_execution_trust(str(svc.workspace_dir(pid)))
+            if not _t.trusted:
+                print(f"REFUSED (untrusted repository): {_t.reason}. {_t.action}", file=_sys.stderr)
+                return 2
             state, result = svc.validate(pid, executor)
             print(f"Validation for {pid}: {'PASS' if result.passed else 'FAIL'} "
                   f"({result.tests_passed}/{result.tests_run}). State {state.status}. "
@@ -311,16 +329,121 @@ def run_client_work(args) -> int:
                   f"evidence={m['evidence_count']}, validation_passed={m['validation_passed']}, "
                   f"reviewed_by={m.get('reviewed_by') or '(none)'}, digest={m['manifest_digest'][:23]}... "
                   "State DELIVERY_PREPARED. Send the package yourself, then: mark-delivered.")
+        elif args.action == "reopen-delivery":
+            if not (args.reviewer or "").strip():
+                print("ERROR: --reviewer is required to reopen a delivery", file=_sys.stderr)
+                return 1
+            if not (args.reason or "").strip():
+                print("ERROR: --reason is required to reopen a delivery", file=_sys.stderr)
+                return 1
+            entry = svc.reopen_delivery(pid, reviewer=args.reviewer, reason=args.reason)
+            outcome = entry["outcome"]
+            if outcome == "REPAIR_REQUIRED":
+                print(f"Reopened {pid}: validated content changed ({len(entry['registered_changed'])} "
+                      "file(s)) -> REPAIR_REQUIRED. Redo: record-execution -> validate -> review -> "
+                      "prepare-delivery.")
+            else:
+                print(f"Reopened {pid}: drafts/metadata only -> READY_FOR_DELIVERY. "
+                      "Re-run prepare-delivery when ready.")
         elif args.action == "mark-delivered":
             st = svc.mark_delivered(pid, note=args.note or "")
             print(f"Marked delivered for {pid}: {st.status}. (This recorded your assertion that you "
                   "sent the prepared package manually; nothing was sent by this command.)")
+        elif args.action in ("worker-start", "worker-resume"):
+            # Bounded autonomous execution via the real Claude Code worker, built ONLY from the
+            # persisted project state. Confined to the workspace; never a prompt/command from a caller.
+            # The project id is validated by workspace_dir BEFORE any path op (rejects traversal,
+            # separators, absolute paths, Windows reserved names, control chars).
+            from core.orchestration.claude_worker import ClaudeWorkerExecutor
+            from core.orchestration.execution_trust import (
+                assess_execution_trust,
+                preflight_work_isolation,
+            )
+            ws = svc.workspace_dir(pid)                       # validates id first (raises for unsafe)
+            trust = assess_execution_trust(str(ws))
+            if not trust.trusted:
+                print(f"REFUSED (untrusted repository): {trust.reason}. {trust.action}",
+                      file=_sys.stderr)
+                return 2
+            pf = preflight_work_isolation(str(ws))
+            if not pf.ok:
+                print(f"REFUSED (work-isolation preflight): {pf.reason}. {pf.action}", file=_sys.stderr)
+                return 2
+            (ws / "WORKER_CANCEL.json").unlink(missing_ok=True)   # clear any stale cancel marker
+            executor = ClaudeWorkerExecutor(resume=(args.action == "worker-resume"),
+                                            timeout_s=int(getattr(args, "timeout", 300) or 300))
+            state, outcome = svc.execute(pid, executor)      # requires the project to exist + approval
+            if outcome.blockers:
+                print("Worker BLOCKED: " + "; ".join(outcome.blockers), file=_sys.stderr)
+                return 2
+            print(f"Worker recorded execution for {pid}: {len(outcome.artifacts)} file(s) changed. "
+                  f"State {state.status}. Now: validate (a real command), then review.")
+        elif args.action == "worker-status":
+            import json as _json
+            v = svc.status(pid)                              # validates id + requires the project exists
+            ws = svc.workspace_dir(pid)                       # confined workspace (already validated)
+            print(f"Project {pid}: {v.status} ({v.progress}%). Next: {v.next_action}")
+            sess_path = ws / "EXECUTION_SESSION.json"
+            if sess_path.exists():
+                s = _json.loads(sess_path.read_text(encoding="utf-8"))
+                print(f"Worker session: executor={s.get('executor')} session={s.get('session_id')} "
+                      f"stop={s.get('stop_reason')} files_changed={len(s.get('files_changed', []))} "
+                      f"cost_usd={s.get('cost_usd')} ok={s.get('ok')}")
+                if s.get("blockers"):
+                    print("Blockers: " + "; ".join(s["blockers"]))
+            else:
+                print("No worker session recorded yet.")
+        elif args.action == "worker-cancel":
+            import json as _json
+            from datetime import datetime, timezone
+            # Validate the id AND require the project to genuinely exist before writing anything, so a
+            # rejected/nonexistent request never creates a workspace, marker, or any other file.
+            if not svc.project_exists(pid):
+                print(f"ERROR: no such project '{pid}' (nothing to cancel; run analyze-job first)",
+                      file=_sys.stderr)
+                return 2
+            ws = svc.workspace_dir(pid)                       # confined workspace (already validated)
+            (ws / "WORKER_CANCEL.json").write_text(
+                _json.dumps({"requested_at": datetime.now(timezone.utc).isoformat()}),
+                encoding="utf-8")
+            print(f"Cancel requested for {pid}: a running worker will stop safely (process tree "
+                  "terminated); a not-yet-started worker will not launch.")
         else:
             print("ERROR: unknown action", file=_sys.stderr)
             return 1
     except (WorkExecutionError, InvalidTransitionError) as exc:
         print(f"BLOCKED: {exc}", file=_sys.stderr)
         return 2
+    return 0
+
+
+def run_operator_dashboard(args) -> int:
+    """v3.1 - the local operator dashboard (Overview/Work/Scout/Tools) over the existing core.
+
+    Reads persisted state through read-only DTOs and exposes guarded lifecycle actions (approve,
+    review, prepare/reopen/mark delivery) that call the SAME services the CLI uses. It never runs an
+    arbitrary command, never accepts argv over HTTP, and sends nothing.
+    """
+    import time as _time
+
+    from core.config import get_settings
+    from core.scout.dashboard import remove_ownership_record, start_dashboard
+    from core.scout.service import ScoutService
+    out = args.output or str(Path(get_settings().output_dir))
+    service = ScoutService(out)
+    server, url = start_dashboard(service, port=args.port, operator_home=True)
+    bound_port = server.server_address[1]
+    print(f"AI QA Factory operator dashboard: {url}   (Ctrl+C to stop)")
+    print(f"  Overview {url}/  ·  Work {url}/work  ·  Scout {url}/scout  ·  Tools {url}/tools")
+    print("  Reads persisted state; lifecycle actions are guarded; nothing is scanned or sent.")
+    try:
+        while True:
+            _time.sleep(1)
+    except KeyboardInterrupt:
+        server.shutdown()
+        print("dashboard stopped")
+    finally:
+        remove_ownership_record(out, bound_port)
     return 0
 
 
@@ -354,9 +477,10 @@ def run_tool_status(args) -> int:
         print(_json.dumps(broker.snapshot(), indent=2, ensure_ascii=False))
         return 0
     print("Tool readiness (deterministic; no live MCP/network call; none live-accepted):")
-    print(f"  {'tool':22} {'domain':26} {'readiness':16} auth / fallback")
+    print(f"  {'tool':22} {'level':18} {'domain':26} {'readiness':16} auth / fallback")
     for t in broker.discover():
-        print(f"  {t.id:22} {t.domain:26} {t.readiness:16} {t.auth_requirement} / {t.fallback}")
+        print(f"  {t.id:22} {t.ui_level:18} {t.domain:26} {t.readiness:16} "
+              f"{t.auth_requirement} / {t.fallback}")
         if t.readiness in ("unavailable", "blocked-by-auth") and t.setup_instruction:
             print(f"      setup: {t.setup_instruction}")
     print("Session-only MCP tools are 'declared' here; connect them in Claude Code (/mcp) to use.")
@@ -463,6 +587,13 @@ def main(argv: list[str] | None = None) -> int:
     tool_cmd.add_argument("--json", action="store_true", dest="as_json",
                           help="Print the machine-readable capability snapshot")
 
+    # v3.1 — the local operator dashboard (Overview / Scout / Work / Tools) over the existing core
+    dash_cmd = subparsers.add_parser(
+        "dashboard", help="Start the local operator dashboard on 127.0.0.1 (Overview, Work, Scout, "
+                          "Tools; read-only reads + guarded lifecycle actions; nothing is sent)")
+    dash_cmd.add_argument("--port", type=int, default=8765, help="Dashboard port")
+    dash_cmd.add_argument("--output", default=None, help="Output workspace (defaults to OUTPUT_DIR)")
+
     # v3.0.0 — unified project index (client-work + Scout)
     projects_cmd = subparsers.add_parser(
         "projects", help="List client-work projects + Scout campaigns from existing state (read-only)")
@@ -475,11 +606,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Drive the persisted client-work lifecycle end to end: approve, record-execution, "
              "validate, review, prepare-delivery, mark-delivered, status/resume "
              "(execution is Claude-Code-driven and human-approved)")
-    cw_cmd.add_argument("action", choices=["status", "resume", "approve", "record-execution",
-                                           "validate", "review", "prepare-delivery", "mark-delivered"])
+    cw_cmd.add_argument("action", choices=["status", "resume", "readiness", "approve",
+                                           "record-execution", "validate", "review",
+                                           "prepare-delivery", "reopen-delivery", "mark-delivered",
+                                           "worker-start", "worker-status", "worker-resume",
+                                           "worker-cancel"])
     cw_cmd.add_argument("--project-id", required=True, help="Project id (from analyze-job)")
-    cw_cmd.add_argument("--reviewer", help="Reviewer identity (required to approve/review)")
+    cw_cmd.add_argument("--reviewer", help="Reviewer identity (required to approve/review/reopen)")
     cw_cmd.add_argument("--note", default="", help="Optional note (approval/review/delivery)")
+    cw_cmd.add_argument("--reason", default="", help="reopen-delivery: why the prepared delivery is "
+                                                     "being reopened (required)")
     cw_cmd.add_argument("--artifacts", help="record-execution: comma-separated relative artifact "
                                             "paths, each optionally 'path:kind'")
     cw_cmd.add_argument("--evidence", help="record-execution: comma-separated relative evidence "
@@ -493,6 +629,8 @@ def main(argv: list[str] | None = None) -> int:
                                           "tokenized POSIX-style; prefer --validation-argv-json "
                                           "on Windows or for paths with spaces")
     cw_cmd.add_argument("--reject", action="store_true", help="review: reject (send to REPAIR_REQUIRED)")
+    cw_cmd.add_argument("--timeout", type=int, default=300,
+                        help="worker-start/resume: hard wall-clock bound in seconds (default 300)")
 
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
     scout_cmd = subparsers.add_parser(
@@ -505,7 +643,7 @@ def main(argv: list[str] | None = None) -> int:
         "radar-demo", "send", "outreach-control", "comms-status", "mcp-audit",
         "draft-create", "draft-preview", "draft-edit", "draft-approve", "draft-reject",
         "draft-revoke", "draft-status", "gmail-auth", "gmail-status",
-        "gmail-revoke-local-token", "provider-status"])
+        "gmail-revoke-local-token", "provider-status", "test-inbox-auth", "test-inbox-status"])
     scout_cmd.add_argument("--seeds", help="Comma-separated public URLs (run; or dashboard "
                                            "to start an active run)")
     scout_cmd.add_argument("--url", help="Single public URL (smoke)")
@@ -547,6 +685,17 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("--approve-live-discovery", dest="approve_live_discovery",
                            action="store_true",
                            help="Explicitly approve configured live providers (never required by tests)")
+    # v3.3 — live seedless discovery (Tavily). Observe-only; requires --approve-live-discovery + key.
+    scout_cmd.add_argument("--live-provider", dest="live_provider", choices=["tavily"],
+                           help="Use a real live discovery provider for campaign-plan/run (tavily)")
+    scout_cmd.add_argument("--include-domains", dest="include_domains", default="",
+                           help="Comma-separated domains to include (live discovery)")
+    scout_cmd.add_argument("--exclude-domains", dest="exclude_domains", default="",
+                           help="Comma-separated domains to exclude (live discovery)")
+    scout_cmd.add_argument("--tavily-max-requests", dest="tavily_max_requests", type=int, default=8,
+                           help="Hard cap on Tavily search requests for the campaign (default 8)")
+    scout_cmd.add_argument("--tavily-max-results", dest="tavily_max_results", type=int, default=10,
+                           help="Hard cap on TOTAL Tavily results across the campaign (default 10)")
     # Final Phase I — pre-send pipeline + memory database options.
     scout_cmd.add_argument("--db", help="Memory database path (db-status/backup/restore/review-list)")
     scout_cmd.add_argument("--dest", help="Destination path (db-backup/db-restore)")
@@ -581,7 +730,12 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("--client-config", dest="client_config", help="Gmail OAuth client JSON path")
     scout_cmd.add_argument("--token-store", dest="token_store", help="Gmail OAuth token store path")
     scout_cmd.add_argument("--expected-account", dest="expected_account",
-                           help="Authorized Gmail account (default dipptrue@gmail.com)")
+                           help="Authorized Gmail account (default dipptrue@gmail.com; "
+                                "drdiplextech@gmail.com for the read-only test inbox)")
+    # v3.2 — read-only technical test-inbox authorization (a DISTINCT token from the send store).
+    scout_cmd.add_argument("--send-token-store", dest="send_token_store",
+                           help="test-inbox-auth: the SEND token path, so the test-inbox token can be "
+                                "verified to be a DISTINCT file (identities must not collapse)")
 
     args = parser.parse_args(argv)
 
@@ -599,6 +753,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "client-work":
         return run_client_work(args)
+
+    if args.mode == "dashboard":
+        return run_operator_dashboard(args)
 
     if args.mode == "scout":
         from core.scout.cli import run_scout_cli

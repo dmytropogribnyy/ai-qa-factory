@@ -125,6 +125,53 @@ def test_modified_validation_evidence_blocks_delivery(tmp_path):
     assert "changed after validation" in str(exc.value)
 
 
+def test_secret_bearing_argv_is_redacted_in_evidence(tmp_path):
+    # v3.1 M0.4: a token passed as an argument is redacted before being persisted as evidence.
+    svc = _start(tmp_path, "p")
+    token = "ghp_" + "a" * 36
+    _, result = svc.validate("p", CommandValidationExecutor(
+        [_PY, "-c", f"print('using {token}')"]))
+    vdir = _ws(tmp_path, "p") / "evidence" / "validation" / result.details["validation_id"]
+    meta = json.loads((vdir / "metadata.json").read_text(encoding="utf-8"))
+    joined = " ".join(meta["argv"])
+    assert token not in joined and "[REDACTED_github_token]" in joined
+    # The redacted display is what is stored; the real command still ran (produced stdout).
+    assert token not in (vdir / "metadata.json").read_text(encoding="utf-8")
+
+
+def test_stdout_stderr_secret_canary_never_persisted_anywhere(tmp_path):
+    # v3.2 5.4: a distinct GitHub-like token in EVERY field (argv, stdout, stderr) must not leave a
+    # raw token ANYWHERE in the workspace (evidence, metadata, TEST_RESULTS, EVIDENCE_INDEX, state,
+    # and — after delivery — manifest/report). Redaction metadata reports every affected field.
+    t_argv, t_out, t_err = "ghp_" + "a" * 36, "ghp_" + "b" * 36, "ghp_" + "c" * 36
+    svc = _start(tmp_path, "p")
+    code = (f"import sys; print('stdout has {t_out} here'); "
+            f"print('stderr has {t_err} too', file=sys.stderr)")
+    _, result = svc.validate("p", CommandValidationExecutor(
+        [_PY, "-c", code, "--token", t_argv]))
+    vid = result.details["validation_id"]
+    vdir = _ws(tmp_path, "p") / "evidence" / "validation" / vid
+    meta = json.loads((vdir / "metadata.json").read_text(encoding="utf-8"))
+    assert meta["redacted"] is True
+    assert set(meta["redacted_fields"]) == {"argv", "stdout", "stderr"}
+    assert meta["argv_redacted"] is True and meta["stdout"]["redacted"] is True
+    # Advance to review so a delivery is prepared and also scanned.
+    svc.review("p", reviewer="op", approved=True)
+    svc.prepare_delivery("p")
+    ws_root = tmp_path / "p"
+    leaked = []
+    for f in ws_root.rglob("*"):
+        if f.is_file():
+            try:
+                text = f.read_text(encoding="utf-8", errors="strict")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for tok in (t_argv, t_out, t_err):
+                if tok in text:
+                    leaked.append(f"{f.relative_to(ws_root)}::{tok[:8]}")
+    assert leaked == [], f"raw token leaked into: {leaked}"
+
+
 def test_no_environment_secrets_are_persisted(tmp_path, monkeypatch):
     canary = "canary-secret-value-1234567890"
     monkeypatch.setenv("FACTORY_TEST_CANARY", canary)

@@ -7,6 +7,11 @@ Gmail is the **primary genuine live email provider** for v2.0.1. The authorized 
 Sending is **disabled by default**. Every external message must be individually, explicitly, and
 currently approved by a human. Nothing in this document enables autonomous or bulk outreach.
 
+> **Canonical email policy:** `docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md` is the single source of
+> truth for every email identity, its purpose, and its OAuth scope — including the SECOND, read-only
+> **Gmail QA Test Inbox** (`drdiplextech@gmail.com`, `gmail.readonly`), which is a **distinct token**
+> from this send provider. The send token can never read; the read token can never send.
+
 > A ChatGPT/Claude Gmail connector is **not** a Factory credential. It does not expose its OAuth
 > tokens to this standalone local process, and connector sessions are never reused.
 

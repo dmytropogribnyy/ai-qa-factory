@@ -157,7 +157,13 @@ def test_prepared_manifest_records_every_included_file_hash(tmp_path):
     svc = _drive_to(tmp_path, "p", "prepared")
     ws = _ws(tmp_path, "p")
     manifest = json.loads((ws / "WORK_DELIVERY_MANIFEST.json").read_text(encoding="utf-8"))
-    assert set(manifest["included_files"]) == {"deliverable.txt", "evidence/run.txt"}
+    # The exact package = registered files + the two delivery documents (M0.2).
+    assert set(manifest["included_files"]) == {
+        "deliverable.txt", "evidence/run.txt", "DELIVERY_REPORT.md", "CLIENT_MESSAGE.md"}
+    assert manifest["included"]["artifacts"] == ["deliverable.txt"]
+    assert manifest["included"]["evidence"] == ["evidence/run.txt"]
+    assert manifest["included"]["delivery_docs"] == ["DELIVERY_REPORT.md", "CLIENT_MESSAGE.md"]
+    assert manifest["client_message_source"] == "generated"
     assert all(len(h) == 64 for h in manifest["artifact_hashes"].values())
     assert manifest["manifest_digest"].startswith("sha256:")
     prepared = json.loads((ws / "DELIVERY_PREPARED.json").read_text(encoding="utf-8"))

@@ -29,6 +29,32 @@ READINESS_LADDER = ("declared", "available-in-session", "configured", "authentic
                     "health-checked", "tools-discovered", "fixture-tested", "sandbox-accepted",
                     "live-accepted", "unavailable", "blocked-by-auth", "blocked-by-policy")
 
+# Conceptual readiness levels shown in the operator UI (v3.1 M0.3). These never overstate: a binding
+# existing is "Binding Available" (not runtime health), a runtime/executable checked is "Runtime
+# Available", a genuine fixture run is "Fixture Verified", and "Live Verified" stays false unless a
+# real live acceptance actually occurred.
+UI_READINESS_LEVELS = ("Declared", "Binding Available", "Runtime Available", "Fixture Verified",
+                       "Live Verified", "Blocked", "Unavailable")
+
+
+def ui_readiness_level(kind: str, readiness: str) -> str:
+    if readiness == "unavailable":
+        return "Unavailable"
+    if readiness in ("blocked-by-auth", "blocked-by-policy"):
+        return "Blocked"
+    if readiness == "live-accepted":
+        return "Live Verified"
+    if readiness in ("fixture-tested", "sandbox-accepted"):
+        return "Fixture Verified"
+    if readiness == "health-checked":
+        # A local binary on PATH is a real runtime; an internal binding present is not yet runtime.
+        return "Runtime Available" if kind == "local_bin" else "Binding Available"
+    if readiness == "authenticated":
+        return "Runtime Available"
+    if readiness in ("configured", "tools-discovered"):
+        return "Binding Available"
+    return "Declared"   # declared / available-in-session / anything not proven
+
 
 @dataclass
 class ToolProfile:
@@ -56,6 +82,7 @@ class ToolStatus:
     checked_at: str = ""
     check_result: str = ""
     setup_instruction: str = ""
+    ui_level: str = ""          # v3.1 M0.3: conceptual UI readiness level (never overstated)
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
@@ -82,8 +109,10 @@ _CATALOGUE: List[ToolProfile] = [
                 setup="connect the Chrome DevTools MCP in Claude Code (/mcp)"),
     ToolProfile("context7", "Context7 docs MCP", DOMAIN_SESSION, "mcp", ["documentation"],
                 setup="connect Context7 in Claude Code for current official library docs"),
-    ToolProfile("api_runner_internal", "Internal API runner", DOMAIN_INTERNAL, "internal",
-                ["api_testing", "openapi"], notes="in-repo OpenAPI/endpoint test runner"),
+    ToolProfile("api_runner_internal", "API Contract Importer & Test Generator", DOMAIN_INTERNAL,
+                "internal", ["api_testing", "openapi"],
+                notes="imports an OpenAPI/Postman contract and generates Playwright API test stubs "
+                      "(planning artifacts); it does NOT execute live API endpoints"),
     ToolProfile("postman_mcp", "Postman MCP", DOMAIN_EXTERNAL_SETUP, "mcp", ["api_testing", "postman"],
                 fallback_id="api_runner_internal", setup="connect Postman MCP + authorize your workspace"),
     ToolProfile("sentry_mcp", "Sentry MCP", DOMAIN_EXTERNAL_SETUP, "mcp", ["error_analysis"],
@@ -147,7 +176,8 @@ class ToolBroker:
             id=p.id, name=p.name, domain=p.domain, readiness=readiness, capabilities=list(p.capabilities),
             auth_requirement=(f"env {p.auth_ref}" if p.auth_ref else "none"),
             fallback=(_BY_ID[p.fallback_id].name if p.fallback_id in _BY_ID else p.fallback_id or "none"),
-            checked_at=self._clock(), check_result=result, setup_instruction=setup)
+            checked_at=self._clock(), check_result=result, setup_instruction=setup,
+            ui_level=ui_readiness_level(p.kind, readiness))
 
     def _readiness(self, p: ToolProfile):
         if p.kind == "internal":

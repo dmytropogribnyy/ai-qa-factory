@@ -45,8 +45,10 @@ def build_provider_registry(sink_dir: str) -> ProviderRegistry:
 
 
 def _seed(mem: MemoryRepository) -> None:
-    mem.upsert_campaign("camp", "Camp", _NOW)
-    mem.upsert_company("co-1", "camp", "One", "one.example", _NOW)
+    # Display names are self-labelling so this synthetic data is never mistaken for a real client
+    # anywhere it is rendered (overview / results / company / screenshots).
+    mem.upsert_campaign("camp", "Demo Campaign · Acceptance Fixture", _NOW)
+    mem.upsert_company("co-1", "camp", "Demo Co (Acceptance Fixture)", "one.example", _NOW)
     mem.add_session("s1", "camp", "co-1", "https://one.example/", "agency", _NOW)
     mem.upsert_contact({"contact_id": "k1", "company_id": "co-1", "channel": "email",
                         "normalized_value": _RECIP, "status": "VERIFIED",

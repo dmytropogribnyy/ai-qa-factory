@@ -15,6 +15,29 @@ def test_gmail_compose_url_is_a_draft_link_not_a_send():
     assert "owner%40ex.example" in url and "Hi%20there" in url and "send" not in url.split("?")[0]
 
 
+def test_results_filters_narrow_the_company_list(tmp_path):
+    # v3.1 P1: text search filters the results using the existing data only.
+    summary = run_radar_demo(str(tmp_path))
+    service = ScoutService(str(tmp_path))
+    service.attach(summary["campaign_id"])
+    server, url = start_dashboard(service)
+    try:
+        with urllib.request.urlopen(url + "/api/results", timeout=5) as r:
+            data = json.loads(r.read())
+        assert data["count"] >= 1
+        name = str(data["companies"][0]["name"] or data["companies"][0]["company_id"])
+        # A search for a real fragment keeps at least one row; a nonsense search shows the empty state.
+        frag = name.split()[0][:4] if name.split() else name[:4]
+        with urllib.request.urlopen(url + f"/results?q={frag}", timeout=5) as r:
+            hit = r.read().decode("utf-8")
+        assert 'role="search"' in hit
+        with urllib.request.urlopen(url + "/results?q=zzz-no-such-company-xyz", timeout=5) as r:
+            miss = r.read().decode("utf-8")
+        assert "No companies match these filters" in miss
+    finally:
+        server.shutdown()
+
+
 def test_dashboard_results_and_company_detail_with_gmail_intent(tmp_path):
     summary = run_radar_demo(str(tmp_path))
     service = ScoutService(str(tmp_path))

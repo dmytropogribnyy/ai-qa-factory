@@ -189,7 +189,8 @@ _PRESEND_ACTIONS = frozenset({"presend-demo", "db-status", "db-backup", "db-rest
 _COMMS_ACTIONS = frozenset({"radar-demo", "send", "outreach-control", "comms-status",
                             "draft-create", "draft-preview", "draft-edit", "draft-approve",
                             "draft-reject", "draft-revoke", "draft-status", "gmail-auth",
-                            "gmail-status", "gmail-revoke-local-token", "provider-status"})
+                            "gmail-status", "gmail-revoke-local-token", "provider-status",
+                            "test-inbox-auth", "test-inbox-status"})
 
 
 def run_scout_cli(args) -> int:

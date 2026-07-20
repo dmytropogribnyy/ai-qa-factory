@@ -76,7 +76,9 @@ ALLOWED_TRANSITIONS: Dict[str, tuple[str, ...]] = {
     # v3.0.2: COMPLETED is reachable ONLY through DELIVERY_PREPARED (prepare_delivery ran and
     # every integrity check passed). Direct READY_FOR_DELIVERY -> COMPLETED is impossible.
     "READY_FOR_DELIVERY": ("DELIVERY_PREPARED", "BLOCKED", "CANCELLED"),
-    "DELIVERY_PREPARED": ("COMPLETED", "READY_FOR_DELIVERY", "BLOCKED", "CANCELLED"),
+    # v3.1 M0.1: reopen-delivery can drop back to READY_FOR_DELIVERY (drafts/metadata only) or
+    # REPAIR_REQUIRED (validated content changed). COMPLETED only via mark-delivered.
+    "DELIVERY_PREPARED": ("COMPLETED", "READY_FOR_DELIVERY", "REPAIR_REQUIRED", "BLOCKED", "CANCELLED"),
     "BLOCKED": ("READY_TO_EXECUTE", "CANCELLED", "FAILED"),
     "FAILED": (),
     "CANCELLED": (),

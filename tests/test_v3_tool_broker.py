@@ -95,6 +95,31 @@ def test_selection_is_task_driven_and_ranks_ready_first():
     assert api[0] == "api_runner_internal"                      # internal runner preferred over Postman MCP
 
 
+def test_api_tool_label_is_honest_not_a_live_runner():
+    # v3.1 P1: the internal API capability imports contracts + generates tests; it must not be
+    # labelled as a live endpoint runner.
+    s = _by_id(_broker().discover())
+    api = s["api_runner_internal"]
+    assert "Contract Importer" in api.name and "Test Generator" in api.name
+    assert "does not execute live" in api.check_result.lower() or "not execute live" in \
+        api.check_result.lower()
+    assert api.ui_level == "Fixture Verified"
+
+
+def test_ui_readiness_levels_are_honest():
+    # v3.1 M0.3: conceptual UI levels never overstate. A local binary on PATH is a real runtime; an
+    # internal binding present is only "Binding Available"; a fixture run is "Fixture Verified".
+    s = _by_id(_broker().discover())
+    assert s["git"].ui_level == "Runtime Available"            # executable on PATH
+    assert s["node"].ui_level == "Unavailable"                 # not on PATH
+    assert s["api_runner_internal"].ui_level == "Fixture Verified"
+    assert s["playwright_internal"].ui_level == "Binding Available"   # binding, not browser runtime
+    assert s["github_mcp"].ui_level == "Declared"
+    assert s["gmail_personal"].ui_level == "Blocked"           # not configured
+    # Nothing is ever "Live Verified" in the deterministic broker.
+    assert all(t.ui_level != "Live Verified" for t in _broker().discover())
+
+
 def test_fallbacks_are_declared():
     s = _by_id(_broker().discover())
     assert s["browserstack_mcp"].fallback == "Internal Playwright runtime"

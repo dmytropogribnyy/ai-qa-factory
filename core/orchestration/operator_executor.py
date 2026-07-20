@@ -58,6 +58,12 @@ class OperatorWorkspaceExecutor:
         self.executor_id = executor_id
         self._notes = list(progress_notes or [])
 
+    @property
+    def executes_client_code(self) -> bool:
+        # Recording-only when there is no validator; but a validator callback runs arbitrary code over
+        # the workspace, so this adapter is code-running (and gated) whenever a validator is present.
+        return self._validator is not None
+
     def execute(self, ctx: ExecutionContext) -> ExecutionOutcome:
         ws = Path(ctx.workspace_dir)
         artifacts: List[ExecutionArtifact] = []
@@ -109,6 +115,7 @@ class CommandValidationExecutor:
     """
 
     is_acceptance_fixture = False
+    executes_client_code = True    # runs an operator/client command in the workspace (client code)
 
     def __init__(self, command: Union[str, Sequence[str]], executor_id: str = "operator:validate",
                  timeout_s: int = 900) -> None:
@@ -121,7 +128,11 @@ class CommandValidationExecutor:
             argv = [str(a) for a in command]
         self._check_argv(argv)
         self._argv: List[str] = argv
-        self._display = " ".join(argv)
+        # Redact likely secret-bearing arguments before they are ever persisted as evidence
+        # (metadata/display) - reusing the single intake redactor. The real argv still runs.
+        from core.orchestration.content_safety import redact_intake_text
+        self._safe_argv: List[str] = [redact_intake_text(a).text for a in argv]
+        self._display = " ".join(self._safe_argv)
         self.executor_id = executor_id
         self._timeout = max(1, min(int(timeout_s), _MAX_TIMEOUT_S))
 
@@ -182,8 +193,12 @@ class CommandValidationExecutor:
         rc: Union[int, None] = None
         out, err = "", ""
         try:
+            # Execute the (possibly untrusted) client validation command with a credential-stripped
+            # environment so it cannot read operator secrets from env (P0-E; not a full sandbox).
+            from core.orchestration.execution_trust import stripped_subprocess_env
             proc = subprocess.run(self._argv, cwd=str(ws), capture_output=True,  # noqa: S603
-                                  text=True, timeout=self._timeout, check=False)
+                                  text=True, timeout=self._timeout, check=False,
+                                  env=stripped_subprocess_env())
             rc, out, err = proc.returncode, self._decode(proc.stdout), self._decode(proc.stderr)
         except subprocess.TimeoutExpired as exc:
             timed_out = True
@@ -191,20 +206,34 @@ class CommandValidationExecutor:
         except OSError as exc:
             spawn_error = f"{type(exc).__name__}: {exc}"
         finished = datetime.now(timezone.utc).isoformat()
-        out_trunc = self._write_bounded(vdir / "stdout.txt", f"$ {self._display}", out)
-        err_trunc = self._write_bounded(vdir / "stderr.txt", f"$ {self._display}", err)
+        # Redact secret-like content from BOTH streams before anything is persisted as evidence
+        # (reusing the single intake redactor). Useful non-secret diagnostics are preserved.
+        from core.orchestration.content_safety import redact_intake_text
+        red_out = redact_intake_text(out)
+        red_err = redact_intake_text(err)
+        spawn_error = redact_intake_text(spawn_error).text if spawn_error else ""
+        out_trunc = self._write_bounded(vdir / "stdout.txt", f"$ {self._display}", red_out.text)
+        err_trunc = self._write_bounded(vdir / "stderr.txt", f"$ {self._display}", red_err.text)
         rel = f"evidence/validation/{vid}"
         passed = rc == 0
+        argv_redacted = self._safe_argv != self._argv
+        redacted_fields = sorted(f for f, on in (("argv", argv_redacted), ("stdout", red_out.secrets_found),
+                                                 ("stderr", red_err.secrets_found)) if on)
         metadata = {
             "validation_id": vid, "project_id": ctx.project_id, "executor_id": self.executor_id,
-            "argv": list(self._argv), "cwd": ".", "cwd_confined_to_workspace": True,
+            "cwd": ".", "cwd_confined_to_workspace": True,
             "started_at": started, "finished_at": finished, "timeout_s": self._timeout,
             "exit_code": rc, "timed_out": timed_out, "spawn_error": spawn_error, "passed": passed,
+            "redacted": bool(redacted_fields), "redacted_fields": redacted_fields,
+            "argv": list(self._safe_argv), "argv_redacted": argv_redacted,
             "stdout": {"path": f"{rel}/stdout.txt", "truncated": out_trunc,
+                       "redacted": red_out.secrets_found,
                        "sha256": self._sha256(vdir / "stdout.txt")},
             "stderr": {"path": f"{rel}/stderr.txt", "truncated": err_trunc,
+                       "redacted": red_err.secrets_found,
                        "sha256": self._sha256(vdir / "stderr.txt")},
-            "note": "validation-attempt provenance; no environment variables are persisted",
+            "note": "validation-attempt provenance; no environment variables are persisted; "
+                    "argv/stdout/stderr/spawn_error are secret-redacted before writing",
         }
         import json as _json
         (vdir / "metadata.json").write_text(_json.dumps(metadata, indent=2, sort_keys=True),

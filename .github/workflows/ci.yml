@@ -103,6 +103,13 @@ jobs:
           name: junit-browser
           path: reports/junit-browser.xml
           if-no-files-found: ignore
+      - name: Upload dashboard screenshots (desktop + mobile; visual review, no secrets)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-screenshots
+          path: reports/screenshots/
+          if-no-files-found: warn
 
   provider-contract:
     # LocalSinkProvider + fake Gmail/Resend transports + OAuth config parsing with fixture creds only.

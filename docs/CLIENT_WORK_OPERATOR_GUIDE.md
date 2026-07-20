@@ -3,6 +3,11 @@
 Client work runs in **Claude Code**. The Factory analyzes first and never starts implementation
 before you approve.
 
+> **Email identities:** for any client signup / email-verification / magic-link / password-reset
+> testing, use the operator-owned **Gmail QA Test Inbox** (`drdiplextech@gmail.com`, read-only) per
+> the canonical `docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md`. Client communication and Scout outreach
+> use `dipptrue@gmail.com`. Automated inbox assertions require an explicitly authorized flow.
+
 ## 1. Intake + feasibility (read-only)
 
 Paste the job (text, URL, budget, deadline, attachments) and say *"only analyze"*, or run:
@@ -54,6 +59,7 @@ python main.py client-work record-execution  --project-id <id> --artifacts src/a
 python main.py client-work validate          --project-id <id> --validation-argv-json '["python","-m","pytest","-q"]'
 python main.py client-work review            --project-id <id> --reviewer <you>   # explicit gate (or --reject -> REPAIR_REQUIRED)
 python main.py client-work prepare-delivery  --project-id <id>                    # -> DELIVERY_PREPARED (verifies hashes + scans, builds the exact manifest)
+python main.py client-work reopen-delivery   --project-id <id> --reviewer <you> --reason "<why>"   # recover a prepared delivery
 python main.py client-work mark-delivered    --project-id <id>                    # you send it yourself first; this records that + re-verifies the package
 python main.py client-work resume            --project-id <id>                    # reload persisted state after a restart
 ```

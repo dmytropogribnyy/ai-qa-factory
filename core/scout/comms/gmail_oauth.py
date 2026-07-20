@@ -218,9 +218,12 @@ def harden_file_permissions(path: str) -> Dict[str, Any]:
 
 def authorize(*, client_config_path: str, token_store_path: str,
               expected_account: str = EXPECTED_ACCOUNT_DEFAULT,
-              open_browser: bool = True) -> Dict[str, Any]:
+              open_browser: bool = True,
+              scopes: Optional[List[str]] = None,
+              scope_validator: Callable[[Any], List[str]] = validate_scopes) -> Dict[str, Any]:
     """Run the loopback installed-app consent flow, verify the account, and store the token. Uses
-    the Google client libraries (imported lazily). Never prints or returns token values."""
+    the Google client libraries (imported lazily). Never prints or returns token values. ``scopes`` /
+    ``scope_validator`` default to the SEND policy; the read-only test-inbox flow injects its own."""
     parse_client_config(client_config_path)  # fail fast on a bad config
     try:
         from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
@@ -230,22 +233,32 @@ def authorize(*, client_config_path: str, token_store_path: str,
             "Gmail OAuth requires the optional Google client libraries "
             "(pip install -r requirements-gmail.txt)") from exc
     audience = parse_client_config(client_config_path)["client_id"]
-    flow = InstalledAppFlow.from_client_secrets_file(client_config_path, scopes=REQUESTED_SCOPES)
-    creds = flow.run_local_server(port=0, open_browser=open_browser)  # loopback, not out-of-band
+    # Google canonicalizes the short "email" scope to ".../userinfo.email"; oauthlib treats that
+    # substitution as a scope change and raises during token exchange. We re-validate the granted
+    # scopes AUTHORITATIVELY in finalize_authorization (accepting the canonical email form and
+    # refusing any forbidden scope), so relaxing oauthlib's own redundant check is safe here.
+    os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+    flow = InstalledAppFlow.from_client_secrets_file(
+        client_config_path, scopes=list(scopes or REQUESTED_SCOPES))
+    # prompt="consent" forces Google to re-present the full consent screen and re-grant every
+    # requested scope; without it Google may silently return a PARTIAL prior grant (e.g. identity
+    # scopes only, dropping gmail.readonly), yielding a token that fails at API call time.
+    creds = flow.run_local_server(port=0, open_browser=open_browser, prompt="consent")
     return finalize_authorization(creds, build, token_store_path=token_store_path, audience=audience,
-                                  expected_account=expected_account)
+                                  expected_account=expected_account, scope_validator=scope_validator)
 
 
 def finalize_authorization(creds: Any, build: Any, *, token_store_path: str, audience: str,
                            expected_account: str = EXPECTED_ACCOUNT_DEFAULT,
-                           verifier: Callable[[str, str], Dict[str, Any]] = official_id_token_verifier
+                           verifier: Callable[[str, str], Dict[str, Any]] = official_id_token_verifier,
+                           scope_validator: Callable[[Any], List[str]] = validate_scopes
                            ) -> Dict[str, Any]:
     """Validate scopes, prove the account with AUTHORITATIVE verification, and atomically store the
     token. Raises a sanitized GmailConfigError (and writes NO token) on invalid scopes, an
     unprovable/invalid account, or a wrong account. Deterministically testable via an injected
-    verifier + fake build."""
+    verifier + fake build. ``scope_validator`` selects the SEND (default) or READ-ONLY policy."""
     granted = sorted(set(getattr(creds, "scopes", []) or []))
-    scope_blockers = validate_scopes(granted)
+    scope_blockers = scope_validator(granted)
     if scope_blockers:
         raise GmailConfigError(
             f"authorization returned invalid scopes ({','.join(scope_blockers)}); refusing to store")
@@ -320,20 +333,47 @@ def _write_token_atomic(token_store_path: str, creds: Any, account: str, scopes:
     harden_file_permissions(token_store_path)
 
 
-def build_token_provider(token_store_path: str) -> Callable[[], str]:
+def build_token_provider(token_store_path: str,
+                         scopes: Optional[List[str]] = None) -> Callable[[], str]:
     """Return a callable that loads + refreshes local credentials and returns a fresh access token.
-    Uses the Google client libraries lazily. Never prints the token."""
+    Uses the Google client libraries lazily. Never prints the token. ``scopes`` defaults to the SEND
+    policy; the read-only test-inbox provider passes its own readonly scopes."""
+    scopes = list(scopes or REQUESTED_SCOPES)
+
     def _provider() -> str:
         try:
             from google.auth.transport.requests import Request  # type: ignore
             from google.oauth2.credentials import Credentials  # type: ignore
         except ImportError as exc:
             raise GmailConfigError("Gmail send requires the optional Google client libraries") from exc
-        creds = Credentials.from_authorized_user_file(token_store_path, REQUESTED_SCOPES)
+        creds = Credentials.from_authorized_user_file(token_store_path, scopes)
         if not creds.valid:
             creds.refresh(Request())
         return creds.token
     return _provider
+
+
+def live_access_token_scopes(token_store_path: str, scopes: List[str]) -> List[str]:
+    """Return the ACTUAL scopes granted to the current access token, via Google's tokeninfo endpoint.
+    This is authoritative: Google's granular consent can grant FEWER scopes than requested, and the
+    stored file records what was requested — only the live token reveals what was truly granted. The
+    token value is sent only to Google's own validation endpoint; it is never returned or printed.
+    Returns [] if the scopes cannot be determined (caller must not treat that as proof of a scope)."""
+    try:
+        import json as _json
+        import urllib.request
+        token = build_token_provider(token_store_path, scopes)()
+        with urllib.request.urlopen(
+                "https://oauth2.googleapis.com/tokeninfo?access_token=" + token, timeout=20) as resp:
+            return sorted(_json.loads(resp.read().decode("utf-8")).get("scope", "").split())
+    except Exception:  # noqa: BLE001 - any failure is "unknown", never a false positive
+        return []
+
+
+def granted_scope_blockers(granted: List[str], *, scope_validator: Callable[[Any], List[str]]) -> List[str]:
+    """Apply a scope policy to the ACTUAL granted scopes. Empty granted (unknown) yields no blocker so
+    a transient tokeninfo failure never false-fails; a KNOWN partial grant fails closed."""
+    return scope_validator(granted) if granted else []
 
 
 def revoke_local_token(token_store_path: str) -> Dict[str, Any]:
