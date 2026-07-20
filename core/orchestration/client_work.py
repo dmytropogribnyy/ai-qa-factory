@@ -49,9 +49,24 @@ class ClientWorkService:
             capability_plan=self._read_json(target / "CAPABILITY_PLAN.json"),
             toolchain_plan=self._read_json(target / "TOOLCHAIN_PLAN.json"),
             intake_report=self._read_json(target / "INTAKE_REPORT.json"))
-        self._add_client_work_artifacts(target, report)
+        readiness = self._build_resource_readiness(target, planning.profile, raw_text, report)
+        self._add_client_work_artifacts(target, report, readiness)
         return ClientWorkResult(project_id=project_id, verdict=report.verdict, profile=planning.profile,
                                 workspace_dir=str(target), feasibility=report, planning=planning)
+
+    def _build_resource_readiness(self, target: Path, profile: str, raw_text: str,
+                                  report: Any) -> Dict[str, Any]:
+        """Compose the per-project Resource Readiness Checklist from the persisted planning signals.
+        Deterministic (no subprocess/network) so analyze stays fast and CI-safe; the Access page shows
+        live operator-runtime readiness separately."""
+        from types import SimpleNamespace
+
+        from core.orchestration.resource_readiness import build_readiness
+        input_map = self._read_json(target / "INPUT_MAP.json")
+        sources = input_map.get("sources", []) if isinstance(input_map, dict) else []
+        missing = SimpleNamespace(blocking=list(getattr(report, "unavailable_blockers", []) or []))
+        return build_readiness(project_id=target.parent.name, profile=profile, raw_text=raw_text,
+                               input_map_sources=sources, missing=missing, integrations=None)
 
     @staticmethod
     def _read_json(path: Path) -> Dict[str, Any]:
@@ -60,7 +75,8 @@ class ClientWorkService:
         except (OSError, ValueError):
             return {}
 
-    def _add_client_work_artifacts(self, target: Path, report: FeasibilityReport) -> None:
+    def _add_client_work_artifacts(self, target: Path, report: FeasibilityReport,
+                                   readiness: Optional[Dict[str, Any]] = None) -> None:
         # Re-read the planning artifacts and republish the COMBINED set so the atomic writer never
         # drops the workflow's output when it adds the feasibility artifacts.
         combined: Dict[str, str] = {}
@@ -71,6 +87,10 @@ class ClientWorkService:
         combined["FEASIBILITY_SUMMARY.md"] = self._summary_md(report)
         combined["CLIENT_QUESTIONS.md"] = self._questions_md(report)
         combined["PROPOSAL_DRAFT.md"] = self._proposal_md(report)
+        if readiness is not None:
+            from core.orchestration.resource_readiness import readiness_summary_text
+            combined["RESOURCE_READINESS.json"] = json.dumps(readiness, indent=2, sort_keys=True)
+            combined["RESOURCE_READINESS.md"] = readiness_summary_text(readiness)
         ArtifactSafeWriter(target).publish(combined)
 
     @staticmethod

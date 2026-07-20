@@ -189,9 +189,19 @@ def run_analyze_job(args) -> int:
         for x in r.reasons_to_reject:
             print(f"  - {x}")
     print(f"Workspace: {res.workspace_dir}")
+    # Chat-first: automatically show the Project Resource Readiness Checklist (no operator prompt).
+    _print_resource_readiness(res.workspace_dir)
     print("Analysis only - nothing executed. Review FEASIBILITY_SUMMARY.md / PROPOSAL_DRAFT.md, "
           "then approve to proceed.")
     return 0
+
+
+def _print_resource_readiness(workspace_dir) -> None:
+    """Print the persisted Resource Readiness summary (chat-first presentation of the JSON artifact)."""
+    from pathlib import Path as _P
+    md = _P(workspace_dir) / "RESOURCE_READINESS.md"
+    if md.is_file():
+        print("\n" + md.read_text(encoding="utf-8").rstrip())
 
 
 def _parse_artifacts(spec, kind, is_evidence=False):
@@ -236,6 +246,15 @@ def run_client_work(args) -> int:
             if v.blockers:
                 print("Blockers: " + ", ".join(v.blockers))
             print(f"Next: {v.next_action}")
+        elif args.action == "readiness":
+            # Display the canonical per-project Resource Readiness Checklist (chat-first; read-only).
+            ws = Path(get_settings().output_dir) / pid / "40_ark_work"
+            md = ws / "RESOURCE_READINESS.md"
+            if not md.is_file():
+                print(f"ERROR: no resource readiness for '{pid}' (run analyze-job first)",
+                      file=_sys.stderr)
+                return 1
+            print(md.read_text(encoding="utf-8").rstrip())
         elif args.action == "approve":
             if not (args.reviewer or "").strip():
                 print("ERROR: --reviewer is required to approve", file=_sys.stderr)
@@ -587,9 +606,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Drive the persisted client-work lifecycle end to end: approve, record-execution, "
              "validate, review, prepare-delivery, mark-delivered, status/resume "
              "(execution is Claude-Code-driven and human-approved)")
-    cw_cmd.add_argument("action", choices=["status", "resume", "approve", "record-execution",
-                                           "validate", "review", "prepare-delivery",
-                                           "reopen-delivery", "mark-delivered",
+    cw_cmd.add_argument("action", choices=["status", "resume", "readiness", "approve",
+                                           "record-execution", "validate", "review",
+                                           "prepare-delivery", "reopen-delivery", "mark-delivered",
                                            "worker-start", "worker-status", "worker-resume",
                                            "worker-cancel"])
     cw_cmd.add_argument("--project-id", required=True, help="Project id (from analyze-job)")
