@@ -90,6 +90,47 @@ axe-core (vendored/optional), Tavily (existing provider), pytest.
 8. **Finalization: full deterministic tests, push, PR #2 update, one 4-job CI, evidence comment,
    operator runbook (A–H).**
 
+## Production campaign capabilities (not preset-only — added per operator follow-up)
+
+The campaign form and engine expose these as first-class **production** capabilities, available
+to any campaign (the acceptance preset merely picks safe defaults):
+
+- **Multi-select filters:** industries/verticals, countries, target/site types, permitted QA
+  interaction modes.
+- **Vertical taxonomy (configurable multi-select, ≥12):** SaaS, e-commerce, marketplaces,
+  travel/booking, professional services, fintech, health/pharma, education, media/content,
+  agencies, B2B platforms, local services.
+- **Enforced hard limits (run stops on ANY, Dashboard shows the exact `stop_reason`):** max
+  discovered, max analyzed, max browser-tested, max actionable, max runtime, discovery/provider
+  budget, per-vertical quotas, max consecutive failures/blocked. *(config fields + engine
+  `stop_reason` landed in increment 1; per-vertical quota enforcement lands with verticals.)*
+- **Persistence/disposition (reuses `AnalyzedSiteRegistry`):** every discovered/visited target +
+  disposition persisted; skip already-processed; rescan only on explicit request; exclude
+  fixed/declined/unsafe/duplicate/suppressed; resume interrupted runs without repeating work.
+- **History + target-detail views expose:** stored evidence, screenshots, browser actions,
+  cleanup verification, scoring, classification, stop reason, campaign linkage.
+
+## Increment 9 — Bounded bug-reproduction + video-evidence subsystem
+
+Default pass stays lightweight (screenshots, Playwright trace, console/network, DOM, browser
+actions, reproducible steps) — **no continuous video**. Per finding, persist structured
+reproduction context: target URL + permitted nav scope, precondition state, exact browser
+steps, resilient selectors/action descriptions, expected vs actual, stop boundary, cleanup
+requirements, prior evidence, reproducibility confidence.
+
+Finding-detail actions: **Recheck / Reproduce / Record short video / Capture stronger
+evidence.** "Record short video" starts a *separate bounded reproduction run* for that finding:
+clean isolated context, shortest useful recording (~10–30 s), shows precondition→actions→visible
+failure, stops immediately after, never crosses irreversible boundaries, verifies cleanup,
+attaches MP4/WebM + updated screenshots + trace + result, marks reproduced / not-reproduced /
+changed / blocked / unsafe, **never fabricates a video when reproduction failed.**
+
+Qualified-auto video only for high-value findings (severity/QA-score threshold, reproducible in
+≥2 attempts, visual/interaction failure screenshots can't explain, safe deterministic path).
+Controls: capture off / manual-only / qualified-auto; max video duration; max videos per
+campaign; storage quota + retention; auto-cleanup of expired low-value recordings; pin/preserve.
+Video shown in Dashboard finding-detail + evidence views; included in the export bundle.
+
 ## Acceptance
 
 - Deterministic: all new tests green locally + in CI (4 jobs).
