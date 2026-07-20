@@ -98,5 +98,8 @@ def test_build_review_draft_is_copy_only_and_never_sends():
     assert d["problem_bullets"] and "Broken checkout button" in d["body"]
     assert d["subject"].startswith("Quick QA review of Shop")
     assert d["contact"] == "info@shop.example.com"
+    # the primary call-to-action is an explicit, low-pressure PAID QA audit offer
+    assert "paid QA audit" in d["body"] and d["offer"]
+    assert "checkout" in d["offer"]                     # tailored to the ecommerce archetype
     # no secrets/keys leak into a draft body
     assert "tvly-" not in d["body"] and "sk-" not in d["body"]

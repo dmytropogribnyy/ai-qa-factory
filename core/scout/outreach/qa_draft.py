@@ -75,14 +75,17 @@ def _llm_polish_body(router: Any, *, domain: str, name: str, archetype: str,
     system = (
         "You write a short, warm, professional cold outreach email offering a website QA review. "
         "Use ONLY the issues provided - never invent, exaggerate, or add findings. Public pages "
-        "only: no logins/forms/orders were used, and you must say so. Plain text, no markdown, no "
-        "salutation placeholder names, under 160 words. Do not include secrets, prices, or links.")
+        "only: no logins/forms/orders were used, and you must say so. End with a clear but "
+        "low-pressure offer of a deeper PAID QA audit (reproducible evidence + a prioritized fix "
+        "list); do NOT quote a specific price or fee amount. Plain text, no markdown, no salutation "
+        "placeholder names, under 170 words. Do not include secrets or links.")
     user = (
         f"Business: {name} ({domain}). Type: {archetype or 'website'}.\n"
         f"Issues found (verbatim, keep as a short bulleted list):\n" +
         "\n".join(f"- {b}" for b in bullets) +
-        "\n\nWrite the email body only (start with 'Hi,'). Offer to share evidence and a "
-        "prioritized fix list. Keep it honest and low-pressure.")
+        "\n\nWrite the email body only (start with 'Hi,'). Make the primary call-to-action a "
+        "deeper PAID QA audit (reproducible evidence + prioritized fix list); offer to share the "
+        "evidence either way. Keep it honest and low-pressure. No specific price.")
     # Scout uses its OWN cheap model, decoupled from the main Factory's premium profile.
     # Default Haiku; never Opus. Override with SCOUT_LLM_MODEL if desired.
     scout_model = os.environ.get("SCOUT_LLM_MODEL", "anthropic/claude-haiku-4-5").strip()
@@ -96,6 +99,26 @@ def _llm_polish_body(router: Any, *, domain: str, name: str, archetype: str,
     if getattr(resp, "used_fallback", False) or model == "mock" or _looks_unsafe(text):
         return deterministic_body, "deterministic"
     return text, model
+
+
+def _offer_line(archetype: str = "") -> str:
+    """The primary call-to-action: a clear but low-pressure offer of a deeper PAID QA audit,
+    tailored to the site type. This is what a positive reply is agreeing to explore."""
+    a = (archetype or "").lower()
+    focus = (
+        ("ecommerce", "your checkout, product, and conversion flows"),
+        ("shop", "your checkout, product, and conversion flows"),
+        ("saas", "your signup, onboarding, and core app flows"),
+        ("marketplace", "your search, listing, and booking flows"),
+        ("booking", "your search, availability, and booking flows"),
+        ("lead", "your forms, conversion paths, and trust signals"),
+    )
+    for key, scope in focus:
+        if key in a:
+            return ("If useful, I offer a deeper, paid QA audit focused on " + scope +
+                    " — with reproducible evidence, severity, and a prioritized fix list.")
+    return ("If useful, I offer a deeper, paid QA audit of your key user journeys — with "
+            "reproducible evidence, severity, and a prioritized fix list.")
 
 
 def build_review_draft(*, domain: str, business_name: str = "",
@@ -113,8 +136,9 @@ def build_review_draft(*, domain: str, business_name: str = "",
     subject = f"Quick QA review of {name} - {len(bullets)} public issue(s) I found"
     intro = (f"I ran a bounded, read-only QA check of your public website ({domain}) and noticed a "
              f"few issues that may affect conversion, accessibility, or user trust:")
-    closing = ("These come from public pages only - no logins, form submissions, or orders. If "
-               "useful, I can share the evidence and a prioritized fix list. Happy to help.")
+    offer = _offer_line(archetype)
+    closing = ("These are from public pages only - no logins, form submissions, or orders. " +
+               offer + " No obligation - happy to share the evidence either way.")
     deterministic_body = "\n".join(["Hi,", "", intro, ""] + [f"- {b}" for b in bullets] +
                                    ["", closing])
     body, generated_by = _llm_polish_body(router, domain=domain, name=name, archetype=archetype,
@@ -122,7 +146,7 @@ def build_review_draft(*, domain: str, business_name: str = "",
     return {
         "schema": "qa-review-draft/v1", "domain": domain, "business_name": name,
         "archetype": archetype,
-        "subject": subject, "problem_bullets": bullets, "body": body,
+        "subject": subject, "problem_bullets": bullets, "body": body, "offer": offer,
         "generated_by": generated_by,
         "contact": contact, "sent": False,
         "disclaimer": ("DRAFT only - the system does not send this. Copy and send it yourself after "

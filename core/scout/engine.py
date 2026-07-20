@@ -119,6 +119,14 @@ class ScoutEngine:
     def _process_prospect(self, pid: str, url: str, prospects: Dict) -> None:
         cfg = self.config
         self._event("prospect_started", prospect=pid, url=url)
+        # Deep capture: point the browser backend at THIS prospect's dir so page.png (and any
+        # future media) lands under the run, servable via /scout/artifact. Static backend has no
+        # screenshot_dir attribute, so this is a no-op for it.
+        if hasattr(self.backend, "screenshot_dir"):
+            try:
+                self.backend.screenshot_dir = str(self.store.prospect_dir(pid))
+            except Exception:
+                pass
         obs = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes)
         self.store.save_prospect_artifact(pid, "observation.json", obs.to_dict())
 

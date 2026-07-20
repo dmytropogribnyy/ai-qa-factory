@@ -110,10 +110,16 @@ class CampaignService:
         `transport` (test) or the live Tavily key (production) drive the provider. Pause/stop are
         honoured cooperatively at engine event boundaries. Live discovery requires
         approve_live_discovery=True AND a Tavily key."""
+        # browser_mode is operator-selectable: "static" (default, no browser) or "playwright"
+        # (Deep capture — real screenshots/evidence). Unknown values fail closed to static.
+        _ov = dict(overrides or {})
+        bmode = str(_ov.pop("browser_mode", "static")).lower()
+        if bmode not in ("static", "playwright"):
+            bmode = "static"
         cfg = build_config(campaign_preset, session_preset, provider_allowlist=["tavily"],
                            output_dir=self.output_dir, approve_live_discovery=approve_live_discovery,
-                           overrides={**(overrides or {}), "resolve_dns": resolve_dns},
-                           browser_mode="static", campaign_name=campaign_name)
+                           overrides={**_ov, "resolve_dns": resolve_dns},
+                           browser_mode=bmode, campaign_name=campaign_name)
         rc = CampaignRunControl(cfg.campaign_id, self.output_dir)
         rc.run_now()                                   # QUEUED -> DISCOVERING (no-overlap guarded)
 
@@ -263,7 +269,22 @@ class CampaignService:
         brain = self._brain_for_domain(domain)
         findings: List[Dict[str, Any]] = []
         contacts: List[str] = []
+        media: List[str] = []                 # rel paths under the run, servable via /scout/artifact
+        network: Dict[str, Any] = {}          # already-captured Chrome/Playwright network evidence
         scout_run = (brain or {}).get("scout_run", "")
+        if not scout_run:
+            # Fall back to the most recent headed-replay run for this domain, so a replay's fresh
+            # screenshots/evidence show up on the card even without a campaign brain decision.
+            try:
+                from core.scout.discovery.domain_intel import canonical_domain
+                dom = canonical_domain(domain) or domain
+                cands = sorted((Path(self.output_dir) / "scout").glob(f"replay-{dom}-*"),
+                               reverse=True)
+                if cands:
+                    scout_run = cands[0].name
+            except Exception:
+                scout_run = scout_run
+        _MEDIA_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4", ".har")
         if scout_run:
             from core.scout.outreach.qa_draft import extract_public_emails
             from core.scout.priority import load_verified_findings
@@ -275,6 +296,16 @@ class CampaignService:
                 for pid in list(state.get("prospects", {}).keys())[:1]:
                     obs = st.load_prospect_artifact(pid, "observation.json") or {}
                     contacts = extract_public_emails(obs, domain=domain)
+                    network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),
+                               "console_errors": obs.get("console_errors", [])[:10],
+                               "failed_resources": obs.get("failed_resources", [])[:10],
+                               "blocked_requests": obs.get("blocked_requests", [])[:10]}
+                    try:
+                        pdir = st.prospect_dir(pid)
+                        media = [f"prospects/{pid}/{fp.name}" for fp in sorted(pdir.iterdir())
+                                 if fp.is_file() and fp.suffix.lower() in _MEDIA_EXT]
+                    except Exception:
+                        media = []
             except Exception:
                 findings, contacts = findings, contacts
         # Copy-only outreach draft from the target's problems (the system never sends it).
@@ -287,6 +318,7 @@ class CampaignService:
                                    contact=(contacts[0] if contacts else ""),
                                    router=self._llm_router())
         return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
+                "scout_run": scout_run, "media": media, "network": network,
                 "findings": [{"severity": f.get("severity"), "category": f.get("category"),
                               "title": f.get("title"), "business_impact": f.get("business_impact"),
                               "url": f.get("url"), "evidence_refs": f.get("evidence_refs", [])}
