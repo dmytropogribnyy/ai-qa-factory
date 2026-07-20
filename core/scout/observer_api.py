@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,26 @@ class ObserverAPI:
         self._root = Path(output_dir).resolve()
         self._evidence_root = (self._root / "scout").resolve()
 
+    def _relativize(self, obj: Any) -> Any:
+        """Replace any absolute output-root path with '<output_root>' so no absolute local path is
+        ever returned to an MCP client (concept §8)."""
+        root = str(self._root)
+        roots = (root + os.sep, root, self._root.as_posix() + "/", self._root.as_posix())
+
+        def fix(s: str) -> str:
+            for r in roots:
+                if r in s:
+                    s = s.replace(r, "<output_root>/" if r.endswith(("/", os.sep)) else "<output_root>")
+            return s
+
+        if isinstance(obj, dict):
+            return {k: self._relativize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._relativize(v) for v in obj]
+        if isinstance(obj, str):
+            return fix(obj)
+        return obj
+
     def _cid(self, campaign_id: str) -> str:
         """Validate a campaign id used as a path segment (fail closed on traversal/separators).
         This is the authoritative boundary check for every campaign-scoped tool (MCP + direct)."""
@@ -102,8 +123,8 @@ class ObserverAPI:
                            output_dir=self.output_dir)
         report = run_preflight(output_dir=self.output_dir, campaign_config=cfg,
                                probe_browser_launch=deep, do_network=deep)
-        return redact({"api_version": OBSERVER_API_VERSION, "deep": deep,
-                       "readiness": report.to_dict()})
+        return self._relativize(redact({"api_version": OBSERVER_API_VERSION, "deep": deep,
+                                        "readiness": report.to_dict()}))
 
     def get_release_readiness(self) -> Dict[str, Any]:
         return {"api_version": OBSERVER_API_VERSION,
@@ -122,7 +143,8 @@ class ObserverAPI:
                         total += f.stat().st_size
                     except OSError:
                         pass
-        return {"api_version": OBSERVER_API_VERSION, "evidence_root": str(self._evidence_root),
+        # Relative label only — never the absolute local path.
+        return {"api_version": OBSERVER_API_VERSION, "evidence_root": "<output_root>/scout",
                 "file_count": count, "total_bytes": total}
 
     # -- campaigns -------------------------------------------------------------------------------
@@ -327,7 +349,11 @@ class ObserverAPI:
         md_path = out / "AI_REVIEW_BUNDLE.md"
         md_path.write_text(self._bundle_markdown(campaign_id, prog, brain, targets, integrity),
                            encoding="utf-8")
-        return {"json": str(json_path), "markdown": str(md_path), "integrity_sha256": integrity}
+        # Return paths RELATIVE to the output root (openable via output_dir / ref) — never absolute
+        # local paths over MCP.
+        return {"json": str(json_path.relative_to(self._root)).replace("\\", "/"),
+                "markdown": str(md_path.relative_to(self._root)).replace("\\", "/"),
+                "integrity_sha256": integrity}
 
     @staticmethod
     def _bundle_markdown(cid, prog, brain, targets, integrity) -> str:

@@ -247,6 +247,7 @@ def build_server() -> "Server":
 async def run_server() -> None:
     """Start the MCP server over stdio. Requires mcp package."""
     server = build_server()
+    from mcp.server import NotificationOptions  # type: ignore[import-untyped,import-not-found]
     from mcp.server.models import InitializationOptions  # type: ignore[import-untyped,import-not-found]
 
     async with stdio_server() as (read_stream, write_stream):
@@ -256,8 +257,10 @@ async def run_server() -> None:
             InitializationOptions(
                 server_name=_SERVER_NAME,
                 server_version=_SERVER_VERSION,
+                # Current mcp requires a NotificationOptions instance (not None), else
+                # get_capabilities() raises AttributeError and the server never starts over stdio.
                 capabilities=server.get_capabilities(
-                    notification_options=None,
+                    notification_options=NotificationOptions(),
                     experimental_capabilities={},
                 ),
             ),
