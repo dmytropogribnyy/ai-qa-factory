@@ -4,10 +4,25 @@ Companion to `docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md`. Records the durability
 Gmail OAuth app and the GitHub PAT status. **No secret, token, refresh token, client secret, or
 authorization code is printed here or anywhere in the repo.**
 
-## 1. Gmail OAuth app — publishing status (OWNER-ONLY BLOCKER)
+## 1. Gmail OAuth app — publishing status (RESOLVED — durable)
 
-**Current state:** the Google Cloud OAuth app (`Prospect QA Radar Local`, project
-`prospect-qa-radar-local`, client "AI QA Factory Local Desktop") is **External / Testing**.
+**Current state (updated):** the Google Cloud OAuth app (`Prospect QA Radar Local`, project
+`prospect-qa-radar-local`, client "AI QA Factory Local Desktop") is **External / In production**
+(user cap 2/100; full public verification intentionally not requested — personal use, two
+owner-controlled accounts). The 7-day Testing refresh-token limit **no longer applies**.
+
+**Durable re-authorization completed (atomic, no email sent, self-test not repeated):** both identities
+were re-authorized under the In-production app with `prompt=consent`, each written to a temporary token
+file, validated (exact account + mutually-exclusive scopes via live tokeninfo + refresh present), then
+**atomically replaced** (`os.replace`) — the working tokens were never destroyed before the durable
+replacements validated. Redacted evidence: `outputs/_email_selftest/durability_reauth.json` (git-ignored;
+no token/secret value). Result — send: `dipptrue@gmail.com` `gmail.send + openid + email` (no read);
+read: `drdiplextech@gmail.com` `gmail.readonly + openid + email` (no send); both refreshable, distinct
+files, outside the repo. **Blocker CLOSED — durable Gmail readiness is now claimed.**
+
+### Historical risk (why publication was required)
+
+Before publication the app was **External / Testing**.
 
 **Verified risk (official Google documentation, `developers.google.com/identity/protocols/oauth2`):**
 > "A Google Cloud Platform project with an OAuth consent screen configured for an external user type
@@ -39,7 +54,7 @@ and **atomically replacing** the current tokens only after tokeninfo confirms th
 mutually-exclusive scopes. Working tokens are never destroyed before the replacements validate. **No
 email is sent during reauthorization.**
 
-**Status: OWNER-ONLY (C). Not durable until published + re-authorized.**
+**Status: CLOSED (A). App In production + both identities re-authorized with durable refresh tokens.**
 
 ## 2. GitHub PAT status
 
