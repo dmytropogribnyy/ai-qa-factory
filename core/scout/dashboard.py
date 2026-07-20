@@ -1494,6 +1494,10 @@ function startCampaign(){{
                            f'{s["max_duration_min"]}m)</option>' for s in cat["session_presets"])
             strat = "".join(f'<option value="{_esc(s)}">{_esc(s)}</option>'
                             for s in cat["strategies"])
+            ind_opts = "".join(f'<option value="{_esc(i)}">{_esc(i)}</option>'
+                               for i in cat["industries"])
+            site_opts = "".join(f'<option value="{_esc(s)}">{_esc(s.replace("_", " "))}</option>'
+                                for s in cat["site_types"])
             body = (
                 '<h1>New Scout campaign</h1>'
                 '<div class="row"><a class="chip" href="/scout/history">History</a>'
@@ -1505,6 +1509,20 @@ function startCampaign(){{
                 + strat + '</select></label>'
                 '<label> Countries (comma, blank = no restriction)<br>'
                 '<input id="countries" placeholder="us, de"></label>'
+                '<label> Languages (comma)<br><input id="languages" placeholder="en, de"></label>'
+                '<label> Industries (multi-select; blank = preset)<br>'
+                '<select id="industries" multiple size="6">' + ind_opts + '</select></label>'
+                '<label> Site types (multi-select; blank = preset)<br>'
+                '<select id="sitetypes" multiple size="6">' + site_opts + '</select></label>'
+                '<label> Keywords / commercial signals (comma)<br>'
+                '<input id="keywords" placeholder="pricing, free trial, book demo"></label>'
+                '<label> Exclude keywords (comma)<br><input id="excludekw"></label>'
+                '<label> Min commercial score 0-100 (blank = preset)<br>'
+                '<input id="minscore" type="number" min="0" max="100" placeholder="preset default"></label>'
+                '<details><summary class="muted">Advanced limits</summary>'
+                '<label> Max discovered domains<br><input id="maxdisc" type="number" min="1"></label>'
+                '<label> Max pages per site<br><input id="maxpages" type="number" min="1"></label>'
+                '</details>'
                 '<p class="muted">Presets are editable templates. Every run is finite (hard '
                 'ceilings) and never sends anything. Live discovery needs your explicit approval '
                 'and a configured Tavily key.</p>'
@@ -1518,9 +1536,22 @@ function startCampaign(){{
                 "const CSRF=" + json.dumps(csrf_token) + ";\n"
                 "function J(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json',"
                 "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json());}\n"
-                "function ov(){var c=document.getElementById('countries').value.trim();"
-                "var o={};if(c){o.countries=c.split(',').map(s=>s.trim()).filter(Boolean);}"
-                "var st=document.getElementById('strategy').value;if(st){o.strategy=st;}return o;}\n"
+                "function v(id){var e=document.getElementById(id);return e?e.value.trim():'';}\n"
+                "function csv(s){return s.split(',').map(x=>x.trim()).filter(Boolean);}\n"
+                "function multi(id){var e=document.getElementById(id);"
+                "return e?Array.from(e.selectedOptions).map(o=>o.value):[];}\n"
+                "function ov(){var o={};"
+                "var c=v('countries');if(c)o.countries=csv(c);"
+                "var lg=v('languages');if(lg)o.languages=csv(lg);"
+                "var st=document.getElementById('strategy').value;if(st)o.strategy=st;"
+                "var ind=multi('industries');if(ind.length)o.industries=ind;"
+                "var sty=multi('sitetypes');if(sty.length)o.site_types=sty;"
+                "var kw=v('keywords');if(kw)o.keywords=csv(kw);"
+                "var ex=v('excludekw');if(ex)o.exclude_keywords=csv(ex);"
+                "var ms=v('minscore');if(ms)o.min_commercial_threshold=parseInt(ms,10);"
+                "var md=v('maxdisc');if(md)o.max_candidates=parseInt(md,10);"
+                "var mp=v('maxpages');if(mp)o.max_pages_per_site=parseInt(mp,10);"
+                "return o;}\n"
                 "document.getElementById('pf').onclick=function(){"
                 "document.getElementById('pfout').textContent='running real probes (browser launch"
                 " + network)…';"
