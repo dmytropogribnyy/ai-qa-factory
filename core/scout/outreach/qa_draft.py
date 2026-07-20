@@ -8,6 +8,7 @@ governed by the existing outreach contact policy.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Dict, List
 
@@ -55,23 +56,74 @@ def problem_bullets(findings: List[Dict[str, Any]], *, limit: int = 8) -> List[s
     return bullets
 
 
+def _looks_unsafe(text: str) -> bool:
+    """Reject an LLM draft that is empty, a mock warning, or leaks a secret-looking token."""
+    t = (text or "").strip()
+    return (not t) or ("MOCK MODE" in t) or ("sk-" in t) or ("tvly-" in t)
+
+
+def _llm_polish_body(router: Any, *, domain: str, name: str, archetype: str,
+                     bullets: List[str], deterministic_body: str) -> tuple[str, str]:
+    """Optionally rewrite the draft prose with a cheap model. Returns (body, generated_by).
+
+    The model may ONLY reword using the exact `bullets` supplied - it must not invent findings.
+    Any failure, mock mode, or unsafe output falls back to the deterministic template ($0)."""
+    if router is None or getattr(getattr(router, "settings", None), "is_mock", True):
+        return deterministic_body, "deterministic"
+    if not bullets:
+        return deterministic_body, "deterministic"
+    system = (
+        "You write a short, warm, professional cold outreach email offering a website QA review. "
+        "Use ONLY the issues provided - never invent, exaggerate, or add findings. Public pages "
+        "only: no logins/forms/orders were used, and you must say so. Plain text, no markdown, no "
+        "salutation placeholder names, under 160 words. Do not include secrets, prices, or links.")
+    user = (
+        f"Business: {name} ({domain}). Type: {archetype or 'website'}.\n"
+        f"Issues found (verbatim, keep as a short bulleted list):\n" +
+        "\n".join(f"- {b}" for b in bullets) +
+        "\n\nWrite the email body only (start with 'Hi,'). Offer to share evidence and a "
+        "prioritized fix list. Keep it honest and low-pressure.")
+    # Scout uses its OWN cheap model, decoupled from the main Factory's premium profile.
+    # Default Haiku; never Opus. Override with SCOUT_LLM_MODEL if desired.
+    scout_model = os.environ.get("SCOUT_LLM_MODEL", "anthropic/claude-haiku-4-5").strip()
+    try:
+        resp = router.complete(task_type="proposal", system_prompt=system, user_prompt=user,
+                               temperature=0.3, max_tokens=500, model=scout_model)
+    except Exception:
+        return deterministic_body, "deterministic"
+    text = (getattr(resp, "text", "") or "").strip()
+    model = getattr(resp, "model", "") or ""
+    if getattr(resp, "used_fallback", False) or model == "mock" or _looks_unsafe(text):
+        return deterministic_body, "deterministic"
+    return text, model
+
+
 def build_review_draft(*, domain: str, business_name: str = "",
                        understanding: Dict[str, Any] = None,
                        findings: List[Dict[str, Any]] = None,
-                       contact: str = "") -> Dict[str, Any]:
-    """Build a COPY-ONLY QA-review outreach draft. `sent` is always False; the system never sends."""
+                       contact: str = "", router: Any = None) -> Dict[str, Any]:
+    """Build a COPY-ONLY QA-review outreach draft. `sent` is always False; the system never sends.
+
+    If `router` is a live (non-mock) LLMRouter, a cheap model (Haiku by default) rewrites the prose
+    for tone only, using the exact factual bullets; it can never send, invent findings, or break the
+    pipeline (deterministic template is the fallback). Bullets stay deterministic."""
     name = (business_name or domain).strip()
     bullets = problem_bullets(findings or [])
+    archetype = (understanding or {}).get("archetype")
     subject = f"Quick QA review of {name} - {len(bullets)} public issue(s) I found"
     intro = (f"I ran a bounded, read-only QA check of your public website ({domain}) and noticed a "
              f"few issues that may affect conversion, accessibility, or user trust:")
     closing = ("These come from public pages only - no logins, form submissions, or orders. If "
                "useful, I can share the evidence and a prioritized fix list. Happy to help.")
-    body = "\n".join(["Hi,", "", intro, ""] + [f"- {b}" for b in bullets] + ["", closing])
+    deterministic_body = "\n".join(["Hi,", "", intro, ""] + [f"- {b}" for b in bullets] +
+                                   ["", closing])
+    body, generated_by = _llm_polish_body(router, domain=domain, name=name, archetype=archetype,
+                                          bullets=bullets, deterministic_body=deterministic_body)
     return {
         "schema": "qa-review-draft/v1", "domain": domain, "business_name": name,
-        "archetype": (understanding or {}).get("archetype"),
+        "archetype": archetype,
         "subject": subject, "problem_bullets": bullets, "body": body,
+        "generated_by": generated_by,
         "contact": contact, "sent": False,
         "disclaimer": ("DRAFT only - the system does not send this. Copy and send it yourself after "
                        "review. Public info only; nothing was submitted to the site."),

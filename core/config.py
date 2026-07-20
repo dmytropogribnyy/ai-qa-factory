@@ -59,6 +59,17 @@ MODEL_PROFILES = {
         "vision": "gpt-5.4-mini",
         "fallback": "gpt-5.4-mini",
     },
+    # Anthropic-only, deliberately cheap. Used by Scout's optional LLM polish.
+    # Haiku is the workhorse (drafts, summaries, quick outputs); Sonnet only for
+    # the reasoning/review tiers. Opus is intentionally ABSENT: Scout never uses it.
+    "anthropic_budget": {
+        "architect": "anthropic/claude-sonnet-5",
+        "coding": "anthropic/claude-haiku-4-5",
+        "review": "anthropic/claude-sonnet-5",
+        "fast": "anthropic/claude-haiku-4-5",
+        "vision": "anthropic/claude-sonnet-5",
+        "fallback": "anthropic/claude-haiku-4-5",
+    },
 }
 
 DEFAULT_EFFORTS = {
@@ -95,6 +106,16 @@ DEFAULT_EFFORTS = {
         "review": "medium",
         "fast": "low",
         "vision": "medium",
+        "fallback": "low",
+    },
+    # Haiku/Sonnet ignore the effort payload (see LLMRouter._effort_kwargs), so these
+    # are advisory only; kept low to stay cheap and fast.
+    "anthropic_budget": {
+        "architect": "medium",
+        "coding": "low",
+        "review": "medium",
+        "fast": "low",
+        "vision": "low",
         "fallback": "low",
     },
 }

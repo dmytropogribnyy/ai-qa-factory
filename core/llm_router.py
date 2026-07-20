@@ -67,10 +67,15 @@ class LLMRouter:
         temperature: float = 0.25,
         max_tokens: int = 1600,
         context: dict | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
-        alias = self.alias_for_task(task_type)
-        model = self.route(task_type)
-        effort = self.effort_for_task(task_type)
+        # `model` forces a specific model (e.g. Scout's cheap Haiku), bypassing profile routing.
+        if model:
+            alias, effort = "override", "low"
+        else:
+            alias = self.alias_for_task(task_type)
+            model = self.route(task_type)
+            effort = self.effort_for_task(task_type)
         if self.settings.is_mock or model == "mock":
             return self._record(LLMResponse(self._mock_response(task_type, user_prompt=user_prompt, context=context), "mock", task_type, model_alias=alias, reasoning_effort=effort))
         # Reasoning models consume max_tokens for internal thinking first.

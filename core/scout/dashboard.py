@@ -25,7 +25,10 @@ from core.scout.campaign_start import CampaignLauncher
 from core.scout.service import ScoutService
 from core.scout.store import StoreError
 
-_CONTENT_TYPES = {".json": "application/json", ".png": "image/png", ".md": "text/markdown"}
+_CONTENT_TYPES = {".json": "application/json", ".png": "image/png", ".md": "text/markdown",
+                  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+                  ".gif": "image/gif", ".webm": "video/webm", ".mp4": "video/mp4",
+                  ".har": "application/json", ".txt": "text/plain", ".html": "text/html"}
 # Defensive cap on how much a single artifact response may return (our artifacts are small).
 _MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
 # The largest JSON body accepted by the start endpoint (requests are tiny).
@@ -1604,7 +1607,27 @@ function startCampaign(){{
             return _page("AI QA Factory — Campaign progress", "/scout", body, script)
 
         def _scout_history_page(self, q) -> str:
-            rows = self._campaign_service().history(filters={"text": (q.get("text") or [""])[0]})
+            from datetime import datetime, timedelta, timezone
+            qtext = (q.get("text") or [""])[0]
+            frm = (q.get("from") or [""])[0].strip()      # explicit YYYY-MM-DD lower bound
+            to = (q.get("to") or [""])[0].strip()          # explicit YYYY-MM-DD upper bound
+            try:
+                days = int((q.get("days") or ["0"])[0])    # any custom N days back
+            except ValueError:
+                days = 0
+            since, until = "", ""
+            if frm or to:
+                since = frm
+                until = (to + "T23:59:59+00:00") if to else ""
+            elif days > 0:
+                since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            rows = self._campaign_service().history(
+                filters={"text": qtext, "since": since, "until": until})
+            active_days = days if (days > 0 and not (frm or to)) else 0
+            range_chips = "".join(
+                f'<a class="chip{" active" if active_days == val else ""}" '
+                f'href="/scout/history?days={val}{("&text=" + _esc(qtext)) if qtext else ""}">{lbl}</a>'
+                for val, lbl in ((1, "Today"), (7, "7 days"), (30, "30 days"), (0, "All")))
             trs = "".join(
                 f'<tr><td><a href="/scout/target?domain={_esc(r.get("domain",""))}">{_esc(r.get("domain",""))}</a></td>'
                 f'<td>{_badge(r.get("analysis_status",""))}</td>'
@@ -1617,8 +1640,16 @@ function startCampaign(){{
                      if rows else '<div class="card empty muted">No analyzed sites yet.</div>')
             body = (f'<h1>Scout history</h1><div class="row">'
                     f'<a class="chip" href="/scout/new">New campaign</a></div>'
-                    f'<form method="get" class="row"><input name="text" placeholder="filter domain/text" '
-                    f'value="{_esc((q.get("text") or [""])[0])}"><button class="chip">Filter</button></form>'
+                    f'<div class="row" style="margin-bottom:6px">{range_chips}</div>'
+                    f'<form method="get" class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
+                    f'<label class="muted">Last <input name="days" type="number" min="1" max="3650" '
+                    f'style="width:64px" value="{active_days or ""}"> days</label>'
+                    f'<span class="muted">or</span>'
+                    f'<label class="muted">from <input name="from" type="date" value="{_esc(frm)}"></label>'
+                    f'<label class="muted">to <input name="to" type="date" value="{_esc(to)}"></label>'
+                    f'<input name="text" placeholder="filter domain/text" value="{_esc(qtext)}">'
+                    f'<button class="chip">Filter</button>'
+                    f'<a class="chip" href="/scout/history">Reset</a></form>'
                     f'<div class="scrollx">{table}</div>'
                     f'<p class="muted">Processed targets are skipped by future campaigns; rescan is '
                     f'explicit. B/C and clean results are retained, never auto-deleted.</p>')
@@ -1635,6 +1666,9 @@ function startCampaign(){{
             bs = (b.get("brain") or {})
             scores = bs.get("scores", {})
             plan = (b.get("plan") or {})
+            findings = det.get("findings") or []
+            contacts = det.get("contacts") or []
+            draft = det.get("draft") or {}
             body = (
                 f'<h1>{_esc(domain)}</h1><div class="row">'
                 f'<a class="chip" href="/scout/history">Back to history</a></div>'
@@ -1659,6 +1693,48 @@ function startCampaign(){{
                 f'<b>Evidence ref:</b> <code>{_esc((entry or {}).get("evidence_ref","—"))}</code></p>'
                 f'<p class="muted">Recheck / Reproduce / Record short video / Capture stronger evidence '
                 f'are available on a live-analyzed target (bounded, fail-closed).</p></div>')
+
+            # Public contacts (read-only; the system never emails anyone).
+            contacts_html = ("".join(f'<span class="chip">{_esc(e)}</span> ' for e in contacts)
+                             or '<span class="muted">None found on public pages.</span>')
+            body += (f'<div class="card"><h2>Public contact(s)</h2><p>{contacts_html}</p>'
+                     f'<p class="muted">Extracted read-only from public pages. Use them to reach out '
+                     f'yourself; the system never sends anything.</p></div>')
+
+            # Problem items with evidence references, highest-severity first.
+            prob_rows = "".join(
+                f'<tr><td>{_badge(f.get("severity") or "—", _sev_badge_kind(f.get("severity","")))}</td>'
+                f'<td class="muted">{_esc(f.get("category") or "—")}</td>'
+                f'<td>{_esc(f.get("title") or "—")}</td>'
+                f'<td class="muted">{_esc(f.get("business_impact") or "")}</td>'
+                f'<td class="muted">{_esc(", ".join(f.get("evidence_refs") or []) or "—")}</td></tr>'
+                for f in findings)
+            prob_table = (f'<table><caption>Problem items ({len(findings)})</caption>'
+                          f'<tr><th>Severity</th><th>Type</th><th>Issue</th><th>Business impact</th>'
+                          f'<th>Evidence</th></tr>{prob_rows}</table>' if findings else
+                          '<div class="empty muted">No verified problem items for this target yet. '
+                          'Run a live, bounded analysis to populate evidence.</div>')
+            body += (f'<div class="card"><h2>Problems found</h2><div class="scrollx">{prob_table}</div>'
+                     f'</div>')
+
+            # Copy-only outreach draft (never sent). Haiku polishes prose when LLM is live.
+            to_addr = _esc(draft.get("contact", "") or (contacts[0] if contacts else ""))
+            to_html = to_addr or '<span class="muted">add a recipient manually</span>'
+            body += (
+                '<div class="card"><h2>Outreach draft — copy only</h2>'
+                '<div class="banner warn">The system never sends this. Copy &amp; send it yourself '
+                'after review — public information only, nothing was submitted to the site.</div>'
+                f'<p><b>Subject:</b> {_esc(draft.get("subject",""))}</p>'
+                f'<p><b>To:</b> {to_html}</p>'
+                f'<textarea id="draftbody" readonly rows="11" style="width:100%;box-sizing:border-box">'
+                f'{_esc(draft.get("body",""))}</textarea>'
+                '<div class="row" style="margin-top:8px;align-items:center;gap:10px">'
+                '<button class="chip" type="button" onclick="copyDraft()">Copy draft</button>'
+                f'<span class="muted">Generated by: {_esc(draft.get("generated_by","deterministic"))}'
+                '</span></div></div>'
+                '<script>function copyDraft(){var t=document.getElementById("draftbody");'
+                't.focus();t.select();try{document.execCommand("copy");}catch(e){}}</script>')
+
             return _page("AI QA Factory — Target detail", "/scout", body)
 
         # --- Scout data pages, unified into the shared layout (reuse existing data) -----------

@@ -245,17 +245,72 @@ class CampaignService:
         f = filters or {}
         text = (f.get("text") or "").lower()
         status = f.get("status") or ""
+        since = (f.get("since") or "").strip()   # ISO lower bound (inclusive)
+        until = (f.get("until") or "").strip()    # ISO upper bound (inclusive-ish)
         if text:
             rows = [r for r in rows if text in json.dumps(r).lower()]
         if status:
             rows = [r for r in rows if r.get("analysis_status") == status]
+        if since:
+            rows = [r for r in rows if str(r.get("last_analysis_at") or "") >= since]
+        if until:
+            rows = [r for r in rows if str(r.get("last_analysis_at") or "") <= until]
         return rows
 
     def target_detail(self, domain: str) -> Dict[str, Any]:
         reg = AnalyzedSiteRegistry(self.output_dir)
         entry = reg.get(domain)
-        return {"domain": domain, "entry": entry.to_dict() if entry else None,
-                "brain": self._brain_for_domain(domain)}
+        brain = self._brain_for_domain(domain)
+        findings: List[Dict[str, Any]] = []
+        contacts: List[str] = []
+        scout_run = (brain or {}).get("scout_run", "")
+        if scout_run:
+            from core.scout.outreach.qa_draft import extract_public_emails
+            from core.scout.priority import load_verified_findings
+            from core.scout.store import RunStore
+            try:
+                st = RunStore(self.output_dir, scout_run)
+                findings = load_verified_findings(st)
+                state = st.load_state() or {}
+                for pid in list(state.get("prospects", {}).keys())[:1]:
+                    obs = st.load_prospect_artifact(pid, "observation.json") or {}
+                    contacts = extract_public_emails(obs, domain=domain)
+            except Exception:
+                findings, contacts = findings, contacts
+        # Copy-only outreach draft from the target's problems (the system never sends it).
+        # A cheap model (Haiku) polishes the prose only when LLM is live; else deterministic ($0).
+        from core.scout.outreach.qa_draft import build_review_draft
+        understanding = (brain or {}).get("brain", {})
+        draft = build_review_draft(domain=domain,
+                                   business_name=(entry.domain if entry else domain),
+                                   understanding=understanding, findings=findings,
+                                   contact=(contacts[0] if contacts else ""),
+                                   router=self._llm_router())
+        return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
+                "findings": [{"severity": f.get("severity"), "category": f.get("category"),
+                              "title": f.get("title"), "business_impact": f.get("business_impact"),
+                              "url": f.get("url"), "evidence_refs": f.get("evidence_refs", [])}
+                             for f in findings],
+                "contacts": contacts, "draft": draft}
+
+    def _llm_router(self):
+        """Lazy, cached LLMRouter. Returns None in mock mode so drafts stay deterministic ($0).
+
+        Set LLM_MODE=live and MODEL_PROFILE=anthropic_budget (Haiku/Sonnet, no Opus) to enable
+        the cheap outreach-prose polish. Any construction error degrades silently to deterministic."""
+        if getattr(self, "_router_cached", "unset") != "unset":
+            return self._router_cached
+        router = None
+        try:
+            from core.config import get_settings
+            settings = get_settings()
+            if not settings.is_mock:
+                from core.llm_router import LLMRouter
+                router = LLMRouter(settings)
+        except Exception:
+            router = None
+        self._router_cached = router
+        return router
 
     def _brain_for_domain(self, domain: str) -> Optional[Dict[str, Any]]:
         base = Path(self.output_dir) / "scout" / "_campaigns"
