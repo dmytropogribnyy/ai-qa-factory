@@ -34,16 +34,10 @@ from core.scout.discovery.providers import DiscoveryCandidate, DiscoveryError, P
 from core.scout.discovery.suppression import apply_suppression
 from core.scout.discovery.triage import TriageContext, assess_commercial, assess_technical
 from core.scout.engine import ScoutEngine
+from core.scout.priority import scout_actionable
 from core.scout.report import build_report as build_scout_report
 from core.scout.run_counters import actionable_target_reached, counters_from_records
 from core.scout.store import RunStore
-
-
-def _default_actionable(rec: CandidateRecord, _scout_store: Any) -> bool:
-    """Default actionability: the explainable commercial priority is 'A'. Increment 2 replaces
-    this with a QA-finding-aware classifier (strong commercial fit AND an evidence-backed
-    medium/high public finding)."""
-    return (rec.commercial_scorecard or {}).get("priority") == "A"
 
 RUN_PLANNED, RUN_RUNNING, RUN_COMPLETED, RUN_FAILED = "PLANNED", "RUNNING", "COMPLETED", "FAILED"
 
@@ -72,10 +66,10 @@ class DiscoveryEngine:
         # Optional explicit backend for promoted Scout runs (fixtures/E2E inject a host-mapped
         # backend; production leaves this None so the Scout engine builds its own real backend).
         self.scout_backend = scout_backend
-        # Predicate deciding whether a promoted+analyzed candidate is "actionable" (Priority A).
-        # Increment 2 replaces the default with a QA-finding-aware classifier; here it is the
-        # explainable commercial priority so the actionable-target stop is real and testable.
-        self.actionable_predicate = actionable_predicate or _default_actionable
+        # Predicate deciding whether a promoted+analyzed candidate is "actionable" (Priority A):
+        # strong commercial fit AND an evidence-backed medium/high public finding from the Scout
+        # run. Overridable for deterministic tests.
+        self.actionable_predicate = actionable_predicate or scout_actionable
         self._start = time.monotonic()
         self._budget = {"provider_calls": 0, "results": 0, "cost_usd": 0.0,
                         "profiled": 0, "eligible": 0, "promoted": 0,
