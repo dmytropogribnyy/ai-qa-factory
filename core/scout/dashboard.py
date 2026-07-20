@@ -307,6 +307,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._scout_replay(parsed)
             if parsed.path == "/api/scout/engagement":
                 return self._scout_engagement(parsed)
+            if parsed.path == "/api/scout/start-client-work":
+                return self._scout_start_client_work(parsed)
             if parsed.path.startswith("/api/work/"):
                 return self._work_action(parsed.path[len("/api/work/"):])
             return self._json(404, {"error": "not found"})
@@ -797,6 +799,37 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 domain, status, work_id=work_id) if (domain and status) else False)
             return self._json(200 if ok else 400,
                               {"ok": ok, "domain": domain, "status": status})
+
+        def _scout_start_client_work(self, parsed):
+            """Bridge a won prospect into the client-work lifecycle: build a job brief from the
+            domain + Scout findings, run the read-only analyze-job planning/feasibility, and mark
+            the prospect won + linked. Never executes client work (planning only, human approves)."""
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            domain = ((parse_qs(parsed.query).get("domain") or [""])[0]
+                      or str((body or {}).get("domain", ""))).strip()
+            if not domain:
+                return self._json(400, {"ok": False, "error": "no domain"})
+            import time as _time
+
+            from core.orchestration.client_work import ClientWorkService
+            from core.scout.discovery.domain_intel import canonical_domain
+            dom = canonical_domain(domain) or domain
+            det = self._campaign_service().target_detail(domain)
+            brief = _client_work_brief(dom, det.get("findings") or [])
+            pid = f"scout-{dom.replace('.', '-')}-{int(_time.time())}"[:64].rstrip("-.")
+            try:
+                res = ClientWorkService(output_dir=service.output_dir).analyze(
+                    brief, pid, source_platform="scout")
+            except Exception as exc:
+                return self._json(400, {"ok": False,
+                                        "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+            AnalyzedSiteRegistry(service.output_dir).set_engagement(domain, "won", work_id=pid)
+            return self._json(200, {"ok": True, "project_id": pid, "verdict": res.verdict,
+                "message": (f"Client-work analysis started ({res.verdict}). Prospect marked Won. "
+                            "Review feasibility + proposal, then approve execution.")})
 
         def _campaign_summary(self):
             st = service.status().get("state", {})
@@ -1845,9 +1878,17 @@ function startCampaign(){{
                          + (f' · <b>Work:</b> <code>{_esc(wid)}</code>' if wid else '')
                          + '</p><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
                          + funnel_btns + '<span id="engmsg" class="muted"></span></div>'
-                         '<p class="muted">Won / Delivered are normally set automatically from the '
-                         'client-work lifecycle; Contacted / Replied you set here. Nothing is '
-                         'emailed by the system.</p></div>')
+                         '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;'
+                         'margin-top:10px"><button class="btn primary" type="button" '
+                         'onclick="startCW()">Start client work</button>'
+                         + (f'<a class="chip" href="/work/{_esc(wid)}">open work &#8599;</a>'
+                            if wid else '')
+                         + '<span id="cwmsg" class="muted"></span></div>'
+                         '<p class="muted">Start client work builds a job brief from these findings, '
+                         'runs the read-only analyze-job (feasibility + proposal), and marks this '
+                         'prospect Won. Won / Delivered otherwise track the client-work lifecycle; '
+                         'Contacted / Replied you set here. Nothing is emailed by the system.</p>'
+                         '</div>')
 
             # Public contacts (read-only; the system never emails anyone).
             contacts_html = ("".join(f'<span class="chip">{_esc(e)}</span> ' for e in contacts)
@@ -1958,6 +1999,15 @@ function startCampaign(){{
                      '"Content-Type":"application/json"},body:"{}"})'
                      '.then(function(r){return r.json();}).then(function(j){'
                      'if(j.ok){location.reload();}else if(m){m.textContent="failed";}})'
+                     '.catch(function(){if(m){m.textContent="request error";}});}'
+                     'function startCW(){var m=document.getElementById("cwmsg");'
+                     'if(m){m.textContent="running analyze-job…";}'
+                     'fetch("/api/scout/start-client-work?domain="+encodeURIComponent(DOM),'
+                     '{method:"POST",headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},'
+                     'body:"{}"}).then(function(r){return r.json();}).then(function(j){'
+                     'if(j.ok){if(m){m.textContent=j.message||"started";}'
+                     'setTimeout(function(){location.reload();},1400);}'
+                     'else if(m){m.textContent="failed: "+(j.error||"unknown");}})'
                      '.catch(function(){if(m){m.textContent="request error";}});}</script>')
 
             return _page("AI QA Factory — Target detail", "/scout", body)
@@ -2321,6 +2371,25 @@ seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. N
 def _esc(s: str) -> str:
     return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;"))
+
+
+def _client_work_brief(domain: str, findings: list) -> str:
+    """Build the analyze-job brief for a won prospect from its domain + Scout findings."""
+    lines = [f"Client QA engagement for {domain} (sourced via Scout prospecting).", "",
+             "A bounded, public, read-only QA scan surfaced these issues to investigate, reproduce, "
+             "and (if the client wants) fix:"]
+    if findings:
+        for f in findings[:12]:
+            sev = str(f.get("severity", "")).upper()
+            row = f"- [{sev}] {f.get('category', '')}: {f.get('title', '')}"
+            impact = f.get("business_impact", "")
+            lines.append(row + (f" — {impact}" if impact else ""))
+    else:
+        lines.append("- (no public findings captured yet; start with a deeper bounded QA audit)")
+    lines += ["", "Requested scope: a deeper QA audit of the key user journeys with reproducible "
+              "evidence, severity, and a prioritized fix list. Access (repo / staging / credentials) "
+              "to be provided by the client."]
+    return "\n".join(lines)
 
 
 def _looks_blocked(status: str, reason: str) -> bool:
