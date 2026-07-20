@@ -238,6 +238,23 @@ class CampaignRunControl:
         age = (datetime.now(timezone.utc) - last).total_seconds()
         return age > self._stale_s
 
+    def reload(self) -> None:
+        """Re-read the persisted state (another thread/process may have set a control)."""
+        self.state = self._load()
+
+    def wait_until_resumed(self, poll: float = 0.1, timeout: float = 3600.0) -> None:
+        """Block until the run is resumed or stopped (reloading the persisted control each poll)."""
+        import time as _time
+        waited = 0.0
+        while waited < timeout:
+            self.reload()
+            if self.state.requested_control == "stop" or self.state.state == STOPPED_CHECKPOINT:
+                return
+            if self.state.state not in (PAUSED, PAUSING):
+                return
+            _time.sleep(poll)
+            waited += poll
+
     def recover_on_startup(self) -> str:
         """On a fresh process: flip an orphaned ACTIVE run to RECOVERABLE. PAUSED work is left
         PAUSED (never auto-resumed). Returns the resulting state."""
