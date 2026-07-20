@@ -78,6 +78,15 @@ def test_rescan_refused_without_csrf(tmp_path):
         server.shutdown()
 
 
+def test_start_client_work_refused_without_csrf(tmp_path):
+    server, url = _dash(tmp_path)
+    try:
+        code, body = _post(f"{url}/api/scout/start-client-work?domain=example.com", {})
+        assert code == 403 and body["ok"] is False       # mutation guard blocks it
+    finally:
+        server.shutdown()
+
+
 def test_replay_refused_without_csrf(tmp_path):
     server, url = _dash(tmp_path)
     try:
