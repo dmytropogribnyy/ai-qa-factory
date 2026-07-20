@@ -46,6 +46,8 @@ class DiscoveryCampaignConfig:
     keywords: List[str] = field(default_factory=list)
     exclude_keywords: List[str] = field(default_factory=list)
     required_flows: List[str] = field(default_factory=list)
+    # Supported site types (drives the per-vertical QA profile). Empty => commercial default.
+    site_types: List[str] = field(default_factory=list)
     # Providers.
     provider_allowlist: List[str] = field(default_factory=list)
     # Market policy (outreach stays "none" by default; read-only profiling under NO_OUTREACH
@@ -61,6 +63,27 @@ class DiscoveryCampaignConfig:
     max_candidates: int = 500
     max_eligible: int = 200
     max_promoted: int = 10
+    # QA-analysis budget (0 => fall back to max_promoted). Caps how many candidates are
+    # promoted into the real ScoutEngine QA. A run stops once this many have been analyzed.
+    max_qa_analyzed: int = 0
+    # Actionable-target stop (0 => disabled): finish as soon as this many Priority-A
+    # (actionable) prospects are found — the run never continues indefinitely.
+    actionable_target: int = 0
+    # Maximum browser-tested domains (0 => equals max_qa_analyzed). "Analyzed" (static triage)
+    # and "browser-tested" (deep Playwright QA) are distinct hard limits.
+    max_browser_tested: int = 0
+    # Per-vertical quota (0 => disabled): cap browser-tested domains per site type so no single
+    # vertical monopolizes a run. Enforced once verticals are assigned (v3.3 vertical profiles).
+    per_vertical_quota: int = 0
+    # Consecutive failed/blocked targets before the run stops (0 => disabled).
+    max_consecutive_failures: int = 0
+    # Session preset key this config was built from (informational; "" when hand-built).
+    session_preset: str = ""
+    # Adaptive strategy: conservative | balanced | opportunity (see core/scout/adaptive.py).
+    strategy: str = "balanced"
+    # Optional outcome targets (may stop a run EARLY once met) + diversity caps (0 == uncapped).
+    outcome_targets: Dict[str, int] = field(default_factory=dict)
+    diversity_caps: Dict[str, int] = field(default_factory=dict)
     time_budget_s: float = 120.0
     cost_ceiling_usd: float = 0.0
     # Promotion / Scout run settings.
@@ -87,12 +110,27 @@ class DiscoveryCampaignConfig:
                 raise DiscoveryConfigError(f"{name} must be a positive int, got {value!r}")
         if self.max_promoted > 50:
             raise DiscoveryConfigError("max_promoted is capped at 50 (bounded promotion)")
+        for name in ("max_qa_analyzed", "actionable_target", "max_browser_tested",
+                     "per_vertical_quota", "max_consecutive_failures"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise DiscoveryConfigError(f"{name} must be a non-negative int, got {value!r}")
+        # QA-analysis budget falls back to the promotion cap; it never exceeds it.
+        if self.max_qa_analyzed == 0:
+            self.max_qa_analyzed = self.max_promoted
+        self.max_qa_analyzed = min(self.max_qa_analyzed, self.max_promoted)
+        # Browser-tested ceiling falls back to (and never exceeds) the QA-analysis budget.
+        if self.max_browser_tested == 0:
+            self.max_browser_tested = self.max_qa_analyzed
+        self.max_browser_tested = min(self.max_browser_tested, self.max_qa_analyzed)
         if self.time_budget_s <= 0:
             raise DiscoveryConfigError("time_budget_s must be positive")
         if self.cost_ceiling_usd < 0:
             raise DiscoveryConfigError("cost_ceiling_usd cannot be negative")
         if self.browser_mode not in ("static", "playwright"):
             raise DiscoveryConfigError(f"unknown browser_mode: {self.browser_mode!r}")
+        if self.strategy not in ("conservative", "balanced", "opportunity"):
+            raise DiscoveryConfigError(f"unknown strategy: {self.strategy!r}")
         if not (1 <= self.max_pages_per_site <= 50):
             raise DiscoveryConfigError("max_pages_per_site must be within 1..50")
         self.allowed_local_hosts = frozenset(self.allowed_local_hosts)
