@@ -236,7 +236,9 @@ class CampaignRunControl:
         except ValueError:
             return True
         age = (datetime.now(timezone.utc) - last).total_seconds()
-        return age > self._stale_s
+        # Use >= so a heartbeat exactly at the stale threshold counts as stale (deterministic:
+        # a 0.0 stale window means "any age is stale", not "must be strictly newer than now").
+        return age >= self._stale_s
 
     def reload(self) -> None:
         """Re-read the persisted state (another thread/process may have set a control)."""
