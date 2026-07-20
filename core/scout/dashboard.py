@@ -1620,7 +1620,7 @@ function startCampaign(){{
                 '<h1>New Scout campaign</h1>'
                 '<div class="row"><a class="chip" href="/scout/history">History</a>'
                 '<a class="chip" href="/scout">Manual URL Scan</a></div>'
-                '<div class="card"><label>Preset<br><select id="preset">' + opts + '</select></label>'
+                '<div class="card formstack"><label>Preset<br><select id="preset">' + opts + '</select></label>'
                 '<label> Session (budget)<br><select id="session"><option value="">preset default</option>'
                 + sess + '</select></label>'
                 '<label> Strategy<br><select id="strategy"><option value="">preset default</option>'
@@ -2403,6 +2403,20 @@ details>summary{cursor:pointer;color:var(--muted)}
 .cards{list-style:none;margin:0;padding:0} .cards li{margin-bottom:var(--gap)}
 .cards .card h3{font-size:15px;margin:0 0 .3rem} .cards .meta{font-size:12px}
 @media (max-width:640px){ .only-desktop{display:none} .only-mobile{display:block} }
+/* Campaign form: stack each field (label above a full-width control); checkboxes stay inline. */
+.formstack label{display:block;margin:0 0 14px;color:var(--text);font-weight:600;font-size:13px}
+.formstack label>select,.formstack label>input:not([type=checkbox]){display:block;width:100%;
+  max-width:440px;margin-top:5px;font-weight:400}
+.formstack label>select[multiple]{max-width:100%}
+.formstack>label:has(>input[type=checkbox]){font-weight:400;color:var(--muted)}
+.formstack details>summary{margin:2px 0 10px}
+/* Comfortable tap targets for chip-styled buttons/links (labels/badges stay compact). */
+button.chip,a.chip{min-height:30px;cursor:pointer}
+@media (max-width:640px){
+  button.chip,a.chip{min-height:44px;padding:8px 16px;font-size:13px}
+  input,select,textarea{font-size:16px}   /* >=16px avoids iOS focus zoom */
+  h1{font-size:20px}
+}
 """
 
 # Legacy run-bound Scout pages predate the Pro Dark shell and hardcode light colours (#ccc/#f4f4f4/
@@ -2497,6 +2511,9 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
     scr = f"<script>{_THEME_TOGGLE_JS}{script}</script>"
     return (f"<!doctype html><html lang=en><head><meta charset=utf-8>"
             f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f"<link rel=\"icon\" href=\"data:image/svg+xml,"
+            f"%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
+            f"%3Crect width='16' height='16' rx='4' fill='%23c9a227'/%3E%3C/svg%3E\">"
             f"<title>{_esc(title)}</title><script>{_THEME_HEAD_JS}</script>"
             f"<style>{_TOKENS_CSS}</style></head><body>"
             f"{_nav_html(active)}<main>{body}</main>{scr}</body></html>")
