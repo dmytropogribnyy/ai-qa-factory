@@ -223,6 +223,26 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 from core.scout.discovery.discovery_status import discovery_status
                 out_dir = getattr(service, "output_dir", "outputs")
                 return self._json(200, discovery_status(out_dir))
+            # v3.3 adaptive Scout operator workflow (read models + pages)
+            if path == "/api/scout/catalog":
+                return self._json(200, self._campaign_service().catalog())
+            if path == "/api/scout/progress":
+                return self._json(200, self._campaign_service().progress((q.get("id") or [""])[0]))
+            if path == "/api/scout/history":
+                return self._json(200, {"rows": self._campaign_service().history(
+                    filters={"text": (q.get("text") or [""])[0],
+                             "status": (q.get("status") or [""])[0]})})
+            if path == "/api/scout/target":
+                return self._json(200, self._campaign_service().target_detail(
+                    (q.get("domain") or [""])[0]))
+            if path == "/scout/new":
+                return self._html(200, self._scout_new_page())
+            if path == "/scout/progress":
+                return self._html(200, self._scout_progress_page((q.get("id") or [""])[0]))
+            if path == "/scout/history":
+                return self._html(200, self._scout_history_page(q))
+            if path == "/scout/target":
+                return self._html(200, self._scout_target_page((q.get("domain") or [""])[0]))
             if path == "/docs":
                 return self._html(200, self._docs_page())
             if path == "/api/results":
@@ -264,6 +284,14 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._control(parsed)
             if parsed.path == "/api/campaign/start":
                 return self._campaign_start()
+            if parsed.path == "/api/scout/preflight":
+                return self._scout_preflight()
+            if parsed.path == "/api/scout/launch":
+                return self._scout_launch()
+            if parsed.path == "/api/scout/control":
+                return self._scout_control(parsed)
+            if parsed.path == "/api/scout/export":
+                return self._scout_export(parsed)
             if parsed.path.startswith("/api/work/"):
                 return self._work_action(parsed.path[len("/api/work/"):])
             return self._json(404, {"error": "not found"})
@@ -1384,6 +1412,8 @@ function startCampaign(){{
                      if rows else '<div class="card empty muted">No campaigns yet. '
                      '<a href="/scout">Open Scout to start one</a>.</div>')
             body = (f'<h1>Scout campaigns</h1><div class="row">'
+                    f'<a class="chip" href="/scout/new">New adaptive campaign</a>'
+                    f'<a class="chip" href="/scout/history">History</a>'
                     f'<a class="chip" href="/scout">Scout home</a>'
                     f'<a class="chip" href="/results">Results</a>'
                     f'<span class="chip">Active {len(ov.active_campaigns)}</span></div>'
@@ -1391,6 +1421,211 @@ function startCampaign(){{
                     f'<p class="muted">Campaign start + Pause/Resume/Stop Safely/Cancel controls are '
                     f'on <a href="/scout">Scout home</a> (bounded, read-only; nothing is sent).</p>')
             return _page("AI QA Factory — Scout campaigns", "/scout", body)
+
+        # --- v3.3 adaptive Scout operator workflow -------------------------------------------
+        def _campaign_service(self):
+            from core.scout.campaign_service import CampaignService
+            return CampaignService(service.output_dir)
+
+        def _scout_preflight(self):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            body = body or {}
+            preset = str(body.get("campaign_preset") or "balanced-production")
+            try:
+                out = self._campaign_service().preflight(
+                    campaign_preset=preset,
+                    probe_browser_launch=bool(body.get("probe_browser", True)),
+                    do_network=bool(body.get("probe_network", True)))
+            except Exception as exc:
+                return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return self._json(200, {"ok": True, **out})
+
+        def _scout_launch(self):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            body = body or {}
+            overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else None
+            try:
+                res = self._campaign_service().launch(
+                    campaign_preset=str(body.get("campaign_preset") or "balanced-production"),
+                    session_preset=body.get("session_preset") or None, overrides=overrides,
+                    approve_live_discovery=bool(body.get("approve_live_discovery")),
+                    background=True)
+            except Exception as exc:
+                return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return self._json(200, {"ok": True, **res})
+
+        def _scout_control(self, parsed):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            qs = parse_qs(parsed.query)
+            return self._json(200, self._campaign_service().control(
+                (qs.get("id") or [""])[0], (qs.get("action") or [""])[0]))
+
+        def _scout_export(self, parsed):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            cid = (parse_qs(parsed.query).get("id") or [""])[0]
+            try:
+                return self._json(200, {"ok": True, "bundle": self._campaign_service().export_bundle(cid)})
+            except Exception as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
+
+        def _scout_new_page(self) -> str:
+            cat = self._campaign_service().catalog()
+            opts = "".join(
+                f'<option value="{_esc(p["key"])}"{" selected" if p["key"]==cat["default_campaign_preset"] else ""}>'
+                f'{_esc(p["label"])}{" (smoke)" if p.get("is_smoke") else ""}</option>'
+                for p in cat["campaign_presets"])
+            sess = "".join(f'<option value="{_esc(s["key"])}">{_esc(s["label"])} '
+                           f'({s["max_discovered"]} discovered / {s["max_qa_analyzed"]} QA / '
+                           f'{s["max_duration_min"]}m)</option>' for s in cat["session_presets"])
+            strat = "".join(f'<option value="{_esc(s)}">{_esc(s)}</option>'
+                            for s in cat["strategies"])
+            body = (
+                '<h1>New Scout campaign</h1>'
+                '<div class="row"><a class="chip" href="/scout/history">History</a>'
+                '<a class="chip" href="/scout">Scout home</a></div>'
+                '<div class="card"><label>Preset<br><select id="preset">' + opts + '</select></label>'
+                '<label> Session (budget)<br><select id="session"><option value="">preset default</option>'
+                + sess + '</select></label>'
+                '<label> Strategy<br><select id="strategy"><option value="">preset default</option>'
+                + strat + '</select></label>'
+                '<label> Countries (comma, blank = no restriction)<br>'
+                '<input id="countries" placeholder="us, de"></label>'
+                '<p class="muted">Presets are editable templates. Every run is finite (hard '
+                'ceilings) and never sends anything. Live discovery needs your explicit approval '
+                'and a configured Tavily key.</p>'
+                '<div class="row"><button id="pf" class="chip">Run readiness preflight</button></div>'
+                '<pre id="pfout" class="scrollx muted"></pre>'
+                '<label><input type="checkbox" id="approve"> I approve one bounded LIVE discovery '
+                'run (real external sites, no submissions/purchases/messages)</label>'
+                '<div class="row"><button id="run" class="chip">Run campaign</button></div>'
+                '<div id="msg" class="muted"></div></div>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";\n"
+                "function J(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json());}\n"
+                "function ov(){var c=document.getElementById('countries').value.trim();"
+                "var o={};if(c){o.countries=c.split(',').map(s=>s.trim()).filter(Boolean);}"
+                "var st=document.getElementById('strategy').value;if(st){o.strategy=st;}return o;}\n"
+                "document.getElementById('pf').onclick=function(){"
+                "document.getElementById('pfout').textContent='running real probes (browser launch"
+                " + network)…';"
+                "J('/api/scout/preflight',{campaign_preset:document.getElementById('preset').value})"
+                ".then(function(j){document.getElementById('pfout').textContent="
+                "JSON.stringify(j.preflight||j,null,2);}).catch(e=>{"
+                "document.getElementById('pfout').textContent='preflight failed: '+e;});};\n"
+                "document.getElementById('run').onclick=function(){"
+                "if(!document.getElementById('approve').checked){alert('approve the bounded live run"
+                " first');return;}var msg=document.getElementById('msg');msg.textContent='launching…';"
+                "J('/api/scout/launch',{campaign_preset:document.getElementById('preset').value,"
+                "session_preset:document.getElementById('session').value||null,"
+                "approve_live_discovery:true,overrides:ov()}).then(function(j){"
+                "if(j.ok){location.href='/scout/progress?id='+encodeURIComponent(j.campaign_id);}"
+                "else{msg.textContent='launch refused: '+(j.error||'unknown');}})"
+                ".catch(e=>{msg.textContent='launch failed: '+e;});};\n")
+            return _page("AI QA Factory — New Scout campaign", "/scout", body, script)
+
+        def _scout_progress_page(self, cid: str) -> str:
+            body = ('<h1>Campaign progress</h1><div class="row">'
+                    '<a class="chip" href="/scout/new">New campaign</a>'
+                    '<a class="chip" href="/scout/history">History</a></div>'
+                    '<div class="card"><div id="p" class="muted">loading…</div>'
+                    '<div class="row"><button class="chip" onclick="ctl(\'pause\')">Pause</button>'
+                    '<button class="chip" onclick="ctl(\'resume\')">Resume</button>'
+                    '<button class="chip" onclick="ctl(\'stop\')">Stop &amp; Save</button>'
+                    '<button class="chip" onclick="exp()">Export evidence</button></div>'
+                    '<div id="msg" class="muted"></div></div>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";const CID=" + json.dumps(cid) + ";\n"
+                "function ctl(a){fetch('/api/scout/control?id='+encodeURIComponent(CID)+'&action='+a,"
+                "{method:'POST',headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(load);}\n"
+                "function exp(){fetch('/api/scout/export?id='+encodeURIComponent(CID),{method:'POST',"
+                "headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
+                "document.getElementById('msg').textContent=j.ok?('bundle: '+j.bundle):('export failed: '+j.error);});}\n"
+                "function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
+                "function load(){fetch('/api/scout/progress?id='+encodeURIComponent(CID)).then(r=>r.json())"
+                ".then(function(j){var c=j.counters||{};var d=(j.decisions||[]);"
+                "var rows=d.map(function(x){return '<tr><td>'+esc(x.domain)+'</td><td>'+esc(x.priority)+"
+                "'</td><td>'+esc((x.allocation||{}).depth)+'</td><td>'+esc((x.brain||{}).business_model||'')+"
+                "'</td></tr>';}).join('');"
+                "document.getElementById('p').innerHTML='<div class=row><span class=chip>State: '+esc(j.run_state)+"
+                "'</span><span class=chip>Stop: '+esc(j.stop_reason||'—')+'</span></div>'+"
+                "'<table><tr><th>Discovered</th><th>Eligible</th><th>QA analyzed</th><th>Actionable</th>'+"
+                "'<th>Already</th><th>Rejected</th><th>Failed</th></tr><tr><td>'+[c.discovered,c.eligible,"
+                "c.qa_analyzed,c.actionable,c.already_analyzed,c.rejected,c.failed].map(v=>esc(v==null?0:v)).join('</td><td>')+"
+                "'</td></tr></table>'+(rows?('<table><caption>Adaptive decisions</caption><tr><th>Domain</th>'+"
+                "'<th>Priority</th><th>Depth</th><th>Business model</th></tr>'+rows+'</table>'):'');});}\n"
+                "load();setInterval(load,3000);\n")
+            return _page("AI QA Factory — Campaign progress", "/scout", body, script)
+
+        def _scout_history_page(self, q) -> str:
+            rows = self._campaign_service().history(filters={"text": (q.get("text") or [""])[0]})
+            trs = "".join(
+                f'<tr><td><a href="/scout/target?domain={_esc(r.get("domain",""))}">{_esc(r.get("domain",""))}</a></td>'
+                f'<td>{_badge(r.get("analysis_status",""))}</td>'
+                f'<td class="muted">{_esc(", ".join(r.get("campaign_ids",[])[:2]))}</td>'
+                f'<td class="muted">{_fmt_ts(r.get("last_analysis_at",""))}</td>'
+                f'<td class="muted">{_esc(r.get("reason","") or r.get("evidence_ref",""))}</td></tr>'
+                for r in rows)
+            table = (f'<table><caption>Analyzed-site history ({len(rows)})</caption><tr><th>Domain</th>'
+                     f'<th>Status</th><th>Campaigns</th><th>Analyzed</th><th>Notes</th></tr>{trs}</table>'
+                     if rows else '<div class="card empty muted">No analyzed sites yet.</div>')
+            body = (f'<h1>Scout history</h1><div class="row">'
+                    f'<a class="chip" href="/scout/new">New campaign</a></div>'
+                    f'<form method="get" class="row"><input name="text" placeholder="filter domain/text" '
+                    f'value="{_esc((q.get("text") or [""])[0])}"><button class="chip">Filter</button></form>'
+                    f'<div class="scrollx">{table}</div>'
+                    f'<p class="muted">Processed targets are skipped by future campaigns; rescan is '
+                    f'explicit. B/C and clean results are retained, never auto-deleted.</p>')
+            return _page("AI QA Factory — Scout history", "/scout", body)
+
+        def _scout_target_page(self, domain: str) -> str:
+            det = self._campaign_service().target_detail(domain)
+            entry, brain = det.get("entry"), det.get("brain")
+            if not entry and not brain:
+                return _page("AI QA Factory — Target", "/scout",
+                             f'<h1>Target</h1><div class="card empty muted">No record for '
+                             f'{_esc(domain)}.</div>')
+            b = brain or {}
+            bs = (b.get("brain") or {})
+            scores = bs.get("scores", {})
+            plan = (b.get("plan") or {})
+            body = (
+                f'<h1>{_esc(domain)}</h1><div class="row">'
+                f'<a class="chip" href="/scout/history">Back to history</a></div>'
+                f'<div class="card"><h2>What Scout thinks this is</h2>'
+                f'<p><b>Archetype:</b> {_esc(bs.get("archetype","—"))} · '
+                f'<b>Business model:</b> {_esc(bs.get("business_model","—"))} · '
+                f'<b>Understanding confidence:</b> {_esc(bs.get("understanding_confidence","—"))}%</p>'
+                f'<p><b>Critical journeys:</b> {_esc(", ".join(bs.get("primary_journeys",[])))}</p>'
+                f'<p><b>Priority:</b> {_badge(b.get("priority","—"))} · '
+                f'<b>Scores</b> commercial {scores.get("commercial","—")} / QA {scores.get("qa_value","—")} / '
+                f'evidence {scores.get("evidence_confidence","—")} / safety {scores.get("safety_confidence","—")} / '
+                f'combined {scores.get("combined_opportunity","—")}</p></div>'
+                f'<div class="card"><h2>Why Scout tested this / what it skipped</h2>'
+                f'<p><b>Depth:</b> {_esc((b.get("allocation") or {}).get("depth","—"))} · '
+                f'<b>Allowed interaction:</b> {_esc(plan.get("allowed_interaction_mode","—"))}</p>'
+                f'<p><b>Checks selected:</b> {_esc(", ".join(plan.get("checks_selected",[])))}</p>'
+                f'<p><b>Checks skipped:</b> {_esc(", ".join(plan.get("checks_skipped",[])))}</p>'
+                f'<p><b>Stop boundary:</b> {_esc(", ".join(plan.get("stop_boundaries",[])) or "—")}</p>'
+                f'<p class="muted"><b>Decisions:</b> {_esc(" · ".join(plan.get("decisions",[])))}</p></div>'
+                f'<div class="card"><h2>Persisted record</h2>'
+                f'<p><b>Status:</b> {_badge((entry or {}).get("analysis_status","—"))} · '
+                f'<b>Evidence ref:</b> <code>{_esc((entry or {}).get("evidence_ref","—"))}</code></p>'
+                f'<p class="muted">Recheck / Reproduce / Record short video / Capture stronger evidence '
+                f'are available on a live-analyzed target (bounded, fail-closed).</p></div>')
+            return _page("AI QA Factory — Target detail", "/scout", body)
 
         # --- Scout data pages, unified into the shared layout (reuse existing data) -----------
         def _results_page(self, q) -> str:
