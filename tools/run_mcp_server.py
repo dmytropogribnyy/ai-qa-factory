@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))  # noqa: E402
 
+from integrations.mcp.observer_handlers import OBSERVER_TOOL_NAMES  # noqa: E402
 from integrations.mcp.tool_handlers import APP_VERSION, TOOL_NAMES  # noqa: E402
 
 _BLOCKED_FLAGS = {
@@ -66,12 +67,18 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.list_tools:
-        print(f"AI QA Factory MCP Server v{APP_VERSION} — Available tools ({len(TOOL_NAMES)}):")
+        total = len(TOOL_NAMES) + len(OBSERVER_TOOL_NAMES)
+        print(f"AI QA Factory MCP Server v{APP_VERSION} — Available tools ({total}):")
+        print(f" Planning tools ({len(TOOL_NAMES)}):")
         for name in TOOL_NAMES:
+            print(f"  - {name}")
+        print(f" Observer read-only tools ({len(OBSERVER_TOOL_NAMES)}):")
+        for name in OBSERVER_TOOL_NAMES:
             print(f"  - {name}")
         print()
         print("Start server: python tools/run_mcp_server.py")
         print("Install:      pip install mcp")
+        print("Output root:  set AIQA_OUTPUT_ROOT (default: outputs)")
         return
 
     if args.demo_health:

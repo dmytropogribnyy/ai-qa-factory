@@ -33,6 +33,7 @@ try:
 except ImportError:
     _MCP_AVAILABLE = False
 
+from integrations.mcp.observer_handlers import OBSERVER_HANDLERS, OBSERVER_TOOL_SCHEMAS
 from integrations.mcp.tool_handlers import HANDLERS, APP_VERSION
 
 _SERVER_NAME = "qa-factory"
@@ -189,8 +190,18 @@ _TOOL_SCHEMAS: list[dict] = [
 ]
 
 
+# The full tool catalog = the original planning tools + the read-only Observer tools.
+ALL_TOOL_SCHEMAS: list[dict] = _TOOL_SCHEMAS + OBSERVER_TOOL_SCHEMAS
+
+
 def _call_handler(name: str, arguments: dict) -> str:
-    """Dispatch tool call and return JSON string result."""
+    """Dispatch tool call and return JSON string result. Read-only Observer tools are dispatched
+    to OBSERVER_HANDLERS; the original planning tools to HANDLERS."""
+    if name in OBSERVER_HANDLERS:
+        try:
+            return json.dumps(OBSERVER_HANDLERS[name](arguments), indent=2, default=str)
+        except Exception as exc:                       # structured error, no traceback/secret
+            return json.dumps({"status": "error", "message": f"{type(exc).__name__}"})
     if name not in HANDLERS:
         return json.dumps({"status": "error", "message": f"Unknown tool: {name}"})
     try:
@@ -220,7 +231,7 @@ def build_server() -> "Server":
                 description=t["description"],
                 inputSchema=t["inputSchema"],
             )
-            for t in _TOOL_SCHEMAS
+            for t in ALL_TOOL_SCHEMAS
         ]
 
     @server.call_tool()
