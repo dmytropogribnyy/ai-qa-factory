@@ -46,13 +46,45 @@ def discovery_cli_args(args) -> list:
     return cli
 
 
+# Supported scheduled modes. "manual" has no scheduled trigger (use run-now).
+SCHEDULE_MODES = ("manual", "daily", "weekdays", "weekly", "once")
+
+
+class ScheduleModeError(ValueError):
+    """Raised for an unknown mode or 'manual' (which has no scheduled task)."""
+
+
+def schedule_trigger_args(mode: str, *, time: str = "09:00", day: str = "MON",
+                          start_date: str = "") -> list:
+    """The schtasks /SC trigger fragment for a scheduled mode. 'manual' raises (no task).
+
+    Every scheduled mode still runs the same bounded campaign with the same ceilings/safety/
+    dedup/recovery/stop-reasons — only the trigger differs."""
+    m = (mode or "daily").lower()
+    if m == "daily":
+        return ["/SC", "DAILY", "/ST", time]
+    if m == "weekdays":
+        return ["/SC", "WEEKLY", "/D", "MON,TUE,WED,THU,FRI", "/ST", time]
+    if m == "weekly":
+        return ["/SC", "WEEKLY", "/D", day, "/ST", time]
+    if m == "once":
+        from datetime import date
+        return ["/SC", "ONCE", "/SD", start_date or date.today().strftime("%Y/%m/%d"), "/ST", time]
+    if m == "manual":
+        raise ScheduleModeError("manual mode has no scheduled task; use 'run-now'")
+    raise ScheduleModeError(f"unknown schedule mode: {mode!r}")
+
+
 def build_create_argv(args) -> list:
     """Build the schtasks /Create argv. Creates the task DISABLED by default. The command it runs is
     the canonical CLI — NEVER the API key."""
     inner = " ".join(f'"{a}"' if " " in a else a for a in discovery_cli_args(args))
     tr = f'cmd /c cd /d "{REPO}" && {inner}'
+    trigger = schedule_trigger_args(getattr(args, "mode", "daily"),
+                                    time=getattr(args, "time", "09:00"),
+                                    day=getattr(args, "day", "MON"))
     return ["schtasks", "/Create", "/TN", task_name(args.campaign_id), "/TR", tr,
-            "/SC", "DAILY", "/ST", getattr(args, "time", "09:00"), "/F", "/DISABLE"]
+            *trigger, "/F", "/DISABLE"]
 
 
 def _run(argv: list) -> int:
@@ -74,6 +106,8 @@ def main() -> int:
     ap.add_argument("--industries", default="")
     ap.add_argument("--business-types", dest="business_types", default="")
     ap.add_argument("--keywords", default="")
+    ap.add_argument("--mode", default="daily", choices=list(SCHEDULE_MODES))
+    ap.add_argument("--day", default="MON")
     ap.add_argument("--time", default="09:00")
     ap.add_argument("--max-results", dest="max_results", type=int, default=10)
     ap.add_argument("--max-requests", dest="max_requests", type=int, default=8)
@@ -84,7 +118,10 @@ def main() -> int:
     if args.action == "run-now":                       # plain CLI; overlap-guarded by the run-lock
         return _run(discovery_cli_args(args))
     if args.action == "create":
-        print(f"Creating DISABLED task {tn} (enable explicitly to activate). Key is NOT in the task.")
+        if args.mode == "manual":
+            print("mode=manual has no scheduled task; use 'run-now' to run on demand.")
+            return 2
+        print(f"Creating DISABLED {args.mode} task {tn} (enable explicitly). Key is NOT in the task.")
         return _run(build_create_argv(args))
     if args.action == "status":
         return _run(["schtasks", "/Query", "/TN", tn, "/FO", "LIST", "/V"])
