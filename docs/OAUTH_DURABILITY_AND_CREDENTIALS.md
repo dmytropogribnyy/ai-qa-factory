@@ -66,12 +66,19 @@ email is sent during reauthorization.**
 
 There is **no evidence of a PAT ever being committed or exposed in this repository.** The earlier
 "PAT-in-env workaround" put a token in a local environment variable (a GitHub MCP DCR workaround), not
-in the repo. Repository/security records therefore **cannot prove or disprove** rotation of any token
-that may have been shared outside the repo (chat/logs).
+in the repo.
 
-**Owner-only verification (C):** if a PAT was ever pasted into any session, log, or external channel,
-rotate it at <https://github.com/settings/tokens> (revoke the old token, issue a new fine-scoped one).
-This cannot be proven closed from repo records and is **not marked closed**.
+**Owner decision (recorded):** the owner reviewed the GitHub token inventory and explicitly authorizes
+**retaining** the existing fine-grained token **"Claude_vscode"** — do **not** rotate or delete it.
+Owner-supplied evidence: fine-grained token; actively used; expires **2026-10-16**; **no classic PAT
+exists**; repository secret scanning and Git history found no exposure. The fine-grained token's exact
+repository selection and permissions are visible only in the owner's Developer Settings UI
+(`github.com/settings/tokens`) — the API does not expose another token's scope selection without the
+token itself, so this is confirmed by owner review, not reprinted here (the credential is never shown).
+
+**Classification: Owner reviewed — retained by explicit owner decision; no in-repository exposure found;
+residual risk accepted.** The token was **not** rotated (by owner choice). This owner decision
+**resolves** the owner-only release blocker.
 
 ## 3. Local secret hygiene (evidenced)
 
