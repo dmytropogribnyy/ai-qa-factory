@@ -30,6 +30,11 @@ DISCOVERED, ANALYZING, ANALYZED, FAILED, SKIPPED, REJECTED = (
     "discovered", "analyzing", "analyzed", "failed", "skipped", "rejected")
 # rescan modes
 RESCAN_MANUAL, RESCAN_INTERVAL, RESCAN_FINGERPRINT = "manual", "interval", "fingerprint"
+# engagement (sales) funnel — tracked separately from analysis_status. won/delivered are set from
+# the client-work lifecycle; contacted is a soft signal (draft copied); replied/lost are manual.
+ENG_PROSPECT, ENG_CONTACTED, ENG_REPLIED, ENG_WON, ENG_DELIVERED, ENG_LOST = (
+    "prospect", "contacted", "replied", "won", "delivered", "lost")
+ENGAGEMENT_STATES = (ENG_PROSPECT, ENG_CONTACTED, ENG_REPLIED, ENG_WON, ENG_DELIVERED, ENG_LOST)
 
 
 def _now_iso() -> str:
@@ -56,6 +61,10 @@ class SiteEntry:
     next_rescan_at: str = ""
     lock_owner: str = ""
     lock_until: float = 0.0
+    # engagement / sales funnel (separate from analysis_status)
+    engagement_status: str = ENG_PROSPECT
+    work_id: str = ""
+    engagement_updated_at: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
@@ -212,6 +221,22 @@ class AnalyzedSiteRegistry:
             return False
         e.analysis_status = DISCOVERED           # eligible again; the run will re-claim + analyze
         e.reason = ""
+        self._save()
+        return True
+
+    def set_engagement(self, url_or_domain: str, status: str, *, work_id: str = "") -> bool:
+        """Advance the sales-funnel status of a known target (prospect->contacted->replied->won->
+        delivered/lost). Won/delivered are normally set from the client-work lifecycle; others by
+        the operator. Rejects an unknown status or unknown target (never invents an entry)."""
+        if status not in ENGAGEMENT_STATES:
+            return False
+        e = self.get(url_or_domain)
+        if e is None:
+            return False
+        e.engagement_status = status
+        if work_id:
+            e.work_id = work_id
+        e.engagement_updated_at = _now_iso()
         self._save()
         return True
 

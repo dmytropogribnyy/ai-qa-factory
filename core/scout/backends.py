@@ -14,6 +14,7 @@ tokens); no raw cookies/credentials are ever stored on the observation.
 """
 from __future__ import annotations
 
+import os
 import time
 import urllib.error
 import urllib.request
@@ -342,10 +343,11 @@ class PlaywrightBackend:
     name = "playwright"
 
     def __init__(self, policy: Optional[UrlPolicy] = None, screenshot_dir: Optional[str] = None,
-                 _playwright_factory=None) -> None:
+                 _playwright_factory=None, headful: Optional[bool] = None) -> None:
         self.policy = policy or UrlPolicy()
         self.screenshot_dir = screenshot_dir
         self._playwright_factory = _playwright_factory
+        self.headful = headful          # None -> follow SCOUT_HEADFUL env; True/False -> force
 
     def _url_allowed(self, url: str) -> bool:
         return check_url(url, policy=self.policy).eligible
@@ -368,7 +370,14 @@ class PlaywrightBackend:
                 )
                 return obs
         with factory() as p:
-            browser = p.chromium.launch(headless=True)
+            # Headless by default (unattended, background-safe). An explicit headful flag (e.g. a
+            # headed replay) wins; otherwise SCOUT_HEADFUL=1 opens a visible, slow-mo window to WATCH.
+            headful = (self.headful if self.headful is not None
+                       else os.getenv("SCOUT_HEADFUL", "").lower() in ("1", "true", "yes", "on"))
+            launch_kwargs: Dict[str, Any] = {"headless": not headful}
+            if headful:
+                launch_kwargs["slow_mo"] = 400
+            browser = p.chromium.launch(**launch_kwargs)
             context = browser.new_context()
             try:
                 page = context.new_page()
@@ -452,7 +461,8 @@ class _HeaderShim:
         return self._d.items()
 
 
-def make_backend(mode: str, policy: Optional[UrlPolicy] = None, screenshot_dir: Optional[str] = None):
+def make_backend(mode: str, policy: Optional[UrlPolicy] = None, screenshot_dir: Optional[str] = None,
+                 headful: Optional[bool] = None):
     if mode == "playwright":
-        return PlaywrightBackend(policy=policy, screenshot_dir=screenshot_dir)
+        return PlaywrightBackend(policy=policy, screenshot_dir=screenshot_dir, headful=headful)
     return StaticHttpBackend(policy=policy)
