@@ -29,6 +29,13 @@ universal orchestration + MCP-consumption layer (ARK). Read `docs/PRODUCT_VISION
 Report real command output. Do not claim success without it. Commit/push only when the
 human explicitly authorises it.
 
+**Fast local loop (efficiency):** while iterating, do NOT run the whole suite every time. The
+pre-commit hook only lints (ruff on staged files); the full 4-job suite runs in CI on push/PR to
+`main`. Use `python tools/test.py affected` (import-graph based — runs only the tests that import
+your changed modules) or `python tools/test.py scout` (the v3.3 Scout regression subset). Run the
+**full** `pytest tests/ -q` once at the pre-merge gate (step 2 above) so cross-module / Windows
+regressions are still caught — that gate is not optional before merging to `main`.
+
 ## Current phase (v3.2 — Autonomous AI QA Operator Pro)
 
 Two distinct surfaces exist; keep them straight:
