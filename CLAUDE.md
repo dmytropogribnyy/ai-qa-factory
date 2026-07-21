@@ -30,11 +30,19 @@ Report real command output. Do not claim success without it. Commit/push only wh
 human explicitly authorises it.
 
 **Fast local loop (efficiency):** while iterating, do NOT run the whole suite every time. The
-pre-commit hook only lints (ruff on staged files); the full 4-job suite runs in CI on push/PR to
-`main`. Use `python tools/test.py affected` (import-graph based — runs only the tests that import
-your changed modules) or `python tools/test.py scout` (the v3.3 Scout regression subset). Run the
-**full** `pytest tests/ -q` once at the pre-merge gate (step 2 above) so cross-module / Windows
-regressions are still caught — that gate is not optional before merging to `main`.
+pre-commit hook only lints (ruff on staged files). Use `python tools/test.py affected` (import-graph
+based — runs only the tests that import your changed modules) or `python tools/test.py scout` (the
+v3.3 Scout regression subset). Run the **full** `pytest tests/ -q` once at the pre-merge gate (step 2
+above) so cross-module / Windows regressions are still caught — that gate is not optional before
+merging to `main`.
+
+**Tiered CI (matches the local loop):** a pull request runs a LIGHT gate — ruff + affected tests +
+a short Scout smoke + docs/agent audits + provider-contract; concurrent reruns on the same ref are
+cancelled. The heavy jobs (real browser acceptance, Windows full suite) run on a PR only when the
+change touches Dashboard / Playwright / process-runtime / platform code (path filter) or the PR
+carries the `full-ci` label. The FULL gate (full deterministic suite ×2 OS + browser acceptance)
+runs on push to `main`, nightly, release tags, and manual dispatch. A `[CLAUDE SLICE READY]` note
+must honestly list which targeted gates ran and why they cover the change's scope.
 
 ## Current phase (v3.2 — Autonomous AI QA Operator Pro)
 

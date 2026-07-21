@@ -5,16 +5,32 @@ name: CI
 # never contacts a real third-party target, and publishes no secrets. Every real provider adapter
 # refuses external calls because PROSPECT_RADAR_EXTERNAL_SEND_DISABLED=1 is set for all jobs; all
 # sending in tests uses the confined local sink or an injected fake transport.
+#
+# Tiered, selective gates (so a small PR is not a ~10-minute wall):
+#   * Pull request (light, fast): ruff + affected tests (tools/test.py) + a short Scout cross-module
+#     smoke + docs/agent audits + provider-contract. The heavy browser / Windows jobs run on a PR
+#     ONLY when the changes touch Dashboard / Playwright / process-runtime / platform-specific code
+#     (path filter), or when the PR carries the `full-ci` label.
+#   * FULL gate (full deterministic suite ×2 OS + real browser acceptance): on push to main, nightly,
+#     release tags, manual dispatch, or the `full-ci` label. This is the authoritative regression gate.
+# Redundant in-progress runs on the same ref are cancelled (no stacked reruns while iterating).
 
 on:
   push:
     branches: [main]
+    tags: ["v*", "*-v*"]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "0 3 * * *" # nightly full gate on main
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   LLM_MODE: mock
@@ -22,10 +38,70 @@ env:
   PROSPECT_RADAR_EXTERNAL_SEND_DISABLED: "1"
 
 jobs:
+  # Decide the gate tier + which heavy jobs are relevant for this change.
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.decide.outputs.full }}
+      browser: ${{ steps.decide.outputs.browser }}
+      windows: ${{ steps.decide.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            browser:
+              - '.github/workflows/ci.yml'
+              - 'requirements.txt'
+              - 'core/scout/dashboard.py'
+              - 'core/dashboard/**'
+              - 'core/scout/preflight.py'
+              - 'core/scout/backends.py'
+              - 'core/scout/demo_site.py'
+              - 'core/project_blueprint_builder.py'
+              - 'core/schemas/project_blueprint.py'
+              - 'tests/**dashboard**'
+              - 'tests/**browser**'
+              - 'tests/**playwright**'
+            windows:
+              - '.github/workflows/ci.yml'
+              - 'requirements.txt'
+              - 'scripts/**'
+              - '**/*.ps1'
+              - 'core/orchestration/claude_worker.py'
+              - 'core/orchestration/work_execution.py'
+              - 'core/orchestration/operator_executor.py'
+              - 'main.py'
+              - 'tools/**'
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          HAS_FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          BROWSER_PATHS: ${{ steps.filter.outputs.browser }}
+          WINDOWS_PATHS: ${{ steps.filter.outputs.windows }}
+        run: |
+          full=false
+          case "$EVENT" in push|schedule|workflow_dispatch) full=true ;; esac
+          if [ "$HAS_FULL_LABEL" = "true" ]; then full=true; fi
+          browser=$full; windows=$full
+          if [ "$BROWSER_PATHS" = "true" ]; then browser=true; fi
+          if [ "$WINDOWS_PATHS" = "true" ]; then windows=true; fi
+          {
+            echo "full=$full"
+            echo "browser=$browser"
+            echo "windows=$windows"
+          } >> "$GITHUB_OUTPUT"
+          echo "tier: full=$full browser=$browser windows=$windows (event=$EVENT)"
+
   core-deterministic:
+    needs: meta
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # affected-test selection diffs against origin/main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -36,15 +112,27 @@ jobs:
           pip install -r requirements.txt
       - name: Ruff
         run: python -m ruff check .
-      - name: Full deterministic tests (browser-free, network-free, no external email)
-        run: python -m pytest tests/ -q -ra --junitxml=reports/junit-core.xml
+      - name: Tests — FULL deterministic suite on the gate; affected + Scout smoke on a light PR
+        env:
+          FULL: ${{ needs.meta.outputs.full }}
+        run: |
+          mkdir -p reports
+          if [ "$FULL" = "true" ]; then
+            python -m pytest tests/ -q -ra --junitxml=reports/junit-core.xml
+          else
+            echo "== light PR: affected tests (import-graph) =="
+            python tools/test.py affected origin/main -q -ra --junitxml=reports/junit-core.xml
+            echo "== short cross-module smoke: Scout v3.3 regression subset =="
+            python tools/test.py scout -q
+          fi
       - name: Docs audit
         run: python tools/docs_audit.py --no-write
       - name: Agent readiness audit
         run: python tools/agent_readiness_audit.py
       - name: Whitespace check
         run: git diff --check
-      - name: Scout + discovery + pre-send + radar demos + audits (no network, nothing sent)
+      - name: Scout + discovery + pre-send + radar demos + audits (FULL gate only; no network)
+        if: needs.meta.outputs.full == 'true'
         run: |
           python main.py scout demo
           python main.py scout campaign-demo
@@ -60,7 +148,41 @@ jobs:
           path: reports/junit-core.xml
           if-no-files-found: ignore
 
+  provider-contract:
+    # LocalSinkProvider + fake Gmail/Resend transports + OAuth config parsing with fixture creds only.
+    # No real credential, no external recipient, no live endpoint, no Google client library. Fast, so
+    # it runs on every PR as a cheap contract signal.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Communication + provider contract tests (local sink / fake transports)
+        run: >-
+          python -m pytest -q --junitxml=reports/junit-provider.xml
+          tests/test_final2_send.py tests/test_final2_e2e.py tests/test_final2_mcp_integration.py
+          tests/test_final2_events.py tests/test_final2_event_trust.py tests/test_final2_provenance.py
+          tests/test_final2_references.py tests/test_final2_review.py tests/test_final2_state_machines.py
+          tests/test_final2_attempts_and_race.py tests/test_final2_gmail.py tests/test_final2_resend.py
+          tests/test_final2_limits.py tests/test_final2_cli.py tests/test_final2_migration.py
+      - name: Upload bounded provider report (no secrets)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-provider
+          path: reports/junit-provider.xml
+          if-no-files-found: ignore
+
   browser-acceptance:
+    needs: meta
+    # FULL gate, or a PR that touches Dashboard / Playwright / browser-relevant code (path filter).
+    if: needs.meta.outputs.browser == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,37 +233,10 @@ jobs:
           path: reports/screenshots/
           if-no-files-found: warn
 
-  provider-contract:
-    # LocalSinkProvider + fake Gmail/Resend transports + OAuth config parsing with fixture creds only.
-    # No real credential, no external recipient, no live endpoint, no Google client library.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Install core dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Communication + provider contract tests (local sink / fake transports)
-        run: >-
-          python -m pytest -q --junitxml=reports/junit-provider.xml
-          tests/test_final2_send.py tests/test_final2_e2e.py tests/test_final2_mcp_integration.py
-          tests/test_final2_events.py tests/test_final2_event_trust.py tests/test_final2_provenance.py
-          tests/test_final2_references.py tests/test_final2_review.py tests/test_final2_state_machines.py
-          tests/test_final2_attempts_and_race.py tests/test_final2_gmail.py tests/test_final2_resend.py
-          tests/test_final2_limits.py tests/test_final2_cli.py tests/test_final2_migration.py
-      - name: Upload bounded provider report (no secrets)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: junit-provider
-          path: reports/junit-provider.xml
-          if-no-files-found: ignore
-
   windows-smoke:
+    needs: meta
+    # FULL gate, or a PR that touches PowerShell / process-runtime / platform-specific code.
+    if: needs.meta.outputs.windows == 'true'
     # The product's primary platform is Windows + PowerShell. This proves the full deterministic
     # suite passes on windows-latest and that the operator PowerShell scripts parse cleanly.
     runs-on: windows-latest
