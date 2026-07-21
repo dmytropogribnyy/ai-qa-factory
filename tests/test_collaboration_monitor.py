@@ -140,6 +140,20 @@ def test_driver_surfaces_model_effort_and_tokens(tmp_path):
     assert "daily_tokens" in drv["budget"]
 
 
+def test_snapshot_reports_delivery_and_billing_source(tmp_path):
+    _checkpoint(CollaborationStore(str(tmp_path)))
+    d = Path(tmp_path) / "_review_relay" / "collab_delivery"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "q-live_k.json").write_text(json.dumps({
+        "message_id": "q-live:k", "delivered_at": "2026-07-21T20:00:00+00:00", "returncode": 0,
+        "claude_cost_usd": 0.021, "claude_model": "claude-haiku-4-5",
+        "billing_source": "subscription", "billing_plan": "pro"}), encoding="utf-8")
+    dl = _monitor(tmp_path).snapshot()["delivery"]
+    assert dl["delivered"] == 1
+    assert dl["claude_cost_usd"] == 0.021
+    assert dl["billing_source"] in ("subscription", "api_credits", "unknown")  # honest, env-derived
+
+
 def test_snapshot_includes_budget_and_bounded_timeline(tmp_path):
     store = CollaborationStore(str(tmp_path))
     _checkpoint(store)

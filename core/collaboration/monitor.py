@@ -140,9 +140,35 @@ class CollaborationMonitor:
             "ci_refs": ci_refs, "timeline": timeline,
         }
 
+    def _delivery(self) -> Dict[str, Any]:
+        """Honest delivery telemetry + billing source (invariant 9): how the local Claude worker that
+        receives decisions is actually paid for (Max/Pro subscription allocation vs API credits)."""
+        from core.collaboration.session_delivery import billing_mode
+        base = Path(self._out) / "_review_relay" / "collab_delivery"
+        delivered = 0
+        cost = 0.0
+        model = ""
+        if base.is_dir():
+            for path in base.glob("*.json"):
+                if path.name.endswith((".decision.json", ".attempts.json")):
+                    continue
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(data, dict) or "delivered_at" not in data:
+                    continue
+                delivered += 1
+                cost += float(data.get("claude_cost_usd") or 0.0)
+                model = data.get("claude_model") or model
+        bm = billing_mode()
+        return {"delivered": delivered, "claude_cost_usd": round(cost, 6), "claude_model": model,
+                "billing_source": bm.get("source"), "billing_plan": bm.get("plan", "")}
+
     def snapshot(self) -> Dict[str, Any]:
         head = self._resolve_head("").lower()             # representative current-branch head
         driver = self._driver()
+        delivery = self._delivery()
         threads = [self._thread_view(t) for t in self._store.threads()]
         threads.sort(key=lambda t: t.get("thread_id", ""))
         needs_owner = (driver["stage"] == "NEEDS_OWNER"
@@ -151,5 +177,5 @@ class CollaborationMonitor:
                   "needs_owner": sum(1 for t in threads if t["state"] == "NEEDS_OWNER"),
                   "done": sum(1 for t in threads if t["state"] == "DONE")}
         return {"schema": SCHEMA_VERSION, "generated_at": self._clock(), "current_head": head,
-                "driver": driver, "owner_action_required": needs_owner, "threads": threads,
-                "counts": counts}
+                "driver": driver, "delivery": delivery, "owner_action_required": needs_owner,
+                "threads": threads, "counts": counts}

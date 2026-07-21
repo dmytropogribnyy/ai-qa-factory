@@ -2810,6 +2810,19 @@ def _collab_body(snap: dict) -> str:
         f'<span title="spend is $0 until AIQA_REVIEWER_PRICE_PER_MTOK_IN/OUT is configured; token '
         f'counts are real">(spend est.)</span></p>{err}</div>')
 
+    dl = snap.get("delivery", {})
+    bsrc = dl.get("billing_source") or "unknown"
+    billing_label = (f'Claude {_esc(dl.get("billing_plan") or "?")} subscription allocation'
+                     if bsrc == "subscription" else
+                     ("Anthropic API credits" if bsrc == "api_credits" else "unknown (verify via /status)"))
+    delivery_card = (
+        '<div class="card"><h2 style="margin-top:0">Claude delivery worker</h2>'
+        f'<p class="muted">delivered {int(dl.get("delivered",0))} &middot; model '
+        f'<code>{_esc(dl.get("claude_model") or "—")}</code> &middot; cost '
+        f'${float(dl.get("claude_cost_usd",0)):.4f}</p>'
+        f'<p class="muted">billing source: <strong>{billing_label}</strong></p></div>')
+    driver_card += delivery_card
+
     threads = snap.get("threads", [])
     if not threads:
         rows = '<div class="card"><p class="muted">No collaboration threads yet.</p></div>'

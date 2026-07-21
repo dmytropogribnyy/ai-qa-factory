@@ -18,6 +18,27 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+# Strict argv-safe classes for values interpolated into the fixed ACK command shown to the resumed
+# session — a quote or shell metacharacter must never be able to alter the command.
+_SAFE_THREAD_ARG = re.compile(r"^[0-9A-Za-z._-]{1,120}$")
+_SAFE_KEY_ARG = re.compile(r"^[0-9A-Za-z._:-]{1,140}$")
+
+
+def billing_mode() -> Dict[str, str]:
+    """Honestly report how the local Claude delivery is billed (invariant 9): a Claude subscription
+    (Max/Pro allocation) via OAuth, or Anthropic API credits, or unknown. Reads structure only — never
+    a token value."""
+    try:
+        data = json.loads((Path.home() / ".claude" / ".credentials.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"source": "unknown", "plan": ""}
+    oauth = data.get("claudeAiOauth") or data.get("oauth") or {}
+    if isinstance(oauth, dict) and oauth:
+        plan = str(oauth.get("subscriptionType") or oauth.get("subscription") or "").strip()
+        return {"source": "subscription", "plan": plan or "unknown"}
+    if any("apikey" in k.lower() or "api_key" in k.lower() for k in data):
+        return {"source": "api_credits", "plan": ""}
+    return {"source": "unknown", "plan": ""}
 
 
 def _default_head_resolver(workspace: str) -> Callable[[], str]:
@@ -156,18 +177,23 @@ class ClaudeSessionDelivery:
         if not exe:
             raise SessionDeliveryError("no native claude executable resolved; cannot deliver safely")
 
+        decision_key = str(decision.get("idempotency_key") or message_id)
+        # Refuse to build a command from a thread/key that could contain shell metacharacters.
+        if not _SAFE_THREAD_ARG.fullmatch(thread) or not _SAFE_KEY_ARG.fullmatch(decision_key):
+            raise SessionDeliveryError("unsafe thread/decision id for delivery command")
+
         data_path = self._dir / f"{self._safe(message_id)}.decision.json"
         data_path.write_text(json.dumps(decision, ensure_ascii=False, sort_keys=True, indent=2),
                              encoding="utf-8")
-        decision_key = str(decision.get("idempotency_key") or message_id)
         ack_cmd = (f'python tools/collab_ack.py --output-root "{self._output_root}" '
                    f'--thread "{thread}" --decision "{decision_key}" --note "delivered reply applied"')
         prompt = _DELIVERY_PROMPT.format(ack_cmd=ack_cmd, path=str(data_path), thread=thread,
                                          decision_key=decision_key)
-        # Scoped tools: the resumed session only needs to read the decision file and run the fixed
-        # python ACK command. No broad shell, no network, no skip-permissions.
+        # Narrowest possible tool grant: only the exact ACK script + reading the decision file. No broad
+        # shell, no network, no skip-permissions — the resumed session cannot run anything else.
         cmd = [exe, "--resume", session, "-p", prompt, "--output-format", "json",
-               "--permission-mode", "acceptEdits", "--allowedTools", "Bash(python:*)", "Read"]
+               "--permission-mode", "acceptEdits",
+               "--allowedTools", "Bash(python tools/collab_ack.py:*)", "Read"]
         try:
             proc = self._run(cmd, cwd=self._workspace, capture_output=True, text=True,
                              timeout=self._timeout, check=False)
@@ -182,13 +208,35 @@ class ClaudeSessionDelivery:
             return {"status": "failed", "message_id": message_id, "attempts": attempts + 1,
                     "returncode": returncode}
 
+        # Capture the real delivery cost/model from the Claude run for honest Dashboard telemetry.
+        claude_cost, claude_model = self._parse_claude_result(getattr(proc, "stdout", ""))
+        billing = billing_mode()
         # Success marker written ONLY after a successful resume. ACK remains the completion proof.
         marker.write_text(json.dumps({"message_id": message_id, "thread_id": thread,
                                       "session": session, "delivered_at": self._clock(),
-                                      "returncode": 0}, ensure_ascii=False, indent=2),
-                          encoding="utf-8")
+                                      "returncode": 0, "claude_cost_usd": claude_cost,
+                                      "claude_model": claude_model,
+                                      "billing_source": billing.get("source"),
+                                      "billing_plan": billing.get("plan", "")},
+                                     ensure_ascii=False, indent=2), encoding="utf-8")
         return {"status": "delivered", "session": session, "message_id": message_id,
-                "returncode": 0}
+                "returncode": 0, "claude_cost_usd": claude_cost}
+
+    @staticmethod
+    def _parse_claude_result(stdout: Any) -> tuple:
+        try:
+            data = json.loads(str(stdout or "") or "{}")
+        except (ValueError, TypeError):
+            return 0.0, ""
+        if not isinstance(data, dict):
+            return 0.0, ""
+        cost = data.get("total_cost_usd")
+        usage = data.get("modelUsage") or {}
+        model = next(iter(usage.keys()), "") if isinstance(usage, dict) else ""
+        try:
+            return round(float(cost or 0.0), 6), str(model)
+        except (TypeError, ValueError):
+            return 0.0, str(model)
 
     @staticmethod
     def _safe(value: str) -> str:

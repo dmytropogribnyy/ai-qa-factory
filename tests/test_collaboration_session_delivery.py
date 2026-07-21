@@ -179,6 +179,23 @@ def test_stale_decision_is_not_delivered(tmp_path):
     assert ran["n"] == 0
 
 
+def test_unsafe_decision_key_is_refused_before_any_wake(tmp_path):
+    ran = {"n": 0}
+
+    def runner(cmd, **kw):
+        ran["n"] += 1
+        return type("P", (), {"returncode": 0})()
+
+    dec = _decision()
+    dec["message_id"] = "t-1:x"
+    dec["idempotency_key"] = 'evil" ; rm -rf /'          # shell metacharacters must be refused
+    d = ClaudeSessionDelivery(_reg(tmp_path), str(tmp_path), exe_resolver=lambda: "claude.exe",
+                              runner=runner, head_resolver=lambda: _SHA)
+    with pytest.raises(SessionDeliveryError, match="unsafe"):
+        d.deliver(dec)
+    assert ran["n"] == 0                                  # no session woken with a crafted key
+
+
 def test_bounded_failure_attempts_then_exhausted(tmp_path):
     def runner(cmd, **kw):
         return type("P", (), {"returncode": 1})()
