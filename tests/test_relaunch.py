@@ -84,6 +84,18 @@ def test_retry_resumes_the_same_writer_session(tmp_path):
     assert worker2.last_resume == "sess-x"                      # resumed the same writer session
 
 
+def test_single_writer_no_second_launch_while_one_in_progress(tmp_path):
+    store = ProductPacketStore(str(tmp_path))
+    _pkt(store)                                            # packet A
+    store.create(objective="second packet B")             # packet B pending
+    # Manually claim A (simulate an active writer) then attempt a cycle: must not launch a 2nd writer.
+    store.claim(store.next_pending()["packet_id"])
+    worker = _Worker(ok=True)
+    out = relaunch_once(store, worker, workspace=str(tmp_path))
+    assert out["status"] == "writer_busy"
+    assert worker.calls == 0                               # B was not launched while A is in progress
+
+
 def test_summary_reports_status_counts(tmp_path):
     store = ProductPacketStore(str(tmp_path))
     _pkt(store)

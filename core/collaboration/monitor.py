@@ -187,6 +187,7 @@ class CollaborationMonitor:
                 "dashboard_stale_at_check": data.get("dashboard_stale_at_check"),
                 "dashboard_action": data.get("dashboard_action", ""),
                 "driver_stage": data.get("driver_stage", ""),
+                "packets": data.get("packets", {}),
                 "owner_action_required": bool(data.get("owner_action_required"))}
 
     def snapshot(self) -> Dict[str, Any]:

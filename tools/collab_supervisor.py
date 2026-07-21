@@ -56,6 +56,7 @@ class SupervisorDeps:
     driver_tick: Callable[[], Dict[str, Any]]
     heartbeat_age_s: Callable[[], float]
     clock: Callable[[], str] = field(default=_now)
+    packet_summary: Optional[Callable[[], Dict[str, Any]]] = None
 
 
 def supervise_once(deps: SupervisorDeps, cfg: SupervisorConfig) -> Dict[str, Any]:
@@ -86,6 +87,7 @@ def supervise_once(deps: SupervisorDeps, cfg: SupervisorConfig) -> Dict[str, Any
         "driver_stage": (tick.get("health") or {}).get("stage", ""),
         "driver_heartbeat_age_s": round(deps.heartbeat_age_s(), 1),
         "owner_action_required": owner_action,
+        "packets": deps.packet_summary() if deps.packet_summary else {},
     }
     _write_status(cfg.output_root, status)
     return {"dashboard": dashboard, "owner_action": owner_action, "status": status}
@@ -214,6 +216,45 @@ def _real_driver_tick(output_root: str) -> Dict[str, Any]:
     return cycle.tick()
 
 
+def _packet_summary(output_root: str) -> Dict[str, Any]:
+    try:
+        from core.collaboration.product_packet import ProductPacketStore
+        from core.collaboration.relaunch import summary
+        return summary(ProductPacketStore(output_root))
+    except Exception:  # noqa: BLE001 - status must never fail the cycle
+        return {}
+
+
+def _relaunch_running() -> bool:
+    if os.name != "nt":
+        return False
+    ps = ("(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+          "Where-Object { $_.CommandLine -match 'collab_relaunch.py' }).ProcessId -join ','")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True,
+                         text=True, check=False, timeout=20)
+    return bool((out.stdout or "").strip())
+
+
+def _maybe_launch_writer(output_root: str, workspace: str) -> str:
+    """Session-independent WRITER: if a packet is pending and no writer/relaunch is active, spawn the
+    relaunch runner DETACHED (non-blocking, single-writer). A fresh claude process does the next step."""
+    from core.collaboration.product_packet import ProductPacketStore
+    packets = ProductPacketStore(output_root).list()
+    if any(p.get("status") == "in_progress" for p in packets):
+        return "writer_active"
+    if not any(p.get("status") == "pending" for p in packets):
+        return "no_work"
+    if _relaunch_running():
+        return "relaunch_active"
+    flags = 0
+    if os.name == "nt":
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    subprocess.Popen([str(VENV_PY), str(REPO / "tools" / "collab_relaunch.py"), "--once",
+                      "--output-root", output_root, "--workspace", workspace], cwd=str(REPO),
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+    return "launched"
+
+
 def _real_deps(cfg: SupervisorConfig) -> SupervisorDeps:
     return SupervisorDeps(
         health=lambda: _real_health(cfg.port),
@@ -221,7 +262,8 @@ def _real_deps(cfg: SupervisorConfig) -> SupervisorDeps:
         start_dashboard=lambda: _start_dashboard(cfg.output_root),
         kill_dashboards=_kill_dashboards,
         driver_tick=lambda: _run_with_timeout(lambda: _real_driver_tick(cfg.output_root), _TICK_TIMEOUT_S),
-        heartbeat_age_s=lambda: _heartbeat_age_s(cfg.output_root))
+        heartbeat_age_s=lambda: _heartbeat_age_s(cfg.output_root),
+        packet_summary=lambda: _packet_summary(cfg.output_root))
 
 
 def _acquire_lock() -> Optional[Path]:
@@ -284,7 +326,12 @@ def main(argv=None) -> int:
         while True:
             try:
                 out = supervise_once(deps, cfg)
-                _log(cfg.output_root, f"dashboard={out['dashboard']} owner_action={out['owner_action']}")
+                # Session-independent WRITER: launch a fresh bounded claude worker on pending product
+                # work (detached, single-writer). This is what makes product engineering continue
+                # without the interactive session (Issue #17).
+                writer = _maybe_launch_writer(cfg.output_root, str(REPO))
+                _log(cfg.output_root, f"dashboard={out['dashboard']} owner_action={out['owner_action']} "
+                                      f"writer={writer}")
             except Exception as exc:  # noqa: BLE001 - a bad cycle must not kill the supervisor
                 _log(cfg.output_root, f"cycle error: {type(exc).__name__}: {exc}")
             time.sleep(max(5.0, cfg.interval_s))

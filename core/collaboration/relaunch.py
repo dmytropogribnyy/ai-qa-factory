@@ -34,6 +34,9 @@ def relaunch_once(store: ProductPacketStore, worker: Any, *, workspace: str = ".
                   build_order: Callable[[Dict[str, Any]], WorkOrder] = build_default_order,
                   resume: bool = True) -> Dict[str, Any]:
     """One relaunch cycle: claim the next pending packet and launch a bounded writer on it."""
+    # One writer at a time: never launch a second while a packet is in progress.
+    if any(p.get("status") == "in_progress" for p in store.list()):
+        return {"status": "writer_busy"}
     pending = store.next_pending()
     if not pending:
         return {"status": "idle"}

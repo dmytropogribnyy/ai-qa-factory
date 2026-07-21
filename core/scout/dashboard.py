@@ -2827,12 +2827,17 @@ def _collab_body(snap: dict) -> str:
     if sup.get("installed"):
         sup_state = ('<span style="color:var(--attention);font-weight:600">&#9888; heartbeat stale</span>'
                      if not sup.get("fresh") else "supervisor alive")
+        pk = sup.get("packets", {}) or {}
+        active = pk.get("active") or pk.get("next_pending") or {}
+        obj = _esc((active.get("objective") or "—")[:120]) if isinstance(active, dict) else "—"
+        pk_line = (f'<p class="muted">product work: {obj} '
+                   f'&middot; {_esc(str(pk.get("by_status", {})))}</p>' if pk else "")
         driver_card += (
             '<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'
             f'<p class="muted">{sup_state} &middot; last check {_esc(_fmt_ts(sup.get("checked_at","")))} '
             f'&middot; at check: up={_esc(str(sup.get("dashboard_up_at_check")))} stale='
             f'{_esc(str(sup.get("dashboard_stale_at_check")))} &middot; action '
-            f'{_esc(sup.get("dashboard_action") or "—")}</p></div>')
+            f'{_esc(sup.get("dashboard_action") or "—")}</p>{pk_line}</div>')
     else:
         driver_card += ('<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'
                         '<p class="muted">not installed — run tools/supervisor_install.ps1 for '
