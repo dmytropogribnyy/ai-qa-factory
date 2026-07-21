@@ -31,8 +31,11 @@ def _now() -> str:
 
 
 def _text(value: Any, *, limit: int) -> str:
-    raw = str(value or "").strip()[:limit]
-    return redact_intake_text(raw).text
+    # Redact FIRST, then bound the length. Truncating first could split a secret across the limit so
+    # the length-sensitive redaction patterns (e.g. Bearer tokens require >=16 chars) no longer match
+    # the truncated fragment, leaking it. Redaction on the full text always removes the whole secret.
+    redacted = redact_intake_text(str(value or "").strip()).text
+    return redacted[:limit]
 
 
 def _sha(value: Any) -> str:

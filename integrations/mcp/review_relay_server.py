@@ -17,13 +17,16 @@ from core.review_relay import ReviewRelay, ReviewRelayError
 
 _SERVER_NAME = "ai-qa-review-relay"
 _SERVER_VERSION = "1.0.0"
-_VALID_ROLES = {"worker", "reviewer", "both"}
+# A running relay process is STRICTLY one role. A single process must never hold both the submit and
+# the decide capability — that would let one actor review its own checkpoints. There is no runtime
+# "both"; tests inspect a specific role's catalog via the explicit `role` argument to tool_schemas().
+_VALID_ROLES = {"worker", "reviewer"}
 
 
 def relay_role() -> str:
     role = os.environ.get("AIQA_REVIEW_RELAY_ROLE", "").strip().lower()
     if role not in _VALID_ROLES:
-        raise RuntimeError("AIQA_REVIEW_RELAY_ROLE must be worker, reviewer, or both")
+        raise RuntimeError("AIQA_REVIEW_RELAY_ROLE must be worker or reviewer")
     return role
 
 
@@ -39,18 +42,20 @@ def _int(args: Dict[str, Any], key: str, default: int) -> int:
 
 
 def _worker(args: Dict[str, Any], fn: Callable[[ReviewRelay, Dict[str, Any]], Any]) -> Any:
-    if relay_role() not in {"worker", "both"}:
+    if relay_role() != "worker":
         return {"status": "blocked", "reason": "worker role required"}
     return fn(_relay(), args)
 
 
 def _reviewer(args: Dict[str, Any], fn: Callable[[ReviewRelay, Dict[str, Any]], Any]) -> Any:
-    if relay_role() not in {"reviewer", "both"}:
+    if relay_role() != "reviewer":
         return {"status": "blocked", "reason": "reviewer role required"}
     return fn(_relay(), args)
 
 
-def _both(args: Dict[str, Any], fn: Callable[[ReviewRelay, Dict[str, Any]], Any]) -> Any:
+def _shared(args: Dict[str, Any], fn: Callable[[ReviewRelay, Dict[str, Any]], Any]) -> Any:
+    # Read-only status; safe for whichever single role is active (only ever reachable when the tool
+    # is exposed for that role). Grants no cross-role capability.
     return fn(_relay(), args)
 
 
@@ -71,9 +76,15 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     "relay_post_decision": lambda a: _reviewer(a, lambda r, x: r.post_decision(
         checkpoint_id=str(x.get("checkpoint_id", "")), decision=str(x.get("decision", "")),
         reviewed_sha=str(x.get("reviewed_sha", "")), message=str(x.get("message", "")),
-        reviewer=str(x.get("reviewer", "gpt-reviewer")))),
-    "relay_get_status": lambda a: _both(a, lambda r, x: {**r.status(), "role": relay_role()}),
+        reviewer=_reviewer_id())),
+    "relay_get_status": lambda a: _shared(a, lambda r, x: {**r.status(), "role": relay_role()}),
 }
+
+
+def _reviewer_id() -> str:
+    # Reviewer identity is SERVER-SIDE configuration, never accepted from the client/tool arguments
+    # (a caller must not be able to forge who reviewed). Safe default keeps the record attributable.
+    return os.environ.get("AIQA_RELAY_REVIEWER_ID", "gpt-reviewer").strip() or "gpt-reviewer"
 
 
 def _schema(name: str, description: str, properties: Dict[str, Any], required=None,
@@ -90,26 +101,25 @@ _ALL_SCHEMAS: List[Dict[str, Any]] = [
              "head_sha": {"type": "string"}, "base_sha": {"type": "string"},
              "pr_number": {"type": "integer"}, "summary": {"type": "string"},
              "question": {"type": "string"}, "evidence": {"type": "string"}},
-            ["slice_name", "branch", "head_sha", "summary"], ("worker", "both")),
+            ["slice_name", "branch", "head_sha", "summary"], ("worker",)),
     _schema("relay_get_decision", "Worker-only: read the independent decision for one checkpoint.",
-            {"checkpoint_id": {"type": "string"}}, ["checkpoint_id"], ("worker", "both")),
+            {"checkpoint_id": {"type": "string"}}, ["checkpoint_id"], ("worker",)),
     _schema("relay_ack_decision", "Worker-only: append an acknowledgement after reading a decision.",
             {"checkpoint_id": {"type": "string"}, "note": {"type": "string"}},
-            ["checkpoint_id"], ("worker", "both")),
+            ["checkpoint_id"], ("worker",)),
     _schema("relay_list_checkpoints", "Reviewer-only: list pending/decided/acked checkpoints.",
             {"status": {"type": "string", "enum": ["pending", "decided", "acked", "all"]},
-             "limit": {"type": "integer"}}, roles=("reviewer", "both")),
+             "limit": {"type": "integer"}}, roles=("reviewer",)),
     _schema("relay_get_checkpoint", "Reviewer-only: read a full checkpoint and its decision/ack state.",
-            {"checkpoint_id": {"type": "string"}}, ["checkpoint_id"], ("reviewer", "both")),
+            {"checkpoint_id": {"type": "string"}}, ["checkpoint_id"], ("reviewer",)),
     _schema("relay_post_decision",
-            "Reviewer-only: post GO, NO-GO, or COMMENT bound to the reviewed head SHA. Never authorizes merge.",
+            "Reviewer-only: post GO, NO-GO, or COMMENT bound to the reviewed head SHA. Never authorizes merge. Reviewer identity is server-side (AIQA_RELAY_REVIEWER_ID), not a tool argument.",
             {"checkpoint_id": {"type": "string"},
              "decision": {"type": "string", "enum": ["GO", "NO-GO", "COMMENT"]},
-             "reviewed_sha": {"type": "string"}, "message": {"type": "string"},
-             "reviewer": {"type": "string"}},
-            ["checkpoint_id", "decision", "reviewed_sha", "message"], ("reviewer", "both")),
+             "reviewed_sha": {"type": "string"}, "message": {"type": "string"}},
+            ["checkpoint_id", "decision", "reviewed_sha", "message"], ("reviewer",)),
     _schema("relay_get_status", "Read relay queue counts and safety capabilities for the current role.",
-            {}, roles=("worker", "reviewer", "both")),
+            {}, roles=("worker", "reviewer")),
 ]
 
 
