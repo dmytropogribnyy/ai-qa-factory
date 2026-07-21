@@ -258,10 +258,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install core dependencies
+      - name: Install core deps + relay HTTP transport (mcp/starlette/uvicorn — dev-only, not core runtime)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install mcp starlette uvicorn
       - name: Relay focused tests
         run: python -m pytest tests/test_review_relay.py -q -ra
       - name: Role separation + runtime 'both' rejected (stdio smoke)
