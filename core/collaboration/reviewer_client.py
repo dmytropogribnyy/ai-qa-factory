@@ -126,10 +126,20 @@ class OpenAIReviewerClient:
 
     def __init__(self, *, model: Optional[str] = None, api_key: Optional[str] = None,
                  create: Optional[Callable[[str, List[Dict[str, str]]], str]] = None,
+                 temperature: Optional[float] = None, reasoning_effort: Optional[str] = None,
                  max_output_chars: int = 20000) -> None:
-        self._model = model or os.environ.get("AIQA_REVIEWER_MODEL", "gpt-4o-mini")
+        # Default to the owner's independent GPT-5.6 reviewer in high-thinking mode; overridable per
+        # deployment via env. GO/NO-GO on code is a high-value decision — do not degrade it (invariant 7).
+        self._model = model or os.environ.get("AIQA_REVIEWER_MODEL", "gpt-5.6-sol")
         self._api_key = api_key if api_key is not None else load_openai_key()
         self._create = create
+        # Sent only when explicitly set: GPT-5 / reasoning models accept only the default temperature,
+        # so we omit it by default and let deterministic structure come from the strict JSON schema.
+        self._temperature = temperature
+        # High reasoning by default; set AIQA_REVIEWER_REASONING_EFFORT="" to omit for non-reasoning models.
+        effort = (reasoning_effort if reasoning_effort is not None
+                  else os.environ.get("AIQA_REVIEWER_REASONING_EFFORT", "high"))
+        self._reasoning_effort = (effort or "").strip()
         self._max_output_chars = max_output_chars
 
     def _resolve_create(self) -> Callable[[str, List[Dict[str, str]]], str]:
@@ -140,11 +150,17 @@ class OpenAIReviewerClient:
         from openai import OpenAI  # lazy: only needed on the live path
 
         client = OpenAI(api_key=self._api_key)
+        temperature = self._temperature
+        reasoning_effort = self._reasoning_effort
 
         def _call(model: str, messages: List[Dict[str, str]]) -> str:
-            resp = client.chat.completions.create(
-                model=model, messages=messages, temperature=0,
-                response_format={"type": "json_object"})
+            kwargs: Dict[str, Any] = {"model": model, "messages": messages,
+                                      "response_format": {"type": "json_object"}}
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            resp = client.chat.completions.create(**kwargs)
             return resp.choices[0].message.content or ""
 
         return _call

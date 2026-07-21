@@ -30,7 +30,10 @@ the automated review loop using the canonical independent-reviewer contract.
 Launchers: `tools/run_collab_driver.py` (bounded reviewer loop), `tools/collab_ack.py` (worker ACK).
 Dashboard: `/collab` page + `/api/collab` JSON (reuses the existing Dashboard/read model — no second
 dashboard). OpenAI key is owner-gated: `OPENAI_API_KEY` env or `~/.aiqa/openai.key` (never committed).
-Model via `AIQA_REVIEWER_MODEL`.
+The independent reviewer defaults to **`gpt-5.6-sol` in high-thinking mode** (`reasoning_effort=high`) —
+GO/NO-GO on code is a high-value decision (invariant 7). Override per deployment with
+`AIQA_REVIEWER_MODEL` and `AIQA_REVIEWER_REASONING_EFFORT` (set the latter to `""` for non-reasoning
+models). `temperature` is omitted by default since GPT-5 reasoning models accept only the default.
 
 ## Safety boundaries
 
