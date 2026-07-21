@@ -309,14 +309,15 @@ class CampaignService:
             except Exception:
                 findings, contacts = findings, contacts
         # Copy-only outreach draft from the target's problems (the system never sends it).
-        # A cheap model (Haiku) polishes the prose only when LLM is live; else deterministic ($0).
+        # A READ is $0: the draft is always deterministic here (router=None). AI prose polish is an
+        # explicit, operator-triggered mutation (see ``polish_draft``) — never a page/refresh read.
         from core.scout.outreach.qa_draft import build_review_draft
         understanding = (brain or {}).get("brain", {})
         draft = build_review_draft(domain=domain,
                                    business_name=(entry.domain if entry else domain),
                                    understanding=understanding, findings=findings,
                                    contact=(contacts[0] if contacts else ""),
-                                   router=self._llm_router())
+                                   router=None)
         from core.scout.outreach.fixability import classify_fixability
         # Cold prospect: no repo/staging access yet, so nothing is 'fix_ready' (honest scoping).
         fixability = classify_fixability(
@@ -330,6 +331,21 @@ class CampaignService:
                               "url": f.get("url"), "evidence_refs": f.get("evidence_refs", [])}
                              for f in findings],
                 "contacts": contacts, "draft": draft, "fixability": fixability}
+
+    def polish_draft(self, domain: str) -> Dict[str, Any]:
+        """Explicit, operator-triggered AI polish of the outreach draft. This is the ONLY draft path
+        that may spend (a cheap model reword, within budget); it is never reached from a read/GET.
+
+        Reuses the deterministic read for facts (findings/understanding/contact), then rebuilds the
+        prose WITH the live router. Falls back to deterministic on any failure/mock/zero-config."""
+        det = self.target_detail(domain)
+        from core.scout.outreach.qa_draft import build_review_draft
+        understanding = ((det.get("brain") or {}).get("brain") or {})
+        contacts = det.get("contacts") or []
+        return build_review_draft(domain=domain, business_name=domain,
+                                  understanding=understanding, findings=(det.get("findings") or []),
+                                  contact=(contacts[0] if contacts else ""),
+                                  router=self._llm_router())
 
     def _llm_router(self):
         """Lazy, cached LLMRouter. Returns None in mock mode so drafts stay deterministic ($0).

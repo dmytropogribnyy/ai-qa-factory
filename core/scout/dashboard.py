@@ -225,6 +225,10 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/access":
                 return self._json(200, cached_access_snapshot(
                     refresh=bool((q.get("refresh") or [""])[0])))
+            if path == "/api/build":
+                # Running-build identity + stale-process detection (read-only, no secrets/paths).
+                from core.build_identity import current_identity
+                return self._json(200, current_identity())
             if path == "/api/discovery":
                 # v3.3 read-only live-discovery + analyzed-site history (no secret; loopback-only).
                 from core.scout.discovery.discovery_status import discovery_status
@@ -307,6 +311,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._scout_replay(parsed)
             if parsed.path == "/api/scout/engagement":
                 return self._scout_engagement(parsed)
+            if parsed.path == "/api/scout/polish-draft":
+                return self._scout_polish_draft(parsed)
             if parsed.path == "/api/scout/start-client-work":
                 return self._scout_start_client_work(parsed)
             if parsed.path.startswith("/api/work/"):
@@ -795,15 +801,40 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             status = ((q.get("status") or [""])[0]
                       or str((body or {}).get("status", ""))).strip().lower()
             work_id = ((q.get("work_id") or [""])[0] or str((body or {}).get("work_id", ""))).strip()
+            # Won/Delivered are commitments — the registry refuses them unless the operator explicitly
+            # confirmed a real client agreement / completed delivery (never a casual one-click change).
+            confirm = str((q.get("confirm") or [""])[0]
+                          or (body or {}).get("confirm", "")).strip().lower() in ("1", "true", "yes")
             ok = (AnalyzedSiteRegistry(service.output_dir).set_engagement(
-                domain, status, work_id=work_id) if (domain and status) else False)
+                domain, status, work_id=work_id, confirm=confirm) if (domain and status) else False)
             return self._json(200 if ok else 400,
-                              {"ok": ok, "domain": domain, "status": status})
+                              {"ok": ok, "domain": domain, "status": status,
+                               "needs_confirmation": bool(status in ("won", "delivered")
+                                                          and not confirm)})
+
+        def _scout_polish_draft(self, parsed):
+            """Explicit, operator-triggered AI polish of the outreach draft (the ONLY draft path that
+            may spend, within budget). CSRF-guarded. Reads are $0; this mutation is opt-in."""
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            domain = ((parse_qs(parsed.query).get("domain") or [""])[0]
+                      or str((body or {}).get("domain", ""))).strip()
+            if not domain:
+                return self._json(400, {"ok": False, "error": "no domain"})
+            try:
+                draft = self._campaign_service().polish_draft(domain)
+            except Exception as exc:
+                return self._json(400, {"ok": False,
+                                        "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+            return self._json(200, {"ok": True, "domain": domain, "draft": draft})
 
         def _scout_start_client_work(self, parsed):
-            """Bridge a won prospect into the client-work lifecycle: build a job brief from the
-            domain + Scout findings, run the read-only analyze-job planning/feasibility, and mark
-            the prospect won + linked. Never executes client work (planning only, human approves)."""
+            """Bridge a prospect into the client-work lifecycle: build a job brief from the domain +
+            Scout findings, run the read-only analyze-job planning/feasibility, and LINK the resulting
+            work item. It does NOT mark the prospect Won — that is a proposal/preparation step; Won
+            needs a real, owner-confirmed client agreement. Planning only (human approves execution)."""
             body = self._read_json_body()
             refusal = self._guard_mutation(body)
             if refusal:
@@ -826,10 +857,14 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             except Exception as exc:
                 return self._json(400, {"ok": False,
                                         "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
-            AnalyzedSiteRegistry(service.output_dir).set_engagement(domain, "won", work_id=pid)
+            # Link the work item WITHOUT advancing the sales stage. The prospect stays where it is;
+            # Won requires a real, owner-confirmed client agreement (explicit, confirmed action).
+            AnalyzedSiteRegistry(service.output_dir).link_work(domain, pid)
             return self._json(200, {"ok": True, "project_id": pid, "verdict": res.verdict,
-                "message": (f"Client-work analysis started ({res.verdict}). Prospect marked Won. "
-                            "Review feasibility + proposal, then approve execution.")})
+                "message": (f"Client-work analysis started ({res.verdict}) and linked as a proposal. "
+                            "The prospect's sales stage is unchanged — mark Won only after a real, "
+                            "confirmed client agreement. Review feasibility + proposal, then approve "
+                            "execution.")})
 
         def _campaign_summary(self):
             st = service.status().get("state", {})
@@ -1886,10 +1921,11 @@ function startCampaign(){{
                             if wid else '')
                          + '<span id="cwmsg" class="muted"></span></div>'
                          '<p class="muted">Start client work builds a job brief from these findings, '
-                         'runs the read-only analyze-job (feasibility + proposal), and marks this '
-                         'prospect Won. Won / Delivered otherwise track the client-work lifecycle; '
-                         'Contacted / Replied you set here. Nothing is emailed by the system.</p>'
-                         '</div>')
+                         'runs the read-only analyze-job (feasibility + proposal), and links it as a '
+                         'proposal. It does NOT change the sales stage. Won / Delivered are '
+                         'commitments — set them only after a real, confirmed client agreement '
+                         '(they ask for confirmation); Contacted / Replied you set freely here. '
+                         'Nothing is emailed by the system.</p></div>')
 
             # Public contacts (read-only; the system never emails anyone).
             contacts_html = ("".join(f'<span class="chip">{_esc(e)}</span> ' for e in contacts)
@@ -1996,8 +2032,13 @@ function startCampaign(){{
                 f'{_esc(draft.get("body",""))}</textarea>'
                 '<div class="row" style="margin-top:8px;align-items:center;gap:10px">'
                 '<button class="chip" type="button" onclick="copyDraft()">Copy draft</button>'
-                f'<span class="muted">Generated by: {_esc(draft.get("generated_by","deterministic"))}'
-                '</span></div></div>'
+                '<button class="chip" type="button" onclick="polishDraft()">Polish with AI</button>'
+                f'<span class="muted">Generated by: <span id="draftgen">'
+                f'{_esc(draft.get("generated_by","deterministic"))}</span></span>'
+                '<span id="polishmsg" class="muted"></span></div>'
+                '<p class="muted">This page loads $0 — the draft above is deterministic. "Polish with '
+                'AI" is an explicit, opt-in action that may use a cheap model within budget; it is '
+                'never run automatically on open or refresh.</p></div>'
                 '<script>function copyDraft(){var t=document.getElementById("draftbody");'
                 't.focus();t.select();try{document.execCommand("copy");}catch(e){}}</script>')
 
@@ -2018,12 +2059,18 @@ function startCampaign(){{
                      'if(m){m.textContent=j.message||(j.ok?"replay started":"replay failed");}})'
                      '.catch(function(){if(m){m.textContent="replay request error";}});}'
                      'function setEng(s){var m=document.getElementById("engmsg");'
+                     # Won/Delivered are commitments: require an explicit operator confirmation
+                     # (they map to confirm=1; the server refuses them otherwise).
+                     'var need=(s==="won"||s==="delivered");'
+                     'if(need&&!window.confirm("Mark this prospect \\""+s+"\\"? Do this only after a '
+                     'real, confirmed client agreement/delivery.")){return;}'
                      'if(m){m.textContent="saving…";}'
                      'fetch("/api/scout/engagement?domain="+encodeURIComponent(DOM)+"&status="+'
-                     'encodeURIComponent(s),{method:"POST",headers:{"X-Scout-CSRF":CSRF,'
-                     '"Content-Type":"application/json"},body:"{}"})'
+                     'encodeURIComponent(s)+(need?"&confirm=1":""),{method:"POST",'
+                     'headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},body:"{}"})'
                      '.then(function(r){return r.json();}).then(function(j){'
-                     'if(j.ok){location.reload();}else if(m){m.textContent="failed";}})'
+                     'if(j.ok){location.reload();}else if(m){m.textContent='
+                     '(j.needs_confirmation?"confirmation required":"failed");}})'
                      '.catch(function(){if(m){m.textContent="request error";}});}'
                      'function startCW(){var m=document.getElementById("cwmsg");'
                      'if(m){m.textContent="running analyze-job…";}'
@@ -2033,6 +2080,17 @@ function startCampaign(){{
                      'if(j.ok){if(m){m.textContent=j.message||"started";}'
                      'setTimeout(function(){location.reload();},1400);}'
                      'else if(m){m.textContent="failed: "+(j.error||"unknown");}})'
+                     '.catch(function(){if(m){m.textContent="request error";}});}'
+                     'function polishDraft(){var m=document.getElementById("polishmsg");'
+                     'if(m){m.textContent="polishing…";}'
+                     'fetch("/api/scout/polish-draft?domain="+encodeURIComponent(DOM),'
+                     '{method:"POST",headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},'
+                     'body:"{}"}).then(function(r){return r.json();}).then(function(j){'
+                     'if(j.ok&&j.draft){var t=document.getElementById("draftbody");'
+                     'if(t){t.value=j.draft.body||t.value;}'
+                     'var g=document.getElementById("draftgen");'
+                     'if(g){g.textContent=j.draft.generated_by||"deterministic";}'
+                     'if(m){m.textContent="";}}else if(m){m.textContent="failed: "+(j.error||"unknown");}})'
                      '.catch(function(){if(m){m.textContent="request error";}});}</script>')
 
             return _page("AI QA Factory — Target detail", "/scout", body)
@@ -2198,10 +2256,26 @@ function startCampaign(){{
             gmail = next((t for t in ToolBroker(clock=lambda: "").discover()
                          if t.id == "gmail_personal"), None)
             gmail_state = gmail.ui_level if gmail else "Unknown"
+            from core.build_identity import current_identity
+            ident = current_identity()
+            stale = bool(ident.get("stale"))
+            build_card = (
+                '<div class="card"><h2>Build identity</h2>'
+                + (f'<div class="banner warn">{_esc(ident.get("warning",""))}</div>' if stale else '')
+                + f'<p><b>Version:</b> {_esc(ident.get("product_version",""))}</p>'
+                + f'<p><b>Running commit:</b> <code>{_esc(ident.get("running_sha") or "unknown")}</code>'
+                + f' · <b>Repository HEAD:</b> <code>{_esc(ident.get("head_sha") or "unknown")}</code></p>'
+                + f'<p><b>Process started:</b> {_esc(ident.get("process_started_at",""))} · '
+                + '<b>Serving current code:</b> '
+                + (_badge("no — restart required", "attention") if stale else _badge("yes", "ok"))
+                + '</p><p class="muted">The running commit is captured at process start; a difference '
+                'from repository HEAD means the server is serving older code and should be restarted. '
+                'No secrets or absolute paths are shown.</p></div>')
             body = (
                 '<h1>Settings</h1>'
                 f'<div class="card"><h2>Workspace</h2>'
                 f'<p>Output workspace: <code>{_esc(str(service.output_dir))}</code></p></div>'
+                + build_card +
                 '<div class="card"><h2>Display density</h2>'
                 '<div class="row"><button class="btn" onclick="setDensity(\'comfortable\')">Comfortable</button>'
                 '<button class="btn" onclick="setDensity(\'compact\')">Compact</button></div>'
@@ -2604,6 +2678,22 @@ _THEME_TOGGLE_JS = ("function _applyThemeLabel(){var t=document.documentElement.
                     "_applyThemeLabel();")
 
 
+def _build_footer_html() -> str:
+    """Compact build-identity footer (version + running SHA, plus a stale-build warning). Never
+    raises to the page; cached so it costs no git subprocess per render."""
+    try:
+        from core.build_identity import current_identity
+        ident = current_identity()
+    except Exception:
+        return ""
+    warn = (f'<span style="color:var(--attention);font-weight:600">&#9888; '
+            f'{_esc(ident.get("warning",""))}</span> &middot; ' if ident.get("stale") else "")
+    return ('<footer style="max-width:var(--maxw);margin:0 auto;padding:10px var(--pad);'
+            'color:var(--muted);font-size:12px;border-top:1px solid var(--border)">'
+            f'{warn}{_esc(ident.get("product_version",""))} &middot; build '
+            f'<code>{_esc(ident.get("running_sha") or "unknown")}</code></footer>')
+
+
 def _page(title: str, active: str, body: str, script: str = "") -> str:
     scr = f"<script>{_THEME_TOGGLE_JS}{script}</script>"
     return (f"<!doctype html><html lang=en><head><meta charset=utf-8>"
@@ -2613,7 +2703,7 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
             f"%3Crect width='16' height='16' rx='4' fill='%23c9a227'/%3E%3C/svg%3E\">"
             f"<title>{_esc(title)}</title><script>{_THEME_HEAD_JS}</script>"
             f"<style>{_TOKENS_CSS}</style></head><body>"
-            f"{_nav_html(active)}<main>{body}</main>{scr}</body></html>")
+            f"{_nav_html(active)}<main>{body}</main>{_build_footer_html()}{scr}</body></html>")
 
 
 def _badge(text: str, kind: str = "") -> str:
