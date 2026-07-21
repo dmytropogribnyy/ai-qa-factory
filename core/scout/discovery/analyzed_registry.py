@@ -224,11 +224,17 @@ class AnalyzedSiteRegistry:
         self._save()
         return True
 
-    def set_engagement(self, url_or_domain: str, status: str, *, work_id: str = "") -> bool:
+    def set_engagement(self, url_or_domain: str, status: str, *, work_id: str = "",
+                       confirm: bool = False) -> bool:
         """Advance the sales-funnel status of a known target (prospect->contacted->replied->won->
-        delivered/lost). Won/delivered are normally set from the client-work lifecycle; others by
-        the operator. Rejects an unknown status or unknown target (never invents an entry)."""
+        delivered/lost). Contacted/Replied/Lost are ordinary one-click operator transitions.
+
+        Won and Delivered are commitments, never a casual one-click change: they require explicit
+        ``confirm=True`` (a real, owner-confirmed client agreement / completed delivery) and are
+        refused otherwise. Rejects an unknown status or unknown target (never invents an entry)."""
         if status not in ENGAGEMENT_STATES:
+            return False
+        if status in (ENG_WON, ENG_DELIVERED) and not confirm:
             return False
         e = self.get(url_or_domain)
         if e is None:
@@ -236,6 +242,19 @@ class AnalyzedSiteRegistry:
         e.engagement_status = status
         if work_id:
             e.work_id = work_id
+        e.engagement_updated_at = _now_iso()
+        self._save()
+        return True
+
+    def link_work(self, url_or_domain: str, work_id: str) -> bool:
+        """Link an internal work item to a target WITHOUT advancing the sales stage. 'Start client
+        work' creates a proposal/preparation item; the prospect stays at its current stage until a
+        real, owner-confirmed client agreement is set explicitly (Won). Refuses an unknown target."""
+        e = self.get(url_or_domain)
+        if e is None:
+            return False
+        if work_id:
+            e.work_id = str(work_id)
         e.engagement_updated_at = _now_iso()
         self._save()
         return True

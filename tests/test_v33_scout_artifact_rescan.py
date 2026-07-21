@@ -130,10 +130,16 @@ def test_engagement_endpoint_sets_status_with_csrf(tmp_path):
                                                 provider="tavily")
     server, url = _dash(tmp_path)
     try:
-        code, body = _post(f"{url}/api/scout/engagement?domain=example.com&status=won", {},
+        # A free operator transition (contacted) is set one-click with CSRF.
+        code, body = _post(f"{url}/api/scout/engagement?domain=example.com&status=contacted", {},
                            csrf=server.scout_csrf_token)
         assert code == 200 and body["ok"] is True
-        assert AnalyzedSiteRegistry(str(tmp_path)).get("example.com").engagement_status == "won"
+        assert AnalyzedSiteRegistry(str(tmp_path)).get("example.com").engagement_status == "contacted"
+        # Won is a commitment: refused without explicit confirmation (funnel correctness).
+        code, body = _post(f"{url}/api/scout/engagement?domain=example.com&status=won", {},
+                           csrf=server.scout_csrf_token)
+        assert code == 400 and body["ok"] is False and body["needs_confirmation"] is True
+        assert AnalyzedSiteRegistry(str(tmp_path)).get("example.com").engagement_status == "contacted"
         # an unknown status is rejected (400), not silently accepted
         code, body = _post(f"{url}/api/scout/engagement?domain=example.com&status=bogus", {},
                            csrf=server.scout_csrf_token)
