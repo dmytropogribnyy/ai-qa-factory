@@ -5,6 +5,11 @@
 .env.production
 .env.staging
 
+# ── Local MCP + review-relay config (machine-specific paths / tokens / session id) ───
+.vscode/mcp.json
+.aiqa_relay_session
+.aiqa_relay_token
+
 # ── Gmail OAuth client config + token stores (v2.0.1 — never commit) ───────────
 .secrets/
 .aiqa/

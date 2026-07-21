@@ -44,6 +44,27 @@ carries the `full-ci` label. The FULL gate (full deterministic suite ×2 OS + br
 runs on push to `main`, nightly, release tags, and manual dispatch. A `[CLAUDE SLICE READY]` note
 must honestly list which targeted gates ran and why they cover the change's scope.
 
+## Review relay protocol (worker side)
+
+The Review Relay (`core/review_relay.py`, worker MCP `relay_*` tools, docs
+`docs/REVIEW_RELAY_MCP.md`) carries slice checkpoints to an independent GPT reviewer and returns a
+GO/NO-GO bound to the exact head SHA. It is a message channel only — it can never merge, run shell,
+write source, or send externally. When operating as the relay worker:
+
+- **After** opening a slice PR and passing the targeted gates, submit a checkpoint
+  (`relay_submit_checkpoint`) with the slice name, branch, PR number, exact head SHA, summary and
+  evidence — the same content as the `[CLAUDE SLICE READY]` note.
+- **Do not merge and do not start the next slice** until a decision arrives whose `reviewed_sha`
+  equals the current head SHA. A `GO` authorises continuing the protocol only — it is **not** merge
+  authorisation (`merge_authorized` is always false); a merge still needs the owner's explicit word.
+- On `NO-GO`, fix only the listed blockers, push, and submit a **new** checkpoint for the new head
+  SHA (decisions are immutable and SHA-bound — a moved branch invalidates an old decision).
+- After reading a decision, record `relay_ack_decision`. A decision whose `reviewed_sha` no longer
+  matches the branch head must be ignored (submit a fresh checkpoint instead).
+- The relay does not wake this session on its own; an owner "проверь relay" (or a future, separately
+  approved reviewer-driver service) triggers the reviewer. Local session id / tokens are never
+  committed (see `.gitignore`).
+
 ## Current phase (v3.2 — Autonomous AI QA Operator Pro)
 
 Two distinct surfaces exist; keep them straight:

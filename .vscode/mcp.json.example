@@ -26,6 +26,21 @@
       "command": "npx",
       "args": ["@playwright/mcp@latest"],
       "disabled": true
+    },
+    // Review Relay — WORKER role for local Claude Code (submit checkpoints, read/ack decisions).
+    // Message channel only: it can never merge, run shell, write source, or send externally. No
+    // secret is needed for the worker (stdio, local files). The reviewer role is a SEPARATE
+    // authenticated HTTP instance run+tunnelled by the owner (needs AIQA_RELAY_MCP_TOKEN) — never
+    // add the reviewer token here. Copy to .vscode/mcp.json (gitignored) and remove "disabled".
+    "ai-qa-review-relay-worker": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["${workspaceFolder}/tools/run_review_relay_mcp.py"],
+      "env": {
+        "AIQA_REVIEW_RELAY_ROLE": "worker",
+        "AIQA_OUTPUT_ROOT": "${workspaceFolder}/outputs"
+      },
+      "disabled": true
     }
     // Resend/Gmail (external communication), Stripe (financial), BrowserStack (paid), Cloudflare/
     // Supabase (deployment) are intentionally omitted from this starter example — add them only
