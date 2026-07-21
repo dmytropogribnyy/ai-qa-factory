@@ -334,10 +334,13 @@ class CampaignService:
 
     def polish_draft(self, domain: str) -> Dict[str, Any]:
         """Explicit, operator-triggered AI polish of the outreach draft. This is the ONLY draft path
-        that may spend (a cheap model reword, within budget); it is never reached from a read/GET.
+        that may make a paid model call (a cheap-model reword), and only when a live LLM is
+        configured; it is never reached from a read/GET, and it is $0/deterministic otherwise.
 
-        Reuses the deterministic read for facts (findings/understanding/contact), then rebuilds the
-        prose WITH the live router. Falls back to deterministic on any failure/mock/zero-config."""
+        NOTE: per-campaign/daily/monthly budget controls and a persistent no-repeat cache arrive in
+        Slice 3 — until then a repeat invocation may repeat the call. Reuses the deterministic read
+        for facts (findings/understanding/contact), then rebuilds the prose WITH the live router.
+        Falls back to deterministic on any failure/mock/zero-config."""
         det = self.target_detail(domain)
         from core.scout.outreach.qa_draft import build_review_draft
         understanding = ((det.get("brain") or {}).get("brain") or {})

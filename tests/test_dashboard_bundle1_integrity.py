@@ -164,6 +164,37 @@ def test_current_identity_exposes_no_secrets_or_abs_paths():
         assert not any(s in k.lower() for s in ("key", "token", "secret", "password"))
 
 
+def test_freeze_running_identity_is_eager_and_idempotent(monkeypatch):
+    """Running identity is captured ONCE, eagerly (not lazily re-evaluated per import/call)."""
+    import core.build_identity as bi
+    monkeypatch.setattr(bi, "_RUNNING", {"sha": None, "started_at": None})
+    calls = []
+
+    def _head(repo_dir=None):
+        calls.append(1)
+        return "c" * 40
+
+    monkeypatch.setattr(bi, "_git_head", _head)
+    first = bi.freeze_running_identity()
+    second = bi.freeze_running_identity()                 # idempotent: no re-capture
+    assert first["sha"] == "c" * 40 and first["started_at"]
+    assert second == first
+    assert len(calls) == 1                                # captured exactly once, at process start
+
+
+def test_build_identity_stale_detected_before_any_request(monkeypatch):
+    """A process frozen on commit A while HEAD has moved to B is flagged stale immediately — the
+    stale signal does not depend on a request having been served first."""
+    import core.build_identity as bi
+    monkeypatch.setattr(bi, "_RUNNING", {"sha": "a" * 40, "started_at": "2026-01-01T00:00:00+00:00"})
+    monkeypatch.setattr(bi, "_HEAD_CACHE", {"sha": None, "at": 0.0})
+    monkeypatch.setattr(bi, "_git_head", lambda repo_dir=None: "b" * 40)
+    ident = bi.current_identity()
+    assert ident["running_sha"] == "a" * 12
+    assert ident["head_sha"] == "b" * 12
+    assert ident["stale"] is True and "Restart" in ident["warning"]
+
+
 # --------------------------------------------------------------------------------------------------
 # Dashboard wiring (loopback HTTP) — the three fixes at the endpoint surface
 # --------------------------------------------------------------------------------------------------
@@ -242,5 +273,28 @@ def test_polish_draft_endpoint_refused_without_csrf(tmp_path):
         except urllib.error.HTTPError as e:
             code = e.code
         assert code == 403                                     # CSRF/origin guard blocks it
+    finally:
+        server.shutdown()
+
+
+def test_start_client_work_links_work_without_marking_won(tmp_path):
+    """Endpoint-level proof: Start client work LINKS a work item, leaves the sales stage unchanged,
+    and its response never claims the prospect is Won."""
+    AnalyzedSiteRegistry(str(tmp_path)).record_analysis("acme.com", evidence_ref="scout/acme.com/qa")
+    server, url = _dash(tmp_path)
+    token = server.scout_csrf_token
+    try:
+        status, j = _post_json(url + "/api/scout/start-client-work?domain=acme.com", token)
+        assert status == 200 and j["ok"] is True
+        assert j["project_id"]                                 # a work item was created
+        msg = j["message"].lower()
+        # The response must NOT claim the prospect became Won...
+        assert not any(p in msg for p in ("marked won", "marked as won", "prospect won", "is won",
+                                          "now won"))
+        # ...and it states the honest semantics (linked as a proposal, stage unchanged).
+        assert "proposal" in msg and "unchanged" in msg
+        e = AnalyzedSiteRegistry(str(tmp_path)).get("acme.com")
+        assert e.work_id == j["project_id"]                   # work_id is linked
+        assert e.engagement_status == ENG_PROSPECT            # sales stage unchanged (NOT won)
     finally:
         server.shutdown()
