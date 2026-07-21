@@ -98,6 +98,48 @@ def test_ack_marks_thread_done(tmp_path):
     assert snap["owner_action_required"] is False
 
 
+def _q_cycle(store, thread="t-1"):
+    """An older, fully-acked QUESTION->RESPONSE->ACK cycle."""
+    q = store.append(make_envelope(kind="QUESTION", thread_id=thread, actor="claude-worker",
+                                   body="q", head_sha=_SHA, branch="feat/x"))
+    r = store.append(make_envelope(kind="RESPONSE", thread_id=thread, actor="gpt-reviewer",
+                                   body="a", head_sha=_SHA, branch="feat/x",
+                                   in_reply_to=q["idempotency_key"]))
+    store.append(make_envelope(kind="ACKNOWLEDGEMENT", thread_id=thread, actor="claude-worker",
+                               body="ok", in_reply_to=r["idempotency_key"]))
+
+
+def test_monitor_uses_latest_causal_cycle_not_first_request(tmp_path):
+    store = CollaborationStore(str(tmp_path))
+    _q_cycle(store)                                        # old, DONE cycle
+    _checkpoint(store)                                     # newer, still-open checkpoint
+    snap = _monitor(tmp_path).snapshot()
+    t = snap["threads"][0]
+    assert t["state"] == "REVIEWING"                       # reflects the NEW checkpoint, not the old ACK
+
+
+def test_ack_binds_to_latest_decision_not_any_old_ack(tmp_path):
+    store = CollaborationStore(str(tmp_path))
+    _q_cycle(store)                                        # old ACK exists in the thread
+    cp = _checkpoint(store)
+    store.append(make_envelope(kind="DECISION", thread_id="t-1", actor="gpt-reviewer", body="ok",
+                               head_sha=_SHA, branch="feat/x", verdict="GO", reviewed_sha=_SHA,
+                               in_reply_to=cp["idempotency_key"]))   # new decision, NOT acked
+    t = _monitor(tmp_path).snapshot()["threads"][0]
+    assert t["decision"] == "GO"
+    assert t["acked"] is False                             # the stale old ACK must not count as current
+    assert t["state"] == "WAITING_FOR_CI"
+
+
+def test_driver_surfaces_model_effort_and_tokens(tmp_path):
+    _checkpoint(CollaborationStore(str(tmp_path)))
+    _driver_state(tmp_path, model="gpt-5.6-sol", reasoning_effort="high")
+    drv = _monitor(tmp_path).snapshot()["driver"]
+    assert drv["model"] == "gpt-5.6-sol"
+    assert drv["reasoning_effort"] == "high"
+    assert "daily_tokens" in drv["budget"]
+
+
 def test_snapshot_includes_budget_and_bounded_timeline(tmp_path):
     store = CollaborationStore(str(tmp_path))
     _checkpoint(store)

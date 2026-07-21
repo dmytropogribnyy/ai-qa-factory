@@ -307,7 +307,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             from core.collaboration.monitor import CollaborationMonitor
             from core.collaboration.service import resolve_git_head
             out = getattr(service, "output_dir", "outputs")
-            return CollaborationMonitor(out, head_resolver=lambda: resolve_git_head(".")).snapshot()
+            return CollaborationMonitor(
+                out, head_resolver=lambda branch="": resolve_git_head(".")).snapshot()
 
         def _collab_page(self) -> str:
             try:
@@ -2795,12 +2796,18 @@ def _collab_body(snap: dict) -> str:
         banner = ('<div class="card" style="border-color:var(--attention)">'
                   '<strong>&#9888; Owner action required</strong> &middot; a thread is waiting on your '
                   'decision (see NEEDS_OWNER below).</div>')
+    model = _esc(d.get("model") or "—")
+    effort = _esc(d.get("reasoning_effort") or "—")
     driver_card = (
         '<div class="card"><h2 style="margin-top:0">Reviewer driver</h2>'
         f'<p>{_badge(d.get("stage","IDLE"))} &middot; heartbeat {_esc(beat)} {stale}</p>'
-        f'<p class="muted">processed {int(d.get("processed",0))} &middot; today '
-        f'{int(b.get("daily_calls",0))}/{int(b.get("cap_calls",0))} calls &middot; '
-        f'${float(b.get("daily_usd",0)):.2f}/${float(b.get("cap_usd",0)):.2f}</p>{err}</div>')
+        f'<p class="muted">model <code>{model}</code> &middot; effort {effort} &middot; processed '
+        f'{int(d.get("processed",0))}</p>'
+        f'<p class="muted">today {int(b.get("daily_calls",0))}/{int(b.get("cap_calls",0))} calls '
+        f'&middot; {int(b.get("daily_tokens",0))} tokens &middot; '
+        f'${float(b.get("daily_usd",0)):.2f}/${float(b.get("cap_usd",0)):.2f} '
+        f'<span title="spend is $0 until AIQA_REVIEWER_PRICE_PER_MTOK_IN/OUT is configured; token '
+        f'counts are real">(spend est.)</span></p>{err}</div>')
 
     threads = snap.get("threads", [])
     if not threads:

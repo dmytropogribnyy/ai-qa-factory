@@ -4,14 +4,36 @@ from __future__ import annotations
 from core.collaboration.budget import BudgetPolicy
 from core.collaboration.reviewer_client import FixtureReviewerClient
 from core.collaboration.service import (
+    CollaborationCycle,
     build_reviewer_driver,
     record_ack,
     resolve_git_head,
     submit_worker_message,
 )
+from core.collaboration.session_delivery import ClaudeSessionDelivery, SessionRegistry
 from core.collaboration.store import CollaborationStore
 
 _SHA = "a" * 40
+
+
+def _bound_cycle(tmp_path, responder, *, session="b93d32d1-7c96-4489-945b-2a49df494349",
+                 bind_thread="t-1", runner=None):
+    reg = SessionRegistry(str(tmp_path / "sessions.json"))
+    if bind_thread:
+        reg.bind(bind_thread, session)
+    runs = {"n": 0}
+
+    def _runner(cmd, **kw):
+        runs["n"] += 1
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    delivery = ClaudeSessionDelivery(reg, str(tmp_path), exe_resolver=lambda: "claude.exe",
+                                     runner=runner or _runner, head_resolver=lambda: _SHA)
+    cycle = CollaborationCycle(str(tmp_path), str(tmp_path),
+                               reviewer_client=FixtureReviewerClient(responder),
+                               policy=BudgetPolicy(backoff_base_seconds=0.0),
+                               registry=reg, delivery=delivery)
+    return cycle, reg, runs
 
 
 def test_resolve_git_head_of_this_repo_is_a_full_sha():
@@ -36,13 +58,45 @@ def test_record_ack_appends_an_acknowledgement(tmp_path):
 
 
 def test_build_reviewer_driver_wires_a_working_loop(tmp_path):
-    submit_worker_message(str(tmp_path), kind="CHECKPOINT", thread_id="t-1", body="ready",
+    submit_worker_message(str(tmp_path), kind="QUESTION", thread_id="t-1", body="retry policy?",
                           head_sha=_SHA, branch="feat/x")
-    client = FixtureReviewerClient(lambda m: {"decision_type": "DECISION", "verdict": "GO",
-                                              "reviewed_sha": m["head_sha"], "message": "ok"})
+    client = FixtureReviewerClient(lambda m: {"decision_type": "RESPONSE", "message": "use backoff"})
     driver = build_reviewer_driver(str(tmp_path), str(tmp_path), reviewer_client=client,
                                    policy=BudgetPolicy(backoff_base_seconds=0.0))
     # head_resolver reads git in tmp_path (not a repo) -> "" -> stale check skipped, review proceeds.
     out = driver.process_once()
     assert out["status"] == "reviewed"
-    assert CollaborationStore(str(tmp_path)).latest_decision("t-1")["verdict"] == "GO"
+    kinds = [m["kind"] for m in CollaborationStore(str(tmp_path)).thread("t-1")["messages"]]
+    assert kinds == ["QUESTION", "RESPONSE"]
+
+
+def test_cycle_reviews_then_delivers_to_bound_session(tmp_path):
+    submit_worker_message(str(tmp_path), kind="QUESTION", thread_id="t-1", body="retry policy?",
+                          head_sha=_SHA, branch="feat/x")
+    cycle, reg, runs = _bound_cycle(
+        tmp_path, lambda m: {"decision_type": "RESPONSE", "message": "use backoff with jitter"})
+    out = cycle.tick()
+    assert out["review"]["status"] == "reviewed"
+    assert any(d["status"] == "delivered" for d in out["deliveries"])   # reviewer->delivery connected
+    assert runs["n"] == 1                                               # the bound session was resumed
+
+
+def test_cycle_does_not_deliver_without_a_session_binding(tmp_path):
+    submit_worker_message(str(tmp_path), kind="QUESTION", thread_id="t-1", body="q",
+                          head_sha=_SHA, branch="feat/x")
+    cycle, reg, runs = _bound_cycle(
+        tmp_path, lambda m: {"decision_type": "RESPONSE", "message": "a"}, bind_thread=None)
+    out = cycle.tick()
+    assert out["review"]["status"] == "reviewed"
+    assert out["deliveries"] == []                                     # nothing woken
+    assert runs["n"] == 0
+
+
+def test_cycle_restart_does_not_redeliver(tmp_path):
+    submit_worker_message(str(tmp_path), kind="QUESTION", thread_id="t-1", body="q",
+                          head_sha=_SHA, branch="feat/x")
+    cycle, reg, runs = _bound_cycle(
+        tmp_path, lambda m: {"decision_type": "RESPONSE", "message": "a"})
+    cycle.tick()
+    cycle.tick()                                                       # simulated restart tick
+    assert runs["n"] == 1                                             # delivered exactly once

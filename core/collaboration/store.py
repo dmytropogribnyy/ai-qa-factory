@@ -16,7 +16,9 @@ from typing import Any, Dict, List, Optional
 
 _REQUIRED_KEYS = ("kind", "thread_id", "idempotency_key")
 _REQUEST_KINDS = {"QUESTION", "PROPOSAL", "CHECKPOINT"}
-_REPLY_KINDS = {"RESPONSE", "CRITIQUE", "RECOMMENDATION", "DECISION"}
+# A request is closed by a reviewer reply OR by a terminal NEEDS_OWNER escalation (fail-closed): the
+# driver must not re-review an escalated request in a loop; the owner resolves it.
+_REPLY_KINDS = {"RESPONSE", "CRITIQUE", "RECOMMENDATION", "DECISION", "NEEDS_OWNER"}
 
 
 class CollaborationStoreError(ValueError):

@@ -103,6 +103,93 @@ def test_question_gets_a_response(tmp_path):
     assert kinds == ["QUESTION", "RESPONSE"]
 
 
+def _raises(_msg):
+    raise RuntimeError("boom")
+
+
+class _UsageClient:
+    model = "gpt-5.6-sol"
+    reasoning_effort = "high"
+
+    def __init__(self, response):
+        self._response = response
+        self.last_usage = {"model": "gpt-5.6-sol", "reasoning_effort": "high",
+                           "input_tokens": 100, "output_tokens": 50, "total_tokens": 150}
+
+    def review(self, **_kw):
+        return self._response
+
+
+def _driver_with(tmp_path, client, *, policy, head=_SHA, git=None):
+    store = CollaborationStore(str(tmp_path))
+    budget = BudgetLedger(str(tmp_path), policy=policy, clock=lambda: "2026-07-21T20:00:00+00:00")
+    git = git or (lambda args: "core/x.py" if "name-only" in args else "diff")
+    driver = ReviewerDriver(store, budget, client, repo_root=str(tmp_path),
+                            head_resolver=lambda: head, git_runner=git,
+                            clock=lambda: "2026-07-21T20:00:00+00:00", sleep=lambda _s: None)
+    return store, budget, driver
+
+
+def test_every_api_attempt_is_counted_as_a_call(tmp_path):
+    store, budget, driver = _driver_with(
+        tmp_path, FixtureReviewerClient(_raises),
+        policy=BudgetPolicy(per_thread_calls=10, daily_calls=20, max_retries=3,
+                            backoff_base_seconds=0.0))
+    _checkpoint(store)
+    out = driver.process_once()
+    assert out["status"] == "needs_owner"
+    assert budget.usage("t-1")["thread_calls"] == 3        # each retried attempt counted, not just one
+
+
+def test_budget_cap_reached_mid_retry_stops_calling(tmp_path):
+    store, budget, driver = _driver_with(
+        tmp_path, FixtureReviewerClient(_raises),
+        policy=BudgetPolicy(per_thread_calls=2, daily_calls=20, max_retries=5,
+                            backoff_base_seconds=0.0))
+    _checkpoint(store)
+    out = driver.process_once()
+    assert out["status"] == "blocked"
+    assert budget.usage("t-1")["thread_calls"] == 2        # stopped at the cap, not 5 attempts
+
+
+def test_real_token_usage_and_model_are_recorded(tmp_path):
+    client = _UsageClient({"decision_type": "DECISION", "verdict": "GO", "reviewed_sha": _SHA,
+                           "message": "scope ok"})
+    store, budget, driver = _driver_with(tmp_path, client,
+                                         policy=BudgetPolicy(per_thread_calls=5, daily_calls=20))
+    _checkpoint(store)
+    driver.process_once()
+    assert budget.usage("t-1")["thread_tokens"] == 150     # real tokens, not a nominal estimate
+    h = driver.health()
+    assert h["model"] == "gpt-5.6-sol" and h["reasoning_effort"] == "high"
+    assert h["budget"]["daily_tokens"] == 150
+
+
+def test_checkpoint_go_blocked_on_incomplete_evidence(tmp_path):
+    # rev-parse --verify returns nothing -> unverifiable SHA -> evidence incomplete -> GO refused.
+    def git(args):
+        return "" if "rev-parse" in args else ("core/x.py" if "name-only" in args else "d")
+    store, budget, driver = _driver_with(
+        tmp_path, FixtureReviewerClient(lambda m: {"decision_type": "DECISION", "verdict": "GO",
+                                                   "reviewed_sha": m["head_sha"], "message": "lgtm"}),
+        policy=BudgetPolicy(per_thread_calls=5), git=git)
+    _checkpoint(store)
+    out = driver.process_once()
+    assert out["status"] == "needs_owner"
+    assert out["reason"] == "evidence_incomplete"
+    assert store.latest_decision("t-1") is None            # no GO recorded on incomplete evidence
+
+
+def test_malformed_output_is_not_cached(tmp_path):
+    store, budget, driver = _driver_with(
+        tmp_path, FixtureReviewerClient(lambda m: {"decision_type": "DECISION", "message": "no verdict"}),
+        policy=BudgetPolicy(per_thread_calls=5))
+    cp = _checkpoint(store)
+    out = driver.process_once()
+    assert out["status"] == "schema_error"
+    assert budget.cache_get(cp["idempotency_key"]) is None  # malformed raw never cached
+
+
 def test_health_reports_stage_actor_and_spend(tmp_path):
     store, budget, client, driver = _driver(
         tmp_path, lambda m: {"decision_type": "DECISION", "verdict": "NO-GO",

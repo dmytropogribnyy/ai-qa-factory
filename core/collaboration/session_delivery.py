@@ -17,6 +17,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+_FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _default_head_resolver(workspace: str) -> Callable[[], str]:
+    def resolve() -> str:
+        try:
+            proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=workspace, capture_output=True,
+                                  text=True, timeout=15, check=False)
+            head = (proc.stdout or "").strip().lower()
+            return head if _FULL_SHA.fullmatch(head) else ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    return resolve
+
 # A Claude Code session id is a UUID (e.g. b93d32d1-7c96-4489-945b-2a49df494349).
 _SESSION_ID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -80,17 +94,35 @@ class ClaudeSessionDelivery:
     def __init__(self, registry: SessionRegistry, output_root: str, *,
                  exe_resolver: Optional[Callable[[], Optional[str]]] = None,
                  runner: Optional[Callable[..., Any]] = None,
-                 workspace: str = ".", timeout: int = 900,
+                 head_resolver: Optional[Callable[[], str]] = None,
+                 workspace: str = ".", timeout: int = 900, max_attempts: int = 3,
                  clock: Optional[Callable[[], str]] = None) -> None:
         self._registry = registry
         self._exe_resolver = exe_resolver or _default_exe_resolver
         self._run = runner or subprocess.run
+        self._head_resolver = head_resolver or _default_head_resolver(workspace)
         self._workspace = workspace
         self._timeout = timeout
+        self._max_attempts = max(1, max_attempts)
         self._clock = clock or _now
         base = Path(output_root) / "_review_relay" / "collab_delivery"
         base.mkdir(parents=True, exist_ok=True)
         self._dir = base
+
+    def _attempts(self, message_id: str) -> int:
+        path = self._dir / f"{self._safe(message_id)}.attempts.json"
+        if not path.exists():
+            return 0
+        try:
+            return int(json.loads(path.read_text(encoding="utf-8")).get("attempts", 0))
+        except (OSError, ValueError, TypeError):
+            return 0
+
+    def _record_attempt(self, message_id: str, count: int, reason: str) -> None:
+        path = self._dir / f"{self._safe(message_id)}.attempts.json"
+        path.write_text(json.dumps({"message_id": message_id, "attempts": count,
+                                    "last_reason": reason, "at": self._clock()},
+                                   ensure_ascii=False, indent=2), encoding="utf-8")
 
     def deliver(self, decision: Dict[str, Any]) -> Dict[str, Any]:
         thread = str(decision.get("thread_id", "")).strip()
@@ -106,6 +138,18 @@ class ClaudeSessionDelivery:
         if marker.exists():
             return {"status": "already_delivered", "session": session, "message_id": message_id}
 
+        attempts = self._attempts(message_id)
+        if attempts >= self._max_attempts:
+            return {"status": "failed_exhausted", "message_id": message_id, "attempts": attempts}
+
+        # Re-check the exact branch head IMMEDIATELY before waking Claude: the branch may have moved
+        # after the reviewer validated it. A stale decision must never wake the session (fail closed).
+        sha = str(decision.get("reviewed_sha") or decision.get("head_sha") or "").lower()
+        current = str(self._head_resolver() or "").lower()
+        if sha and current and sha != current:
+            return {"status": "stale", "message_id": message_id, "reviewed_sha": sha,
+                    "current_head": current}
+
         exe = self._exe_resolver()
         if not exe:
             raise SessionDeliveryError("no native claude executable resolved; cannot deliver safely")
@@ -116,16 +160,27 @@ class ClaudeSessionDelivery:
         prompt = _DELIVERY_PROMPT.format(path=str(data_path), thread=thread, message_id=message_id)
         cmd = [exe, "--resume", session, "-p", prompt, "--output-format", "json",
                "--permission-mode", "acceptEdits"]
-        proc = self._run(cmd, cwd=self._workspace, capture_output=True, text=True,
-                         timeout=self._timeout, check=False)
+        try:
+            proc = self._run(cmd, cwd=self._workspace, capture_output=True, text=True,
+                             timeout=self._timeout, check=False)
+        except Exception as exc:  # noqa: BLE001 - a timeout/crash is a failed attempt, never success
+            self._record_attempt(message_id, attempts + 1, type(exc).__name__)
+            return {"status": "failed", "message_id": message_id, "attempts": attempts + 1,
+                    "error": type(exc).__name__}
         returncode = int(getattr(proc, "returncode", 0) or 0)
+        if returncode != 0:
+            # A non-zero resume is NOT success — no marker, so a later deliver can safely retry.
+            self._record_attempt(message_id, attempts + 1, f"returncode={returncode}")
+            return {"status": "failed", "message_id": message_id, "attempts": attempts + 1,
+                    "returncode": returncode}
 
+        # Success marker written ONLY after a successful resume. ACK remains the completion proof.
         marker.write_text(json.dumps({"message_id": message_id, "thread_id": thread,
                                       "session": session, "delivered_at": self._clock(),
-                                      "returncode": returncode}, ensure_ascii=False, indent=2),
+                                      "returncode": 0}, ensure_ascii=False, indent=2),
                           encoding="utf-8")
         return {"status": "delivered", "session": session, "message_id": message_id,
-                "returncode": returncode}
+                "returncode": 0}
 
     @staticmethod
     def _safe(value: str) -> str:

@@ -79,10 +79,13 @@ class BudgetLedger:
 
     # --- usage ----------------------------------------------------------------------------------
     def record(self, thread_id: str, *, calls: int = 1, usd: float = 0.0,
-               input_chars: int = 0, output_chars: int = 0) -> Dict[str, Any]:
+               input_chars: int = 0, output_chars: int = 0, input_tokens: int = 0,
+               output_tokens: int = 0, total_tokens: int = 0) -> Dict[str, Any]:
         event = {"thread_id": str(thread_id), "date": self._today(), "calls": int(calls),
                  "usd": float(usd), "input_chars": int(input_chars),
-                 "output_chars": int(output_chars), "at": self._clock()}
+                 "output_chars": int(output_chars), "input_tokens": int(input_tokens),
+                 "output_tokens": int(output_tokens), "total_tokens": int(total_tokens),
+                 "at": self._clock()}
         path = self._events / f"{event['date']}-{uuid4().hex}.json"
         with path.open("x", encoding="utf-8") as fh:
             json.dump(event, fh, ensure_ascii=False, sort_keys=True)
@@ -100,15 +103,18 @@ class BudgetLedger:
 
     def usage(self, thread_id: str) -> Dict[str, Any]:
         tid = str(thread_id)
-        t_calls = t_usd = d_calls = d_usd = 0.0
+        t_calls = t_usd = d_calls = d_usd = d_tokens = t_tokens = 0.0
         for e in self._events_today():
             d_calls += e.get("calls", 0)
             d_usd += e.get("usd", 0.0)
+            d_tokens += e.get("total_tokens", 0)
             if e.get("thread_id") == tid:
                 t_calls += e.get("calls", 0)
                 t_usd += e.get("usd", 0.0)
+                t_tokens += e.get("total_tokens", 0)
         return {"thread_calls": int(t_calls), "thread_usd": round(t_usd, 6),
-                "daily_calls": int(d_calls), "daily_usd": round(d_usd, 6)}
+                "thread_tokens": int(t_tokens), "daily_calls": int(d_calls),
+                "daily_usd": round(d_usd, 6), "daily_tokens": int(d_tokens)}
 
     def check(self, thread_id: str) -> BudgetVerdict:
         u = self.usage(thread_id)

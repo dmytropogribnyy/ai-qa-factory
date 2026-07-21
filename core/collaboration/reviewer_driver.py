@@ -11,11 +11,13 @@ merge, write source, run shell, or send externally.
 from __future__ import annotations
 
 import json
+import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
-from core.collaboration.budget import BudgetLedger, RetryExhausted, run_with_retries
+from core.collaboration.budget import BudgetLedger
 from core.collaboration.envelopes import make_envelope
 from core.collaboration.evidence import gather_evidence
 from core.collaboration.reviewer_client import (
@@ -28,21 +30,33 @@ from core.collaboration.store import CollaborationStore, CollaborationStoreError
 CANONICAL_REVIEWER_CONTRACT = (
     "You are an INDEPENDENT engineering reviewer for the AI QA Factory. You review exactly one commit "
     "identified by its full head SHA, using only the bounded evidence provided. You cannot merge, write "
-    "source, run shell, or send anything externally; you only return a structured judgement. Judge the "
-    "change against the project invariants and the stated scope. For a CHECKPOINT return decision_type "
+    "source, run shell, or send anything externally; you only return a structured judgement. "
+    "The decision_type is fixed by request_kind and you MUST use it: a QUESTION -> decision_type "
+    "RESPONSE; a PROPOSAL -> decision_type CRITIQUE or RECOMMENDATION; a CHECKPOINT -> decision_type "
     "DECISION with verdict GO only if the evidence and tests genuinely support it, NO-GO with specific "
-    "blockers otherwise, COMMENT if you cannot decide. Echo reviewed_sha exactly. Distinguish observed, "
-    "inferred and unverified claims; never assume capabilities that are not evidenced. Respond ONLY with "
-    "the required JSON object."
+    "blockers otherwise, or COMMENT if you truly cannot decide, and echo reviewed_sha exactly. Judge "
+    "against the project invariants and the stated scope. Distinguish observed, inferred and unverified "
+    "claims; never assume capabilities that are not evidenced. Respond ONLY with the required JSON object."
 )
 
 _REPLY_KIND = {"RESPONSE": "RESPONSE", "CRITIQUE": "CRITIQUE",
                "RECOMMENDATION": "RECOMMENDATION", "DECISION": "DECISION"}
-_DEFAULT_USD_PER_CALL = 0.01
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _cost_from_usage(usage: Optional[Dict[str, Any]]) -> float:
+    """Truthful cost from REAL tokens and configured per-million-token pricing (0 when unpriced —
+    never a fabricated flat charge). The hard budget bound is the call count; spend is only shown as
+    actual once pricing is configured (AIQA_REVIEWER_PRICE_PER_MTOK_IN/OUT)."""
+    if not usage:
+        return 0.0
+    p_in = float(os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_IN", "0") or 0.0)
+    p_out = float(os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_OUT", "0") or 0.0)
+    return round(usage.get("input_tokens", 0) / 1e6 * p_in
+                 + usage.get("output_tokens", 0) / 1e6 * p_out, 6)
 
 
 class ReviewerDriver:
@@ -57,7 +71,7 @@ class ReviewerDriver:
         git_runner: Optional[Callable[[list], str]] = None,
         reviewer_id: str = "gpt-reviewer",
         system_contract: str = CANONICAL_REVIEWER_CONTRACT,
-        cost_estimator: Optional[Callable[[Dict[str, Any], Dict[str, Any]], float]] = None,
+        cost_estimator: Optional[Callable[[Optional[Dict[str, Any]]], float]] = None,
         clock: Optional[Callable[[], str]] = None,
         sleep: Optional[Callable[[float], None]] = None,
     ) -> None:
@@ -69,9 +83,10 @@ class ReviewerDriver:
         self._git_runner = git_runner
         self._reviewer_id = reviewer_id
         self._contract = system_contract
-        self._cost = cost_estimator or (lambda ev, msg: _DEFAULT_USD_PER_CALL)
+        self._cost = cost_estimator or _cost_from_usage
         self._clock = clock or _now
-        self._sleep = sleep or (lambda _s: None)
+        # Real bounded backoff in production; tests inject a no-op sleep.
+        self._sleep = sleep if sleep is not None else time.sleep
         self._state_path = Path(budget._events.parent) / "collab_driver" / "state.json"  # same base
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         self._state = self._load_state()
@@ -104,7 +119,11 @@ class ReviewerDriver:
                 "last_error": self._state.get("last_error", ""),
                 "heartbeat": self._state.get("updated_at", ""),
                 "current_thread": self._state.get("current_thread", ""),
+                "model": self._state.get("model", getattr(self._client, "model", "")),
+                "reasoning_effort": self._state.get("reasoning_effort",
+                                                    getattr(self._client, "reasoning_effort", "")),
                 "budget": {"daily_calls": daily["daily_calls"], "daily_usd": daily["daily_usd"],
+                           "daily_tokens": daily["daily_tokens"],
                            "policy": {"daily_calls": self._budget.policy.daily_calls,
                                       "daily_usd": self._budget.policy.daily_usd}}}
 
@@ -131,25 +150,17 @@ class ReviewerDriver:
             self._escalate(request, f"budget cap reached ({verdict.cap}): {verdict.reason}")
             return {"status": "blocked", "cap": verdict.cap}
 
+        evidence = gather_evidence(self._repo_root, request["head_sha"],
+                                   base_sha=str(request.get("base_sha", "")),
+                                   request=request, git_runner=self._git_runner)
         key = request["idempotency_key"]
-        cached = self._budget.cache_get(key)
-        try:
-            if cached is not None:
-                raw = cached
-            else:
-                evidence = gather_evidence(self._repo_root, request["head_sha"],
-                                           base_sha=str(request.get("base_sha", "")),
-                                           request=request, git_runner=self._git_runner)
-                raw = run_with_retries(
-                    lambda: self._client.review(system_contract=self._contract, evidence=evidence,
-                                                message=request),
-                    policy=self._budget.policy, sleep=self._sleep)
-                self._budget.record(thread, calls=1, usd=self._cost(evidence, request))
-                self._budget.cache_put(key, raw)
-        except RetryExhausted as exc:
-            self._budget.record(thread, calls=1, usd=self._cost({}, request))
-            self._escalate(request, f"reviewer call failed after bounded retries: {exc}")
-            return {"status": "needs_owner", "reason": "retries_exhausted"}
+        cached = self._budget.cache_get(key)   # only schema-validated replies are ever cached
+        if cached is not None:
+            raw = cached
+        else:
+            raw, failure = self._review_with_accounting(thread, request, evidence)
+            if failure is not None:
+                return failure                 # already escalated (blocked / retries exhausted)
 
         try:
             result = validate_reviewer_output(raw, request_kind=request["kind"],
@@ -158,11 +169,53 @@ class ReviewerDriver:
             self._escalate(request, f"reviewer output rejected by schema: {exc}")
             return {"status": "schema_error"}
 
+        # P0-3: a CHECKPOINT can NEVER produce GO on missing, unverified, or materially truncated
+        # evidence — the reviewer might otherwise GO on the worker's claims. Fail closed to the owner.
+        if (request["kind"] == "CHECKPOINT" and result.decision_type == "DECISION"
+                and result.verdict == "GO" and not evidence.get("evidence_complete", False)):
+            self._escalate(request, "insufficient independent evidence to authorize GO: "
+                           + "; ".join(evidence.get("incompleteness", ["evidence incomplete"])))
+            return {"status": "needs_owner", "reason": "evidence_incomplete"}
+
+        self._budget.cache_put(key, raw)       # cache ONLY the schema-validated response
         reply = self._append_reply(request, result)
         self._save_state(stage="IDLE", processed=self._state.get("processed", 0) + 1,
-                         last_success_at=self._clock(), current_thread="")
+                         last_success_at=self._clock(), current_thread="",
+                         model=getattr(self._client, "model", ""),
+                         reasoning_effort=getattr(self._client, "reasoning_effort", ""))
         return {"status": "reviewed", "decision_type": result.decision_type,
                 "verdict": result.verdict, "message_id": reply["message_id"]}
+
+    def _review_with_accounting(self, thread: str, request: Dict[str, Any],
+                                evidence: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]],
+                                                                   Optional[Dict[str, Any]]]:
+        """Call the reviewer with bounded retries, counting EVERY attempt as a call and re-checking
+        the budget cap before each attempt (real backoff between them). Returns (raw, None) on success
+        or (None, escalation-result) when the cap is hit or retries are exhausted (fail closed)."""
+        attempts = max(1, int(self._budget.policy.max_retries))
+        last_exc: Optional[BaseException] = None
+        for i in range(attempts):
+            verdict = self._budget.check(thread)
+            if not verdict.allowed:
+                self._escalate(request, f"budget cap reached ({verdict.cap}): {verdict.reason}")
+                return None, {"status": "blocked", "cap": verdict.cap}
+            try:
+                raw = self._client.review(system_contract=self._contract, evidence=evidence,
+                                          message=request)
+            except Exception as exc:  # noqa: BLE001 - a failed attempt still consumed an API call
+                last_exc = exc
+                self._budget.record(thread, calls=1, usd=0.0)
+                if i < attempts - 1:
+                    self._sleep(self._budget.policy.backoff_base_seconds * (2 ** i))
+                continue
+            usage = getattr(self._client, "last_usage", None) or {}
+            self._budget.record(thread, calls=1, usd=self._cost(usage),
+                                input_tokens=usage.get("input_tokens", 0),
+                                output_tokens=usage.get("output_tokens", 0),
+                                total_tokens=usage.get("total_tokens", 0))
+            return raw, None
+        self._escalate(request, f"reviewer call failed after {attempts} attempts: {last_exc}")
+        return None, {"status": "needs_owner", "reason": "retries_exhausted"}
 
     def _append_reply(self, request: Dict[str, Any], result) -> Dict[str, Any]:
         kind = _REPLY_KIND[result.decision_type]

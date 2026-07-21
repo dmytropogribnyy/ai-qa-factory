@@ -17,6 +17,48 @@ def _runner(mapping):
     return run
 
 
+def _complete_runner():
+    return _runner({"rev-parse --verify": _HEAD, "diff --name-only": "core/a.py\ncore/b.py",
+                    "diff --stat": " 2 files changed", "diff " + _BASE: "+ok\n" * 5,
+                    "log -1": "feat: change"})
+
+
+def test_verified_sha_and_completeness_flags():
+    ev = gather_evidence(".", _HEAD, base_sha=_BASE, git_runner=_complete_runner())
+    assert ev["sha_verified"] is True
+    assert ev["git_ok"] is True
+    assert ev["evidence_complete"] is True
+    assert ev["incompleteness"] == []
+
+
+def test_unverifiable_sha_marks_evidence_incomplete():
+    # rev-parse --verify returns nothing -> the commit cannot be confirmed to exist.
+    run = _runner({"diff --name-only": "core/a.py", "diff --stat": "x", "diff " + _BASE: "d",
+                   "log -1": "s"})
+    ev = gather_evidence(".", _HEAD, base_sha=_BASE, git_runner=run)
+    assert ev["sha_verified"] is False
+    assert ev["evidence_complete"] is False
+    assert any("verif" in r.lower() for r in ev["incompleteness"])
+
+
+def test_material_truncation_marks_incomplete():
+    run = _runner({"rev-parse --verify": _HEAD, "diff --name-only": "core/a.py", "diff --stat": "x",
+                   "diff " + _BASE: "+line\n" * 100000, "log -1": "s"})
+    ev = gather_evidence(".", _HEAD, base_sha=_BASE, git_runner=run, max_diff_chars=400)
+    assert ev["diff_truncated"] is True
+    assert ev["evidence_complete"] is False
+
+
+def test_pack_includes_canonical_criteria_and_manifest_contents():
+    ev = gather_evidence(".", _HEAD, base_sha=_BASE, git_runner=_complete_runner(),
+                         request={"body": "slice ready; full suite green"},
+                         manifests={"ci": "run 123 success", "tests": "5128 passed"})
+    assert "invariant" in ev["canonical_criteria"].lower()      # real content, loaded from the repo doc
+    assert ev["checkpoint_manifest"] == "slice ready; full suite green"
+    assert ev["manifests"]["ci"] == "run 123 success"
+    assert ev["manifests"]["tests"] == "5128 passed"
+
+
 def test_evidence_binds_head_sha_and_bounds_the_diff():
     big_diff = "+line\n" * 100000
     run = _runner({"diff --name-only": "core/a.py\ncore/b.py",

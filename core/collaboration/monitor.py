@@ -45,10 +45,18 @@ class CollaborationMonitor:
         self._out = output_root
         self._store = CollaborationStore(output_root)
         self._budget = BudgetLedger(output_root)
-        self._head_resolver = head_resolver or (lambda: "")
+        # head_resolver(branch) -> that branch's head; per-thread matching, not one global HEAD.
+        # Accept both branch-aware and legacy zero-arg resolvers.
+        self._head_resolver = head_resolver or (lambda branch="": "")
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
         self._stale_seconds = stale_seconds
         self._state_path = Path(output_root) / "_review_relay" / "collab_driver" / "state.json"
+
+    def _resolve_head(self, branch: str) -> str:
+        try:
+            return str(self._head_resolver(branch) or "")
+        except TypeError:
+            return str(self._head_resolver() or "")   # legacy zero-arg resolver
 
     def _driver_state(self) -> Dict[str, Any]:
         if self._state_path.exists():
@@ -70,17 +78,28 @@ class CollaborationMonitor:
             stale = (now - beat).total_seconds() > self._stale_seconds
         return {"stage": state.get("stage", "IDLE"), "processed": state.get("processed", 0),
                 "last_error": state.get("last_error", ""), "heartbeat": state.get("updated_at", ""),
-                "stale": stale,
+                "stale": stale, "model": state.get("model", ""),
+                "reasoning_effort": state.get("reasoning_effort", ""),
                 "budget": {"daily_calls": daily["daily_calls"], "daily_usd": daily["daily_usd"],
+                           "daily_tokens": daily["daily_tokens"],
                            "cap_calls": self._budget.policy.daily_calls,
                            "cap_usd": self._budget.policy.daily_usd}}
 
-    def _thread_view(self, thread_id: str, current_head: str) -> Dict[str, Any]:
+    def _thread_view(self, thread_id: str) -> Dict[str, Any]:
         messages = self._store.thread(thread_id)["messages"]
         latest = messages[-1] if messages else {}
-        request = next((m for m in messages if m.get("kind") in _REQUEST_STATE), {})
+        # Derive the LATEST causal cycle, not the first request in the thread.
+        request = next((m for m in reversed(messages) if m.get("kind") in _REQUEST_STATE), {})
         decision = next((m for m in reversed(messages) if m.get("kind") == "DECISION"), {})
-        acked = any(m.get("kind") == "ACKNOWLEDGEMENT" for m in messages)
+        replies = [m for m in messages if m.get("kind") in _REPLY_STATE or m.get("kind") == "DECISION"]
+        latest_reply = replies[-1] if replies else {}
+        # An ACK counts only when it binds to the LATEST reply/decision — not "any old ACK".
+        ack_targets = {str(m.get("in_reply_to", "")) for m in messages
+                       if m.get("kind") == "ACKNOWLEDGEMENT"}
+        acked = bool(latest_reply) and latest_reply.get("idempotency_key") in ack_targets
+        # Head is matched per THREAD/branch, not against one process-wide checkout HEAD.
+        branch = request.get("branch") or latest.get("branch") or ""
+        current_head = self._resolve_head(branch).lower()
 
         state, actor, action, nxt = "WORKING", "claude-worker", "in progress", ""
         kind = latest.get("kind", "")
@@ -122,9 +141,9 @@ class CollaborationMonitor:
         }
 
     def snapshot(self) -> Dict[str, Any]:
-        head = str(self._head_resolver() or "").lower()
+        head = self._resolve_head("").lower()             # representative current-branch head
         driver = self._driver()
-        threads = [self._thread_view(t, head) for t in self._store.threads()]
+        threads = [self._thread_view(t) for t in self._store.threads()]
         threads.sort(key=lambda t: t.get("thread_id", ""))
         needs_owner = (driver["stage"] == "NEEDS_OWNER"
                        or any(t["state"] == "NEEDS_OWNER" for t in threads))

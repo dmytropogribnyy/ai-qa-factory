@@ -141,6 +141,37 @@ class OpenAIReviewerClient:
                   else os.environ.get("AIQA_REVIEWER_REASONING_EFFORT", "high"))
         self._reasoning_effort = (effort or "").strip()
         self._max_output_chars = max_output_chars
+        self._last_usage: Optional[Dict[str, Any]] = None   # real token usage from the last live call
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def reasoning_effort(self) -> str:
+        return self._reasoning_effort
+
+    @property
+    def last_usage(self) -> Optional[Dict[str, Any]]:
+        return self._last_usage
+
+    def _usage_from(self, model: str, usage: Any) -> Dict[str, Any]:
+        def _get(obj: Any, name: str) -> int:
+            val = getattr(obj, name, None)
+            if val is None and isinstance(obj, dict):
+                val = obj.get(name)
+            try:
+                return int(val or 0)
+            except (TypeError, ValueError):
+                return 0
+        reasoning = 0
+        details = getattr(usage, "completion_tokens_details", None)
+        if details is not None:
+            reasoning = _get(details, "reasoning_tokens")
+        return {"model": model, "reasoning_effort": self._reasoning_effort,
+                "input_tokens": _get(usage, "prompt_tokens"),
+                "output_tokens": _get(usage, "completion_tokens"),
+                "reasoning_tokens": reasoning, "total_tokens": _get(usage, "total_tokens")}
 
     def _resolve_create(self) -> Callable[[str, List[Dict[str, str]]], str]:
         if self._create is not None:
@@ -161,27 +192,33 @@ class OpenAIReviewerClient:
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
             resp = client.chat.completions.create(**kwargs)
+            self._last_usage = self._usage_from(model, getattr(resp, "usage", None))
             return resp.choices[0].message.content or ""
 
         return _call
 
     def review(self, *, system_contract: str, evidence: Dict[str, Any],
                message: Dict[str, Any]) -> Dict[str, Any]:
+        request_kind = message.get("kind")
+        allowed = sorted(_ALLOWED_OUTPUT.get(request_kind, {"RESPONSE"}))
         payload = {
-            "request_kind": message.get("kind"),
+            "request_kind": request_kind,
             "instruction": message.get("body", ""),
             "head_sha": message.get("head_sha", ""),
             "branch": message.get("branch", ""),
             "pr_number": message.get("pr_number"),
             "requested_next_action": message.get("requested_next_action", ""),
             "evidence": evidence,
+            # decision_type is NOT free choice: it is fixed by request_kind. QUESTION->RESPONSE,
+            # PROPOSAL->CRITIQUE or RECOMMENDATION, CHECKPOINT->DECISION.
+            "required_decision_type": (allowed[0] if len(allowed) == 1 else allowed),
             "required_output_schema": {
-                "decision_type": "RESPONSE|CRITIQUE|RECOMMENDATION|DECISION",
-                "verdict": "GO|NO-GO|COMMENT (DECISION only)",
-                "reviewed_sha": "echo the exact head_sha (DECISION only)",
-                "message": "your reasoning",
-                "blockers": ["..."], "confidence": "low|medium|high",
-                "evidence_used": ["..."]},
+                "decision_type": "|".join(allowed) + " (MUST be one of these for this request_kind)",
+                "verdict": "GO|NO-GO|COMMENT (required only when decision_type is DECISION)",
+                "reviewed_sha": "echo the exact head_sha verbatim (required only for DECISION)",
+                "message": "your reasoning (required, non-empty)",
+                "blockers": ["specific blocker", "..."], "confidence": "low|medium|high",
+                "evidence_used": ["which evidence you relied on"]},
         }
         messages = [{"role": "system", "content": system_contract},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]

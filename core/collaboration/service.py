@@ -9,15 +9,22 @@ from __future__ import annotations
 
 import re
 import subprocess
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from core.collaboration.budget import BudgetLedger, BudgetPolicy
 from core.collaboration.envelopes import make_envelope
 from core.collaboration.reviewer_client import OpenAIReviewerClient, ReviewerClient
 from core.collaboration.reviewer_driver import ReviewerDriver
+from core.collaboration.session_delivery import (
+    ClaudeSessionDelivery,
+    SessionDeliveryError,
+    SessionRegistry,
+)
 from core.collaboration.store import CollaborationStore
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+_DELIVERABLE = {"RESPONSE", "CRITIQUE", "RECOMMENDATION", "DECISION"}
+_DEFAULT_REGISTRY = ".aiqa_collab_sessions.json"
 
 
 def resolve_git_head(repo_root: str = ".") -> str:
@@ -59,3 +66,58 @@ def build_reviewer_driver(output_root: str, repo_root: str = ".", *,
     client = reviewer_client or OpenAIReviewerClient()
     return ReviewerDriver(store, budget, client, repo_root=repo_root,
                           head_resolver=lambda: resolve_git_head(repo_root), reviewer_id=reviewer_id)
+
+
+class CollaborationCycle:
+    """One bounded autonomous tick that CONNECTS the reviewer and delivery (Issue #14 P0-1): review a
+    pending request, then deliver every undelivered reviewer reply into its bound Claude session. Both
+    halves are idempotent (review dedup via open-requests; delivery dedup via the success marker), so a
+    restart never duplicates an API review or a Claude resume. It observes ACKs but never blocks on them.
+    """
+
+    def __init__(self, output_root: str, repo_root: str = ".", *,
+                 reviewer_client: Optional[ReviewerClient] = None,
+                 policy: Optional[BudgetPolicy] = None, reviewer_id: str = "gpt-reviewer",
+                 registry: Optional[SessionRegistry] = None,
+                 delivery: Optional[ClaudeSessionDelivery] = None) -> None:
+        self._store = CollaborationStore(output_root)
+        self._driver = build_reviewer_driver(output_root, repo_root, reviewer_client=reviewer_client,
+                                              policy=policy, reviewer_id=reviewer_id)
+        self._registry = registry or SessionRegistry(_DEFAULT_REGISTRY)
+        self._delivery = delivery or ClaudeSessionDelivery(
+            self._registry, output_root, workspace=repo_root,
+            head_resolver=lambda: resolve_git_head(repo_root))
+
+    def _deliver_pending(self) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for thread_id in self._store.threads():
+            if self._registry.session_for(thread_id) is None:
+                continue                                   # no bound session -> nothing to wake
+            acked = {str(m.get("in_reply_to", "")) for m in self._store.thread(thread_id)["messages"]
+                     if m.get("kind") == "ACKNOWLEDGEMENT"}
+            for m in self._store.thread(thread_id)["messages"]:
+                if m.get("kind") not in _DELIVERABLE:
+                    continue
+                try:
+                    res = self._delivery.deliver(m)
+                except SessionDeliveryError as exc:
+                    res = {"status": "error", "reason": str(exc)}
+                res["acked"] = m.get("idempotency_key") in acked
+                if res.get("status") != "already_delivered":
+                    results.append({"message_id": m.get("message_id"), **res})
+        return results
+
+    def tick(self) -> Dict[str, Any]:
+        review = self._driver.process_once()
+        deliveries = self._deliver_pending()
+        return {"review": review, "deliveries": deliveries, "health": self._driver.health()}
+
+    def run(self, *, max_iterations: int = 500) -> List[Dict[str, Any]]:
+        """Bounded loop (never unlimited): stop when there is nothing left to review or on fail-closed."""
+        ticks: List[Dict[str, Any]] = []
+        for _ in range(max(1, max_iterations)):
+            outcome = self.tick()
+            ticks.append(outcome)
+            if outcome["review"]["status"] in ("idle", "blocked", "needs_owner", "stale"):
+                break
+        return ticks
