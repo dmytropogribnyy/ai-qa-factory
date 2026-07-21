@@ -214,8 +214,14 @@ release-candidate claims.
 
 ### Level 3 — owner required
 
-Merge to main, paid-budget exceptions, client credentials/access, outreach/email, purchases, real external mutations,
-client delivery, and final release acceptance.
+Paid-budget exceptions, client credentials/access, outreach/email, purchases, real external mutations,
+client delivery, destructive history rewrite, repository visibility/access changes, and final release acceptance.
+
+**Merge to main** is owner-owned but **standingly delegated**: the owner granted a one-time standing
+authorization (see section 13) so the trusted local Git/Claude automation may *execute* a merge after
+an exact-head `[GPT REVIEW: GO]` + green required CI, with no per-PR re-confirmation. This does not move
+merge authority to GPT — GPT's decision is a review verdict and always carries `merge_authorized=false`;
+the authority stays with the owner, whose standing grant delegates only the routine execution.
 
 ## 10. Delivery phases
 
@@ -240,6 +246,12 @@ and uncommitted. The driver must not expose arbitrary shell execution through MC
 
 A separate bounded service notices checkpoints, invokes the configured GPT reviewer, posts decisions, and wakes the
 Claude session. It must enforce budgets, retry/idempotency, exact-SHA binding, audit logging, and owner boundaries.
+
+**Status:** Phase A shipped (`core/review_relay.py` + relay MCP). Phases B + C + D are implemented
+together as **Direct Collaboration Driver v1** (GitHub Issue #14, `core/collaboration/`) — SHA-bound
+envelopes, a bounded OpenAI-backed reviewer driver, safe delivery into one bound Claude session, an
+owner-visible Dashboard monitor, and budget/retry/idempotency guardrails. See
+`docs/DIRECT_COLLABORATION_DRIVER.md`. Phase E (Scout commercial learning loop) remains future work.
 
 ### Phase E — Scout Commercial Learning Loop
 
@@ -268,3 +280,53 @@ The system is successful when:
 4. Add local session delivery in a separate bounded step.
 5. Use the working channel immediately on the remaining Scout/Dashboard slices.
 6. Add full autonomous reviewer driving only after the manual relay path is stable and auditable.
+
+## 13. Standing owner authorization (merge boundary)
+
+The owner granted a durable standing authorization (recorded on GitHub, PR #13 comment 5037397576).
+It replaces the earlier rule that each merge required a fresh owner message.
+
+**Autonomous without another owner prompt** — after an exact-head `[GPT REVIEW: GO]` + green required
+CI: create/update branches; commit and push scoped changes; open/update/convert PRs; add/remove CI
+labels and rerun relevant jobs; rebase or resolve ordinary conflicts (no `main` history rewrite);
+**merge a PR**; delete merged feature branches; create follow-up issues/checkpoints/comments; and
+revert a newly merged change when CI or deterministic evidence proves a regression (then report).
+
+**Still owner-gated (never automatic)** — force-push/history rewrite of `main` or protected branches;
+deleting `main`, repositories, releases, or durable evidence; publishing a release/tag externally;
+changing repository visibility/ownership/access; paid-budget exceptions, credentials, outreach,
+purchases, client delivery, or any other external mutation.
+
+The relay and reviewer tools themselves have **no merge capability** (`merge_authorized` is always
+false); the merge is executed by the trusted local Git/Claude workflow after the validated exact-SHA GO.
+A GO whose `reviewed_sha` no longer matches the branch head is stale and must not be acted on.
+
+## 14. Canonical product invariants (review acceptance criteria)
+
+Every architecture/PR review checks these owner-level invariants (GitHub PR #13 comment 5037647350).
+A technically green change that materially violates one is a product NO-GO.
+
+1. **Integrated product, not islands** — Scout, Dashboard, Work execution, Observer, evidence, CI, and
+   the Claude↔GPT collaboration share one canonical state/read model; no duplicate dashboards or stores.
+2. **Flexible, smart architecture** — modular, replaceable adapters and policy-driven orchestration; a
+   living design that records decisions and migration paths.
+3. **Maximum safe autonomy** — autonomous discovery, triage, analysis, testing, evidence, retries,
+   dedupe/rescan, review/fix/merge-after-GO, and continuation; owner interruption only for
+   credentials/access, paid budget, outreach/external mutation, destructive history, or genuine ambiguity.
+4. **Operator-first UI** — clear state, actor, task, progress, PR/SHA/CI, next action, heartbeat,
+   blockers, NEEDS_OWNER; smart defaults, filters, production vs diagnostics separation; mobile-friendly.
+5. **Evidence is a first-class object** — reproducible bundles (screenshots/trace/logs/steps/env/
+   timestamps/hashes/impact/confidence), retention/dedupe/redaction, and links from Dashboard findings;
+   never fabricated; observed vs inferred vs unverified distinguished.
+6. **Autonomous Scout optimizes commercial value** — real-source discovery, safe access checks,
+   critical-flow investigation, low false positives, buyer likelihood, fixability, expected value; the
+   target→finding→opportunity→proposal→response→paid-work learning loop is preserved.
+7. **Budget-safe LLM usage** — deterministic/read-only first; LLM only where it materially helps;
+   per-task/model/token/cost ledger, hard/soft limits, caching, idempotency, retry caps, visible spend.
+8. **Restartable, low-maintenance** — survive app/driver/Claude restarts without losing the active task
+   or duplicating actions; persist safe config/session bindings locally (never secrets in Git); health checks.
+9. **Truthful across every surface** — Dashboard, Observer, API, CI, evidence, and docs agree on
+   production state, diagnostics, readiness, costs, completion. "Installed" ≠ "ready"; "token present" ≠
+   "authenticated"; "folder exists" ≠ a production campaign.
+10. **Success is product completion** — the Direct Driver and relay are enabling infrastructure that must
+    accelerate Scout/Dashboard/AI QA Factory completion, not become a competing endless platform.
