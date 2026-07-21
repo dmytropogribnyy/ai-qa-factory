@@ -1,0 +1,125 @@
+"""Persisted product-work packets for the session-independent writer loop (Issue #17).
+
+A *packet* is one bounded product task (objective, acceptance, safety boundary, next action) persisted
+under the SAME ``_review_relay`` base the Direct Driver already uses — there is no second state store.
+The task-managed supervisor picks the next pending packet and launches a bounded Claude writer on it;
+because the packet + its status live on disk, a fresh session (after a quota reset or a restart) resumes
+exactly where the last one stopped, and an in-progress claim prevents a duplicate launch.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
+
+_STATUSES = {"pending", "in_progress", "done", "failed", "needs_owner"}
+_SAFE_ID = re.compile(r"^pkt-[0-9A-Za-z._-]{6,80}$")
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+class ProductPacketError(ValueError):
+    """Raised for an invalid or conflicting product-packet operation."""
+
+
+class ProductPacketStore:
+    """Append/update store of bounded product packets under the shared _review_relay base."""
+
+    def __init__(self, output_root: str = "outputs") -> None:
+        self._dir = Path(output_root) / "_review_relay" / "product_packets"
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+    def create(self, *, objective: str, acceptance: str = "", safety: str = "",
+               next_action: str = "", area: str = "scout_dashboard") -> Dict[str, Any]:
+        if not str(objective).strip():
+            raise ProductPacketError("objective is required")
+        pid = f"pkt-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
+        record = {"packet_id": pid, "objective": str(objective).strip(),
+                  "acceptance": str(acceptance).strip(), "safety": str(safety).strip(),
+                  "next_action": str(next_action).strip() or str(objective).strip(),
+                  "area": str(area), "status": "pending", "attempts": 0,
+                  "created_at": _now(), "updated_at": _now(), "branch": "", "pr_number": None,
+                  "last_result": ""}
+        self._write(pid, record)
+        return record
+
+    def get(self, packet_id: str) -> Optional[Dict[str, Any]]:
+        pid = self._validate(packet_id)
+        path = self._dir / f"{pid}.json"
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def list(self) -> List[Dict[str, Any]]:
+        rows = []
+        for path in self._dir.glob("pkt-*.json"):
+            try:
+                rows.append(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
+        rows.sort(key=lambda r: (r.get("created_at", ""), r.get("packet_id", "")))
+        return rows
+
+    def next_pending(self) -> Optional[Dict[str, Any]]:
+        for row in self.list():
+            if row.get("status") == "pending":
+                return row
+        return None
+
+    def claim(self, packet_id: str) -> Optional[Dict[str, Any]]:
+        """Atomically move a packet pending -> in_progress so only one writer is ever launched for it.
+        Returns the claimed record, or None if it was not pending (already claimed/finished)."""
+        pid = self._validate(packet_id)
+        # Atomic claim marker: the first caller to create it wins; a concurrent caller is refused.
+        marker = self._dir / f"{pid}.claim"
+        try:
+            fd = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+        except FileExistsError:
+            return None
+        record = self.get(pid)
+        if not record or record.get("status") != "pending":
+            return None
+        record.update(status="in_progress", attempts=int(record.get("attempts", 0)) + 1,
+                      updated_at=_now())
+        self._write(pid, record)
+        return record
+
+    def update(self, packet_id: str, **changes: Any) -> Dict[str, Any]:
+        pid = self._validate(packet_id)
+        record = self.get(pid)
+        if record is None:
+            raise ProductPacketError("packet not found")
+        status = changes.get("status")
+        if status is not None and status not in _STATUSES:
+            raise ProductPacketError(f"invalid status: {status}")
+        record.update(changes)
+        record["updated_at"] = _now()
+        # Releasing back to pending (retry) clears the claim so a later cycle can re-claim it.
+        if record.get("status") == "pending":
+            (self._dir / f"{pid}.claim").unlink(missing_ok=True)
+        self._write(pid, record)
+        return record
+
+    @staticmethod
+    def _validate(packet_id: str) -> str:
+        pid = str(packet_id or "").strip()
+        if not _SAFE_ID.fullmatch(pid):
+            raise ProductPacketError("invalid packet_id")
+        return pid
+
+    def _write(self, pid: str, record: Dict[str, Any]) -> None:
+        tmp = self._dir / f"{pid}.json.tmp"
+        tmp.write_text(json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
+                       encoding="utf-8")
+        tmp.replace(self._dir / f"{pid}.json")
