@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import pytest
 
+import json
+
 from core.collaboration.reviewer_client import (
     FixtureReviewerClient,
+    OpenAIReviewerClient,
     ReviewerSchemaError,
+    load_openai_key,
     validate_reviewer_output,
 )
 
@@ -71,3 +75,39 @@ def test_fixture_client_returns_scripted_output_and_records_calls():
     assert out["verdict"] == "NO-GO"
     assert client.calls == 1
     assert client.last_system_contract.startswith("be an independent")
+
+
+def test_openai_client_shapes_request_and_parses_json_without_network():
+    seen = {}
+
+    def fake_create(model, messages):
+        seen["model"] = model
+        seen["system"] = messages[0]["content"]
+        seen["user"] = messages[1]["content"]
+        return json.dumps({"decision_type": "DECISION", "verdict": "GO", "reviewed_sha": _SHA,
+                           "message": "scope ok"})
+
+    client = OpenAIReviewerClient(model="test-model", api_key="x", create=fake_create)
+    out = client.review(system_contract="reviewer contract",
+                        evidence={"diff_stat": "1 file"}, message={"kind": "CHECKPOINT",
+                        "head_sha": _SHA, "branch": "feat/x", "body": "please review"})
+    assert out["verdict"] == "GO"
+    assert seen["model"] == "test-model"
+    payload = json.loads(seen["user"])
+    assert payload["request_kind"] == "CHECKPOINT"
+    assert payload["head_sha"] == _SHA
+    assert "evidence" in payload
+
+
+def test_openai_client_rejects_non_json_output():
+    client = OpenAIReviewerClient(api_key="x", create=lambda m, msgs: "not json at all")
+    try:
+        client.review(system_contract="c", evidence={}, message={"kind": "QUESTION", "head_sha": _SHA})
+        raise AssertionError("expected ReviewerSchemaError")
+    except ReviewerSchemaError:
+        pass
+
+
+def test_load_openai_key_prefers_env():
+    assert load_openai_key({"OPENAI_API_KEY": "sk-abc"}) == "sk-abc"
+    assert load_openai_key({"AIQA_HOME": "/nonexistent-dir-xyz"}) == ""

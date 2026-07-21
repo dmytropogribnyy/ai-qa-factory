@@ -12,8 +12,11 @@ whole lifecycle without a network) and ``OpenAIReviewerClient`` (the real, owner
 """
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Protocol
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Protocol
 
 _DECISION_VERDICTS = {"GO", "NO-GO", "COMMENT"}
 # Which reviewer decision_type is valid as a reply to each request kind.
@@ -102,3 +105,75 @@ class FixtureReviewerClient:
         self.last_evidence = evidence
         self.last_message = message
         return self._responder(message)
+
+
+def load_openai_key(env: Optional[Dict[str, str]] = None) -> str:
+    """Owner-gated OpenAI key: env first, then a gitignored local ~/.aiqa/openai.key. Never committed."""
+    env = env if env is not None else dict(os.environ)
+    key = (env.get("OPENAI_API_KEY") or env.get("AIQA_OPENAI_API_KEY") or "").strip()
+    if key:
+        return key
+    key_file = Path(env.get("AIQA_HOME") or (Path.home() / ".aiqa")) / "openai.key"
+    if key_file.is_file():
+        return key_file.read_text(encoding="utf-8").strip()
+    return ""
+
+
+class OpenAIReviewerClient:
+    """Real, owner-gated reviewer over the OpenAI API. The model receives TEXT only — no tools, so it
+    can never merge, write source, run shell, or send externally. ``create`` is injectable so the
+    request shaping and JSON parsing are testable without the network or the ``openai`` package."""
+
+    def __init__(self, *, model: Optional[str] = None, api_key: Optional[str] = None,
+                 create: Optional[Callable[[str, List[Dict[str, str]]], str]] = None,
+                 max_output_chars: int = 20000) -> None:
+        self._model = model or os.environ.get("AIQA_REVIEWER_MODEL", "gpt-4o-mini")
+        self._api_key = api_key if api_key is not None else load_openai_key()
+        self._create = create
+        self._max_output_chars = max_output_chars
+
+    def _resolve_create(self) -> Callable[[str, List[Dict[str, str]]], str]:
+        if self._create is not None:
+            return self._create
+        if not self._api_key:
+            raise ReviewerSchemaError("no OpenAI API key configured (set OPENAI_API_KEY or ~/.aiqa/openai.key)")
+        from openai import OpenAI  # lazy: only needed on the live path
+
+        client = OpenAI(api_key=self._api_key)
+
+        def _call(model: str, messages: List[Dict[str, str]]) -> str:
+            resp = client.chat.completions.create(
+                model=model, messages=messages, temperature=0,
+                response_format={"type": "json_object"})
+            return resp.choices[0].message.content or ""
+
+        return _call
+
+    def review(self, *, system_contract: str, evidence: Dict[str, Any],
+               message: Dict[str, Any]) -> Dict[str, Any]:
+        payload = {
+            "request_kind": message.get("kind"),
+            "instruction": message.get("body", ""),
+            "head_sha": message.get("head_sha", ""),
+            "branch": message.get("branch", ""),
+            "pr_number": message.get("pr_number"),
+            "requested_next_action": message.get("requested_next_action", ""),
+            "evidence": evidence,
+            "required_output_schema": {
+                "decision_type": "RESPONSE|CRITIQUE|RECOMMENDATION|DECISION",
+                "verdict": "GO|NO-GO|COMMENT (DECISION only)",
+                "reviewed_sha": "echo the exact head_sha (DECISION only)",
+                "message": "your reasoning",
+                "blockers": ["..."], "confidence": "low|medium|high",
+                "evidence_used": ["..."]},
+        }
+        messages = [{"role": "system", "content": system_contract},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
+        raw_text = (self._resolve_create()(self._model, messages) or "")[: self._max_output_chars]
+        try:
+            data = json.loads(raw_text)
+        except (ValueError, TypeError) as exc:
+            raise ReviewerSchemaError(f"reviewer did not return valid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ReviewerSchemaError("reviewer JSON must be an object")
+        return data
