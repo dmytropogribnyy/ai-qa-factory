@@ -16,6 +16,9 @@ on:
     tags: ["v*", "*-v*"]
   pull_request:
     branches: [main]
+    # `labeled` makes the manual ci-*/full-ci override actually start a run when a label is added.
+    # `unlabeled` is intentionally omitted so removing a label cannot cancel an in-flight forced gate.
+    types: [opened, synchronize, reopened, labeled]
   schedule:
     - cron: "0 3 * * *" # nightly full gate on main
   workflow_dispatch:
@@ -270,18 +273,23 @@ jobs:
           set -e
           test "$(AIQA_REVIEW_RELAY_ROLE=worker python tools/run_review_relay_mcp.py --list-tools | grep -c 'relay_')" = "4"
           AIQA_REVIEW_RELAY_ROLE=both python tools/run_review_relay_mcp.py --list-tools 2>&1 | grep -q "must be worker or reviewer"
-      - name: Authenticated HTTP 401 smoke (reviewer)
+      - name: Authenticated reviewer HTTP smoke (401 unauth; real MCP initialize -> 200)
         run: |
           set -e
           export AIQA_REVIEW_RELAY_ROLE=reviewer AIQA_RELAY_MCP_TOKEN=ci-smoke-token AIQA_OUTPUT_ROOT="$(mktemp -d)"
           python tools/run_review_relay_mcp.py --http --port 8785 &
-          srv=$!; sleep 4
-          code_noauth=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8785/mcp/ -d '{}')
-          code_auth=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8785/mcp/ -H 'Authorization: Bearer ci-smoke-token' -H 'Accept: application/json, text/event-stream' -d '{}')
-          kill $srv || true
-          echo "no-token=$code_noauth authed=$code_auth"
-          test "$code_noauth" = "401"
-          test "$code_auth" != "401"
+          srv=$!
+          trap 'kill "$srv" 2>/dev/null || true' EXIT
+          sleep 4
+          init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-relay-smoke","version":"1"}}}'
+          hdr_accept='Accept: application/json, text/event-stream'
+          no=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8785/mcp/ -H "$hdr_accept" -H 'Content-Type: application/json' -d "$init")
+          wrong=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8785/mcp/ -H 'Authorization: Bearer WRONG' -H "$hdr_accept" -H 'Content-Type: application/json' -d "$init")
+          ok=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8785/mcp/ -H "Authorization: Bearer $AIQA_RELAY_MCP_TOKEN" -H "$hdr_accept" -H 'Content-Type: application/json' -d "$init")
+          echo "no-token=$no wrong-token=$wrong authed-initialize=$ok"
+          test "$no" = "401"
+          test "$wrong" = "401"
+          test "$ok" = "200"
 
   # ── Scout / orchestration / canonical read-model smoke ───────────────────────────────────────────
   scout-smoke:
