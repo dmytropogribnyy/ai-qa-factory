@@ -28,10 +28,14 @@ class CollaborationStoreError(ValueError):
 class CollaborationStore:
     """Cross-process-safe, append-only collaboration thread log over immutable per-message files."""
 
-    def __init__(self, output_root: str = "outputs") -> None:
+    def __init__(self, output_root: str = "outputs", clock=None) -> None:
         self._base = Path(output_root) / "_review_relay"
         self._messages = self._base / "collab_messages"
         self._messages.mkdir(parents=True, exist_ok=True)
+        # stored_at alone is NOT a safe sort key: Windows' coarse clock gives identical microsecond
+        # timestamps to rapid sequential appends, and the message_id tiebreak is a content hash (not
+        # insertion order). A monotonic per-thread `seq` orders messages by real insertion order.
+        self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat(timespec="microseconds"))
 
     # --- write ----------------------------------------------------------------------------------
     def append(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
@@ -51,7 +55,10 @@ class CollaborationStore:
 
         record = dict(envelope)
         record["message_id"] = f"{thread}:{key}"
-        record["stored_at"] = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        record["stored_at"] = self._clock()
+        # Insertion index within the thread (this new file is not yet on disk), so ordering is stable
+        # even when two appends share a stored_at timestamp on a coarse-resolution clock.
+        record["seq"] = sum(1 for _ in thread_dir.glob("*.json"))
         self._write_once(path, record)
         return record
 
@@ -84,7 +91,7 @@ class CollaborationStore:
                 rows.append(self._read(path))
             except CollaborationStoreError:
                 continue
-        rows.sort(key=lambda m: (m.get("stored_at", ""), m.get("message_id", "")))
+        rows.sort(key=lambda m: (m.get("seq", 0), m.get("stored_at", ""), m.get("message_id", "")))
         return rows
 
     def threads(self) -> List[str]:
@@ -99,7 +106,7 @@ class CollaborationStore:
             for m in messages:
                 if m.get("kind") in _REQUEST_KINDS and m.get("idempotency_key") not in answered:
                     pending.append(m)
-        pending.sort(key=lambda m: (m.get("stored_at", ""), m.get("message_id", "")))
+        pending.sort(key=lambda m: (m.get("stored_at", ""), m.get("seq", 0), m.get("message_id", "")))
         return pending
 
     def latest_decision(self, thread_id: str) -> Optional[Dict[str, Any]]:

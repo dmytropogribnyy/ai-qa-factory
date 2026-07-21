@@ -34,6 +34,19 @@ def test_append_is_immutable_and_dedupes_by_idempotency_key(tmp_path):
     assert store.thread("t-1")["count"] == 1        # not duplicated
 
 
+def test_thread_order_is_stable_under_a_coarse_clock(tmp_path):
+    # Windows' coarse clock can stamp rapid appends with the SAME microsecond timestamp; the thread
+    # order must still follow real insertion order (regression: RESPONSE sorted before QUESTION).
+    store = CollaborationStore(str(tmp_path), clock=lambda: "2026-07-21T20:00:00.000000+00:00")
+    q = store.append(_q())
+    store.append(make_envelope(kind="RESPONSE", thread_id="t-1", actor="gpt-reviewer", body="a",
+                               head_sha=_SHA, branch="feat/x", in_reply_to=q["idempotency_key"]))
+    store.append(make_envelope(kind="ACKNOWLEDGEMENT", thread_id="t-1", actor="claude-worker",
+                               body="ok", in_reply_to=q["idempotency_key"]))
+    assert [m["kind"] for m in store.thread("t-1")["messages"]] == ["QUESTION", "RESPONSE",
+                                                                    "ACKNOWLEDGEMENT"]
+
+
 def test_thread_returns_messages_in_stored_order(tmp_path):
     store = CollaborationStore(str(tmp_path))
     q = store.append(_q())
