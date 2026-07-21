@@ -41,6 +41,8 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.testmondata
+.testmondata-journal
 *.egg-info/
 dist/
 build/
