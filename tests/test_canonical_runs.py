@@ -40,6 +40,43 @@ def test_is_diagnostic_run_treats_real_campaign_as_production():
     assert is_diagnostic_run("campaign-acme-ecommerce-20260721T090000Z-0f9d21") is False
 
 
+def test_production_campaign_not_diagnostic_when_business_slug_contains_marker_word():
+    """Regression: a real campaign id whose business/industry slug happens to contain a diagnostic
+    word (smoke/demo/acceptance/fixture) must stay PRODUCTION — its structural id shape wins over
+    any naming heuristic (classifier false-positive fix from GPT review)."""
+    for cid in (
+        "campaign-smokehouse-restaurant-20260721T101500Z-abc123",
+        "campaign-product-demo-platform-20260721T101500Z-abc123",
+        "campaign-acceptance-consulting-20260721T101500Z-abc123",
+        "campaign-fixture-manufacturer-20260721T101500Z-abc123",
+        "campaign-replay-media-agency-20260721T101500Z-abc123",
+    ):
+        assert is_diagnostic_run(cid) is False, cid
+
+
+def test_explicit_run_kind_marker_is_authoritative():
+    # An explicit persisted marker decides outright, regardless of the id text.
+    assert is_diagnostic_run("campaign-acme-20260721T101500Z-abc123", run_kind="smoke") is True
+    assert is_diagnostic_run("smoke-a", run_kind="production") is False
+
+
+def test_legacy_diagnostics_still_caught_by_anchored_patterns():
+    for cid in ("smoke-a", "v33-live-acceptance", "v33-skip-proof",
+                "campaign-discovery-demo", "campaign-discovery-demo-promo-01",
+                "radar-demo", "scout-demo", "replay-acme.com-171", "headed-replay-x",
+                "_registry", "_runcontrol"):
+        assert is_diagnostic_run(cid) is True, cid
+
+
+def test_production_slug_marker_word_survives_canonical_counts(tmp_path):
+    _seed_runcontrol(tmp_path, "campaign-smokehouse-restaurant-20260721T101500Z-abc123")
+    _seed_runcontrol(tmp_path, "smoke-a")
+    counts = campaign_counts(str(tmp_path))
+    assert counts["production"] == 1 and counts["diagnostic"] == 1
+    prod_ids = {c["campaign_id"] for c in canonical_campaigns(str(tmp_path))}
+    assert "campaign-smokehouse-restaurant-20260721T101500Z-abc123" in prod_ids
+
+
 # --- canonical enumeration (from _runcontrol, the same source Observer uses) ------------------------
 def test_canonical_campaigns_excludes_diagnostics_by_default(tmp_path):
     _seed_runcontrol(tmp_path, _PROD_ID)
