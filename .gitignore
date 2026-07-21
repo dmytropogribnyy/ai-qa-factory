@@ -13,6 +13,7 @@
 # ── Direct Collaboration Driver v1 (Issue #14): local session bindings, never committed ───
 .aiqa_collab_sessions.json
 .aiqa_collab_config.json
+.aiqa_supervisor.lock
 
 # ── Gmail OAuth client config + token stores (v2.0.1 — never commit) ───────────
 .secrets/

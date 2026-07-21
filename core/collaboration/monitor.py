@@ -165,10 +165,32 @@ class CollaborationMonitor:
         return {"delivered": delivered, "claude_cost_usd": round(cost, 6), "claude_model": model,
                 "billing_source": bm.get("source"), "billing_plan": bm.get("plan", "")}
 
+    def _supervisor(self) -> Dict[str, Any]:
+        """Durable-supervisor status (Issue #14 P0): proves the system is kept alive outside the Claude
+        session. Read-only; absent file simply means the supervisor is not installed/running."""
+        path = Path(self._out) / "_review_relay" / "collab_supervisor.json"
+        if not path.exists():
+            return {"installed": False}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"installed": False}
+        if not isinstance(data, dict):
+            return {"installed": False}
+        beat = _parse(data.get("checked_at", ""))
+        now = _parse(self._clock())
+        fresh = bool(beat and now and (now - beat).total_seconds() <= 180)
+        return {"installed": True, "fresh": fresh, "checked_at": data.get("checked_at", ""),
+                "dashboard_up": data.get("dashboard_up"), "dashboard_stale": data.get("dashboard_stale"),
+                "dashboard_action": data.get("dashboard_action", ""),
+                "driver_stage": data.get("driver_stage", ""),
+                "owner_action_required": bool(data.get("owner_action_required"))}
+
     def snapshot(self) -> Dict[str, Any]:
         head = self._resolve_head("").lower()             # representative current-branch head
         driver = self._driver()
         delivery = self._delivery()
+        supervisor = self._supervisor()
         threads = [self._thread_view(t) for t in self._store.threads()]
         threads.sort(key=lambda t: t.get("thread_id", ""))
         needs_owner = (driver["stage"] == "NEEDS_OWNER"
@@ -177,5 +199,5 @@ class CollaborationMonitor:
                   "needs_owner": sum(1 for t in threads if t["state"] == "NEEDS_OWNER"),
                   "done": sum(1 for t in threads if t["state"] == "DONE")}
         return {"schema": SCHEMA_VERSION, "generated_at": self._clock(), "current_head": head,
-                "driver": driver, "delivery": delivery, "owner_action_required": needs_owner,
-                "threads": threads, "counts": counts}
+                "driver": driver, "delivery": delivery, "supervisor": supervisor,
+                "owner_action_required": needs_owner, "threads": threads, "counts": counts}
