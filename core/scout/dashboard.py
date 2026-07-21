@@ -2823,6 +2823,21 @@ def _collab_body(snap: dict) -> str:
         f'<p class="muted">billing source: <strong>{billing_label}</strong></p></div>')
     driver_card += delivery_card
 
+    sup = snap.get("supervisor", {})
+    if sup.get("installed"):
+        sup_state = ('<span style="color:var(--attention);font-weight:600">&#9888; heartbeat stale</span>'
+                     if not sup.get("fresh") else "supervisor alive")
+        driver_card += (
+            '<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'
+            f'<p class="muted">{sup_state} &middot; last check {_esc(_fmt_ts(sup.get("checked_at","")))} '
+            f'&middot; at check: up={_esc(str(sup.get("dashboard_up_at_check")))} stale='
+            f'{_esc(str(sup.get("dashboard_stale_at_check")))} &middot; action '
+            f'{_esc(sup.get("dashboard_action") or "—")}</p></div>')
+    else:
+        driver_card += ('<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'
+                        '<p class="muted">not installed — run tools/supervisor_install.ps1 for '
+                        'session-independent Dashboard + driver recovery</p></div>')
+
     threads = snap.get("threads", [])
     if not threads:
         rows = '<div class="card"><p class="muted">No collaboration threads yet.</p></div>'

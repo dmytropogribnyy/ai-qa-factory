@@ -10,6 +10,7 @@ so a verdict can never be recorded against a moved head.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -28,10 +29,14 @@ class CollaborationStoreError(ValueError):
 class CollaborationStore:
     """Cross-process-safe, append-only collaboration thread log over immutable per-message files."""
 
-    def __init__(self, output_root: str = "outputs") -> None:
+    def __init__(self, output_root: str = "outputs", clock=None) -> None:
         self._base = Path(output_root) / "_review_relay"
         self._messages = self._base / "collab_messages"
         self._messages.mkdir(parents=True, exist_ok=True)
+        # stored_at alone is NOT a safe sort key: Windows' coarse clock gives identical microsecond
+        # timestamps to rapid sequential appends, and the message_id tiebreak is a content hash (not
+        # insertion order). A monotonic per-thread `seq` orders messages by real insertion order.
+        self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat(timespec="microseconds"))
 
     # --- write ----------------------------------------------------------------------------------
     def append(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
@@ -51,9 +56,25 @@ class CollaborationStore:
 
         record = dict(envelope)
         record["message_id"] = f"{thread}:{key}"
-        record["stored_at"] = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        record["stored_at"] = self._clock()
+        # Monotonic per-thread insertion order, allocated ATOMICALLY (O_EXCL claim marker) so two
+        # concurrent writers can never receive the same seq — stable ordering even under a coarse clock
+        # and cross-process appends.
+        record["seq"] = self._claim_seq(thread_dir)
         self._write_once(path, record)
         return record
+
+    @staticmethod
+    def _claim_seq(thread_dir: Path) -> int:
+        n = sum(1 for _ in thread_dir.glob("*.json"))
+        while True:
+            marker = thread_dir / f".seq.{n}"
+            try:
+                fd = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                return n
+            except FileExistsError:
+                n += 1
 
     def _assert_decision_binds_to_checkpoint(self, thread: str, decision: Dict[str, Any]) -> None:
         target = str(decision.get("in_reply_to", "")).strip()
@@ -84,7 +105,7 @@ class CollaborationStore:
                 rows.append(self._read(path))
             except CollaborationStoreError:
                 continue
-        rows.sort(key=lambda m: (m.get("stored_at", ""), m.get("message_id", "")))
+        rows.sort(key=lambda m: (m.get("seq", 0), m.get("stored_at", ""), m.get("message_id", "")))
         return rows
 
     def threads(self) -> List[str]:
@@ -99,7 +120,7 @@ class CollaborationStore:
             for m in messages:
                 if m.get("kind") in _REQUEST_KINDS and m.get("idempotency_key") not in answered:
                     pending.append(m)
-        pending.sort(key=lambda m: (m.get("stored_at", ""), m.get("message_id", "")))
+        pending.sort(key=lambda m: (m.get("stored_at", ""), m.get("seq", 0), m.get("message_id", "")))
         return pending
 
     def latest_decision(self, thread_id: str) -> Optional[Dict[str, Any]]:
