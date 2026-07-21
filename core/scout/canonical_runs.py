@@ -13,26 +13,66 @@ production while ``smoke-a`` / ``v33-live-acceptance`` / ``*-promo-*`` are not.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-# Substrings that mark a run/campaign id as a diagnostic/acceptance/replay/per-target/demo artifact.
-_DIAGNOSTIC_MARKERS = (
-    "smoke", "acceptance", "skip-proof", "-promo-", "promo-", "demo",
-    "replay", "headed-replay", "fixture",
+# A REAL production campaign id is minted as ``campaign-<business-slug>-<YYYYMMDDThhmmssZ>-<hex6>``
+# (see core.scout.discovery.config.fresh_campaign_id). Any id of this exact shape is production —
+# regardless of what words the business slug contains (e.g. "smokehouse", "product-demo",
+# "acceptance-consulting", "fixture-manufacturer"). This structural origin signal is what prevents a
+# real campaign from vanishing from production just because its name matched a naming heuristic.
+_PRODUCTION_ID_RE = re.compile(r"^campaign-.+-\d{8}t\d{6}z-[0-9a-f]{6}$")
+
+# Legacy diagnostic runs (created by demos / acceptance / replay scripts, predating run-control) are
+# matched by EXACT ANCHORED patterns only — never an arbitrary substring — so a business slug that
+# merely contains one of these words is not misclassified.
+_DIAG_PREFIXES = ("smoke-", "replay-", "headed-replay-", "v33-", "acceptance-")
+_DIAG_SUFFIXES = (
+    re.compile(r"-demo$"),
+    re.compile(r"-promo-\d+$"),
+    re.compile(r"-acceptance$"),
+    re.compile(r"-skip-proof$"),
 )
+_DIAG_EXACT = frozenset({"smoke", "demo", "replay", "fixture", "acceptance", "radar-demo",
+                         "scout-demo"})
+
+# Explicit persisted run-kind values (authoritative when available). Production kinds win; the rest
+# force diagnostic without touching the id at all.
+_KIND_PRODUCTION = frozenset({"production", "campaign", "client", "real", "prod"})
+_KIND_DIAGNOSTIC = frozenset({"smoke", "acceptance", "safe-live-acceptance", "demo", "replay",
+                              "headed-replay", "skip-proof", "fixture", "diagnostic", "acceptance-proof"})
 
 
-def is_diagnostic_run(run_id: str) -> bool:
+def is_diagnostic_run(run_id: str, *, run_kind: Optional[str] = None) -> bool:
     """True if a scout run/campaign id is NOT a production client campaign.
 
-    Reserved bookkeeping dirs (``_registry``, ``_runcontrol``, ``_bundles``, ``_campaigns``,
-    ``_dashboard``, ``_locks``, any ``_``-prefixed) and the known diagnostic naming patterns are
-    diagnostic; anything else (a real ``campaign-<slug>-<stamp>-<hex>`` id) is production."""
+    Classification order (most authoritative first):
+      1. An EXPLICIT persisted run-kind marker (``run_kind``), when available, decides outright.
+      2. Reserved bookkeeping ids (``_``-prefixed / empty) are diagnostic.
+      3. A real ``campaign-<slug>-<stamp>-<hex>`` structured id is PRODUCTION — regardless of the
+         words in its business slug (this is the fix for classifier false positives).
+      4. Otherwise, legacy diagnostic runs are matched by exact anchored prefixes/suffixes/whole-id
+         names only — never an arbitrary substring.
+      5. Anything else defaults to production (never hide real work on a mere name guess)."""
+    if run_kind:
+        rk = str(run_kind).strip().lower()
+        if rk in _KIND_PRODUCTION:
+            return False
+        if rk in _KIND_DIAGNOSTIC:
+            return True
     n = (run_id or "").strip().lower()
     if not n or n.startswith("_"):
         return True
-    return any(marker in n for marker in _DIAGNOSTIC_MARKERS)
+    if _PRODUCTION_ID_RE.match(n):
+        return False
+    if n in _DIAG_EXACT:
+        return True
+    if any(n.startswith(p) for p in _DIAG_PREFIXES):
+        return True
+    if any(rx.search(n) for rx in _DIAG_SUFFIXES):
+        return True
+    return False
 
 
 def _runcontrol_ids(output_dir: str) -> List[str]:
