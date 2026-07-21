@@ -95,6 +95,7 @@ def gather_evidence(
     refs = [str(r).strip() for r in (request.get("evidence_refs") or []) if str(r).strip()]
     manifest_contents = {str(k): _redact(v, limit=max_manifest_chars)
                          for k, v in (manifests or {}).items()}
+    criteria = _canonical_criteria(repo_root)
     return {
         "head_sha": head,
         "base_sha": base,
@@ -111,7 +112,8 @@ def gather_evidence(
         "diff_truncated": diff_truncated,
         "evidence_refs": refs,
         # Contents, not just references, so the reviewer reasons over real criteria (P0-3).
-        "canonical_criteria": _canonical_criteria(repo_root),
+        "canonical_criteria": criteria,
+        "criteria_loaded": bool(criteria),
         "checkpoint_manifest": _redact(request.get("body", ""), limit=max_manifest_chars),
         "manifests": manifest_contents,
         "evidence_complete": evidence_complete,

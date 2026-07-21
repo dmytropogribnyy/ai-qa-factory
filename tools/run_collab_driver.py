@@ -40,8 +40,9 @@ def main(argv=None) -> int:
     for _ in range(max(1, args.max_iterations)):
         outcome = cycle.tick()
         print(json.dumps(outcome, ensure_ascii=False, default=str))
-        if outcome["review"]["status"] in ("needs_owner", "blocked"):
-            return 2                                        # fail closed: stop for the owner
+        # Fail closed for the owner on any terminal reviewer OR delivery state (not just needs_owner).
+        if outcome.get("owner_action"):
+            return 2
         time.sleep(max(0.0, args.poll))
     return 0
 

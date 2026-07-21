@@ -72,6 +72,7 @@ class ReviewerDriver:
         reviewer_id: str = "gpt-reviewer",
         system_contract: str = CANONICAL_REVIEWER_CONTRACT,
         cost_estimator: Optional[Callable[[Optional[Dict[str, Any]]], float]] = None,
+        manifest_provider: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
         clock: Optional[Callable[[], str]] = None,
         sleep: Optional[Callable[[float], None]] = None,
     ) -> None:
@@ -83,6 +84,8 @@ class ReviewerDriver:
         self._git_runner = git_runner
         self._reviewer_id = reviewer_id
         self._contract = system_contract
+        # Trusted CI/test manifest for the exact SHA — a CHECKPOINT GO requires it (P0). Default: none.
+        self._manifest_provider = manifest_provider or (lambda _sha: None)
         self._cost = cost_estimator or _cost_from_usage
         self._clock = clock or _now
         # Real bounded backoff in production; tests inject a no-op sleep.
@@ -150,9 +153,11 @@ class ReviewerDriver:
             self._escalate(request, f"budget cap reached ({verdict.cap}): {verdict.reason}")
             return {"status": "blocked", "cap": verdict.cap}
 
+        manifest = self._manifest_provider(request["head_sha"])
+        manifests = {"trusted_gate": json.dumps(manifest)} if manifest else None
         evidence = gather_evidence(self._repo_root, request["head_sha"],
                                    base_sha=str(request.get("base_sha", "")),
-                                   request=request, git_runner=self._git_runner)
+                                   request=request, manifests=manifests, git_runner=self._git_runner)
         key = request["idempotency_key"]
         cached = self._budget.cache_get(key)   # only schema-validated replies are ever cached
         if cached is not None:
@@ -169,13 +174,22 @@ class ReviewerDriver:
             self._escalate(request, f"reviewer output rejected by schema: {exc}")
             return {"status": "schema_error"}
 
-        # P0-3: a CHECKPOINT can NEVER produce GO on missing, unverified, or materially truncated
-        # evidence — the reviewer might otherwise GO on the worker's claims. Fail closed to the owner.
+        # P0: a CHECKPOINT can NEVER produce GO unless the SHA is verified, the diff is whole, the
+        # canonical criteria loaded, AND a trusted CI/test manifest for this exact SHA is present and
+        # explicitly successful. The worker's body/refs may supplement but cannot satisfy this gate.
         if (request["kind"] == "CHECKPOINT" and result.decision_type == "DECISION"
-                and result.verdict == "GO" and not evidence.get("evidence_complete", False)):
-            self._escalate(request, "insufficient independent evidence to authorize GO: "
-                           + "; ".join(evidence.get("incompleteness", ["evidence incomplete"])))
-            return {"status": "needs_owner", "reason": "evidence_incomplete"}
+                and result.verdict == "GO"):
+            reasons = list(evidence.get("incompleteness", []))
+            if not evidence.get("criteria_loaded", False):
+                reasons.append("canonical criteria did not load")
+            if not (manifest and manifest.get("present")):
+                reasons.append("no trusted CI/test manifest for this exact SHA")
+            elif not manifest.get("success"):
+                reasons.append("trusted CI/test manifest is not successful")
+            if reasons:
+                self._escalate(request, "cannot authorize GO without trusted evidence: "
+                               + "; ".join(reasons))
+                return {"status": "needs_owner", "reason": "untrusted_or_incomplete_evidence"}
 
         self._budget.cache_put(key, raw)       # cache ONLY the schema-validated response
         reply = self._append_reply(request, result)

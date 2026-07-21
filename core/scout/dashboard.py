@@ -305,10 +305,11 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
 
         def _collab_snapshot(self):
             from core.collaboration.monitor import CollaborationMonitor
-            from core.collaboration.service import resolve_git_head
+            from core.collaboration.service import resolve_branch_head
             out = getattr(service, "output_dir", "outputs")
+            # Truly branch-aware: match each thread against ITS branch head (read-only), not one HEAD.
             return CollaborationMonitor(
-                out, head_resolver=lambda branch="": resolve_git_head(".")).snapshot()
+                out, head_resolver=lambda branch="": resolve_branch_head(".", branch)).snapshot()
 
         def _collab_page(self) -> str:
             try:

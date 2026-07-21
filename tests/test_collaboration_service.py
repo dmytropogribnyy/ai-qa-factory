@@ -17,7 +17,7 @@ _SHA = "a" * 40
 
 
 def _bound_cycle(tmp_path, responder, *, session="b93d32d1-7c96-4489-945b-2a49df494349",
-                 bind_thread="t-1", runner=None):
+                 bind_thread="t-1", runner=None, deliver_head=_SHA):
     reg = SessionRegistry(str(tmp_path / "sessions.json"))
     if bind_thread:
         reg.bind(bind_thread, session)
@@ -28,7 +28,7 @@ def _bound_cycle(tmp_path, responder, *, session="b93d32d1-7c96-4489-945b-2a49df
         return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     delivery = ClaudeSessionDelivery(reg, str(tmp_path), exe_resolver=lambda: "claude.exe",
-                                     runner=runner or _runner, head_resolver=lambda: _SHA)
+                                     runner=runner or _runner, head_resolver=lambda: deliver_head)
     cycle = CollaborationCycle(str(tmp_path), str(tmp_path),
                                reviewer_client=FixtureReviewerClient(responder),
                                policy=BudgetPolicy(backoff_base_seconds=0.0),
@@ -100,3 +100,24 @@ def test_cycle_restart_does_not_redeliver(tmp_path):
     cycle.tick()
     cycle.tick()                                                       # simulated restart tick
     assert runs["n"] == 1                                             # delivered exactly once
+
+
+def test_cycle_escalates_terminal_delivery_failure_to_owner(tmp_path):
+    # branch head moved after review -> delivery is stale -> durable NEEDS_OWNER, owner_action True.
+    submit_worker_message(str(tmp_path), kind="QUESTION", thread_id="t-1", body="q",
+                          head_sha=_SHA, branch="feat/x")
+    cycle, reg, runs = _bound_cycle(
+        tmp_path, lambda m: {"decision_type": "RESPONSE", "message": "a"}, deliver_head="e" * 40)
+    out = cycle.tick()
+    assert any(d["status"] == "stale" for d in out["deliveries"])
+    assert out["owner_action"] is True
+    kinds = [m["kind"] for m in CollaborationStore(str(tmp_path)).thread("t-1")["messages"]]
+    assert "NEEDS_OWNER" in kinds                                     # durable, owner-visible
+
+
+def test_resolve_branch_head_is_safe(tmp_path):
+    from core.collaboration.service import resolve_branch_head
+    head = resolve_branch_head(".", "feat/direct-collaboration-driver-v1")
+    assert head == "" or len(head) == 40
+    injected = resolve_branch_head(".", "; rm -rf /")                 # invalid ref -> safe fallback
+    assert injected == "" or len(injected) == 40

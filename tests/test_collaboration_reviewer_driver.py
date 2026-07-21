@@ -11,15 +11,33 @@ _SHA = "a" * 40
 _MOVED = "d" * 40
 
 
-def _driver(tmp_path, responder, *, head=_SHA, policy=None):
+def _trusted(_sha):
+    return {"present": True, "success": True, "summary": "CI success; tests 5147/5152 ok"}
+
+
+def _complete_git(args):
+    # Non-empty for every command incl. rev-parse --verify -> a verified, complete evidence pack.
+    return "core/x.py" if "name-only" in args else "diff"
+
+
+def _write_criteria(tmp_path):
+    # gather_evidence loads canonical criteria from repo_root; provide it so criteria_loaded is True.
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "COLLABORATIVE_AI_ENGINEERING_MODEL.md").write_text(
+        "## 14. Canonical product invariants\n1. Integrated product, not islands.\n", encoding="utf-8")
+
+
+def _driver(tmp_path, responder, *, head=_SHA, policy=None, manifest_provider=_trusted):
+    _write_criteria(tmp_path)
     store = CollaborationStore(str(tmp_path))
     budget = BudgetLedger(str(tmp_path), policy=policy or BudgetPolicy(
         per_thread_calls=5, per_thread_usd=5.0, daily_calls=20, daily_usd=20.0, max_retries=2,
         backoff_base_seconds=0.0), clock=lambda: "2026-07-21T20:00:00+00:00")
     client = FixtureReviewerClient(responder)
     driver = ReviewerDriver(store, budget, client, repo_root=str(tmp_path),
-                            head_resolver=lambda: head,
-                            git_runner=lambda args: "core/x.py" if "name-only" in args else "diff",
+                            head_resolver=lambda: head, git_runner=_complete_git,
+                            manifest_provider=manifest_provider,
                             clock=lambda: "2026-07-21T20:00:00+00:00", sleep=lambda _s: None)
     return store, budget, client, driver
 
@@ -120,12 +138,14 @@ class _UsageClient:
         return self._response
 
 
-def _driver_with(tmp_path, client, *, policy, head=_SHA, git=None):
+def _driver_with(tmp_path, client, *, policy, head=_SHA, git=None, manifest_provider=_trusted):
+    _write_criteria(tmp_path)
     store = CollaborationStore(str(tmp_path))
     budget = BudgetLedger(str(tmp_path), policy=policy, clock=lambda: "2026-07-21T20:00:00+00:00")
-    git = git or (lambda args: "core/x.py" if "name-only" in args else "diff")
+    git = git or _complete_git
     driver = ReviewerDriver(store, budget, client, repo_root=str(tmp_path),
                             head_resolver=lambda: head, git_runner=git,
+                            manifest_provider=manifest_provider,
                             clock=lambda: "2026-07-21T20:00:00+00:00", sleep=lambda _s: None)
     return store, budget, driver
 
@@ -176,8 +196,30 @@ def test_checkpoint_go_blocked_on_incomplete_evidence(tmp_path):
     _checkpoint(store)
     out = driver.process_once()
     assert out["status"] == "needs_owner"
-    assert out["reason"] == "evidence_incomplete"
+    assert out["reason"] == "untrusted_or_incomplete_evidence"
     assert store.latest_decision("t-1") is None            # no GO recorded on incomplete evidence
+
+
+def test_checkpoint_go_blocked_without_a_trusted_manifest(tmp_path):
+    store, budget, client, driver = _driver(
+        tmp_path, lambda m: {"decision_type": "DECISION", "verdict": "GO",
+                             "reviewed_sha": m["head_sha"], "message": "lgtm"},
+        manifest_provider=lambda _sha: None)          # no trusted CI/test manifest for this SHA
+    _checkpoint(store)
+    out = driver.process_once()
+    assert out["status"] == "needs_owner"
+    assert store.latest_decision("t-1") is None       # worker claims alone cannot authorize GO
+
+
+def test_checkpoint_go_blocked_when_manifest_unsuccessful(tmp_path):
+    store, budget, client, driver = _driver(
+        tmp_path, lambda m: {"decision_type": "DECISION", "verdict": "GO",
+                             "reviewed_sha": m["head_sha"], "message": "lgtm"},
+        manifest_provider=lambda _sha: {"present": True, "success": False, "summary": "CI failed"})
+    _checkpoint(store)
+    out = driver.process_once()
+    assert out["status"] == "needs_owner"
+    assert store.latest_decision("t-1") is None       # a failing gate can never yield GO
 
 
 def test_malformed_output_is_not_cached(tmp_path):

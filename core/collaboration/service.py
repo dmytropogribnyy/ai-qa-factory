@@ -20,7 +20,7 @@ from core.collaboration.session_delivery import (
     SessionDeliveryError,
     SessionRegistry,
 )
-from core.collaboration.store import CollaborationStore
+from core.collaboration.store import CollaborationStore, CollaborationStoreError
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _DELIVERABLE = {"RESPONSE", "CRITIQUE", "RECOMMENDATION", "DECISION"}
@@ -57,15 +57,31 @@ def record_ack(output_root: str, *, thread_id: str, decision_key: str, note: str
     return store.append(envelope)
 
 
+def resolve_branch_head(repo_root: str, branch: str) -> str:
+    """Read-only head of a specific local branch (P1 — real per-branch matching, not global HEAD)."""
+    ref = str(branch or "").strip()
+    if not ref or not re.fullmatch(r"[0-9A-Za-z._/-]{1,200}", ref):
+        return resolve_git_head(repo_root)
+    try:
+        proc = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+                              cwd=repo_root, capture_output=True, text=True, timeout=15, check=False)
+        head = (proc.stdout or "").strip().lower()
+        return head if _FULL_SHA.fullmatch(head) else resolve_git_head(repo_root)
+    except (OSError, subprocess.SubprocessError):
+        return resolve_git_head(repo_root)
+
+
 def build_reviewer_driver(output_root: str, repo_root: str = ".", *,
                           reviewer_client: Optional[ReviewerClient] = None,
                           policy: Optional[BudgetPolicy] = None,
                           reviewer_id: str = "gpt-reviewer") -> ReviewerDriver:
+    from core.collaboration.manifest import build_trusted_manifest
     store = CollaborationStore(output_root)
     budget = BudgetLedger(output_root, policy=policy or BudgetPolicy())
     client = reviewer_client or OpenAIReviewerClient()
     return ReviewerDriver(store, budget, client, repo_root=repo_root,
-                          head_resolver=lambda: resolve_git_head(repo_root), reviewer_id=reviewer_id)
+                          head_resolver=lambda: resolve_git_head(repo_root), reviewer_id=reviewer_id,
+                          manifest_provider=lambda sha: build_trusted_manifest(output_root, repo_root, sha))
 
 
 class CollaborationCycle:
@@ -103,21 +119,44 @@ class CollaborationCycle:
                 except SessionDeliveryError as exc:
                     res = {"status": "error", "reason": str(exc)}
                 res["acked"] = m.get("idempotency_key") in acked
+                # A terminal delivery failure must become a DURABLE owner-visible escalation, so the
+                # Dashboard can never show IDLE while delivery is dead (P1).
+                if res.get("status") in ("failed_exhausted", "stale", "error"):
+                    self._escalate_delivery(thread_id, m, res)
                 if res.get("status") != "already_delivered":
                     results.append({"message_id": m.get("message_id"), **res})
         return results
 
+    def _escalate_delivery(self, thread_id: str, reply: Dict[str, Any], res: Dict[str, Any]) -> None:
+        detail = (res.get("reason") or res.get("error")
+                  or (f"branch moved to {res.get('current_head', '')[:12]}" if res.get("status") == "stale"
+                      else f"attempts={res.get('attempts', '')}"))
+        try:
+            self._store.append(make_envelope(
+                kind="NEEDS_OWNER", thread_id=thread_id, actor="collab-driver",
+                body=f"terminal delivery failure ({res.get('status')}) for reply "
+                     f"{reply.get('message_id')}: {detail}",
+                in_reply_to=str(reply.get("idempotency_key", "")),
+                requested_next_action="owner must resolve delivery"))
+        except CollaborationStoreError:
+            pass                                           # idempotent: identical escalation dedupes
+
     def tick(self) -> Dict[str, Any]:
         review = self._driver.process_once()
         deliveries = self._deliver_pending()
-        return {"review": review, "deliveries": deliveries, "health": self._driver.health()}
+        delivery_terminal = any(d.get("status") in ("failed_exhausted", "stale", "error")
+                                for d in deliveries)
+        owner_action = (review["status"] in ("needs_owner", "blocked", "stale", "schema_error")
+                        or delivery_terminal)
+        return {"review": review, "deliveries": deliveries, "owner_action": owner_action,
+                "health": self._driver.health()}
 
     def run(self, *, max_iterations: int = 500) -> List[Dict[str, Any]]:
-        """Bounded loop (never unlimited): stop when there is nothing left to review or on fail-closed."""
+        """Bounded loop (never unlimited): stop when idle OR on any fail-closed / terminal delivery."""
         ticks: List[Dict[str, Any]] = []
         for _ in range(max(1, max_iterations)):
             outcome = self.tick()
             ticks.append(outcome)
-            if outcome["review"]["status"] in ("idle", "blocked", "needs_owner", "stale"):
+            if outcome["owner_action"] or outcome["review"]["status"] == "idle":
                 break
         return ticks
