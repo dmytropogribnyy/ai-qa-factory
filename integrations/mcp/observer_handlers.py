@@ -49,7 +49,9 @@ OBSERVER_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     "observer_get_release_readiness": _wrap(lambda a, args: a.get_release_readiness()),
     "observer_get_storage_status": _wrap(lambda a, args: a.get_storage_status()),
     "observer_list_campaigns": _wrap(lambda a, args: a.list_campaigns(
-        limit=_int(args, "limit", 50), offset=_int(args, "offset", 0))),
+        limit=_int(args, "limit", 50), offset=_int(args, "offset", 0),
+        include_diagnostics=bool(args.get("include_diagnostics", True)))),
+    "observer_campaign_counts": _wrap(lambda a, args: a.campaign_counts()),
     "observer_get_campaign": _wrap(lambda a, args: a.get_campaign(str(args.get("campaign_id", "")))),
     "observer_get_run_progress": _wrap(lambda a, args: a.get_run_progress(
         str(args.get("campaign_id", "")))),
@@ -97,7 +99,8 @@ OBSERVER_TOOL_SCHEMAS: List[Dict[str, Any]] = [
     _schema("observer_get_system_readiness", "Read-only readiness probes (installed != ready). deep=true launches Chromium + network.", {"deep": {"type": "boolean"}}),
     _schema("observer_get_release_readiness", "Read-only release-readiness summary.", {}),
     _schema("observer_get_storage_status", "Read-only evidence storage usage.", {}),
-    _schema("observer_list_campaigns", "Read-only paginated list of campaigns with run state + counters.", _PAGE),
+    _schema("observer_list_campaigns", "Read-only paginated list of campaigns with run state + counters (each tagged production/diagnostic). include_diagnostics=false returns production only.", {**_PAGE, "include_diagnostics": {"type": "boolean"}}),
+    _schema("observer_campaign_counts", "Read-only production vs diagnostic canonical campaign counts (matches the Dashboard read model).", {}),
     _schema("observer_get_campaign", "Read-only campaign snapshot.", _CAMPAIGN, ["campaign_id"]),
     _schema("observer_get_run_progress", "Read-only run progress (state, counters, decisions).", _CAMPAIGN, ["campaign_id"]),
     _schema("observer_get_run_stop_reason", "Read-only campaign stop reason.", _CAMPAIGN, ["campaign_id"]),

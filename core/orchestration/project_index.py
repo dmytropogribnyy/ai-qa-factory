@@ -38,6 +38,7 @@ class ProjectEntry:
     selected_capabilities: List[str] = field(default_factory=list)
     selected_tools: List[str] = field(default_factory=list)
     operator_next_action: str = ""
+    diagnostic: bool = False       # True for smoke/acceptance/replay/promo/demo artifacts
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
@@ -47,8 +48,10 @@ class ProjectIndex:
     def __init__(self, output_dir: str = "outputs") -> None:
         self._out = Path(output_dir)
 
-    def list_projects(self) -> List[ProjectEntry]:
-        projects = self._client_projects() + self._scout_campaigns()
+    def list_projects(self, include_diagnostics: bool = False) -> List[ProjectEntry]:
+        """Production projects by default. ``include_diagnostics=True`` also surfaces diagnostic
+        Scout runs (smoke/acceptance/replay/promo/demo) for an explicit "Show diagnostics" view."""
+        projects = self._client_projects(include_diagnostics) + self._scout_campaigns(include_diagnostics)
         return sorted(projects, key=lambda e: (e.updated_at or "", e.project_id), reverse=True)
 
     def snapshot(self) -> Dict[str, Any]:
@@ -65,10 +68,16 @@ class ProjectIndex:
         except (OSError, ValueError):
             return {}
 
-    def _client_projects(self) -> List[ProjectEntry]:
+    def _client_projects(self, include_diagnostics: bool = False) -> List[ProjectEntry]:
+        from core.scout.canonical_runs import is_diagnostic_run
         out: List[ProjectEntry] = []
         for ark in sorted(self._out.glob("*/40_ark_work")):
             if "scout" in ark.parts:
+                continue
+            project_id = ark.parent.name
+            # smoke-a and other diagnostic/test project ids are hidden from production by default.
+            diagnostic = is_diagnostic_run(project_id)
+            if diagnostic and not include_diagnostics:
                 continue
             wp = self._read_json(ark / "WORK_PACKET.json")
             rs = self._read_json(ark / "WORK_RUN_STATE.json")
@@ -89,32 +98,54 @@ class ProjectIndex:
                 deliverables=list(fr.get("expected_deliverables", [])),
                 selected_capabilities=list(wp.get("detected_capabilities", [])),
                 selected_tools=list(fr.get("selected_tools", [])),
-                operator_next_action=self._client_next_action(fr, status, blockers)))
+                operator_next_action=self._client_next_action(fr, status, blockers),
+                diagnostic=diagnostic))
         return out
 
-    def _scout_campaigns(self) -> List[ProjectEntry]:
-        root = self._out / "scout"
-        if not root.is_dir():
-            return []
+    def _scout_campaigns(self, include_diagnostics: bool = False) -> List[ProjectEntry]:
+        """Canonical Scout campaigns come from the orchestration source (scout/_runcontrol/), the
+        SAME source Observer/CampaignService use — NOT a folder scan. Production excludes diagnostic
+        ids (smoke/acceptance/replay/promo/demo). Under ``include_diagnostics`` we additionally
+        surface legacy folder artifacts (demo/acceptance runs that predate or bypass run-control),
+        always classified diagnostic — never counted as production."""
+        from core.scout.canonical_runs import canonical_campaigns
         out: List[ProjectEntry] = []
-        for base in sorted(p for p in root.iterdir() if p.is_dir()):
-            st = self._read_json(base / "state.json")
-            report = base / "report"
-            if not st and not report.is_dir():
-                continue
-            evidence = len(list(report.glob("*.json"))) if report.is_dir() else 0
-            counts = st.get("counts", {}) if isinstance(st.get("counts"), dict) else {}
-            status = st.get("status") or ("COMPLETED" if report.is_dir() else "UNKNOWN")
-            out.append(ProjectEntry(
-                project_id=(st.get("campaign_id") or base.name), type="scout_campaign",
-                title=(st.get("campaign_id") or base.name), source="scout",
-                created_at=st.get("started_at", ""), updated_at=st.get("updated_at", st.get("started_at", "")),
-                lifecycle_state=status,
-                progress=(100 if status in ("COMPLETED", "DONE") else 50 if status else 0),
-                blockers=[], workspace_path=str(base), evidence_count=evidence,
-                deliverables=[], selected_capabilities=[], selected_tools=[],
-                operator_next_action=self._scout_next_action(status, counts)))
+        seen: set = set()
+        for row in canonical_campaigns(str(self._out), include_diagnostics=include_diagnostics):
+            cid = row["campaign_id"]
+            seen.add(cid)
+            out.append(self._scout_entry(cid, diagnostic=row["diagnostic"]))
+        if include_diagnostics:
+            root = self._out / "scout"
+            if root.is_dir():
+                for base in sorted(p for p in root.iterdir() if p.is_dir()):
+                    name = base.name
+                    if name in seen or name.startswith("_"):
+                        continue
+                    st = self._read_json(base / "state.json")
+                    if not st and not (base / "report").is_dir():
+                        continue
+                    seen.add(name)
+                    out.append(self._scout_entry(name, diagnostic=True))
         return out
+
+    def _scout_entry(self, cid: str, *, diagnostic: bool) -> ProjectEntry:
+        base = self._out / "scout" / cid
+        st = self._read_json(base / "state.json")
+        report = base / "report"
+        evidence = len(list(report.glob("*.json"))) if report.is_dir() else 0
+        counts = st.get("counts", {}) if isinstance(st.get("counts"), dict) else {}
+        status = st.get("status") or ("COMPLETED" if report.is_dir() else "UNKNOWN")
+        return ProjectEntry(
+            project_id=(st.get("campaign_id") or cid), type="scout_campaign",
+            title=(st.get("campaign_id") or cid), source="scout",
+            created_at=st.get("started_at", ""),
+            updated_at=st.get("updated_at", st.get("started_at", "")),
+            lifecycle_state=status,
+            progress=(100 if status in ("COMPLETED", "DONE") else 50 if status else 0),
+            blockers=[], workspace_path=str(base), evidence_count=evidence,
+            deliverables=[], selected_capabilities=[], selected_tools=[],
+            operator_next_action=self._scout_next_action(status, counts), diagnostic=diagnostic)
 
     @staticmethod
     def _client_next_action(fr: Dict[str, Any], status: str, blockers: List[str]) -> str:

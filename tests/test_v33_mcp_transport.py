@@ -53,7 +53,8 @@ def test_stdio_transport_lists_and_calls_observer_tools(tmp_path):
     res = asyncio.run(_smoke(str(tmp_path)))
     names = res["names"]
     # server starts (regression guard for the NotificationOptions fix) + full catalog is exposed
-    assert len([n for n in names if n.startswith("observer_")]) == 19
+    # (20 read-only observer tools incl. observer_campaign_counts, added in the canonical read-model)
+    assert len([n for n in names if n.startswith("observer_")]) == 20
     assert "qa_factory_health" in names
     # a real tool call reflects persisted state
     assert "analyzed_sites" in res["overview"]

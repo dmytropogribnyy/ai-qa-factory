@@ -39,6 +39,30 @@ def test_source_of_truth_parity(tmp_path, monkeypatch):
     assert cid in [c["campaign_id"] for c in obs.list_campaigns()["campaigns"]]
 
 
+def test_observer_campaign_counts_match_dashboard_read_model(tmp_path):
+    # Seed the canonical source directly: one production + one diagnostic campaign.
+    rc = tmp_path / "scout" / "_runcontrol"
+    rc.mkdir(parents=True)
+    (rc / "campaign-acme-ecommerce-20260721T090000Z-0f9d21.json").write_text("{}", encoding="utf-8")
+    (rc / "smoke-a.json").write_text("{}", encoding="utf-8")
+
+    obs = ObserverAPI(str(tmp_path))
+    counts = obs.campaign_counts()
+    assert counts["production"] == 1 and counts["diagnostic"] == 1
+
+    # Parity: Observer uses the SAME shared read model the Dashboard uses.
+    from core.scout.canonical_runs import campaign_counts
+    dash = campaign_counts(str(tmp_path))
+    assert counts["production"] == dash["production"] and counts["diagnostic"] == dash["diagnostic"]
+
+    # Rows are tagged, and production-only listing excludes the diagnostic campaign.
+    tagged = {r["campaign_id"]: r["diagnostic"] for r in obs.list_campaigns()["campaigns"]}
+    assert tagged["smoke-a"] is True
+    assert tagged["campaign-acme-ecommerce-20260721T090000Z-0f9d21"] is False
+    prod_ids = {r["campaign_id"] for r in obs.list_campaigns(include_diagnostics=False)["campaigns"]}
+    assert "smoke-a" not in prod_ids
+
+
 def test_redaction_never_leaks_secrets():
     payload = {"tavily_api_key": "tvly-abc123", "note": "key tvly-XYZ789 inside", "ok": 1,
                "nested": {"authorization": "Bearer zzz"}}

@@ -153,16 +153,31 @@ class ObserverAPI:
         ids = sorted(p.stem for p in rc_dir.glob("*.json")) if rc_dir.exists() else []
         return ids
 
-    def list_campaigns(self, *, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    def list_campaigns(self, *, limit: int = 50, offset: int = 0,
+                       include_diagnostics: bool = True) -> Dict[str, Any]:
+        """Canonical campaigns from _runcontrol. Each row is tagged production/diagnostic via the
+        SAME classifier the Dashboard uses (so counts agree). ``include_diagnostics=False`` returns
+        only production campaigns; the production/diagnostic totals are always reported."""
+        from core.scout.canonical_runs import is_diagnostic_run
         ids = self._campaign_ids()
-        page = ids[offset:offset + max(1, min(limit, 500))]
+        diagnostic_total = sum(1 for cid in ids if is_diagnostic_run(cid))
+        shown = ids if include_diagnostics else [c for c in ids if not is_diagnostic_run(c)]
+        page = shown[offset:offset + max(1, min(limit, 500))]
         rows = []
         for cid in page:
             prog = self.svc.progress(cid)
             rows.append({"campaign_id": cid, "run_state": prog["run_state"],
-                         "stop_reason": prog["stop_reason"], "counters": prog["counters"]})
-        return {"api_version": OBSERVER_API_VERSION, "total": len(ids), "offset": offset,
-                "limit": limit, "campaigns": redact(rows)}
+                         "stop_reason": prog["stop_reason"], "counters": prog["counters"],
+                         "diagnostic": is_diagnostic_run(cid)})
+        return {"api_version": OBSERVER_API_VERSION, "total": len(shown), "offset": offset,
+                "limit": limit, "production_total": len(ids) - diagnostic_total,
+                "diagnostic_total": diagnostic_total, "campaigns": redact(rows)}
+
+    def campaign_counts(self) -> Dict[str, Any]:
+        """Production vs diagnostic canonical campaign counts — the SAME read model the Dashboard
+        uses (core.scout.canonical_runs.campaign_counts), so Observer and Dashboard never disagree."""
+        from core.scout.canonical_runs import campaign_counts
+        return {"api_version": OBSERVER_API_VERSION, **campaign_counts(str(self._root))}
 
     def get_campaign(self, campaign_id: str) -> Dict[str, Any]:
         campaign_id = self._cid(campaign_id)
