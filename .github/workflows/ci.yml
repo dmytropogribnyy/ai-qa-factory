@@ -1,19 +1,14 @@
 name: CI
 
-# Deterministic + browser + provider-contract acceptance for AI QA Factory / ARK Prospect QA Radar.
-# CI NEVER sends an external message, never uses live provider credentials (no Gmail/Resend secrets),
-# never contacts a real third-party target, and publishes no secrets. Every real provider adapter
-# refuses external calls because PROSPECT_RADAR_EXTERNAL_SEND_DISABLED=1 is set for all jobs; all
-# sending in tests uses the confined local sink or an injected fake transport.
+# Selective, path/risk-based CI (v2). A small PR must not drag the full ~10-minute cross-OS + browser
+# suite. Each change is classified into stable groups; only the relevant suites run on a PR. The FULL
+# authoritative gate (full deterministic suite x2 OS + real browser acceptance) still runs on push to
+# main, nightly, release tags, manual dispatch, or the `full-ci` label.
 #
-# Tiered, selective gates (so a small PR is not a ~10-minute wall):
-#   * Pull request (light, fast): ruff + affected tests (tools/test.py) + a short Scout cross-module
-#     smoke + docs/agent audits + provider-contract. The heavy browser / Windows jobs run on a PR
-#     ONLY when the changes touch Dashboard / Playwright / process-runtime / platform-specific code
-#     (path filter), or when the PR carries the `full-ci` label.
-#   * FULL gate (full deterministic suite ×2 OS + real browser acceptance): on push to main, nightly,
-#     release tags, manual dispatch, or the `full-ci` label. This is the authoritative regression gate.
-# Redundant in-progress runs on the same ref are cancelled (no stacked reruns while iterating).
+# Safety unchanged: no external send, no live provider credentials, no real third-party target, no
+# secrets. PROSPECT_RADAR_EXTERNAL_SEND_DISABLED=1 for all jobs; sending uses the confined local sink.
+#
+# Manual override labels on a PR: full-ci (everything), ci-provider, ci-browser, ci-windows.
 
 on:
   push:
@@ -21,6 +16,9 @@ on:
     tags: ["v*", "*-v*"]
   pull_request:
     branches: [main]
+    # `labeled` makes the manual ci-*/full-ci override actually start a run when a label is added.
+    # `unlabeled` is intentionally omitted so removing a label cannot cancel an in-flight forced gate.
+    types: [opened, synchronize, reopened, labeled]
   schedule:
     - cron: "0 3 * * *" # nightly full gate on main
   workflow_dispatch:
@@ -38,23 +36,55 @@ env:
   PROSPECT_RADAR_EXTERNAL_SEND_DISABLED: "1"
 
 jobs:
-  # Decide the gate tier + which heavy jobs are relevant for this change.
+  # ── Classify the change into stable groups and decide which suites run ──────────────────────────
   meta:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       full: ${{ steps.decide.outputs.full }}
+      docs_only: ${{ steps.decide.outputs.docs_only }}
+      affected_code: ${{ steps.decide.outputs.affected_code }}
+      relay: ${{ steps.decide.outputs.relay }}
+      relay_cli: ${{ steps.decide.outputs.relay_cli }}
+      scout: ${{ steps.decide.outputs.scout }}
+      provider: ${{ steps.decide.outputs.provider }}
       browser: ${{ steps.decide.outputs.browser }}
-      windows: ${{ steps.decide.outputs.windows }}
+      windows_full: ${{ steps.decide.outputs.windows_full }}
+      windows_targeted: ${{ steps.decide.outputs.windows_targeted }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
-        id: filter
+        id: f
         if: github.event_name == 'pull_request'
         with:
           filters: |
-            browser:
-              - '.github/workflows/ci.yml'
-              - 'requirements.txt'
+            docs:
+              - 'docs/**'
+              - '**/*.md'
+            relay:
+              - 'core/review_relay.py'
+              - 'integrations/mcp/review_relay_server.py'
+              - 'tools/run_review_relay_mcp.py'
+              - 'tools/review_relay_wait.py'
+              - 'tests/test_review_relay.py'
+            relay_cli:
+              - 'integrations/mcp/review_relay_server.py'
+              - 'tools/run_review_relay_mcp.py'
+              - 'tools/review_relay_wait.py'
+            scout:
+              - 'core/scout/**'
+              - 'core/orchestration/**'
+              - 'core/dashboard/**'
+              - 'core/schemas/**'
+              - 'main.py'
+              - 'tests/test_v33_**'
+              - 'tests/test_canonical_runs.py'
+              - 'tests/test_v3_project_index.py'
+              - 'tests/test_v31_operator_dashboard.py'
+            provider:
+              - 'core/scout/comms/**'
+              - 'tests/test_final2_**'
+            dashboard_browser:
               - 'core/scout/dashboard.py'
               - 'core/dashboard/**'
               - 'core/scout/preflight.py'
@@ -65,43 +95,109 @@ jobs:
               - 'tests/**dashboard**'
               - 'tests/**browser**'
               - 'tests/**playwright**'
-            windows:
-              - '.github/workflows/ci.yml'
-              - 'requirements.txt'
+            windows_runtime:
               - 'scripts/**'
               - '**/*.ps1'
               - 'core/orchestration/claude_worker.py'
               - 'core/orchestration/work_execution.py'
               - 'core/orchestration/operator_executor.py'
-              - 'main.py'
+            deps_workflow:
+              - '.github/workflows/**'
+              - 'requirements*.txt'
+              - 'pyproject.toml'
+              - 'setup.py'
+              - 'setup.cfg'
+            cli_tools:
               - 'tools/**'
+            code:
+              - 'core/**'
+              - 'integrations/**'
+              - 'tools/**'
+              - 'tests/**'
+              - 'main.py'
+              - 'scripts/**'
+              - 'requirements*.txt'
+              - 'pyproject.toml'
+              - '.github/**'
       - id: decide
         env:
           EVENT: ${{ github.event_name }}
-          HAS_FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-          BROWSER_PATHS: ${{ steps.filter.outputs.browser }}
-          WINDOWS_PATHS: ${{ steps.filter.outputs.windows }}
+          L_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          L_PROVIDER: ${{ contains(github.event.pull_request.labels.*.name, 'ci-provider') }}
+          L_BROWSER: ${{ contains(github.event.pull_request.labels.*.name, 'ci-browser') }}
+          L_WINDOWS: ${{ contains(github.event.pull_request.labels.*.name, 'ci-windows') }}
+          P_DOCS: ${{ steps.f.outputs.docs }}
+          P_RELAY: ${{ steps.f.outputs.relay }}
+          P_RELAY_CLI: ${{ steps.f.outputs.relay_cli }}
+          P_SCOUT: ${{ steps.f.outputs.scout }}
+          P_PROVIDER: ${{ steps.f.outputs.provider }}
+          P_DASHBROWSER: ${{ steps.f.outputs.dashboard_browser }}
+          P_WINRUNTIME: ${{ steps.f.outputs.windows_runtime }}
+          P_DEPSWF: ${{ steps.f.outputs.deps_workflow }}
+          P_CLITOOLS: ${{ steps.f.outputs.cli_tools }}
+          P_CODE: ${{ steps.f.outputs.code }}
         run: |
+          set -eu
+          yes() { [ "$1" = "true" ]; }
           full=false
           case "$EVENT" in push|schedule|workflow_dispatch) full=true ;; esac
-          if [ "$HAS_FULL_LABEL" = "true" ]; then full=true; fi
-          browser=$full; windows=$full
-          if [ "$BROWSER_PATHS" = "true" ]; then browser=true; fi
-          if [ "$WINDOWS_PATHS" = "true" ]; then windows=true; fi
-          {
-            echo "full=$full"
-            echo "browser=$browser"
-            echo "windows=$windows"
-          } >> "$GITHUB_OUTPUT"
-          echo "tier: full=$full browser=$browser windows=$windows (event=$EVENT)"
+          if yes "$L_FULL"; then full=true; fi
 
-  core-deterministic:
+          # On a non-PR event the path filter did not run; a full run covers everything anyway.
+          docs_only=false; affected_code=false
+          relay=false; relay_cli=false; scout=false; provider=false; browser=false
+          windows_full=false; windows_targeted=false
+
+          if [ "$full" = "true" ]; then
+            relay=true; scout=true; provider=true; browser=true; windows_full=true; affected_code=true
+          else
+            # PR: select only relevant suites.
+            if yes "$P_DOCS" && ! yes "$P_CODE"; then docs_only=true; fi
+            if yes "$P_CODE" && [ "$docs_only" = "false" ]; then affected_code=true; fi
+            if yes "$P_RELAY"; then relay=true; fi
+            if yes "$P_RELAY_CLI"; then relay_cli=true; fi
+            if yes "$P_SCOUT"; then scout=true; fi
+            if yes "$P_PROVIDER" || yes "$P_DEPSWF" || yes "$L_PROVIDER"; then provider=true; fi
+            if yes "$P_DASHBROWSER" || yes "$L_BROWSER"; then browser=true; fi
+            if yes "$P_DEPSWF" || yes "$P_WINRUNTIME" || yes "$L_WINDOWS"; then windows_full=true; fi
+            # Targeted Windows smoke for a changed CLI/tool ONLY when a full Windows run is not needed.
+            if [ "$windows_full" = "false" ] && { yes "$P_RELAY_CLI" || yes "$P_CLITOOLS"; }; then
+              windows_targeted=true
+            fi
+          fi
+
+          {
+            echo "full=$full"; echo "docs_only=$docs_only"; echo "affected_code=$affected_code"
+            echo "relay=$relay"; echo "relay_cli=$relay_cli"; echo "scout=$scout"
+            echo "provider=$provider"; echo "browser=$browser"
+            echo "windows_full=$windows_full"; echo "windows_targeted=$windows_targeted"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### CI selection (event: $EVENT)"
+            echo ""
+            echo "| suite | run? | reason |"
+            echo "|---|---|---|"
+            echo "| fast (ruff + audits + tests) | ✅ | always; tests: full=$full docs_only=$docs_only affected=$affected_code |"
+            echo "| relay-smoke | $([ $relay = true ] && echo ✅ || echo ⏭️) | relay paths / full |"
+            echo "| scout-smoke | $([ $scout = true ] && echo ✅ || echo ⏭️) | scout/orchestration/canonical / full |"
+            echo "| provider-contract | $([ $provider = true ] && echo ✅ || echo ⏭️) | provider/deps / full / label |"
+            echo "| browser-acceptance | $([ $browser = true ] && echo ✅ || echo ⏭️) | dashboard/browser / full / label |"
+            echo "| windows-targeted | $([ $windows_targeted = true ] && echo ✅ || echo ⏭️) | changed CLI/tool, no full Windows |"
+            echo "| windows-full | $([ $windows_full = true ] && echo ✅ || echo ⏭️) | full / deps / PS-runtime / label |"
+            echo ""
+            echo "docs-only PR skips pytest + browser deps. A relay-only PR runs ruff + relay tests + docs audit + Linux relay smoke (+ targeted Windows relay smoke only if the CLI/transport changed)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Always: ruff + audits; tests scale to the change (full suite / affected / docs-only none) ────
+  fast:
     needs: meta
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # affected-test selection diffs against origin/main
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -112,26 +208,31 @@ jobs:
           pip install -r requirements.txt
       - name: Ruff
         run: python -m ruff check .
-      - name: Tests — FULL deterministic suite on the gate; affected + Scout smoke on a light PR
-        env:
-          FULL: ${{ needs.meta.outputs.full }}
-        run: |
-          mkdir -p reports
-          if [ "$FULL" = "true" ]; then
-            python -m pytest tests/ -q -ra --junitxml=reports/junit-core.xml
-          else
-            echo "== light PR: affected tests (import-graph) =="
-            python tools/test.py affected origin/main -q -ra --junitxml=reports/junit-core.xml
-            echo "== short cross-module smoke: Scout v3.3 regression subset =="
-            python tools/test.py scout -q
-          fi
       - name: Docs audit
         run: python tools/docs_audit.py --no-write
       - name: Agent readiness audit
         run: python tools/agent_readiness_audit.py
       - name: Whitespace check
         run: git diff --check
-      - name: Scout + discovery + pre-send + radar demos + audits (FULL gate only; no network)
+      - name: Tests — full on the gate; affected on a code PR; none on a docs-only PR
+        env:
+          FULL: ${{ needs.meta.outputs.full }}
+          DOCS_ONLY: ${{ needs.meta.outputs.docs_only }}
+          AFFECTED: ${{ needs.meta.outputs.affected_code }}
+        run: |
+          mkdir -p reports
+          if [ "$FULL" = "true" ]; then
+            echo "== FULL deterministic suite =="
+            python -m pytest tests/ -q -ra --junitxml=reports/junit-core.xml
+          elif [ "$DOCS_ONLY" = "true" ]; then
+            echo "== docs-only PR: audits above are the gate; no pytest / no browser deps =="
+          elif [ "$AFFECTED" = "true" ]; then
+            echo "== affected tests (import-graph vs origin/main) =="
+            python tools/test.py affected origin/main -q -ra --junitxml=reports/junit-core.xml
+          else
+            echo "== no code/docs change detected; nothing to test =="
+          fi
+      - name: Full-gate demos (no network, nothing sent)
         if: needs.meta.outputs.full == 'true'
         run: |
           python main.py scout demo
@@ -148,11 +249,79 @@ jobs:
           path: reports/junit-core.xml
           if-no-files-found: ignore
 
-  provider-contract:
-    # LocalSinkProvider + fake Gmail/Resend transports + OAuth config parsing with fixture creds only.
-    # No real credential, no external recipient, no live endpoint, no Google client library. Fast, so
-    # it runs on every PR as a cheap contract signal.
+  # ── Review Relay: fast Linux stdio + authenticated HTTP smoke + focused tests ────────────────────
+  relay-smoke:
+    needs: meta
+    if: needs.meta.outputs.relay == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install core deps + relay HTTP transport (mcp/starlette/uvicorn — dev-only, not core runtime)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install mcp starlette uvicorn
+      - name: Relay focused tests
+        run: python -m pytest tests/test_review_relay.py -q -ra
+      - name: Role separation + runtime 'both' rejected (stdio smoke)
+        run: |
+          set -e
+          test "$(AIQA_REVIEW_RELAY_ROLE=worker python tools/run_review_relay_mcp.py --list-tools | grep -c 'relay_')" = "4"
+          AIQA_REVIEW_RELAY_ROLE=both python tools/run_review_relay_mcp.py --list-tools 2>&1 | grep -q "must be worker or reviewer"
+      - name: Authenticated reviewer HTTP smoke (401 unauth; real MCP initialize -> 200)
+        run: |
+          set -e
+          export AIQA_REVIEW_RELAY_ROLE=reviewer AIQA_RELAY_MCP_TOKEN=ci-smoke-token AIQA_OUTPUT_ROOT="$(mktemp -d)"
+          python tools/run_review_relay_mcp.py --http --port 8785 &
+          srv=$!
+          trap 'kill "$srv" 2>/dev/null || true' EXIT
+          sleep 4
+          init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-relay-smoke","version":"1"}}}'
+          hdr_accept='Accept: application/json, text/event-stream'
+          no=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8785/mcp/ -H "$hdr_accept" -H 'Content-Type: application/json' -d "$init")
+          wrong=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8785/mcp/ -H 'Authorization: Bearer WRONG' -H "$hdr_accept" -H 'Content-Type: application/json' -d "$init")
+          ok=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8785/mcp/ -H "Authorization: Bearer $AIQA_RELAY_MCP_TOKEN" -H "$hdr_accept" -H 'Content-Type: application/json' -d "$init")
+          echo "no-token=$no wrong-token=$wrong authed-initialize=$ok"
+          test "$no" = "401"
+          test "$wrong" = "401"
+          test "$ok" = "200"
+
+  # ── Scout / orchestration / canonical read-model smoke ───────────────────────────────────────────
+  scout-smoke:
+    needs: meta
+    if: needs.meta.outputs.scout == 'true' && needs.meta.outputs.full != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Scout v3.3 regression subset + deterministic demos (no network)
+        run: |
+          python tools/test.py scout -q -ra
+          python main.py scout demo
+          python main.py scout campaign-demo
+          python main.py scout radar-demo
+
+  # ── Provider / outreach contract (fake transports, no external send) ─────────────────────────────
+  provider-contract:
+    needs: meta
+    if: needs.meta.outputs.provider == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -179,11 +348,12 @@ jobs:
           path: reports/junit-provider.xml
           if-no-files-found: ignore
 
+  # ── Real browser acceptance (Chromium + axe + generated TS framework), only when relevant ────────
   browser-acceptance:
     needs: meta
-    # FULL gate, or a PR that touches Dashboard / Playwright / browser-relevant code (path filter).
     if: needs.meta.outputs.browser == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -203,9 +373,6 @@ jobs:
         run: |
           mkdir -p .pw-runtime
           cd .pw-runtime
-          # A dotted dir name is an invalid npm package name, so write package.json explicitly
-          # instead of `npm init -y`. System libs were already installed by the Python step above,
-          # so install the browser only (no --with-deps).
           printf '{"name":"pw-runtime","version":"1.0.0","private":true}\n' > package.json
           npm install "@playwright/test@^1.44.0"
           ./node_modules/.bin/playwright install chromium
@@ -233,13 +400,39 @@ jobs:
           path: reports/screenshots/
           if-no-files-found: warn
 
-  windows-smoke:
+  # ── Windows TARGETED: prove a changed CLI/tool + relay transport work on Windows (no full suite) ──
+  windows-targeted:
     needs: meta
-    # FULL gate, or a PR that touches PowerShell / process-runtime / platform-specific code.
-    if: needs.meta.outputs.windows == 'true'
-    # The product's primary platform is Windows + PowerShell. This proves the full deterministic
-    # suite passes on windows-latest and that the operator PowerShell scripts parse cleanly.
+    if: needs.meta.outputs.windows_targeted == 'true'
     runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install core dependencies (requirements.txt only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Ruff
+        run: python -m ruff check .
+      - name: Targeted relay/CLI smoke on Windows (no full deterministic suite)
+        run: |
+          python -m pytest tests/test_review_relay.py -q -ra
+        if: needs.meta.outputs.relay == 'true'
+      - name: Operator CLI parses on Windows
+        run: |
+          python main.py tool-status
+          python main.py client-work --help
+
+  # ── Windows FULL: the authoritative Windows deterministic suite + PowerShell parse smoke ─────────
+  windows-full:
+    needs: meta
+    if: needs.meta.outputs.windows_full == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
