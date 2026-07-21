@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -177,6 +178,34 @@ def _heartbeat_age_s(output_root: str) -> float:
         return 1e9
 
 
+_TICK_TIMEOUT_S = 300.0
+
+
+def _run_with_timeout(fn: Callable[[], Dict[str, Any]], timeout_s: float) -> Dict[str, Any]:
+    """Run one driver tick under a wall-clock bound so a hung tick (a stuck OpenAI call or claude
+    --resume) can never block the Dashboard watchdog. A timed-out tick surfaces as owner-visible and the
+    supervision loop continues; the stray worker is already bounded by the driver's own timeouts."""
+    box: Dict[str, Any] = {}
+
+    def _target() -> None:
+        try:
+            box["value"] = fn()
+        except Exception as exc:  # noqa: BLE001 - a bad tick must not kill supervision
+            box["error"] = f"{type(exc).__name__}: {exc}"
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout_s)
+    if thread.is_alive():
+        return {"review": {"status": "tick_timeout"}, "deliveries": [], "owner_action": True,
+                "health": {"stage": "TICK_TIMEOUT"}}
+    if "error" in box:
+        return {"review": {"status": "tick_error"}, "deliveries": [], "owner_action": True,
+                "health": {"stage": "ERROR", "last_error": box["error"]}}
+    return box.get("value", {"review": {"status": "idle"}, "deliveries": [], "owner_action": False,
+                             "health": {}})
+
+
 def _real_driver_tick(output_root: str) -> Dict[str, Any]:
     from core.collaboration.service import CollaborationCycle
     from core.collaboration.session_delivery import SessionRegistry
@@ -191,7 +220,7 @@ def _real_deps(cfg: SupervisorConfig) -> SupervisorDeps:
         current_head=_real_head,
         start_dashboard=lambda: _start_dashboard(cfg.output_root),
         kill_dashboards=_kill_dashboards,
-        driver_tick=lambda: _real_driver_tick(cfg.output_root),
+        driver_tick=lambda: _run_with_timeout(lambda: _real_driver_tick(cfg.output_root), _TICK_TIMEOUT_S),
         heartbeat_age_s=lambda: _heartbeat_age_s(cfg.output_root))
 
 

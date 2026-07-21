@@ -8,7 +8,29 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tools.collab_supervisor import SupervisorConfig, SupervisorDeps, supervise_once
+import time
+
+from tools.collab_supervisor import (
+    SupervisorConfig,
+    SupervisorDeps,
+    _run_with_timeout,
+    supervise_once,
+)
+
+
+def test_hung_driver_tick_times_out_without_blocking_supervision():
+    # A stuck tick must not block the Dashboard watchdog; it surfaces as owner-visible and returns fast.
+    t0 = time.time()
+    out = _run_with_timeout(lambda: time.sleep(5) or {"review": {"status": "idle"}}, timeout_s=0.3)
+    assert time.time() - t0 < 2.0                       # returned promptly, did not wait for the hang
+    assert out["review"]["status"] == "tick_timeout"
+    assert out["owner_action"] is True
+
+
+def test_driver_tick_error_is_contained():
+    out = _run_with_timeout(lambda: (_ for _ in ()).throw(RuntimeError("boom")), timeout_s=1.0)
+    assert out["review"]["status"] == "tick_error"
+    assert out["owner_action"] is True
 
 
 def _deps(*, up=True, stale=False, sha="8a36374abcd", head="8a36374abcd",
