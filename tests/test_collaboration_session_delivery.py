@@ -179,21 +179,47 @@ def test_stale_decision_is_not_delivered(tmp_path):
     assert ran["n"] == 0
 
 
-def test_unsafe_decision_key_is_refused_before_any_wake(tmp_path):
-    ran = {"n": 0}
+def test_crafted_ids_never_reach_the_delivery_command(tmp_path):
+    # Identifiers travel ONLY in the immutable data file — a crafted id can never enter the command.
+    captured = {}
 
     def runner(cmd, **kw):
-        ran["n"] += 1
-        return type("P", (), {"returncode": 0})()
+        captured["cmd"] = cmd
+        return type("P", (), {"returncode": 0, "stdout": "{}"})()
 
     dec = _decision()
     dec["message_id"] = "t-1:x"
-    dec["idempotency_key"] = 'evil" ; rm -rf /'          # shell metacharacters must be refused
+    dec["idempotency_key"] = 'evil" ; rm -rf / #'
     d = ClaudeSessionDelivery(_reg(tmp_path), str(tmp_path), exe_resolver=lambda: "claude.exe",
                               runner=runner, head_resolver=lambda: _SHA)
-    with pytest.raises(SessionDeliveryError, match="unsafe"):
-        d.deliver(dec)
-    assert ran["n"] == 0                                  # no session woken with a crafted key
+    out = d.deliver(dec)
+    assert out["status"] == "delivered"
+    joined = " ".join(captured["cmd"])
+    assert "rm -rf" not in joined and "evil" not in joined      # crafted id absent from the command
+    assert "--decision-file" in joined                         # ids read from the file instead
+
+
+def test_ack_reads_ids_only_from_the_decision_file(tmp_path):
+    # The resumed session's ACK command reads ids from the file (not from interpolated args); simulate
+    # it running the fixed --decision-file command and assert an ACK is appended.
+    import re as _re
+
+    from tools.collab_ack import main as ack_main
+
+    def runner(cmd, **kw):
+        prompt = cmd[cmd.index("-p") + 1]
+        m = _re.search(r'--decision-file "([^"]+)"', prompt)
+        if m:
+            ack_main(["--decision-file", m.group(1)])
+        return type("P", (), {"returncode": 0, "stdout": "{}"})()
+
+    dec = _decision()
+    dec["message_id"] = "t-1:kk"
+    d = ClaudeSessionDelivery(_reg(tmp_path), str(tmp_path), exe_resolver=lambda: "claude.exe",
+                              runner=runner, head_resolver=lambda: _SHA)
+    d.deliver(dec)
+    kinds = [m["kind"] for m in CollaborationStore(str(tmp_path)).thread("t-1")["messages"]]
+    assert "ACKNOWLEDGEMENT" in kinds
 
 
 def test_bounded_failure_attempts_then_exhausted(tmp_path):
