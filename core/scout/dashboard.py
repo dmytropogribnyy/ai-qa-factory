@@ -232,6 +232,11 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 # Running-build identity + stale-process detection (read-only, no secrets/paths).
                 from core.build_identity import current_identity
                 return self._json(200, current_identity())
+            if path == "/api/collab":
+                # Direct Collaboration Driver monitor (Issue #14.D) — read-only over the canonical store.
+                return self._json(200, self._collab_snapshot())
+            if path == "/collab":
+                return self._html(200, self._collab_page())
             if path == "/api/discovery":
                 # v3.3 read-only live-discovery + analyzed-site history (no secret; loopback-only).
                 from core.scout.discovery.discovery_status import discovery_status
@@ -297,6 +302,22 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             from datetime import datetime, timezone
             return DashboardReadModel(service.output_dir,
                                       clock=lambda: datetime.now(timezone.utc).isoformat())
+
+        def _collab_snapshot(self):
+            from core.collaboration.monitor import CollaborationMonitor
+            from core.collaboration.service import resolve_git_head
+            out = getattr(service, "output_dir", "outputs")
+            return CollaborationMonitor(out, head_resolver=lambda: resolve_git_head(".")).snapshot()
+
+        def _collab_page(self) -> str:
+            try:
+                snap = self._collab_snapshot()
+            except Exception as exc:
+                return _page("Collaboration", "/collab",
+                             f'<h1>Collaboration</h1><p class="muted">Monitor unavailable: '
+                             f'{_esc(type(exc).__name__)}</p>')
+            return _page("Collaboration", "/collab", _collab_body(snap),
+                         script="setTimeout(function(){location.reload();},15000);")
 
         do_HEAD = do_GET
 
@@ -2688,8 +2709,8 @@ def _theme_legacy(html: str) -> str:
 # "Scout" is the adaptive Discover Prospects workflow; the legacy seed scanner stays at /scout
 # (relabelled "Manual URL Scan"). The nav highlights Scout for any /scout* page.
 _NAV = (("Overview", "/"), ("Scout", "/scout/new"), ("Work", "/work"))
-_MORE = (("Tools", "/tools"), ("Activity", "/activity"), ("Settings", "/settings"),
-         ("Documentation", "/docs"))
+_MORE = (("Collaboration", "/collab"), ("Tools", "/tools"), ("Activity", "/activity"),
+         ("Settings", "/settings"), ("Documentation", "/docs"))
 
 
 def _nav_html(active: str) -> str:
@@ -2753,6 +2774,68 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
 
 def _badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{_esc(text)}</span>'
+
+
+_COLLAB_STATE_KIND = {"NEEDS_OWNER": "attention", "BLOCKED": "blocked", "FIXING": "attention",
+                      "WAITING_FOR_CI": "attention", "DONE": "done"}
+
+
+def _collab_body(snap: dict) -> str:
+    """Render the Direct Collaboration Driver monitor (Issue #14.D) — one truthful status area over
+    the canonical store: driver heartbeat/spend, an owner-action banner, and a per-thread timeline."""
+    d = snap.get("driver", {})
+    b = d.get("budget", {})
+    stale = ('<span style="color:var(--attention);font-weight:600">&#9888; heartbeat stale</span>'
+             if d.get("stale") else "")
+    beat = _fmt_ts(d.get("heartbeat", ""))
+    err = (f'<p class="muted">last error: {_esc(d.get("last_error"))}</p>' if d.get("last_error")
+           else "")
+    banner = ""
+    if snap.get("owner_action_required"):
+        banner = ('<div class="card" style="border-color:var(--attention)">'
+                  '<strong>&#9888; Owner action required</strong> &middot; a thread is waiting on your '
+                  'decision (see NEEDS_OWNER below).</div>')
+    driver_card = (
+        '<div class="card"><h2 style="margin-top:0">Reviewer driver</h2>'
+        f'<p>{_badge(d.get("stage","IDLE"))} &middot; heartbeat {_esc(beat)} {stale}</p>'
+        f'<p class="muted">processed {int(d.get("processed",0))} &middot; today '
+        f'{int(b.get("daily_calls",0))}/{int(b.get("cap_calls",0))} calls &middot; '
+        f'${float(b.get("daily_usd",0)):.2f}/${float(b.get("cap_usd",0)):.2f}</p>{err}</div>')
+
+    threads = snap.get("threads", [])
+    if not threads:
+        rows = '<div class="card"><p class="muted">No collaboration threads yet.</p></div>'
+    else:
+        cards = []
+        for t in threads:
+            kind = _COLLAB_STATE_KIND.get(t.get("state", ""), "")
+            sha = _esc((t.get("head_sha") or "")[:12] or "—")
+            match = ("&#10003; matches head" if t.get("reviewed_sha_matches_head")
+                     else ("&#9888; stale head" if t.get("stale_head") else ""))
+            dec = (f'<td>{_esc(t.get("decision") or "—")} '
+                   f'<span class="muted">{match}</span></td>')
+            pr = t.get("pr_number")
+            pr_txt = f'#{int(pr)}' if pr else "—"
+            timeline = " &rarr; ".join(
+                f'{_esc(ev.get("kind",""))}' for ev in t.get("timeline", [])) or "—"
+            ci = ", ".join(_esc(r) for r in t.get("ci_refs", [])) or "—"
+            cards.append(
+                f'<div class="card"><h3 style="margin:0 0 6px">{_esc(t.get("thread_id"))} '
+                f'{_badge(t.get("state","") , kind)}</h3>'
+                f'<table><tr><td class="muted">actor</td><td>{_esc(t.get("actor"))}</td></tr>'
+                f'<tr><td class="muted">now</td><td>{_esc(t.get("current_action"))}</td></tr>'
+                f'<tr><td class="muted">next</td><td>{_esc(t.get("next_action"))}</td></tr>'
+                f'<tr><td class="muted">branch / PR</td><td>{_esc(t.get("branch") or "—")} &middot; '
+                f'{pr_txt}</td></tr>'
+                f'<tr><td class="muted">head SHA</td><td><code>{sha}</code></td></tr>'
+                f'<tr><td class="muted">decision</td>{dec}</tr>'
+                f'<tr><td class="muted">CI evidence</td><td>{ci}</td></tr>'
+                f'<tr><td class="muted">timeline</td><td>{timeline}</td></tr></table></div>')
+        rows = "".join(cards)
+
+    return (f'<h1>Collaboration</h1><p class="muted">Autonomous GPT reviewer &harr; Claude worker '
+            f'&middot; current head <code>{_esc((snap.get("current_head") or "")[:12] or "—")}</code> '
+            f'&middot; auto-refreshes</p>{banner}{driver_card}{rows}')
 
 
 def _fmt_ts(iso: str) -> str:
