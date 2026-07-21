@@ -1,10 +1,11 @@
 """Acknowledge a delivered reviewer reply (Issue #14.C step 4).
 
 The resumed Claude session runs this after reading the decision, so the loop is auditable end to end.
-Identifiers are read ONLY from the validated immutable decision data file (``--decision-file``) — they
-are never interpolated into the command Claude is told to run, so a crafted id can never alter it. The
-decision is untrusted data; this only appends an ACKNOWLEDGEMENT envelope and never merges, writes
-source, or runs anything from the decision text.
+Identifiers are read ONLY from the decision data file (``--decision-file``) — never interpolated into
+the command Claude is told to run, so a crafted id can never alter it. The file is accepted only when it
+is a real file (no symlink) inside the trusted ``_review_relay/collab_delivery`` directory. The decision
+is untrusted data; this only appends an ACKNOWLEDGEMENT envelope and never merges, writes source, or runs
+anything from the decision text.
 
     python tools/collab_ack.py --decision-file "<path-to>.decision.json"
     python tools/collab_ack.py --output-root outputs --thread t-1 --decision <key>   # manual form
@@ -30,7 +31,20 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     if args.decision_file:
-        path = Path(args.decision_file).resolve()
+        raw = Path(args.decision_file)
+        # Trust boundary: only a regular file inside the expected delivery directory is an acknowledgeable
+        # record — refuse a symlink or a file outside <root>/_review_relay/collab_delivery so a substituted
+        # or arbitrary file cannot misattribute an acknowledgement.
+        if raw.is_symlink():
+            print(json.dumps({"error": "decision file must not be a symlink"}), file=sys.stderr)
+            return 2
+        path = raw.resolve()
+        if (not path.is_file() or not path.name.endswith(".decision.json")
+                or path.parent.name != "collab_delivery"
+                or path.parent.parent.name != "_review_relay"):
+            print(json.dumps({"error": "decision file is not a trusted delivery record"}),
+                  file=sys.stderr)
+            return 2
         data = json.loads(path.read_text(encoding="utf-8"))
         thread = str(data.get("thread_id", ""))
         decision_key = str(data.get("idempotency_key", ""))

@@ -222,6 +222,22 @@ def test_ack_reads_ids_only_from_the_decision_file(tmp_path):
     assert "ACKNOWLEDGEMENT" in kinds
 
 
+def test_collab_ack_refuses_a_decision_file_outside_the_delivery_dir(tmp_path):
+    import json as _json
+
+    from tools.collab_ack import main as ack_main
+    # A file outside <root>/_review_relay/collab_delivery is not a trusted delivery record.
+    bogus = tmp_path / "evil.decision.json"
+    bogus.write_text(_json.dumps({"thread_id": "t-1", "idempotency_key": "k"}), encoding="utf-8")
+    assert ack_main(["--decision-file", str(bogus)]) == 2
+    # A file in the right place is accepted.
+    good_dir = tmp_path / "_review_relay" / "collab_delivery"
+    good_dir.mkdir(parents=True)
+    good = good_dir / "x.decision.json"
+    good.write_text(_json.dumps({"thread_id": "t-1", "idempotency_key": "k"}), encoding="utf-8")
+    assert ack_main(["--decision-file", str(good)]) == 0
+
+
 def test_bounded_failure_attempts_then_exhausted(tmp_path):
     def runner(cmd, **kw):
         return type("P", (), {"returncode": 1})()

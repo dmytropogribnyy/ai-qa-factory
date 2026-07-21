@@ -174,9 +174,10 @@ class ClaudeSessionDelivery:
         if not exe:
             raise SessionDeliveryError("no native claude executable resolved; cannot deliver safely")
 
-        # The FULL immutable decision (including thread_id + idempotency_key) travels ONLY in this data
-        # file; no identifier is ever interpolated into the command/instruction, so a crafted id cannot
-        # alter what Claude is told to run. The only value in the command is the sanitized file path.
+        # The FULL decision (including thread_id + idempotency_key) travels ONLY in this data file, in the
+        # trusted collab_delivery directory; no identifier is ever interpolated into the command/
+        # instruction, so a crafted id cannot alter what Claude is told to run. The only value in the
+        # command is the sanitized file path, and collab_ack refuses any file outside that directory.
         data = dict(decision)
         data.setdefault("thread_id", thread)
         data.setdefault("idempotency_key", str(decision.get("idempotency_key") or message_id))
