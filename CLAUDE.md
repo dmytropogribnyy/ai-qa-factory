@@ -65,6 +65,24 @@ write source, or send externally. When operating as the relay worker:
   approved reviewer-driver service) triggers the reviewer. Local session id / tokens are never
   committed (see `.gitignore`).
 
+## Standing authorization + Direct Collaboration Driver
+
+- **Standing merge authorization** (owner, PR #13 comment 5037397576): after an exact-head
+  `[GPT REVIEW: GO]` + green required CI, ordinary Git/GitHub operations — including **merge** — are
+  autonomous with no per-PR re-confirmation. External mutations (paid budget, credentials, outreach,
+  client delivery), destructive `main` history rewrites, and repo visibility/access changes stay
+  owner-gated. GPT's GO is a review verdict (`merge_authorized=false`); the merge is executed by the
+  trusted local workflow. A GO whose `reviewed_sha` no longer matches the branch head is stale — do not
+  act on it. Canonical: `docs/COLLABORATIVE_AI_ENGINEERING_MODEL.md` §13.
+- **Direct Collaboration Driver v1** (`core/collaboration/`, Issue #14) removes manual Claude↔GPT
+  copy/paste: SHA-bound envelopes over the same `_review_relay` store, a bounded OpenAI-backed reviewer
+  driver, safe delivery into one bound Claude session, an owner-visible Dashboard `/collab` monitor, and
+  budget/retry/idempotency guardrails. The remote model gets text only (no merge/shell/write/send). Do
+  not claim it "ready" until all 10 live E2E checks pass. See `docs/DIRECT_COLLABORATION_DRIVER.md`.
+- **Canonical product invariants** (PR #13 comment 5037647350) are review acceptance criteria — a
+  technically green change that materially violates one is a product NO-GO. Canonical:
+  `docs/COLLABORATIVE_AI_ENGINEERING_MODEL.md` §14.
+
 ## Current phase (v3.2 — Autonomous AI QA Operator Pro)
 
 Two distinct surfaces exist; keep them straight:
