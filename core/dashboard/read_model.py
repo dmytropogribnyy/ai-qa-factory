@@ -144,15 +144,17 @@ class DashboardReadModel:
         self._clock = clock or (lambda: "")
 
     # --- projects -------------------------------------------------------------------------------
-    def _client_entries(self):
-        return [p for p in self._index.list_projects() if p.type == "client_work"]
+    def _client_entries(self, include_diagnostics: bool = False):
+        return [p for p in self._index.list_projects(include_diagnostics)
+                if p.type == "client_work"]
 
-    def _scout_entries(self):
-        return [p for p in self._index.list_projects() if p.type == "scout_campaign"]
+    def _scout_entries(self, include_diagnostics: bool = False):
+        return [p for p in self._index.list_projects(include_diagnostics)
+                if p.type == "scout_campaign"]
 
     def project_list(self, *, view: str = "all", limit: int = 200,
-                     offset: int = 0) -> Dict[str, Any]:
-        items = [self._to_list_item(p) for p in self._client_entries()]
+                     offset: int = 0, include_diagnostics: bool = False) -> Dict[str, Any]:
+        items = [self._to_list_item(p) for p in self._client_entries(include_diagnostics)]
         items = [i for i in items if _matches_view(i, view)]
         total = len(items)
         page = items[offset:offset + max(1, limit)]
@@ -171,9 +173,9 @@ class DashboardReadModel:
             href=f"/work/{p.project_id}")
 
     # --- overview -------------------------------------------------------------------------------
-    def overview(self) -> OverviewSnapshot:
-        clients = self._client_entries()
-        scouts = self._scout_entries()
+    def overview(self, include_diagnostics: bool = False) -> OverviewSnapshot:
+        clients = self._client_entries(include_diagnostics)
+        scouts = self._scout_entries(include_diagnostics)
         attention: List[AttentionItem] = []
         for p in clients:
             title = _ATTENTION.get(p.lifecycle_state)
@@ -197,13 +199,20 @@ class DashboardReadModel:
                             if str(c.lifecycle_state).upper() in ("RUNNING", "ACTIVE", "EXECUTING")]
         recent = [self._to_scout_item(c).to_dict() for c in scouts
                   if str(c.lifecycle_state).upper() in ("COMPLETED", "DONE")][:5]
+        # How many diagnostic items are hidden from this (production) view — so the UI can offer an
+        # honest "Show diagnostics" without mixing them into the production counts.
+        diagnostics_hidden = 0
+        if not include_diagnostics:
+            diagnostics_hidden = sum(1 for p in self._index.list_projects(include_diagnostics=True)
+                                     if p.diagnostic)
         return OverviewSnapshot(
             generated_at=self._clock(),
             attention=[a.to_dict() for a in attention], active_work=active_work,
             active_campaigns=active_campaigns, recent_results=recent, alert=None,
             counts={"attention": len(attention), "active_work": len(active_work),
                     "active_campaigns": len(active_campaigns),
-                    "projects": len(clients), "campaigns": len(scouts)})
+                    "projects": len(clients), "campaigns": len(scouts),
+                    "diagnostics_hidden": diagnostics_hidden})
 
     def _to_scout_item(self, c) -> ScoutCampaignListItem:
         return ScoutCampaignListItem(

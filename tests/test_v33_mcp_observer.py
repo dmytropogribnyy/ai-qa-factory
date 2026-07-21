@@ -52,8 +52,10 @@ def test_all_observer_tools_present_and_read_only(tmp_path, monkeypatch):
                      "observer_reproduce_finding", "observer_record_finding_video",
                      "observer_capture_stronger_evidence", "observer_control"}
     assert not (set(OBSERVER_TOOL_NAMES) & control_tools)
-    assert all(n.startswith("observer_get") or n.startswith("observer_list")
-               or n == "observer_export_ai_review_bundle" for n in OBSERVER_TOOL_NAMES)
+    # Read-only tools by convention: get*/list*/counts (all pure reads) + the export bundle writer.
+    _read_only = {"observer_export_ai_review_bundle", "observer_campaign_counts"}
+    assert all(n.startswith("observer_get") or n.startswith("observer_list") or n in _read_only
+               for n in OBSERVER_TOOL_NAMES)
 
 
 def test_output_root_is_server_side_not_a_tool_arg(tmp_path, monkeypatch):

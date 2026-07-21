@@ -200,10 +200,12 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._html(200, self._projects_page())
             # v3.1 operator dashboard read-model routes
             if path == "/api/overview":
-                return self._json(200, self._read_model().overview().to_dict())
+                return self._json(200, self._read_model().overview(
+                    include_diagnostics=self._want_diagnostics(q)).to_dict())
             if path == "/api/work":
                 view = (q.get("view") or ["all"])[0]
-                return self._json(200, self._read_model().project_list(view=view))
+                return self._json(200, self._read_model().project_list(
+                    view=view, include_diagnostics=self._want_diagnostics(q)))
             if path.startswith("/api/work/"):
                 return self._json(200, self._work_detail_json(path[len("/api/work/"):]))
             if path == "/work" or path == "/work/":
@@ -217,7 +219,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/activity":
                 return self._html(200, self._activity_page(q))
             if path == "/api/activity":
-                return self._json(200, self._activity_json((q.get("project") or [""])[0]))
+                return self._json(200, self._activity_json((q.get("project") or [""])[0],
+                                                           self._want_diagnostics(q)))
             if path == "/settings":
                 if (q.get("refresh") or [""])[0]:
                     cached_access_snapshot(refresh=True)   # explicit operator refresh
@@ -272,9 +275,15 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 # Operator home = the new Overview inbox; a Scout-run-bound dashboard keeps its
                 # existing run view at "/" (regression-preserved). Both link to each other.
                 if operator_home and not service.is_running() and not self._has_active_run():
-                    return self._html(200, self._operator_overview_page())
+                    return self._html(200, self._operator_overview_page(q))
                 return self._html(200, self._overview_html())
             return self._json(404, {"error": "not found"})
+
+        @staticmethod
+        def _want_diagnostics(q) -> bool:
+            """Read the 'Show diagnostics' toggle (?diagnostics=1). Production views are the default;
+            diagnostics are only ever shown when the operator explicitly opts in."""
+            return (q.get("diagnostics") or [""])[0].strip().lower() in ("1", "true", "yes", "on")
 
         def _has_active_run(self) -> bool:
             try:
@@ -1295,8 +1304,9 @@ function startCampaign(){{
                 "if(p)p.textContent='offline (retrying)';});}"
                 "setInterval(tick,10000);tick();})();\n")
 
-        def _operator_overview_page(self) -> str:
-            ov = self._read_model().overview()
+        def _operator_overview_page(self, q=None) -> str:
+            diag = self._want_diagnostics(q or {})
+            ov = self._read_model().overview(include_diagnostics=diag)
             def _att(a):
                 return (f'<div class="card"><div class="row" style="justify-content:space-between">'
                         f'<div><strong>{_esc(a["title"])}</strong> {_badge(a["status"], "attention")}<br>'
@@ -1321,10 +1331,18 @@ function startCampaign(){{
                         f'<th>Status</th><th>Next action</th></tr>{camps}</table>'
                         if camps else '<div class="card empty muted">No active Scout campaigns. '
                         '<a href="/scout">Open Scout</a></div>')
-            body = (f'<h1>Overview</h1>'
+            hidden = ov.counts.get("diagnostics_hidden", 0)
+            diag_toggle = (
+                '<a class="chip" href="/">&#10003; Production only — hide diagnostics</a>' if diag else
+                (f'<a class="chip" href="/?diagnostics=1">Show diagnostics ({hidden})</a>'
+                 if hidden else ''))
+            diag_banner = ('<div class="banner warn">Showing diagnostic data (smoke/acceptance/'
+                           'replay/demo). These are not production work.</div>' if diag else '')
+            body = (f'<h1>Overview</h1>{diag_banner}'
                     f'<div class="row"><span class="chip">Projects {ov.counts.get("projects", 0)}</span>'
                     f'<span class="chip">Needs attention {ov.counts.get("attention", 0)}</span>'
-                    f'<span class="chip">Campaigns {ov.counts.get("campaigns", 0)}</span>'
+                    f'<span class="chip">Active Scout campaigns {ov.counts.get("active_campaigns", 0)}'
+                    f'</span>{diag_toggle}'
                     f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
                     f'{self._poll_html()}'
                     f'<h2>Needs your attention</h2>{att}'
@@ -1348,11 +1366,16 @@ function startCampaign(){{
 
         def _work_list_page(self, q) -> str:
             view = (q.get("view") or ["all"])[0]
-            data = self._read_model().project_list(view=view)
+            diag = self._want_diagnostics(q)
+            data = self._read_model().project_list(view=view, include_diagnostics=diag)
+            _dsuffix = "&diagnostics=1" if diag else ""
             views = "".join(
-                f'<a class="chip" href="/work?view={v}" '
+                f'<a class="chip" href="/work?view={v}{_dsuffix}" '
                 f'{"style=font-weight:600" if v == view else ""}>{_esc(lbl)}</a>'
                 for v, lbl in self._WORK_VIEWS)
+            views += (
+                f'<a class="chip" href="/work?view={view}">&#10003; Production only</a>' if diag else
+                f'<a class="chip" href="/work?view={view}&diagnostics=1">Show diagnostics</a>')
             def _row(p):
                 return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a>'
                         f'<div class="muted">{_esc(p["project_id"])}</div></td>'
@@ -2233,11 +2256,12 @@ function startCampaign(){{
             return (f'<li>{_esc(rel)} <span class="muted">{_esc(e.get("kind", ""))}</span> '
                     f'{_badge(label, kind)}{link}</li>')
 
-        def _activity_json(self, project):
+        def _activity_json(self, project, include_diagnostics: bool = False):
             events = []
             from core.orchestration.work_execution import WorkExecutionService
             wx = WorkExecutionService(output_dir=service.output_dir)
-            index = self._read_model().project_list(view="all")["projects"]
+            index = self._read_model().project_list(
+                view="all", include_diagnostics=include_diagnostics)["projects"]
             targets = [project] if project else [p["project_id"] for p in index]
             for pid in targets:
                 try:
@@ -2253,7 +2277,8 @@ function startCampaign(){{
             return {"schema": "dashboard-read-model/v1", "events": events[:200]}
 
         def _activity_page(self, q) -> str:
-            data = self._activity_json((q.get("project") or [""])[0])
+            diag = self._want_diagnostics(q)
+            data = self._activity_json((q.get("project") or [""])[0], diag)
             rows = "".join(
                 f'<tr><td class="muted">{_esc(e["time"])}</td><td>{_esc(e["actor"])}</td>'
                 f'<td>{_esc(e["action"])}</td><td>{_esc(e["object"])}</td>'
@@ -2261,8 +2286,14 @@ function startCampaign(){{
             table = (f'<table><caption>Recent state transitions</caption><tr><th>Time</th><th>Actor</th>'
                      f'<th>Action</th><th>Project</th><th>Result</th></tr>{rows}</table>' if rows
                      else '<div class="card empty muted">No activity yet.</div>')
+            toggle = (
+                '<a class="chip" href="/activity">&#10003; Production only</a>' if diag else
+                '<a class="chip" href="/activity?diagnostics=1">Show diagnostics</a>')
+            banner = ('<div class="banner warn">Showing diagnostic activity (smoke/acceptance/demo). '
+                      'Not production.</div>' if diag else '')
             return _page("AI QA Factory — Activity", "/activity",
-                         f'<h1>Activity</h1><div class="scrollx">{table}</div>')
+                         f'<h1>Activity</h1>{banner}<div class="row">{toggle}</div>'
+                         f'<div class="scrollx">{table}</div>')
 
         def _settings_page(self) -> str:
             from core.orchestration.tool_broker import ToolBroker
