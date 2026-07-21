@@ -61,13 +61,13 @@ def supervise_once(deps: SupervisorDeps, cfg: SupervisorConfig) -> Dict[str, Any
     """One supervision cycle (pure decisions + injected effects). Restarts only what is unhealthy."""
     health = deps.health()
     dashboard = "ok"
-    if not health.get("up"):
-        deps.start_dashboard()                      # down -> start (nothing to kill)
-        dashboard = "started"
-    elif health.get("stale"):
-        deps.kill_dashboards()                      # serving older code -> replace, no duplicates
+    # Restart on down OR stale, and ALWAYS kill first: a running-but-unresponsive Dashboard reports
+    # down over HTTP yet still holds :8765, so a bare start would race a duplicate. kill_dashboards is
+    # a no-op when nothing is running.
+    if not health.get("up") or health.get("stale"):
+        deps.kill_dashboards()
         deps.start_dashboard()
-        dashboard = "restarted"
+        dashboard = "restarted" if health.get("up") else "started"
 
     tick = deps.driver_tick()                       # free when idle; GPT only for new messages
     owner_action = bool(tick.get("owner_action"))
@@ -107,10 +107,8 @@ def _write_status(output_root: str, status: Dict[str, Any]) -> None:
 def _log(output_root: str, message: str) -> None:
     path = Path(output_root) / "_review_relay" / "collab_supervisor.log"
     path.parent.mkdir(parents=True, exist_ok=True)
+    _rotate(path)                                       # bounded: truncate to the recent half at the cap
     try:
-        if path.exists() and path.stat().st_size > _LOG_MAX_BYTES:
-            tail = path.read_text(encoding="utf-8", errors="replace")[-_LOG_MAX_BYTES // 2:]
-            path.write_text(tail, encoding="utf-8")
         with path.open("a", encoding="utf-8") as fh:
             fh.write(f"{_now()} {message}\n")
     except OSError:
@@ -162,12 +160,11 @@ def _start_dashboard(output_root: str) -> None:
     flags = 0
     if os.name == "nt":
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-    log = Path(output_root) / "_review_relay" / "collab_dashboard.out.log"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    _rotate(log)                                        # bound the Dashboard stdout log (no unbounded growth)
-    with log.open("a", encoding="utf-8") as fh:
-        subprocess.Popen([str(VENV_PY), "main.py", "dashboard"], cwd=str(REPO),
-                         stdout=fh, stderr=subprocess.STDOUT, creationflags=flags)
+    # Discard the Dashboard's stdout entirely: a captured file the long-lived Dashboard keeps open would
+    # grow unbounded and cannot be rotated by the supervisor while held. The Dashboard's own state is
+    # observed via /api/build, so its stdout carries nothing the supervisor needs.
+    subprocess.Popen([str(VENV_PY), "main.py", "dashboard"], cwd=str(REPO),
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
 
 
 def _heartbeat_age_s(output_root: str) -> float:

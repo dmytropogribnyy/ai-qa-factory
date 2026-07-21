@@ -42,11 +42,13 @@ def test_healthy_dashboard_is_not_restarted(tmp_path):
     assert ev["started"] == 0 and ev["killed"] == 0
 
 
-def test_down_dashboard_is_started_once(tmp_path):
+def test_down_or_unresponsive_dashboard_is_killed_then_started(tmp_path):
+    # 'down' over HTTP can be a hung-but-running Dashboard still holding :8765, so ALWAYS kill before
+    # start — a bare start would race a duplicate. kill is a no-op when nothing is running.
     deps, ev = _deps(up=False)
     out = supervise_once(deps, SupervisorConfig(output_root=str(tmp_path)))
     assert out["dashboard"] == "started"
-    assert ev["started"] == 1 and ev["killed"] == 0     # started, no duplicate kill needed
+    assert ev["killed"] == 1 and ev["started"] == 1     # kill-before-start prevents a duplicate
 
 
 def test_stale_dashboard_is_killed_then_restarted(tmp_path):
