@@ -2830,8 +2830,8 @@ def _collab_body(snap: dict) -> str:
         driver_card += (
             '<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'
             f'<p class="muted">{sup_state} &middot; last check {_esc(_fmt_ts(sup.get("checked_at","")))} '
-            f'&middot; dashboard up={_esc(str(sup.get("dashboard_up")))} stale='
-            f'{_esc(str(sup.get("dashboard_stale")))} &middot; last action '
+            f'&middot; at check: up={_esc(str(sup.get("dashboard_up_at_check")))} stale='
+            f'{_esc(str(sup.get("dashboard_stale_at_check")))} &middot; action '
             f'{_esc(sup.get("dashboard_action") or "—")}</p></div>')
     else:
         driver_card += ('<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'

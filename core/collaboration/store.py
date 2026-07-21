@@ -10,6 +10,7 @@ so a verdict can never be recorded against a moved head.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -56,11 +57,24 @@ class CollaborationStore:
         record = dict(envelope)
         record["message_id"] = f"{thread}:{key}"
         record["stored_at"] = self._clock()
-        # Insertion index within the thread (this new file is not yet on disk), so ordering is stable
-        # even when two appends share a stored_at timestamp on a coarse-resolution clock.
-        record["seq"] = sum(1 for _ in thread_dir.glob("*.json"))
+        # Monotonic per-thread insertion order, allocated ATOMICALLY (O_EXCL claim marker) so two
+        # concurrent writers can never receive the same seq — stable ordering even under a coarse clock
+        # and cross-process appends.
+        record["seq"] = self._claim_seq(thread_dir)
         self._write_once(path, record)
         return record
+
+    @staticmethod
+    def _claim_seq(thread_dir: Path) -> int:
+        n = sum(1 for _ in thread_dir.glob("*.json"))
+        while True:
+            marker = thread_dir / f".seq.{n}"
+            try:
+                fd = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                return n
+            except FileExistsError:
+                n += 1
 
     def _assert_decision_binds_to_checkpoint(self, thread: str, decision: Dict[str, Any]) -> None:
         target = str(decision.get("in_reply_to", "")).strip()

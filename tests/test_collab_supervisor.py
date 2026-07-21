@@ -66,10 +66,22 @@ def test_status_file_is_written_truthfully(tmp_path):
     deps, ev = _deps(up=True, stale=False, sha="8a36374abcd")
     supervise_once(deps, SupervisorConfig(output_root=str(tmp_path)))
     status = json.loads((Path(tmp_path) / "_review_relay" / "collab_supervisor.json").read_text())
-    assert status["dashboard_up"] is True
-    assert status["dashboard_stale"] is False
+    # Labelled as the check-time SAMPLE (truthful) rather than a claim about the current live state.
+    assert status["dashboard_up_at_check"] is True
+    assert status["dashboard_stale_at_check"] is False
+    assert status["dashboard_action"] == "ok"
     assert status["running_sha"] == "8a36374abcd"
     assert "checked_at" in status
+
+
+def test_started_dashboard_status_is_not_mislabelled_as_currently_up(tmp_path):
+    # A just-restarted Dashboard is not yet serving; the status must not claim it is currently up.
+    deps, ev = _deps(up=False)
+    supervise_once(deps, SupervisorConfig(output_root=str(tmp_path)))
+    status = json.loads((Path(tmp_path) / "_review_relay" / "collab_supervisor.json").read_text())
+    assert status["dashboard_up_at_check"] is False       # honest: down at check
+    assert status["dashboard_action"] == "started"        # and we started it
+    assert "dashboard_up" not in status                   # no misleading "current" up field
 
 
 def test_owner_action_from_driver_is_surfaced(tmp_path):

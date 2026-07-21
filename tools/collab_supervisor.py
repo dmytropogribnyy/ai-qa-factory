@@ -74,8 +74,11 @@ def supervise_once(deps: SupervisorDeps, cfg: SupervisorConfig) -> Dict[str, Any
 
     status = {
         "checked_at": deps.clock(),
-        "dashboard_up": bool(health.get("up")),
-        "dashboard_stale": bool(health.get("stale")),
+        # These are the health SAMPLE AT CHECK TIME (before any remediation this cycle); the action
+        # taken is `dashboard_action`. They are deliberately not relabelled as the current live state,
+        # since a freshly (re)started Dashboard is not yet serving when the cycle records the sample.
+        "dashboard_up_at_check": bool(health.get("up")),
+        "dashboard_stale_at_check": bool(health.get("stale")),
         "running_sha": health.get("sha", ""),
         "expected_head": deps.current_head(),
         "dashboard_action": dashboard,
@@ -145,12 +148,23 @@ def _kill_dashboards() -> None:
                    capture_output=True, timeout=30)
 
 
+def _rotate(path: Path) -> None:
+    """Keep a bounded log — truncate to the recent half when it exceeds the cap (no unbounded growth)."""
+    try:
+        if path.exists() and path.stat().st_size > _LOG_MAX_BYTES:
+            tail = path.read_text(encoding="utf-8", errors="replace")[-_LOG_MAX_BYTES // 2:]
+            path.write_text(tail, encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _start_dashboard(output_root: str) -> None:
     flags = 0
     if os.name == "nt":
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
     log = Path(output_root) / "_review_relay" / "collab_dashboard.out.log"
     log.parent.mkdir(parents=True, exist_ok=True)
+    _rotate(log)                                        # bound the Dashboard stdout log (no unbounded growth)
     with log.open("a", encoding="utf-8") as fh:
         subprocess.Popen([str(VENV_PY), "main.py", "dashboard"], cwd=str(REPO),
                          stdout=fh, stderr=subprocess.STDOUT, creationflags=flags)
@@ -185,17 +199,27 @@ def _real_deps(cfg: SupervisorConfig) -> SupervisorDeps:
 
 
 def _acquire_lock() -> Optional[Path]:
-    """Single-instance lock: refuse to start if another live supervisor holds the lock."""
+    """Single-instance lock via ATOMIC O_EXCL create (no read-then-write race). A stale lock left by a
+    dead process is reclaimed once; a lock held by a live supervisor refuses the new instance."""
     lock = REPO / ".aiqa_supervisor.lock"
-    if lock.exists():
+    for _ in range(2):
         try:
-            pid = int(lock.read_text(encoding="utf-8").strip() or "0")
-        except (OSError, ValueError):
-            pid = 0
-        if pid and _pid_alive(pid):
-            return None
-    lock.write_text(str(os.getpid()), encoding="utf-8")
-    return lock
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("utf-8"))
+            os.close(fd)
+            return lock
+        except FileExistsError:
+            try:
+                pid = int(lock.read_text(encoding="utf-8").strip() or "0")
+            except (OSError, ValueError):
+                pid = 0
+            if pid and _pid_alive(pid):
+                return None                             # another live supervisor holds it
+            try:
+                lock.unlink()                           # stale lock from a dead process -> reclaim
+            except OSError:
+                return None
+    return None
 
 
 def _pid_alive(pid: int) -> bool:

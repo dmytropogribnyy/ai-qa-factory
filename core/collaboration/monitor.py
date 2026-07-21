@@ -180,8 +180,11 @@ class CollaborationMonitor:
         beat = _parse(data.get("checked_at", ""))
         now = _parse(self._clock())
         fresh = bool(beat and now and (now - beat).total_seconds() <= 180)
+        # Fields are the health SAMPLE AT CHECK TIME + the action taken (truthful; not a claim about the
+        # current live state). A stale heartbeat means the supervisor is not actually running now.
         return {"installed": True, "fresh": fresh, "checked_at": data.get("checked_at", ""),
-                "dashboard_up": data.get("dashboard_up"), "dashboard_stale": data.get("dashboard_stale"),
+                "dashboard_up_at_check": data.get("dashboard_up_at_check"),
+                "dashboard_stale_at_check": data.get("dashboard_stale_at_check"),
                 "dashboard_action": data.get("dashboard_action", ""),
                 "driver_stage": data.get("driver_stage", ""),
                 "owner_action_required": bool(data.get("owner_action_required"))}
