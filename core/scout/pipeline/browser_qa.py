@@ -134,10 +134,15 @@ def collect_axe_on_page(page, *, max_violations: int = _MAX_A11Y_FINDINGS) -> Li
     CDN). Returns BOUNDED, REDACTED raw violations — rule id, impact, help text, and one sanitized
     selector; never a full DOM dump, message list, or node payload."""
     _inject_axe(page)
-    report = page.evaluate(AXE_RUN_JS)
-    # A COMPLETE axe report is a dict whose "violations" is a list. A null / structurally-incomplete
-    # report means axe did NOT run to completion — RAISE so the caller records it as UNAVAILABLE
-    # coverage rather than misrepresenting a failed run as a clean "ok, zero violations".
+    return _parse_axe_report(page.evaluate(AXE_RUN_JS), max_violations=max_violations)
+
+
+def _parse_axe_report(report: Any, *, max_violations: int = _MAX_A11Y_FINDINGS) -> List[Dict[str, Any]]:
+    """Validate + bound + redact an ``axe.run()`` report (pure — no page/injection, so it is unit
+    testable without a browser or the axe bundle). A COMPLETE report is a dict whose ``violations`` is
+    a list; a null / structurally-incomplete report means axe did NOT run to completion — RAISE so the
+    caller records UNAVAILABLE coverage rather than misrepresenting a failed run as a clean 'zero
+    violations'."""
     if not isinstance(report, dict) or not isinstance(report.get("violations"), list):
         raise RuntimeError("axe report missing or structurally incomplete")
     out: List[Dict[str, Any]] = []

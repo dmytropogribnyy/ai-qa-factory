@@ -182,26 +182,41 @@ class _FakePage:
         return self._axe if "axe.run" in js else self._perf
 
 
-def test_collect_axe_raises_on_null_or_incomplete_report():
-    from core.scout.pipeline.browser_qa import collect_axe_on_page
+def _axe_bundle_available():
+    try:
+        from core.scout.pipeline.browser_qa import load_axe_source
+        load_axe_source()
+        return True
+    except Exception:
+        return False
+
+
+def test_parse_axe_report_raises_on_null_or_incomplete():
+    # Pure validation (no page/injection/bundle): a null or structurally-incomplete report is refused.
+    from core.scout.pipeline.browser_qa import _parse_axe_report
     for bad in (None, {}, {"violations": "not-a-list"}, "x", 5):
         with pytest.raises(Exception):
-            collect_axe_on_page(_FakePage(axe=bad))
+            _parse_axe_report(bad)
 
 
-def test_collect_axe_valid_empty_report_is_ok_empty():
-    from core.scout.pipeline.browser_qa import collect_axe_on_page
-    assert collect_axe_on_page(_FakePage(axe={"violations": []})) == []
+def test_parse_axe_report_valid_empty_is_empty_and_violations_parse():
+    from core.scout.pipeline.browser_qa import _parse_axe_report
+    assert _parse_axe_report({"violations": []}) == []          # succeeded-with-[] is a valid clean run
+    out = _parse_axe_report({"violations": [{"id": "image-alt", "impact": "serious", "help": "h",
+                                             "nodes": [{"target": ["img"]}]}]})
+    assert out[0]["rule"] == "image-alt" and out[0]["impact"] == "serious"
 
 
 def test_deep_qa_marks_unavailable_when_axe_report_is_incomplete():
     from core.scout.backends import PlaywrightBackend
     obs = PageObservation(url="https://ex.com", ok=True, backend="playwright")
+    # axe=None -> parse (or, absent the bundle, injection) raises -> recorded as unavailable, not clean.
     PlaywrightBackend()._collect_deep_qa(_FakePage(perf={"loadEvent": 5000}, axe=None), obs)
-    assert obs.axe_status == "unavailable" and obs.axe_violations == []   # a failed axe run is NOT clean
+    assert obs.axe_status == "unavailable" and obs.axe_violations == []
     assert obs.perf.get("loadEvent") == 5000                              # perf still captured
 
 
+@pytest.mark.skipif(not _axe_bundle_available(), reason="axe bundle not installed")
 def test_deep_qa_valid_empty_axe_report_is_ok_not_unavailable():
     from core.scout.backends import PlaywrightBackend
     obs = PageObservation(url="https://ex.com", ok=True, backend="playwright")
