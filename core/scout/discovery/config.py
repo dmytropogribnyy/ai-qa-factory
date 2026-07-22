@@ -88,6 +88,7 @@ class DiscoveryCampaignConfig:
     cost_ceiling_usd: float = 0.0
     # Promotion / Scout run settings.
     browser_mode: str = "static"
+    video_mode: str = "manual"          # off | manual (default) | qualified_auto (opt-in short clip)
     max_pages_per_site: int = 4
     allowed_local_hosts: FrozenSet[str] = field(default_factory=frozenset)
     resolve_dns: bool = True
@@ -129,6 +130,8 @@ class DiscoveryCampaignConfig:
             raise DiscoveryConfigError("cost_ceiling_usd cannot be negative")
         if self.browser_mode not in ("static", "playwright"):
             raise DiscoveryConfigError(f"unknown browser_mode: {self.browser_mode!r}")
+        if self.video_mode not in ("off", "manual", "qualified_auto"):
+            raise DiscoveryConfigError(f"unknown video_mode: {self.video_mode!r}")
         if self.strategy not in ("conservative", "balanced", "opportunity"):
             raise DiscoveryConfigError(f"unknown strategy: {self.strategy!r}")
         if not (1 <= self.max_pages_per_site <= 50):

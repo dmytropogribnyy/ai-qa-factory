@@ -141,6 +141,25 @@ def test_real_browser_backend_capabilities(tmp_path):
         assert posts == []                                   # no form was ever submitted
 
 
+def test_real_browser_records_and_omits_reproduction_video(tmp_path):
+    """Live proof of the record step (slice D): a real Chromium context writes a genuine .webm when
+    asked, and writes nothing when not asked. Qualify->keep/delete is proven deterministically in
+    tests/test_scout_video_capture.py; this pins that the recording itself is real, not simulated."""
+    with _serve() as (base, host, posts):
+        pdir = tmp_path / "prospect"
+        backend = PlaywrightBackend(policy=_policy(host), screenshot_dir=str(pdir))
+
+        obs = backend.observe(f"{base}/ok/index.html", 20, 3_000_000, record_video=True)
+        assert obs.ok is True
+        assert obs.video_ref.startswith("_vidtmp") and obs.video_ref.endswith(".webm")
+        clip = pdir / obs.video_ref
+        assert clip.exists() and clip.stat().st_size > 0     # a real, non-empty recording on disk
+
+        obs2 = backend.observe(f"{base}/ok/index.html", 20, 3_000_000, record_video=False)
+        assert obs2.video_ref == ""                          # opt-out: nothing recorded
+        assert posts == []                                   # still never submits a form
+
+
 def test_real_browser_engine_pipeline_and_report(tmp_path):
     _c = itertools.count()
 
