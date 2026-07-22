@@ -308,16 +308,9 @@ def _acquire_lock() -> Optional[Path]:
     return None
 
 
-def _pid_alive(pid: int) -> bool:
-    if os.name == "nt":
-        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True,
-                             check=False)
-        return str(pid) in (out.stdout or "")
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
+# Single source of truth for process liveness lives in core (Issue #17 P0-A); the supervisor reuses it
+# (core must never import from tools).
+from core.collaboration.process_liveness import pid_alive as _pid_alive  # noqa: E402
 
 
 def main(argv=None) -> int:

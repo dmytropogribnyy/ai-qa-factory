@@ -2837,17 +2837,29 @@ def _collab_body(snap: dict) -> str:
             attempts = _esc(str(active.get("attempts", 0)))
             retry = active.get("next_retry_at") or ""
             backoff = f' &middot; retry after {_esc(_fmt_ts(retry))}' if retry else ""
-            spent = float(active.get("spent_usd", 0.0) or 0.0)
+            usage = float(active.get("usage_usd_equiv", 0.0) or 0.0)
+            charged = float(active.get("actual_charged_usd", 0.0) or 0.0)
             cap = float(active.get("max_total_usd", 0.0) or 0.0)
-            spend_txt = (f' &middot; spend ${spent:.2f}' + (f'/${cap:.2f} cap' if cap else '')
-                         if (spent or cap) else "")
+            src = _esc(str(active.get("billing_source") or ""))
+            bill_bits = []
+            if src:
+                bill_bits.append(f'billing <code>{src}</code>')
+            if usage:
+                bill_bits.append(f'usage &asymp;${usage:.2f} (subscription equiv)')
+            if charged or cap:
+                bill_bits.append(f'API ${charged:.2f}' + (f'/${cap:.2f} cap' if cap else ''))
+            spend_txt = (' &middot; ' + ' &middot; '.join(bill_bits)) if bill_bits else ""
+            owner = _esc(str(active.get("claim_owner") or ""))
+            hb = active.get("heartbeat_at") or ""
+            owner_txt = (f' &middot; writer <code>{owner}</code>'
+                         + (f' &middot; heartbeat {_esc(_fmt_ts(hb))}' if hb else '')) if owner else ""
             wt = _esc(str(active.get("branch") or active.get("workspace_path") or ""))
             wt_txt = f' &middot; worktree <code>{wt}</code>' if wt else ""
             need = pk.get("needs_owner") or []
             need_line = ('<p class="muted" style="color:var(--attention);font-weight:600">'
                          f'&#9888; {len(need)} product packet(s) need owner</p>' if need else "")
             pk_line = (f'<p class="muted">product work: {obj} &middot; phase <code>{phase}</code> '
-                       f'&middot; attempts {attempts}{backoff}{spend_txt}{wt_txt} &middot; '
+                       f'&middot; attempts {attempts}{backoff}{spend_txt}{owner_txt}{wt_txt} &middot; '
                        f'{_esc(str(pk.get("by_status", {})))}</p>{need_line}')
         driver_card += (
             '<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'

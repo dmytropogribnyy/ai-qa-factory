@@ -113,15 +113,32 @@ def test_started_dashboard_status_is_not_mislabelled_as_currently_up(tmp_path):
     assert "dashboard_up" not in status                   # no misleading "current" up field
 
 
+_DEAD_PID = 2_147_483_646  # an implausible PID -> the owner process tree is provably dead
+
+
 def test_writer_gate_recovers_orphaned_claim_and_becomes_eligible(tmp_path):
-    # P0-2 at the supervisor level: a dead writer's in_progress claim must not report writer_active
-    # forever. writer_gate recovers the expired lease each cycle and re-eligibles the packet.
+    # P0-A at the supervisor level: an expired lease WHOSE OWNER PROCESS TREE IS DEAD must not report
+    # writer_active forever. writer_gate recovers it each cycle and re-eligibles the packet.
     store = ProductPacketStore(str(tmp_path))
     p = store.create(objective="rank scout findings")
-    store.claim(p["packet_id"], owner="dead-writer", lease_seconds=600, now=_WT0)
+    store.claim(p["packet_id"], owner="dead-writer", owner_pids=[_DEAD_PID],
+                lease_seconds=600, now=_WT0)                   # dead owner on this host
     gate = writer_gate(store, now=_WT0 + timedelta(seconds=601))
     assert gate == "eligible"
     assert store.get(p["packet_id"])["status"] == "pending"
+
+
+def test_writer_gate_does_not_recover_a_live_owner_after_lease_expiry(tmp_path):
+    # P0-A core: the double-writer root cause. A still-alive owner (this process) whose lease lapsed must
+    # never be reclaimed -> the gate reports writer_active, not eligible (no second writer).
+    import os as _os
+
+    store = ProductPacketStore(str(tmp_path))
+    p = store.create(objective="x")
+    store.claim(p["packet_id"], owner="live-writer", owner_pids=[_os.getpid()],
+                lease_seconds=150, now=_WT0)
+    assert writer_gate(store, now=_WT0 + timedelta(seconds=1000)) == "writer_active"
+    assert store.get(p["packet_id"])["status"] == "in_progress"
 
 
 def test_writer_gate_reports_writer_active_while_lease_valid(tmp_path):

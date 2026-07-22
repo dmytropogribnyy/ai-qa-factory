@@ -5,6 +5,13 @@ under the SAME ``_review_relay`` base the Direct Driver already uses — there i
 The task-managed supervisor picks the next pending packet and launches a bounded Claude writer on it;
 because the packet + its status live on disk, a fresh session (after a quota reset or a restart) resumes
 exactly where the last one stopped, and an in-progress claim prevents a duplicate launch.
+
+P0-A single-writer fencing (Issue #17, GPT comments 5045114314 / 5045130846): an expired lease is NOT
+evidence a writer is dead. A claim carries a unique ``claim_token`` plus its owner ``host`` + ``pids``;
+a live relaunch heartbeat renews the lease while the writer runs (see ``relaunch.py``), every
+heartbeat/terminal update is gated on the CURRENT ``claim_token`` (a stale owner or a reused PID becomes
+a no-op), and recovery reclaims only when the lease is expired AND the owner process tree is provably
+dead on this host — otherwise it fails closed to a visible ``blocked`` state, never a time-only reclaim.
 """
 from __future__ import annotations
 
@@ -13,14 +20,18 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
-_STATUSES = {"pending", "in_progress", "done", "failed", "needs_owner"}
+from core.collaboration.process_liveness import local_host, owner_liveness
+
+_STATUSES = {"pending", "in_progress", "done", "failed", "needs_owner", "blocked",
+             "stopped", "cancelled"}
 _SAFE_ID = re.compile(r"^pkt-[0-9A-Za-z._-]{6,80}$")
 
 # A claim lease must exceed the bounded writer's own timeout (default 1800s) so a genuinely-running
-# writer is never mistaken for an orphan; a claim older than this is a dead process and is recovered.
+# writer is never mistaken for an orphan; a claim older than this WITH a dead owner is recovered. A
+# shorter lease is safe only because the relaunch heartbeat renews it while the writer is alive.
 DEFAULT_LEASE_SECONDS = 2700
 
 
@@ -41,6 +52,13 @@ def _parse_iso(value: str) -> Optional[datetime]:
         return datetime.fromisoformat(str(value)) if value else None
     except (TypeError, ValueError):
         return None
+
+
+def _default_owner_alive(record: Dict[str, Any]) -> Optional[bool]:
+    """Real process-tree liveness for a claim owner (injectable in tests). True=alive, False=dead,
+    None=unknown → the caller fails closed to ``blocked``."""
+    return owner_liveness(owner_host=record.get("owner_host", ""),
+                          owner_pids=record.get("owner_pids", []))
 
 
 class ProductPacketError(ValueError):
@@ -74,18 +92,20 @@ class ProductPacketStore:
                   "last_result": "",
                   # Issue #17 P0-1: canonical protocol phase, advanced only from persisted evidence.
                   "phase": "new",
-                  # Issue #17 P0-2: claim attribution + lease (empty until claimed).
+                  # Issue #17 P0-2/P0-A: claim attribution + lease + fencing identity (empty until claimed).
                   "claim_owner": "", "claimed_at": "", "lease_expires_at": "", "heartbeat_at": "",
+                  "claim_token": "", "owner_host": "", "owner_pids": [],
                   # Issue #17 P0-3: durable backoff gate (empty = immediately eligible).
                   "next_retry_at": "",
                   # Writer isolation (owner/GPT requirement): the writer runs in this dedicated worktree
                   # / branch off base_sha, never the controller worktree (empty = controller workspace).
                   "workspace_path": "", "base_sha": "",
-                  # Conservative bounds for a live run: per-packet launch cap + total spend cap + the
-                  # accumulated real writer cost, all surfaced in /collab (0 = use module default).
-                  "max_launches": 0, "max_total_usd": 0.0, "spent_usd": 0.0,
-                  # Per-packet claim lease (0 = DEFAULT_LEASE_SECONDS). A short lease makes a killed
-                  # writer's orphaned claim reclaimable quickly (observable kill/resume recovery).
+                  # Conservative bounds for a live run: per-packet launch cap + REAL-dollar spend cap +
+                  # honest billing split (subscription token-equivalent usage vs actually-charged API $).
+                  "max_launches": 0, "max_total_usd": 0.0,
+                  "usage_usd_equiv": 0.0, "actual_charged_usd": 0.0, "billing_source": "",
+                  # Per-packet claim lease (0 = DEFAULT_LEASE_SECONDS). Kept fresh by the relaunch
+                  # heartbeat; a short lease is safe only with that heartbeat active.
                   "lease_seconds": 0}
         self._write(pid, record)
         return record
@@ -126,11 +146,13 @@ class ProductPacketStore:
         return None
 
     def claim(self, packet_id: str, *, owner: str = "",
-              lease_seconds: int = DEFAULT_LEASE_SECONDS,
-              now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+              lease_seconds: int = DEFAULT_LEASE_SECONDS, now: Optional[datetime] = None,
+              owner_pids: Optional[List[int]] = None, owner_host: Optional[str] = None,
+              claim_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Atomically move a packet pending -> in_progress so only one writer is ever launched for it.
-        Records an attributable, time-bounded claim (owner + lease) so a crashed writer can be recovered
-        (P0-2). Returns the claimed record, or None if it was not pending (already claimed/finished)."""
+        Records an attributable, time-bounded, fenced claim: owner id + a unique ``claim_token`` + the
+        owner ``host`` and ``pids`` so a crashed writer can be recovered only when it is provably dead
+        (P0-A). Returns the claimed record, or None if it was not pending (already claimed/finished)."""
         pid = self._validate(packet_id)
         # Atomic claim marker: the first caller to create it wins; a concurrent caller is refused.
         marker = self._dir / f"{pid}.claim"
@@ -143,37 +165,64 @@ class ProductPacketStore:
         if not record or record.get("status") != "pending":
             return None
         dt = _now_dt(now)
+        pids = [int(p) for p in (owner_pids or []) if str(p).strip().lstrip("-").isdigit()]
         record.update(status="in_progress", attempts=int(record.get("attempts", 0)) + 1,
-                      claim_owner=str(owner), claimed_at=_iso(dt), heartbeat_at=_iso(dt),
+                      claim_owner=str(owner), claim_token=str(claim_token or uuid4().hex),
+                      owner_host=(local_host() if owner_host is None else str(owner_host)),
+                      owner_pids=pids, claimed_at=_iso(dt), heartbeat_at=_iso(dt),
                       lease_expires_at=_iso(dt + timedelta(seconds=int(lease_seconds))),
                       updated_at=_iso(dt))
         self._write(pid, record)
         return record
 
-    def heartbeat(self, packet_id: str, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
-                  now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
-        """Extend a live claim's lease (P0-2). A long-running writer refreshes its lease so recovery
-        never reclaims it while genuinely alive. No-op for a packet that is not in progress."""
+    def heartbeat(self, packet_id: str, *, claim_token: str = "",
+                  lease_seconds: int = DEFAULT_LEASE_SECONDS, now: Optional[datetime] = None,
+                  owner_pids: Optional[List[int]] = None) -> Optional[Dict[str, Any]]:
+        """Extend a live claim's lease while the writer genuinely runs (P0-A). Token-gated: a stale
+        heartbeat thread or a reused PID whose ``claim_token`` no longer matches the current claim is a
+        NO-OP (cannot renew or mutate a newer claim). No-op for a packet that is not in progress."""
         pid = self._validate(packet_id)
         record = self.get(pid)
         if not record or record.get("status") != "in_progress":
             return None
+        if claim_token and record.get("claim_token") and record.get("claim_token") != claim_token:
+            return None                                        # stale owner / PID reuse -> no-op
         dt = _now_dt(now)
-        record.update(heartbeat_at=_iso(dt),
-                      lease_expires_at=_iso(dt + timedelta(seconds=int(lease_seconds))),
-                      updated_at=_iso(dt))
+        changes: Dict[str, Any] = {
+            "heartbeat_at": _iso(dt),
+            "lease_expires_at": _iso(dt + timedelta(seconds=int(lease_seconds))),
+            "updated_at": _iso(dt)}
+        if owner_pids is not None:
+            changes["owner_pids"] = [int(p) for p in owner_pids
+                                     if str(p).strip().lstrip("-").isdigit()]
+        record.update(changes)
         self._write(pid, record)
         return record
 
-    def recover_orphaned_claims(self, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """Reset any in-progress packet whose lease has expired back to pending (P0-2).
+    def resolve(self, packet_id: str, *, claim_token: str = "", **changes: Any) -> Optional[Dict[str, Any]]:
+        """Token-gated terminal update by the CLAIM OWNER (release/complete). If a newer claim now owns
+        the packet (``claim_token`` mismatch), this is a no-op returning None, so a late/stale relaunch
+        can never clobber a fresh claim's state (P0-A)."""
+        pid = self._validate(packet_id)
+        record = self.get(pid)
+        if record is None:
+            return None
+        if claim_token and record.get("claim_token") and record.get("claim_token") != claim_token:
+            return None
+        return self.update(pid, **changes)
 
-        The lease is longer than the writer's own timeout, so a genuinely-running writer is never
-        reclaimed; only a claim left behind by a dead process/session/machine is recovered. Recovery is
-        resumable — the writer_session is preserved — and clears the stale ``.claim`` marker so a fresh
-        cycle can re-claim without launching a duplicate. Returns the recovered records.
+    def recover_orphaned_claims(
+            self, *, now: Optional[datetime] = None,
+            is_owner_alive: Optional[Callable[[Dict[str, Any]], Optional[bool]]] = None
+    ) -> List[Dict[str, Any]]:
+        """Reclaim an in-progress packet ONLY when its lease is expired AND its owner process tree is
+        provably dead on this host (P0-A). A live owner is never reclaimed (no double writer); an
+        unknowable owner (different/empty host) fails CLOSED to a visible ``blocked`` state rather than a
+        time-only reclaim that could split-brain. Recovery is resumable (``writer_session`` preserved)
+        and clears the stale ``.claim`` marker. Returns the records reclaimed to pending.
         """
         dt = _now_dt(now)
+        alive_fn = is_owner_alive or _default_owner_alive
         recovered: List[Dict[str, Any]] = []
         for row in self.list():
             if row.get("status") != "in_progress":
@@ -181,8 +230,18 @@ class ProductPacketStore:
             expires = _parse_iso(row.get("lease_expires_at", ""))
             if expires is None or expires >= dt:
                 continue                                       # no lease or still valid -> live writer
+            alive = alive_fn(row)
+            if alive is True:
+                continue                                       # provably alive -> never reclaim
+            if alive is None:
+                # Fail closed: liveness unknowable here. Make it owner-visible; do NOT time-reclaim.
+                if row.get("status") != "blocked":
+                    self.update(row["packet_id"], status="blocked",
+                                last_result="fenced: owner liveness unknown (host mismatch); "
+                                            "expired lease is not proof of death — needs owner")
+                continue
             rec = self.update(row["packet_id"], status="pending",
-                              last_result="recovered orphaned claim (lease expired)")
+                              last_result="recovered orphaned claim (lease expired + owner tree dead)")
             recovered.append(rec)
         return recovered
 

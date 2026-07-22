@@ -249,19 +249,71 @@ def test_packet_max_launches_overrides_module_cap(tmp_path):
     assert rec["status"] == "needs_owner" and rec["attempts"] == 2
 
 
-def test_total_spend_cap_escalates_to_needs_owner(tmp_path):
-    # GPT money-bound: accumulate real writer cost and stop for owner approval before overspending.
+def test_real_dollar_cap_escalates_only_on_actually_charged_api_spend(tmp_path):
+    # GPT P1 money-bound: the REAL-dollar cap trips on actually-charged API dollars.
     store = ProductPacketStore(str(tmp_path))
     p = _pkt(store)
     store.update(p["packet_id"], max_total_usd=3.0)
     relaunch_once(store, _Worker(ok=True, cost_usd=2.0), workspace=str(tmp_path), now=_T0,
-                  completion_check=lambda pkt: "proposed")      # progressing but not complete
-    assert abs(store.get(p["packet_id"])["spent_usd"] - 2.0) < 1e-6
-    relaunch_once(store, _Worker(ok=True, cost_usd=2.0), workspace=str(tmp_path),
-                  now=_T0 + timedelta(hours=2), completion_check=lambda pkt: "proposed")
+                  billing_source="api_credits", completion_check=lambda pkt: "proposed")
     rec = store.get(p["packet_id"])
-    assert rec["status"] == "needs_owner"                       # 4.0 total > 3.0 cap -> owner approval
-    assert rec["spent_usd"] >= 3.0
+    assert abs(rec["actual_charged_usd"] - 2.0) < 1e-6
+    assert rec["billing_source"] == "api_credits"
+    relaunch_once(store, _Worker(ok=True, cost_usd=2.0), workspace=str(tmp_path),
+                  now=_T0 + timedelta(hours=2), billing_source="api_credits",
+                  completion_check=lambda pkt: "proposed")
+    rec = store.get(p["packet_id"])
+    assert rec["status"] == "needs_owner"                       # 4.0 charged > 3.0 cap -> owner approval
+    assert rec["actual_charged_usd"] >= 3.0
+
+
+def test_subscription_usage_never_trips_the_false_dollar_cap(tmp_path):
+    # GPT P1: subscription token-equivalent usage is NOT real dollars; a $ cap must never falsely stop a
+    # subscription run (the E2E-observed "false needs_owner"). Usage is still tracked honestly.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    store.update(p["packet_id"], max_total_usd=3.0)
+    t = _T0
+    for _ in range(3):
+        relaunch_once(store, _Worker(ok=True, cost_usd=2.0), workspace=str(tmp_path), now=t,
+                      billing_source="subscription", completion_check=lambda pkt: "proposed")
+        t = t + timedelta(hours=2)
+    rec = store.get(p["packet_id"])
+    assert rec["status"] != "needs_owner"                       # never a false-dollar-cap stop
+    assert rec["actual_charged_usd"] == 0.0                     # nothing really charged
+    assert rec["usage_usd_equiv"] >= 6.0                        # but usage is tracked truthfully
+    assert rec["billing_source"] == "subscription"
+
+
+def test_heartbeat_keeps_single_writer_during_a_run_longer_than_the_lease(tmp_path):
+    # P0-A regression A: a writer that runs longer than its lease must NOT be reclaimed into a second
+    # writer — the live heartbeat renews the claim, and recovery sees the owner (this process) alive.
+    import time as _time
+
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    store.update(p["packet_id"], lease_seconds=15)             # short lease -> heartbeat renews every ~5s
+    seen: dict = {}
+
+    class _LongWorker:
+        def run(self, order, workspace, *, resume_session="", cancel=None):
+            pid = p["packet_id"]
+            first = store.get(pid)["lease_expires_at"]
+            deadline = _time.time() + 25
+            while _time.time() < deadline:
+                cur = store.get(pid)
+                if cur["lease_expires_at"] > first:            # heartbeat fired during the run
+                    seen["renewed"] = True
+                    # a recovery pass with a far-future clock (lease "expired") must NOT reclaim a live owner
+                    store.recover_orphaned_claims(now=datetime.now(timezone.utc) + timedelta(days=1))
+                    seen["status_during"] = store.get(pid)["status"]
+                    break
+                _time.sleep(0.2)
+            return type("R", (), {"ok": False, "session_id": "s", "reason": "stop", "cost_usd": 0.0})()
+
+    relaunch_once(store, _LongWorker(), workspace=str(tmp_path))
+    assert seen.get("renewed") is True                          # the lease was renewed mid-run
+    assert seen.get("status_during") == "in_progress"           # never reclaimed while the owner is alive
 
 
 def test_default_order_carries_the_canonical_protocol_and_thread(tmp_path):
