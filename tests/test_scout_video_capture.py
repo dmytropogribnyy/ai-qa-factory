@@ -137,7 +137,7 @@ class _CaptchaRecordingBackend:
     name = "playwright"
     screenshot_dir = None
 
-    def observe(self, url, timeout_s, max_bytes, *, record_video=False):
+    def observe(self, url, timeout_s, max_bytes, *, record_video=False, deep_qa=False):
         obs = PageObservation(url=url, backend=self.name, captcha_marker=True)
         if record_video and self.screenshot_dir:
             vt = Path(self.screenshot_dir) / "_vidtmp"
@@ -163,7 +163,7 @@ class _RaisingRecordingBackend:
     name = "playwright"
     screenshot_dir = None
 
-    def observe(self, url, timeout_s, max_bytes, *, record_video=False):
+    def observe(self, url, timeout_s, max_bytes, *, record_video=False, deep_qa=False):
         if record_video and self.screenshot_dir:
             vt = Path(self.screenshot_dir) / "_vidtmp"
             vt.mkdir(parents=True, exist_ok=True)

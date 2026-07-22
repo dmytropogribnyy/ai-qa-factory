@@ -128,6 +128,22 @@ def run_axe(page, url: str) -> List[RawObservation]:
     return parse_axe_violations(report, url)
 
 
+def collect_axe_on_page(page, *, max_violations: int = _MAX_A11Y_FINDINGS) -> List[Dict[str, Any]]:
+    """Run axe-core against an ALREADY-LOADED page (NO navigation of its own — for the operator deep
+    capture that already owns the live page). Injects only the pinned repo-local axe bundle (never a
+    CDN). Returns BOUNDED, REDACTED raw violations — rule id, impact, help text, and one sanitized
+    selector; never a full DOM dump, message list, or node payload."""
+    _inject_axe(page)
+    report = page.evaluate(AXE_RUN_JS)
+    out: List[Dict[str, Any]] = []
+    for v in ((report or {}).get("violations", []) or [])[:max_violations]:
+        out.append({"rule": str(v.get("id", "unknown"))[:60],
+                    "impact": str(v.get("impact", "") or "minor")[:20],
+                    "help": str(v.get("help", "") or "")[:160],
+                    "selector": _first_selector(v)})
+    return out
+
+
 def parse_axe_violations(report: Dict[str, Any], url: str) -> List[RawObservation]:
     """Parse an axe.run() report into bounded, deduplicated, sanitized accessibility findings."""
     violations = (report or {}).get("violations", [])[:_MAX_A11Y_FINDINGS]

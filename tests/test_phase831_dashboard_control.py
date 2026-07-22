@@ -42,11 +42,12 @@ class _GatedBackend:
     def release(self) -> None:
         self._release.set()
 
-    def observe(self, url, timeout_s, max_bytes, *, record_video=False):
+    def observe(self, url, timeout_s, max_bytes, *, record_video=False, deep_qa=False):
         if not self._release.is_set():
             self.entered.set()
             self._release.wait(timeout=10)
-        return self._inner.observe(url, timeout_s, max_bytes, record_video=record_video)
+        return self._inner.observe(url, timeout_s, max_bytes, record_video=record_video,
+                                   deep_qa=deep_qa)
 
 
 def _seeds(base, names):

@@ -72,6 +72,15 @@ _CAPTCHA = (
     "<main><h1>Verify</h1><div class='g-recaptcha'>Please complete the reCAPTCHA to continue.</div>"
     "</main></body></html>"
 )
+# A page with GUARANTEED axe violations (image without alt, input without a label) so the live axe
+# run has something real to find.
+_A11Y = (
+    "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+    "<title>A11y issues</title></head><body>"
+    "<main><h1>Issues</h1><img src='/logo.png'>"
+    "<form><input type='text' name='q'></form></main></body></html>"
+)
 
 
 def _make_handler(post_counter):
@@ -94,6 +103,8 @@ def _make_handler(post_counter):
                 return self._send(200, _OK)
             if path == "/captcha/index.html":
                 return self._send(200, _CAPTCHA)
+            if path == "/a11y/index.html":
+                return self._send(200, _A11Y)
             return self._send(404, "<title>nope</title><h1>404</h1>")
 
         do_HEAD = do_GET
@@ -158,6 +169,24 @@ def test_real_browser_records_and_omits_reproduction_video(tmp_path):
         obs2 = backend.observe(f"{base}/ok/index.html", 20, 3_000_000, record_video=False)
         assert obs2.video_ref == ""                          # opt-out: nothing recorded
         assert posts == []                                   # still never submits a form
+
+
+def test_real_browser_deep_qa_runs_axe_and_perf_without_network_fetch(tmp_path):
+    """Live proof the operator deep-QA path is real: a real Chromium injects the PINNED LOCAL axe
+    bundle (no CDN), runs axe against the DOM (finds the seeded image-alt violation), and captures
+    real navigation timing — all on the already-open page."""
+    with _serve() as (base, host, posts):
+        backend = PlaywrightBackend(policy=_policy(host), screenshot_dir=str(tmp_path / "p"))
+        obs = backend.observe(f"{base}/a11y/index.html", 20, 3_000_000, deep_qa=True)
+        assert obs.ok is True
+        assert obs.axe_status == "ok"                          # real axe-core ran to completion
+        rules = {v["rule"] for v in obs.axe_violations}
+        assert "image-alt" in rules                            # axe genuinely analyzed the rendered DOM
+        assert obs.perf.get("loadEvent") is not None           # real navigation timing captured
+        # axe came from the local bundle — no CDN/network fetch was made for it.
+        assert not any("axe" in r.lower() or "cdn" in r.lower()
+                       for r in obs.blocked_requests + obs.failed_resources)
+        assert posts == []                                     # still never submits a form
 
 
 def test_real_browser_engine_pipeline_and_report(tmp_path):

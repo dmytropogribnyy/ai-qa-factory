@@ -151,8 +151,10 @@ class ScoutEngine:
         try:
             # The recording-capable observe is INSIDE the guarded block: if it creates _vidtmp and
             # then raises (e.g. a browser launch/context failure), the finally still cleans it up.
+            deep_qa = cfg.browser_mode == "playwright"   # real axe + perf on BOTH passes (two-pass verify)
             obs = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes,
-                                       record_video=(self._evidence.video_mode == VIDEO_QUALIFIED_AUTO))
+                                       record_video=(self._evidence.video_mode == VIDEO_QUALIFIED_AUTO),
+                                       deep_qa=deep_qa)
             self.store.save_prospect_artifact(pid, "observation.json", obs.to_dict())
 
             # CAPTCHA / access prohibition -> manual action, no interaction, continue others.
@@ -180,7 +182,8 @@ class ScoutEngine:
             self.control.wait_while_paused()
             if self.control.should_stop():
                 return
-            obs2 = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes)
+            obs2 = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes,
+                                        deep_qa=deep_qa)
             link_status2 = self._probe_links(obs2) if "links" in cfg.check_families else {}
             flow2 = self._explore_flow(obs2) if "business_flow" in cfg.check_families else None
             ctx2 = CheckContext(run_id=self.store.root.name, prospect_ref=pid, backend=obs2.backend,
