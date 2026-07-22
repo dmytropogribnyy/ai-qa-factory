@@ -135,8 +135,15 @@ def collect_axe_on_page(page, *, max_violations: int = _MAX_A11Y_FINDINGS) -> Li
     selector; never a full DOM dump, message list, or node payload."""
     _inject_axe(page)
     report = page.evaluate(AXE_RUN_JS)
+    # A COMPLETE axe report is a dict whose "violations" is a list. A null / structurally-incomplete
+    # report means axe did NOT run to completion — RAISE so the caller records it as UNAVAILABLE
+    # coverage rather than misrepresenting a failed run as a clean "ok, zero violations".
+    if not isinstance(report, dict) or not isinstance(report.get("violations"), list):
+        raise RuntimeError("axe report missing or structurally incomplete")
     out: List[Dict[str, Any]] = []
-    for v in ((report or {}).get("violations", []) or [])[:max_violations]:
+    for v in report["violations"][:max_violations]:
+        if not isinstance(v, dict):
+            continue
         out.append({"rule": str(v.get("id", "unknown"))[:60],
                     "impact": str(v.get("impact", "") or "minor")[:20],
                     "help": str(v.get("help", "") or "")[:160],

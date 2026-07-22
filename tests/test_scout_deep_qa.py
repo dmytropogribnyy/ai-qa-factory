@@ -8,6 +8,8 @@ overlapping heuristic is suppressed ONLY when axe genuinely ran; the static path
 """
 from __future__ import annotations
 
+import pytest
+
 from core.scout.backends import PageObservation
 from core.scout.checks import PERF_POLICY, CheckContext, check_accessibility, check_performance
 from core.scout.config import ScoutRunConfig
@@ -161,3 +163,47 @@ def test_axe_violation_reproduces_and_is_verified_end_to_end(tmp_path):
     backend = _DeepQABackend(perf_seq=[{}, {}],
                              axe=[{"rule": "image-alt", "impact": "serious", "help": "alt"}])
     assert "axe:image-alt" in _verified_sigs(_run_prospect(tmp_path, backend))
+
+
+# -- unavailable-vs-ok distinction: a null/incomplete axe report is NEVER a clean "ok []" -----------
+
+
+class _FakePage:
+    """A minimal page double for the deep-QA collectors (no real browser). evaluate() returns the axe
+    report for the axe.run() call and the perf metrics otherwise."""
+
+    def __init__(self, perf=None, axe=None):
+        self._perf, self._axe = perf, axe
+
+    def add_script_tag(self, content=None):
+        return None
+
+    def evaluate(self, js):
+        return self._axe if "axe.run" in js else self._perf
+
+
+def test_collect_axe_raises_on_null_or_incomplete_report():
+    from core.scout.pipeline.browser_qa import collect_axe_on_page
+    for bad in (None, {}, {"violations": "not-a-list"}, "x", 5):
+        with pytest.raises(Exception):
+            collect_axe_on_page(_FakePage(axe=bad))
+
+
+def test_collect_axe_valid_empty_report_is_ok_empty():
+    from core.scout.pipeline.browser_qa import collect_axe_on_page
+    assert collect_axe_on_page(_FakePage(axe={"violations": []})) == []
+
+
+def test_deep_qa_marks_unavailable_when_axe_report_is_incomplete():
+    from core.scout.backends import PlaywrightBackend
+    obs = PageObservation(url="https://ex.com", ok=True, backend="playwright")
+    PlaywrightBackend()._collect_deep_qa(_FakePage(perf={"loadEvent": 5000}, axe=None), obs)
+    assert obs.axe_status == "unavailable" and obs.axe_violations == []   # a failed axe run is NOT clean
+    assert obs.perf.get("loadEvent") == 5000                              # perf still captured
+
+
+def test_deep_qa_valid_empty_axe_report_is_ok_not_unavailable():
+    from core.scout.backends import PlaywrightBackend
+    obs = PageObservation(url="https://ex.com", ok=True, backend="playwright")
+    PlaywrightBackend()._collect_deep_qa(_FakePage(perf={"loadEvent": 1000}, axe={"violations": []}), obs)
+    assert obs.axe_status == "ok" and obs.axe_violations == []            # succeeded-with-[] IS ok
