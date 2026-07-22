@@ -12,7 +12,9 @@ interrupts the active loop. Nothing is ever submitted, logged into, or sent.
 """
 from __future__ import annotations
 
+import shutil
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
@@ -20,12 +22,29 @@ from core.scout.backends import PageObservation, make_backend
 from core.scout.checks import CheckContext, run_checks
 from core.scout.config import ScoutRunConfig
 from core.scout.control import RunControl
+from core.scout.evidence_policy import EvidenceSettings, VIDEO_QUALIFIED_AUTO, video_qualified
 from core.scout.findings import ScoutFinding
 from core.scout.sanitize import Sanitizer
 from core.scout.scoring import build_scorecard
 from core.scout.store import RunStore, StoreError
 from core.scout.url_safety import dedupe_eligible
 from core.scout.verification import IndependentVerifier
+
+# Verified-defect categories where motion/behaviour matters and a static screenshot is insufficient —
+# the only cases a reproduction video is worth keeping.
+_INTERACTION_CATEGORIES = frozenset({"business_flow", "functional"})
+_SEV_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3}
+
+
+def _audit_opportunity(scorecard) -> int:
+    for d in getattr(scorecard, "dimensions", []):
+        if getattr(d, "name", "") == "audit_opportunity":
+            return int(getattr(d, "value", 0) or 0)
+    return 0
+
+
+def _rmtree(path) -> None:
+    shutil.rmtree(path, ignore_errors=True)
 
 # Run statuses.
 RUN_PENDING, RUN_RUNNING, RUN_PAUSED = "PENDING", "RUNNING", "PAUSED"
@@ -68,6 +87,8 @@ class ScoutEngine:
         self.sanitizer = Sanitizer()
         self.verifier = IndependentVerifier(self.sanitizer)
         self.progress = progress
+        self._evidence = EvidenceSettings(video_mode=getattr(config, "video_mode", "manual"))
+        self._videos_recorded = 0        # bounded per-run counter (max_videos_per_campaign)
 
     # ------------------------------------------------------------------
     def run(self) -> Dict:
@@ -127,7 +148,8 @@ class ScoutEngine:
                 self.backend.screenshot_dir = str(self.store.prospect_dir(pid))
             except Exception:
                 pass
-        obs = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes)
+        obs = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes,
+                                   record_video=(self._evidence.video_mode == VIDEO_QUALIFIED_AUTO))
         self.store.save_prospect_artifact(pid, "observation.json", obs.to_dict())
 
         # CAPTCHA / access prohibition -> manual action, no interaction, continue others.
@@ -172,15 +194,52 @@ class ScoutEngine:
         )
         scorecard = build_scorecard(pid, verified)
         self.store.save_prospect_artifact(pid, "scorecard.json", scorecard.to_dict())
+        video_ref = self._finalize_prospect_video(pid, obs.video_ref, verified, scorecard)
 
         defects = [f for f in verified if f.severity != "info"]
         prospects[pid].update({
             "status": P_DONE, "priority": scorecard.priority,
             "verified_findings": len(verified), "verified_defects": len(defects),
             "rejected_findings": len(rejected), "evidence_ref": evidence_ref,
+            "video_ref": video_ref,
         })
         self._event("prospect_done", prospect=pid, verified=len(verified),
                     defects=len(defects), rejected=len(rejected), priority=scorecard.priority)
+
+    def _finalize_prospect_video(self, pid: str, video_ref: str,
+                                 verified: List[ScoutFinding], scorecard) -> str:
+        """Keep a qualified reproduction clip or delete the unqualified temp recording.
+
+        A short video is kept ONLY for a reproduced visual/interaction defect of sufficient severity
+        and QA value where a screenshot is insufficient and the path is safe/deterministic (see
+        evidence_policy.video_qualified); otherwise the temp recording is removed — Scout never keeps
+        an unreproduced video. Two-pass verification IS the reproduction (a verified finding appeared
+        in two independent observations). Returns the kept servable path "reproduction.webm" or "".
+        """
+        pdir = Path(self.store.prospect_dir(pid))
+        vidtmp = pdir / "_vidtmp"
+        kept = ""
+        try:
+            if video_ref:
+                defects = [f for f in verified if f.severity != "info"]
+                allowed = False
+                if defects:
+                    severity = max((f.severity for f in defects),
+                                   key=lambda s: _SEV_ORDER.get(s, 0))
+                    visual = any(f.category in _INTERACTION_CATEGORIES for f in defects)
+                    allowed, _reason = video_qualified(
+                        self._evidence, severity=severity,
+                        qa_score=_audit_opportunity(scorecard), reproduced=True,
+                        visual_or_interaction=visual, screenshots_sufficient=not visual,
+                        safe_deterministic_path=True, videos_recorded=self._videos_recorded)
+                clip = pdir / video_ref
+                if allowed and clip.exists():
+                    clip.replace(pdir / "reproduction.webm")   # promote to a servable top-level file
+                    self._videos_recorded += 1
+                    kept = "reproduction.webm"
+        finally:
+            _rmtree(vidtmp)          # always clean the temp dir (an unqualified clip is never kept)
+        return kept
 
     # ------------------------------------------------------------------
     def _probe_links(self, obs: PageObservation) -> Dict[str, int]:

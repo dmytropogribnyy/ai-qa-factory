@@ -121,8 +121,9 @@ class HostMappedStaticBackend:
         self._inner = StaticHttpBackend(
             policy=UrlPolicy(allowed_local_hosts=frozenset(host_map.values()), resolve_dns=False))
 
-    def observe(self, url: str, timeout_s: float, max_bytes: int) -> PageObservation:
-        elig = check_url(url, policy=self.policy)
+    def observe(self, url: str, timeout_s: float, max_bytes: int, *,
+                record_video: bool = False) -> PageObservation:
+        elig = check_url(url, policy=self.policy)   # fixture backend has no browser; never records
         if not elig.eligible:
             obs = PageObservation(url=url, final_url=url)
             obs.fetch_error = f"blocked URL: {elig.reason}"

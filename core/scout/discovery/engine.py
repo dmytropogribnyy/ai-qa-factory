@@ -288,6 +288,7 @@ class DiscoveryEngine:
             scout_cfg = ScoutRunConfig(
                 campaign_name=cfg.campaign_id, seeds=[rec.normalized_url],
                 allowed_local_hosts=cfg.allowed_local_hosts, browser_mode=cfg.browser_mode,
+                video_mode=cfg.video_mode,
                 output_dir=cfg.output_dir, run_id=scout_run_id, resolve_dns=cfg.resolve_dns,
                 max_pages_per_site=cfg.max_pages_per_site)
             scout_store = RunStore(cfg.output_dir, scout_run_id)

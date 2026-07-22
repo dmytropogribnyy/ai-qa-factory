@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List
 
 from core.scout import SCOUT_VERSION
+from core.scout.evidence_policy import VIDEO_MANUAL, VIDEO_MODES
 from core.scout.url_safety import UrlPolicy
 
 MAX_SEEDS = 10
@@ -44,6 +45,9 @@ class ScoutRunConfig:
     concurrency: int = 1
     check_families: List[str] = field(default_factory=lambda: sorted(CHECK_FAMILIES))
     browser_mode: str = "static"
+    # Reproduction-video policy. Default "manual" = behaviour unchanged (never auto-records);
+    # "qualified_auto" opts into a short clip for a reproduced visual/interaction defect.
+    video_mode: str = VIDEO_MANUAL
     output_dir: str = "outputs"
     resume: bool = False
     run_id: str = ""
@@ -80,6 +84,8 @@ class ScoutRunConfig:
             raise ScoutConfigError("at least one check family is required")
         if self.browser_mode not in BROWSER_MODES:
             raise ScoutConfigError(f"unknown browser_mode: {self.browser_mode!r}")
+        if self.video_mode not in VIDEO_MODES:
+            raise ScoutConfigError(f"unknown video_mode: {self.video_mode!r}")
         self.check_families = sorted(set(self.check_families))
         self.allowed_local_hosts = frozenset(self.allowed_local_hosts)
 

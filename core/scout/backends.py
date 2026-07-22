@@ -90,6 +90,7 @@ class PageObservation:
     blocked_requests: List[str] = field(default_factory=list)   # unsafe requests we aborted
     timing_ms: Dict[str, float] = field(default_factory=dict)
     screenshot_ref: str = ""
+    video_ref: str = ""            # rel path (under the prospect dir) to a kept reproduction video
     backend: str = "static"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -101,7 +102,8 @@ class PageObservation:
 class BrowserBackend(Protocol):
     name: str
 
-    def observe(self, url: str, timeout_s: float, max_bytes: int) -> PageObservation: ...
+    def observe(self, url: str, timeout_s: float, max_bytes: int, *,
+                record_video: bool = False) -> PageObservation: ...
 
 
 # ---------------------------------------------------------------------------
@@ -264,8 +266,9 @@ class StaticHttpBackend:
         handler = _NoAutoRedirect()
         self._opener = urllib.request.build_opener(handler)
 
-    def observe(self, url: str, timeout_s: float, max_bytes: int) -> PageObservation:
-        obs = PageObservation(url=url, backend=self.name)
+    def observe(self, url: str, timeout_s: float, max_bytes: int, *,
+                record_video: bool = False) -> PageObservation:
+        obs = PageObservation(url=url, backend=self.name)  # static backend cannot record video
         current = url
         chain: List[str] = []
         for _ in range(_MAX_REDIRECTS + 1):
@@ -352,7 +355,8 @@ class PlaywrightBackend:
     def _url_allowed(self, url: str) -> bool:
         return check_url(url, policy=self.policy).eligible
 
-    def observe(self, url: str, timeout_s: float, max_bytes: int) -> PageObservation:
+    def observe(self, url: str, timeout_s: float, max_bytes: int, *,
+                record_video: bool = False) -> PageObservation:
         obs = PageObservation(url=url, backend=self.name)
         elig = check_url(url, policy=self.policy)
         if not elig.eligible:
@@ -378,14 +382,30 @@ class PlaywrightBackend:
             if headful:
                 launch_kwargs["slow_mo"] = 400
             browser = p.chromium.launch(**launch_kwargs)
-            context = browser.new_context()
+            ctx_kwargs: Dict[str, Any] = {}
+            vidtmp = None
+            # Opt-in reproduction recording: only when asked AND a per-prospect dir is set. The temp
+            # clip is qualified and kept-or-deleted later by the engine (never kept unreproduced).
+            if record_video and self.screenshot_dir:
+                vidtmp = os.path.join(self.screenshot_dir, "_vidtmp")
+                os.makedirs(vidtmp, exist_ok=True)
+                ctx_kwargs["record_video_dir"] = vidtmp
+            context = browser.new_context(**ctx_kwargs)
+            video = None
             try:
                 page = context.new_page()
                 self._observe_with_page(page, url, timeout_s, max_bytes, obs)
+                if vidtmp is not None:
+                    video = page.video          # grab the handle BEFORE close finalizes the file
             except Exception as exc:
                 obs.fetch_error = f"browser error: {type(exc).__name__}: {str(exc)[:160]}"
             finally:
-                self._safe_close(context, browser)
+                self._safe_close(context, browser)   # closing the context flushes the .webm to disk
+            if video is not None:
+                try:                             # basename only — never leak an absolute path
+                    obs.video_ref = os.path.join("_vidtmp", os.path.basename(video.path()))
+                except Exception:
+                    pass
         return obs
 
     def _observe_with_page(self, page, url: str, timeout_s: float, max_bytes: int,

@@ -28,7 +28,7 @@ LEVEL_VIDEO = 4
 VIDEO_OFF = "off"
 VIDEO_MANUAL = "manual"
 VIDEO_QUALIFIED_AUTO = "qualified_auto"
-_VIDEO_MODES = frozenset({VIDEO_OFF, VIDEO_MANUAL, VIDEO_QUALIFIED_AUTO})
+VIDEO_MODES = frozenset({VIDEO_OFF, VIDEO_MANUAL, VIDEO_QUALIFIED_AUTO})
 
 _SEV_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3}
 
@@ -45,7 +45,7 @@ class EvidenceSettings:
     min_qa_score_for_video: int = 50
 
     def __post_init__(self) -> None:
-        if self.video_mode not in _VIDEO_MODES:
+        if self.video_mode not in VIDEO_MODES:
             raise ValueError(f"unknown video_mode: {self.video_mode!r}")
         # 10–30s is the normal useful window; hard-cap at 30s.
         self.max_video_seconds = max(1, min(self.max_video_seconds, 30))
