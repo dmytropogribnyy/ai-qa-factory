@@ -15,6 +15,16 @@ from core.scout.findings import ScoutFinding
 
 _EMAIL_HINTS = ("email", "e-mail", "mail")
 
+# Centralized, frozen performance policy (owned here, NOT hard-coded in the backend): the backend
+# captures raw timing; this classifies it. The policy id is recorded in the finding evidence so a
+# threshold change is never mistaken for a different reproduction.
+PERF_POLICY = {"load_ms": 4000, "policy_id": "perf_v1"}
+
+
+def _axe_severity(impact: str) -> str:
+    return {"critical": "high", "serious": "high", "moderate": "medium", "minor": "low"}.get(
+        str(impact or "").lower(), "low")
+
 
 @dataclass
 class CheckContext:
@@ -79,21 +89,41 @@ def check_accessibility(obs: PageObservation, ctx: CheckContext) -> List[ScoutFi
     out: List[ScoutFinding] = []
     if not obs.ok:
         return out
-    missing_alt = [i for i in obs.images if not i.get("alt", "").strip()]
-    if missing_alt:
-        out.append(_mk(ctx, obs, family="accessibility", category="accessibility",
-                       title=f"{len(missing_alt)} image(s) missing alt text", severity="medium",
-                       confidence="high", signature="img_missing_alt",
-                       expected="All content images have alt text",
-                       actual=f"{len(missing_alt)} <img> without alt",
-                       business_impact="Screen-reader users cannot perceive the images."))
-    if not obs.input_labels_ok:
-        out.append(_mk(ctx, obs, family="accessibility", category="accessibility",
-                       title="Form input(s) without an accessible label", severity="medium",
-                       confidence="medium", signature="unlabeled_input",
-                       expected="Every input has a label/aria-label",
-                       actual="One or more inputs lack an accessible name",
-                       business_impact="Assistive tech users cannot identify the field."))
+    # Real axe-core violations (Playwright deep capture). Rule-level + route-scoped via finding_id:
+    # two passes prove recurrence of the same RULE on the same route (not the identical node).
+    axe_ok = obs.axe_status == "ok"
+    if axe_ok:
+        seen: set = set()
+        for v in (obs.axe_violations or []):
+            rule = str(v.get("rule", "") or "unknown")
+            if rule in seen:
+                continue
+            seen.add(rule)
+            impact = v.get("impact", "minor")
+            out.append(_mk(ctx, obs, family="accessibility", category="accessibility",
+                           title=f"axe: {v.get('help', rule)}", severity=_axe_severity(impact),
+                           confidence="high", signature=f"axe:{rule}",
+                           actual=f"axe rule {rule} ({impact})",
+                           expected="No axe violation for this rule",
+                           business_impact="Accessibility barriers exclude users and carry legal risk."))
+    # Heuristics: when axe genuinely ran, suppress the two it supersedes (image-alt, label) and keep
+    # the structural ones; when axe did NOT run (unavailable / static path), run the full heuristic set.
+    if not axe_ok:
+        missing_alt = [i for i in obs.images if not i.get("alt", "").strip()]
+        if missing_alt:
+            out.append(_mk(ctx, obs, family="accessibility", category="accessibility",
+                           title=f"{len(missing_alt)} image(s) missing alt text", severity="medium",
+                           confidence="high", signature="img_missing_alt",
+                           expected="All content images have alt text",
+                           actual=f"{len(missing_alt)} <img> without alt",
+                           business_impact="Screen-reader users cannot perceive the images."))
+        if not obs.input_labels_ok:
+            out.append(_mk(ctx, obs, family="accessibility", category="accessibility",
+                           title="Form input(s) without an accessible label", severity="medium",
+                           confidence="medium", signature="unlabeled_input",
+                           expected="Every input has a label/aria-label",
+                           actual="One or more inputs lack an accessible name",
+                           business_impact="Assistive tech users cannot identify the field."))
     h1s = [h for h in obs.headings if h["level"] == 1]
     if obs.headings and len(h1s) == 0:
         out.append(_mk(ctx, obs, family="accessibility", category="accessibility",
@@ -103,6 +133,12 @@ def check_accessibility(obs: PageObservation, ctx: CheckContext) -> List[ScoutFi
         out.append(_mk(ctx, obs, family="accessibility", category="accessibility",
                        title="No <main> landmark", severity="low", confidence="medium",
                        signature="missing_main", expected="A <main> landmark", actual="No <main>"))
+    if axe_ok:
+        out.append(_mk(ctx, obs, family="accessibility", category="coverage",
+                       title="Heuristic a11y checks yielded to axe-core (deeper automated coverage)",
+                       severity="info", confidence="high", signature="a11y_axe_active",
+                       coverage_limitation="axe-core ran; automated checks are not full accessibility "
+                                           "coverage (manual audit still required)."))
     return out
 
 
@@ -142,6 +178,22 @@ def check_performance(obs: PageObservation, ctx: CheckContext) -> List[ScoutFind
                        title="No Cache-Control header", severity="info", confidence="low",
                        signature="no_cache_control", expected="A Cache-Control policy",
                        actual="No Cache-Control response header"))
+    # Real rendered navigation timing (Playwright deep capture). The signature is the threshold-breach
+    # bucket (route-scoped via finding_id) and EXCLUDES the exact ms, so two passes with different
+    # measurements still reproduce the SAME finding; the exact ms + policy id live in the evidence.
+    load = int((obs.perf or {}).get("loadEvent") or 0)
+    if load > PERF_POLICY["load_ms"]:
+        out.append(_mk(ctx, obs, family="performance", category="performance",
+                       title="Slow page load", severity="medium", confidence="high",
+                       signature="slow_load", actual=f"load ~{load}ms",
+                       expected=f"< {PERF_POLICY['load_ms']}ms (policy {PERF_POLICY['policy_id']})",
+                       business_impact="Slow loads increase bounce and lost conversions."))
+    elif obs.backend == "playwright" and not (obs.perf or {}).get("loadEvent"):
+        # Deep capture ran but the navigation-timing entry was unavailable — honest coverage, not a pass.
+        out.append(_mk(ctx, obs, family="performance", category="coverage",
+                       title="Navigation timing unavailable (deep capture)", severity="info",
+                       confidence="high", signature="perf_timing_unavailable",
+                       coverage_limitation="The navigation timing entry was not available for this page."))
     if obs.backend == "static":
         out.append(_mk(ctx, obs, family="performance", category="coverage",
                        title="Runtime performance timing not observed (static backend)",

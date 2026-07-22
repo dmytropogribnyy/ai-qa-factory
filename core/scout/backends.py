@@ -91,6 +91,11 @@ class PageObservation:
     timing_ms: Dict[str, float] = field(default_factory=dict)
     screenshot_ref: str = ""
     video_ref: str = ""            # rel path (under the prospect dir) to a kept reproduction video
+    # Deep-QA (Playwright deep-capture only). axe_status distinguishes the three states so an
+    # overlapping heuristic is suppressed ONLY when axe genuinely ran; "" = not attempted (static/off).
+    axe_status: str = ""           # "" not attempted | "ok" (ran; violations may be empty) | "unavailable"
+    axe_violations: List[Dict[str, Any]] = field(default_factory=list)  # bounded, redacted raw violations
+    perf: Dict[str, Any] = field(default_factory=dict)   # raw nav timing (only when captured; {} = none)
     backend: str = "static"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -103,7 +108,7 @@ class BrowserBackend(Protocol):
     name: str
 
     def observe(self, url: str, timeout_s: float, max_bytes: int, *,
-                record_video: bool = False) -> PageObservation: ...
+                record_video: bool = False, deep_qa: bool = False) -> PageObservation: ...
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +272,7 @@ class StaticHttpBackend:
         self._opener = urllib.request.build_opener(handler)
 
     def observe(self, url: str, timeout_s: float, max_bytes: int, *,
-                record_video: bool = False) -> PageObservation:
+                record_video: bool = False, deep_qa: bool = False) -> PageObservation:
         obs = PageObservation(url=url, backend=self.name)  # static backend cannot record video
         current = url
         chain: List[str] = []
@@ -356,7 +361,7 @@ class PlaywrightBackend:
         return check_url(url, policy=self.policy).eligible
 
     def observe(self, url: str, timeout_s: float, max_bytes: int, *,
-                record_video: bool = False) -> PageObservation:
+                record_video: bool = False, deep_qa: bool = False) -> PageObservation:
         obs = PageObservation(url=url, backend=self.name)
         elig = check_url(url, policy=self.policy)
         if not elig.eligible:
@@ -395,6 +400,8 @@ class PlaywrightBackend:
             try:
                 page = context.new_page()
                 self._observe_with_page(page, url, timeout_s, max_bytes, obs)
+                if deep_qa and obs.ok:
+                    self._collect_deep_qa(page, obs)    # real perf + axe on the already-open page
                 if vidtmp is not None:
                     video = page.video          # grab the handle BEFORE close finalizes the file
             except Exception as exc:
@@ -462,6 +469,25 @@ class PlaywrightBackend:
             shot = os.path.join(self.screenshot_dir, "page.png")
             page.screenshot(path=shot)
             obs.screenshot_ref = "page.png"  # basename only — never leak an absolute path
+
+    def _collect_deep_qa(self, page, obs: PageObservation) -> None:
+        """Deep-QA on the already-open page: real navigation timing (captured BEFORE axe adds CPU
+        work) + real axe-core. Each capability failure is ISOLATED as unavailable coverage — it never
+        fabricates a clean result and never fails the whole observation."""
+        from core.scout.pipeline.browser_qa import PERF_JS, collect_axe_on_page
+        try:
+            m = page.evaluate(PERF_JS)
+            if isinstance(m, dict):
+                obs.perf = {k: m.get(k) for k in ("domContentLoaded", "loadEvent", "responseEnd",
+                                                  "resourceCount", "transferBytes",
+                                                  "largestResourceBytes")}
+        except Exception:
+            obs.perf = {}                      # timing unavailable -> honest coverage, not a pass
+        try:
+            obs.axe_violations = collect_axe_on_page(page)
+            obs.axe_status = "ok"              # ran (violations may legitimately be empty)
+        except Exception:
+            obs.axe_status, obs.axe_violations = "unavailable", []
 
     @staticmethod
     def _safe_close(*closables) -> None:

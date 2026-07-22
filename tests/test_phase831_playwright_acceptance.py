@@ -72,9 +72,18 @@ _CAPTCHA = (
     "<main><h1>Verify</h1><div class='g-recaptcha'>Please complete the reCAPTCHA to continue.</div>"
     "</main></body></html>"
 )
+# A page with GUARANTEED axe violations (image without alt, input without a label) so the live axe
+# run has something real to find.
+_A11Y = (
+    "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+    "<title>A11y issues</title></head><body>"
+    "<main><h1>Issues</h1><img src='/logo.png'>"
+    "<form><input type='text' name='q'></form></main></body></html>"
+)
 
 
-def _make_handler(post_counter):
+def _make_handler(post_counter, get_counter):
     class _H(BaseHTTPRequestHandler):
         def log_message(self, *a):
             return
@@ -90,10 +99,13 @@ def _make_handler(post_counter):
 
         def do_GET(self):
             path = self.path.split("?", 1)[0]
+            get_counter.append(path)                      # every GET is logged (proves no axe fetch)
             if path == "/ok/index.html":
                 return self._send(200, _OK)
             if path == "/captcha/index.html":
                 return self._send(200, _CAPTCHA)
+            if path == "/a11y/index.html":
+                return self._send(200, _A11Y)
             return self._send(404, "<title>nope</title><h1>404</h1>")
 
         do_HEAD = do_GET
@@ -107,12 +119,12 @@ def _make_handler(post_counter):
 
 @contextmanager
 def _serve():
-    posts = []
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(posts))
+    posts, gets = [], []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _make_handler(posts, gets))
     host, port = server.server_address
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        yield f"http://127.0.0.1:{port}", f"127.0.0.1:{port}", posts
+        yield f"http://127.0.0.1:{port}", f"127.0.0.1:{port}", posts, gets
     finally:
         server.shutdown()
         server.server_close()
@@ -123,7 +135,7 @@ def _policy(host):
 
 
 def test_real_browser_backend_capabilities(tmp_path):
-    with _serve() as (base, host, posts):
+    with _serve() as (base, host, posts, gets):
         shots = tmp_path / "shots"
         backend = PlaywrightBackend(policy=_policy(host), screenshot_dir=str(shots))
         obs = backend.observe(f"{base}/ok/index.html", 20, 3_000_000)
@@ -145,7 +157,7 @@ def test_real_browser_records_and_omits_reproduction_video(tmp_path):
     """Live proof of the record step (slice D): a real Chromium context writes a genuine .webm when
     asked, and writes nothing when not asked. Qualify->keep/delete is proven deterministically in
     tests/test_scout_video_capture.py; this pins that the recording itself is real, not simulated."""
-    with _serve() as (base, host, posts):
+    with _serve() as (base, host, posts, gets):
         pdir = tmp_path / "prospect"
         backend = PlaywrightBackend(policy=_policy(host), screenshot_dir=str(pdir))
 
@@ -160,13 +172,34 @@ def test_real_browser_records_and_omits_reproduction_video(tmp_path):
         assert posts == []                                   # still never submits a form
 
 
+def test_real_browser_deep_qa_runs_axe_and_perf_without_network_fetch(tmp_path):
+    """Live proof the operator deep-QA path is real: a real Chromium injects the PINNED LOCAL axe
+    bundle (no CDN), runs axe against the DOM (finds the seeded image-alt violation), and captures
+    real navigation timing — all on the already-open page."""
+    with _serve() as (base, host, posts, gets):
+        backend = PlaywrightBackend(policy=_policy(host), screenshot_dir=str(tmp_path / "p"))
+        obs = backend.observe(f"{base}/a11y/index.html", 20, 3_000_000, deep_qa=True)
+        assert obs.ok is True
+        assert obs.axe_status == "ok"                          # real axe-core ran to completion
+        rules = {v["rule"] for v in obs.axe_violations}
+        assert "image-alt" in rules                            # axe genuinely analyzed the rendered DOM
+        assert obs.perf.get("loadEvent") is not None           # real navigation timing captured
+        # No axe network fetch of ANY kind: the fixture logged every GET (only /a11y + /logo.png; a
+        # successful axe fetch would appear here), and no axe request was blocked/failed either — axe
+        # was injected from the pinned local bundle as inline content.
+        assert gets and not any("axe" in g.lower() for g in gets)
+        assert not any("axe" in r.lower() or "cdn" in r.lower()
+                       for r in obs.blocked_requests + obs.failed_resources)
+        assert posts == []                                     # still never submits a form
+
+
 def test_real_browser_engine_pipeline_and_report(tmp_path):
     _c = itertools.count()
 
     def _clock():
         return f"2026-07-17T05:00:{next(_c):02d}+00:00"
 
-    with _serve() as (base, host, posts):
+    with _serve() as (base, host, posts, gets):
         cfg = ScoutRunConfig(campaign_name="pw-accept",
                              seeds=[f"{base}/ok/index.html", f"{base}/captcha/index.html"],
                              allowed_local_hosts=frozenset({host}), browser_mode="playwright",
