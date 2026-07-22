@@ -7,5 +7,5 @@ controls, or performs any external side effect. See docs/PHASE_CONTRACTS.md (Pha
 """
 from __future__ import annotations
 
-SCOUT_VERSION = "2.0.2"
+SCOUT_VERSION = "2.1.0"
 SCOUT_PRODUCT_NAME = "AI QA Factory / ARK Prospect QA Scout"
