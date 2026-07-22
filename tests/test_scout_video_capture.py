@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from core.scout.backends import PageObservation, StaticHttpBackend
 from core.scout.config import ScoutConfigError, ScoutRunConfig
 from core.scout.engine import ScoutEngine
@@ -154,3 +156,27 @@ def test_early_exit_still_cleans_the_temp_video(tmp_path):
     eng._process_prospect("01-x", "https://ex.com", prospects)
     assert prospects["01-x"]["status"] == "MANUAL_ACTION_REQUIRED"     # early manual exit
     assert not (Path(store.prospect_dir("01-x")) / "_vidtmp").exists()  # temp still cleaned
+
+
+class _RaisingRecordingBackend:
+    """Creates a temp recording on observe, then raises (e.g. a browser context failure mid-record)."""
+    name = "playwright"
+    screenshot_dir = None
+
+    def observe(self, url, timeout_s, max_bytes, *, record_video=False):
+        if record_video and self.screenshot_dir:
+            vt = Path(self.screenshot_dir) / "_vidtmp"
+            vt.mkdir(parents=True, exist_ok=True)
+            (vt / "clip.webm").write_bytes(b"FAKEWEBM")
+        raise RuntimeError("browser crashed mid-recording")
+
+
+def test_observe_exception_still_cleans_the_temp_video(tmp_path):
+    # If the recording-capable observe creates _vidtmp and then raises, the temp clip is still cleaned.
+    cfg = _cfg(video_mode="qualified_auto", output_dir=str(tmp_path))
+    store = RunStore(str(tmp_path), "run-raise")
+    eng = ScoutEngine(cfg, store, backend=_RaisingRecordingBackend())
+    prospects = {"01-x": {"status": "PENDING", "url": "https://ex.com"}}
+    with pytest.raises(RuntimeError):
+        eng._process_prospect("01-x", "https://ex.com", prospects)
+    assert not (Path(store.prospect_dir("01-x")) / "_vidtmp").exists()  # cleaned despite the exception

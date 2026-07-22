@@ -148,9 +148,11 @@ class ScoutEngine:
                 self.backend.screenshot_dir = str(self.store.prospect_dir(pid))
             except Exception:
                 pass
-        obs = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes,
-                                   record_video=(self._evidence.video_mode == VIDEO_QUALIFIED_AUTO))
         try:
+            # The recording-capable observe is INSIDE the guarded block: if it creates _vidtmp and
+            # then raises (e.g. a browser launch/context failure), the finally still cleans it up.
+            obs = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes,
+                                       record_video=(self._evidence.video_mode == VIDEO_QUALIFIED_AUTO))
             self.store.save_prospect_artifact(pid, "observation.json", obs.to_dict())
 
             # CAPTCHA / access prohibition -> manual action, no interaction, continue others.
