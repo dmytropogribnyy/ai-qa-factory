@@ -77,7 +77,13 @@ class ProductPacketStore:
                   # Issue #17 P0-2: claim attribution + lease (empty until claimed).
                   "claim_owner": "", "claimed_at": "", "lease_expires_at": "", "heartbeat_at": "",
                   # Issue #17 P0-3: durable backoff gate (empty = immediately eligible).
-                  "next_retry_at": ""}
+                  "next_retry_at": "",
+                  # Writer isolation (owner/GPT requirement): the writer runs in this dedicated worktree
+                  # / branch off base_sha, never the controller worktree (empty = controller workspace).
+                  "workspace_path": "", "base_sha": "",
+                  # Conservative bounds for a live run: per-packet launch cap + total spend cap + the
+                  # accumulated real writer cost, all surfaced in /collab (0 = use module default).
+                  "max_launches": 0, "max_total_usd": 0.0, "spent_usd": 0.0}
         self._write(pid, record)
         return record
 

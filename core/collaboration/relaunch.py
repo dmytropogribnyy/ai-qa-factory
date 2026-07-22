@@ -83,45 +83,62 @@ def build_default_order(packet: Dict[str, Any], *, max_budget_usd: float = 2.0,
         session_id=str(packet.get("writer_session", "")))
 
 
-def _handle_not_ok(store: ProductPacketStore, claimed: Dict[str, Any], now: datetime,
-                   max_attempts: int, *, reason: str, session_id: str,
-                   status_key: str) -> Dict[str, Any]:
+def _cap_reason(attempts: int, launch_cap: int, spent: float, max_total_usd: float) -> str:
+    """Which conservative bound (if any) has been reached — the total launch cap or the total spend cap
+    (owner/GPT money bound). Empty string means neither: keep going."""
+    if attempts >= launch_cap:
+        return f"launch cap {launch_cap} reached"
+    if max_total_usd and spent >= max_total_usd:
+        return f"spend cap ${max_total_usd:.2f} reached (spent ${spent:.2f})"
+    return ""
+
+
+def _handle_not_ok(store: ProductPacketStore, claimed: Dict[str, Any], now: datetime, launch_cap: int,
+                   *, reason: str, session_id: str, status_key: str, spent: float,
+                   max_total_usd: float) -> Dict[str, Any]:
     """A failed launch (exhausted quota, transient error, or a launch exception) follows one durable
-    path (P0-3): back off until a computed retry time, or — once the total launch cap is reached —
-    escalate to a durable, owner-visible NEEDS_OWNER stop. Never an instant per-interval relaunch."""
+    path (P0-3): back off until a computed retry time, or — once a conservative bound is reached
+    (launch cap OR total spend cap) — escalate to a durable, owner-visible NEEDS_OWNER stop."""
     pid = claimed["packet_id"]
     attempts = int(claimed.get("attempts", 0))
     writer_session = session_id or claimed.get("writer_session", "")
-    if attempts >= max_attempts:
+    spent = round(float(spent), 6)
+    cap = _cap_reason(attempts, launch_cap, spent, max_total_usd)
+    if cap:
         store.update(pid, status="needs_owner", writer_session=writer_session, next_retry_at="",
-                     last_result=f"exhausted {attempts} attempts: {reason}"[:400])
-        return {"status": "needs_owner", "packet_id": pid, "reason": reason, "attempts": attempts}
+                     spent_usd=spent, last_result=f"stopped ({cap}); last: {reason}"[:400])
+        return {"status": "needs_owner", "packet_id": pid, "reason": reason, "attempts": attempts,
+                "spent_usd": spent}
     retry_at = _iso(now + timedelta(seconds=_backoff_seconds(attempts)))
     store.update(pid, status="pending", writer_session=writer_session, next_retry_at=retry_at,
-                 last_result=f"retry: {reason}"[:400])
+                 spent_usd=spent, last_result=f"retry: {reason}"[:400])
     return {"status": status_key, "ok": False, "retry": True, "packet_id": pid,
-            "reason": reason, "next_retry_at": retry_at}
+            "reason": reason, "next_retry_at": retry_at, "spent_usd": spent}
 
 
 def _handle_incomplete(store: ProductPacketStore, claimed: Dict[str, Any], now: datetime,
-                       max_attempts: int, *, phase: str, session_id: str) -> Dict[str, Any]:
+                       launch_cap: int, *, phase: str, session_id: str, spent: float,
+                       max_total_usd: float) -> Dict[str, Any]:
     """An ok writer step that did NOT reach the GO boundary (P0-1): record the evidenced phase and
     continue on a bounded, capped cadence — a short fixed wait (so the reviewer can respond before the
-    next step), and a durable NEEDS_OWNER stop once the total launch cap is reached. Never a false done."""
+    next step), and a durable NEEDS_OWNER stop once a conservative bound is reached. Never a false done."""
     pid = claimed["packet_id"]
     attempts = int(claimed.get("attempts", 0))
     writer_session = session_id or claimed.get("writer_session", "")
-    if attempts >= max_attempts:
+    spent = round(float(spent), 6)
+    cap = _cap_reason(attempts, launch_cap, spent, max_total_usd)
+    if cap:
         store.update(pid, status="needs_owner", phase=phase, writer_session=writer_session,
-                     next_retry_at="",
-                     last_result=f"did not reach GO within {attempts} launches (phase={phase})")
-        return {"status": "needs_owner", "packet_id": pid, "phase": phase, "attempts": attempts}
+                     next_retry_at="", spent_usd=spent,
+                     last_result=f"stopped ({cap}) at phase={phase}; needs owner approval to continue")
+        return {"status": "needs_owner", "packet_id": pid, "phase": phase, "attempts": attempts,
+                "spent_usd": spent}
     retry_at = _iso(now + timedelta(seconds=BACKOFF_BASE_S))
     store.update(pid, status="pending", phase=phase, writer_session=writer_session,
-                 next_retry_at=retry_at,
+                 next_retry_at=retry_at, spent_usd=spent,
                  last_result=f"writer step ok; awaiting protocol completion (phase={phase})")
     return {"status": "launched", "ok": True, "complete": False, "packet_id": pid,
-            "phase": phase, "next_retry_at": retry_at}
+            "phase": phase, "next_retry_at": retry_at, "spent_usd": spent}
 
 
 def relaunch_once(store: ProductPacketStore, worker: Any, *, workspace: str = ".",
@@ -150,31 +167,41 @@ def relaunch_once(store: ProductPacketStore, worker: Any, *, workspace: str = ".
         return {"status": "claimed_elsewhere"}          # a concurrent cycle already took it
 
     pid = claimed["packet_id"]
+    # Conservative per-packet bounds (owner/GPT money bound) override the module defaults.
+    launch_cap = int(claimed.get("max_launches") or max_attempts)
+    max_total_usd = float(claimed.get("max_total_usd") or 0.0)
+    prior_spent = float(claimed.get("spent_usd", 0.0) or 0.0)
+    # Writer isolation: run in the packet's dedicated worktree, never the controller workspace.
+    run_workspace = str(claimed.get("workspace_path") or "").strip() or workspace
     order = build_order(claimed)
     resume_session = str(claimed.get("writer_session", "")) if (resume and claimed.get("attempts", 0) > 1) else ""
     try:
-        result = worker.run(order, workspace, resume_session=resume_session)
+        result = worker.run(order, run_workspace, resume_session=resume_session)
     except Exception as exc:  # noqa: BLE001 - a launch failure must release the packet, never crash
-        return _handle_not_ok(store, claimed, dt, max_attempts,
+        return _handle_not_ok(store, claimed, dt, launch_cap,
                               reason=f"launch error: {type(exc).__name__}: {exc}",
-                              session_id="", status_key="launch_error")
+                              session_id="", status_key="launch_error", spent=prior_spent,
+                              max_total_usd=max_total_usd)
 
+    cost = float(getattr(result, "cost_usd", 0.0) or 0.0)
+    spent = prior_spent + cost
     session_id = str(getattr(result, "session_id", "") or "")
     if bool(getattr(result, "ok", False)):
         # P0-1: a successful process is NOT a completed product packet. Mark done ONLY when the bound
         # collaboration thread evidences the exact-SHA GO boundary; otherwise keep driving the protocol.
         phase = str(check(claimed) or "new")
         if is_complete(phase):
-            store.update(pid, status="done", phase=phase,
+            store.update(pid, status="done", phase=phase, spent_usd=round(spent, 6),
                          writer_session=session_id or claimed.get("writer_session", ""),
                          last_result=f"packet complete: exact-SHA GPT GO (phase={phase})")
             return {"status": "completed", "ok": True, "complete": True, "packet_id": pid,
-                    "phase": phase}
-        return _handle_incomplete(store, claimed, dt, max_attempts, phase=phase, session_id=session_id)
+                    "phase": phase, "spent_usd": round(spent, 6)}
+        return _handle_incomplete(store, claimed, dt, launch_cap, phase=phase, session_id=session_id,
+                                  spent=spent, max_total_usd=max_total_usd)
     # Not ok (e.g., exhausted quota / transient failure): durable backoff or capped escalation (P0-3).
     reason = str(getattr(result, "reason", "") or "writer not ok")
-    return _handle_not_ok(store, claimed, dt, max_attempts, reason=reason, session_id=session_id,
-                          status_key="launched")
+    return _handle_not_ok(store, claimed, dt, launch_cap, reason=reason, session_id=session_id,
+                          status_key="launched", spent=spent, max_total_usd=max_total_usd)
 
 
 def _packet_view(packet: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -184,7 +211,10 @@ def _packet_view(packet: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return {"packet_id": packet.get("packet_id"), "status": packet.get("status"),
             "phase": packet.get("phase", "new"), "attempts": packet.get("attempts", 0),
             "next_retry_at": packet.get("next_retry_at", ""), "objective": packet.get("objective", ""),
-            "last_result": packet.get("last_result", ""), "pr_number": packet.get("pr_number")}
+            "last_result": packet.get("last_result", ""), "pr_number": packet.get("pr_number"),
+            "branch": packet.get("branch", ""), "workspace_path": packet.get("workspace_path", ""),
+            "spent_usd": packet.get("spent_usd", 0.0), "max_total_usd": packet.get("max_total_usd", 0.0),
+            "max_launches": packet.get("max_launches", 0)}
 
 
 def summary(store: ProductPacketStore) -> Dict[str, Any]:

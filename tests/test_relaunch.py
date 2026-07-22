@@ -18,19 +18,23 @@ _T0 = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
 class _Worker:
     """Stub bounded worker adapter recording launches and returning a scripted result."""
 
-    def __init__(self, ok=True, session_id="sess-1", reason="", raises=False):
+    def __init__(self, ok=True, session_id="sess-1", reason="", raises=False, cost_usd=0.0):
         self._ok, self._session, self._reason, self._raises = ok, session_id, reason, raises
+        self._cost = cost_usd
         self.calls = 0
         self.last_order = None
         self.last_resume = None
+        self.last_workspace = None
 
     def run(self, order, workspace, *, resume_session="", cancel=None):
         self.calls += 1
         self.last_order = order
         self.last_resume = resume_session
+        self.last_workspace = workspace
         if self._raises:
             raise RuntimeError("claude not available")
-        return type("R", (), {"ok": self._ok, "session_id": self._session, "reason": self._reason})()
+        return type("R", (), {"ok": self._ok, "session_id": self._session, "reason": self._reason,
+                              "cost_usd": self._cost})()
 
 
 def _pkt(store):
@@ -206,6 +210,46 @@ def test_summary_surfaces_needs_owner_packets(tmp_path):
     s = summary(store)
     assert s["by_status"].get("needs_owner") == 1
     assert any(x.get("packet_id") == p["packet_id"] for x in s["needs_owner"])
+
+
+def test_writer_runs_in_packet_workspace_path_when_set(tmp_path):
+    # GPT isolation requirement: the writer runs in the packet's own worktree, never the controller repo.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    store.update(p["packet_id"], workspace_path="/isolated/worktree",
+                 branch="feat/scout-target-confidence", base_sha="deadbeef")
+    worker = _Worker(ok=True)
+    relaunch_once(store, worker, workspace=str(tmp_path), now=_T0,
+                  completion_check=lambda pkt: "decided_go")
+    assert worker.last_workspace == "/isolated/worktree"        # isolated, not the controller workspace
+
+
+def test_packet_max_launches_overrides_module_cap(tmp_path):
+    # GPT money-bound: a conservative per-packet launch cap escalates before the module default (8).
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    store.update(p["packet_id"], max_launches=2)
+    t = _T0
+    for _ in range(2):
+        relaunch_once(store, _Worker(ok=False, reason="quota"), workspace=str(tmp_path), now=t)
+        t = t + timedelta(hours=2)
+    rec = store.get(p["packet_id"])
+    assert rec["status"] == "needs_owner" and rec["attempts"] == 2
+
+
+def test_total_spend_cap_escalates_to_needs_owner(tmp_path):
+    # GPT money-bound: accumulate real writer cost and stop for owner approval before overspending.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    store.update(p["packet_id"], max_total_usd=3.0)
+    relaunch_once(store, _Worker(ok=True, cost_usd=2.0), workspace=str(tmp_path), now=_T0,
+                  completion_check=lambda pkt: "proposed")      # progressing but not complete
+    assert abs(store.get(p["packet_id"])["spent_usd"] - 2.0) < 1e-6
+    relaunch_once(store, _Worker(ok=True, cost_usd=2.0), workspace=str(tmp_path),
+                  now=_T0 + timedelta(hours=2), completion_check=lambda pkt: "proposed")
+    rec = store.get(p["packet_id"])
+    assert rec["status"] == "needs_owner"                       # 4.0 total > 3.0 cap -> owner approval
+    assert rec["spent_usd"] >= 3.0
 
 
 def test_default_order_carries_the_canonical_protocol_and_thread(tmp_path):
