@@ -83,7 +83,10 @@ class ProductPacketStore:
                   "workspace_path": "", "base_sha": "",
                   # Conservative bounds for a live run: per-packet launch cap + total spend cap + the
                   # accumulated real writer cost, all surfaced in /collab (0 = use module default).
-                  "max_launches": 0, "max_total_usd": 0.0, "spent_usd": 0.0}
+                  "max_launches": 0, "max_total_usd": 0.0, "spent_usd": 0.0,
+                  # Per-packet claim lease (0 = DEFAULT_LEASE_SECONDS). A short lease makes a killed
+                  # writer's orphaned claim reclaimable quickly (observable kill/resume recovery).
+                  "lease_seconds": 0}
         self._write(pid, record)
         return record
 

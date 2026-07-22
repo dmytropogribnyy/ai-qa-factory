@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Optional
 
 from core.collaboration.packet_phase import is_complete, phase_for_packet
-from core.collaboration.product_packet import ProductPacketStore, _iso, _now_dt
+from core.collaboration.product_packet import DEFAULT_LEASE_SECONDS, ProductPacketStore, _iso, _now_dt
 from core.orchestration.claude_worker import WorkOrder
 
 # A product writer needs to read/edit/write source and run tests, git and the collab CLIs.
@@ -167,7 +167,9 @@ def relaunch_once(store: ProductPacketStore, worker: Any, *, workspace: str = ".
         # Distinguish "nothing to do" from "waiting out a backoff" so /collab tells the truth (P0-3).
         waiting = any(p.get("status") == "pending" for p in store.list())
         return {"status": "backoff" if waiting else "idle"}
-    claimed = store.claim(pending["packet_id"], owner=owner or _owner_token(), now=dt)
+    lease_seconds = int(pending.get("lease_seconds") or DEFAULT_LEASE_SECONDS)
+    claimed = store.claim(pending["packet_id"], owner=owner or _owner_token(), now=dt,
+                          lease_seconds=lease_seconds)
     if claimed is None:
         return {"status": "claimed_elsewhere"}          # a concurrent cycle already took it
 

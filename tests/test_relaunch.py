@@ -212,6 +212,18 @@ def test_summary_surfaces_needs_owner_packets(tmp_path):
     assert any(x.get("packet_id") == p["packet_id"] for x in s["needs_owner"])
 
 
+def test_relaunch_claims_with_packet_lease_seconds(tmp_path):
+    # A packet may set a short recovery lease so a killed writer's claim is reclaimed quickly — this is
+    # what makes the live kill/resume proof observable instead of waiting out the 45-min default.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    store.update(p["packet_id"], lease_seconds=120)
+    relaunch_once(store, _Worker(ok=True), workspace=str(tmp_path), now=_T0,
+                  completion_check=lambda pkt: "proposed")
+    exp = datetime.fromisoformat(store.get(p["packet_id"])["lease_expires_at"])
+    assert (exp - _T0).total_seconds() == 120
+
+
 def test_writer_runs_in_packet_workspace_path_when_set(tmp_path):
     # GPT isolation requirement: the writer runs in the packet's own worktree, never the controller repo.
     store = ProductPacketStore(str(tmp_path))
