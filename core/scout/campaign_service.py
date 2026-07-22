@@ -224,22 +224,32 @@ class CampaignService:
                      "allocator": alloc.snapshot(), "decisions": decisions})
         self._register_analyzed(cfg.campaign_id, [d.get("domain", "") for d in decisions])
 
-    def _register_analyzed(self, campaign_id: str, domains: List[str]) -> None:
+    def _register_analyzed(self, campaign_id: str, domains: List[str]) -> List[str]:
         """P1 Golden-Path fix: every promoted/QA-analyzed domain must appear in the History registry
         (/scout/history reads AnalyzedSiteRegistry; target-detail findings come from the brain). Only
         promoted domains are passed here — rejected/failed/merely-discovered are never registered.
         Idempotent: a new domain is added; a re-analysis updates the timestamp + appends the campaign;
-        no duplicate row is created. Never fails the run."""
+        no duplicate row is created. Never fails the run.
+
+        Returns the domains actually PERSISTED — a suppressed write error is reflected by absence, so a
+        caller (reconcile) can report attempted-vs-persisted honestly rather than assume success."""
         from core.scout.discovery.analyzed_registry import ANALYZED, AnalyzedSiteRegistry
+        persisted: List[str] = []
         try:
             reg = AnalyzedSiteRegistry(self.output_dir)
-            for dom in domains:
-                d = str(dom or "").strip()
-                if d:
-                    reg.record_analysis(d, status=ANALYZED, evidence_ref=f"scout/{d}/qa",
-                                        campaign_id=campaign_id)
-        except Exception:  # noqa: BLE001 - registry write must never crash a completed campaign
-            pass
+        except Exception:  # noqa: BLE001 - registry open must never crash a completed campaign
+            return persisted
+        for dom in domains:
+            d = str(dom or "").strip()
+            if not d:
+                continue
+            try:
+                reg.record_analysis(d, status=ANALYZED, evidence_ref=f"scout/{d}/qa",
+                                    campaign_id=campaign_id)
+                persisted.append(d)
+            except Exception:  # noqa: BLE001 - one bad domain never blocks the rest; reported by absence
+                continue
+        return persisted
 
     def reconcile_history(self) -> Dict[str, Any]:
         """Self-heal History from persisted brain decisions. Campaigns that ran before the
@@ -247,24 +257,34 @@ class CampaignService:
         so those analyzed companies are invisible in ``/scout/history``. This replays every saved
         campaign's promoted domains through the SAME ``record_analysis`` path (never hardcoded);
         already-registered domains are updated in place, never duplicated. Safe to run repeatedly.
-        Returns a summary of how many campaigns were scanned and which domains were registered."""
+        Reports domains ACTUALLY persisted (not merely attempted) and counts malformed brain files it
+        defensively skipped, so the result is honest even when a file or a write is bad."""
         base = Path(self.output_dir) / "scout" / "_campaigns"
         campaigns_scanned = 0
         registered: set = set()
+        skipped_malformed = 0
         if base.is_dir():
             for brain_path in sorted(base.glob("*/BRAIN_DECISIONS.json")):
                 try:
                     data = json.loads(brain_path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
-                    continue                            # skip a malformed/unreadable brain file
-                cid = str(data.get("campaign_id") or brain_path.parent.name)
-                domains = [str(d.get("domain", "")).strip() for d in data.get("decisions", [])]
+                    skipped_malformed += 1                # unreadable / not JSON
+                    continue
+                decisions = data.get("decisions") if isinstance(data, dict) else None
+                if not isinstance(decisions, list):
+                    skipped_malformed += 1                # wrong shape (not a decisions list)
+                    continue
+                cid = str((data.get("campaign_id") if isinstance(data, dict) else "")
+                          or brain_path.parent.name)
+                domains = [str(d.get("domain", "")).strip()
+                           for d in decisions if isinstance(d, dict)]
                 domains = [d for d in domains if d]
                 if domains:
-                    self._register_analyzed(cid, domains)
+                    persisted = self._register_analyzed(cid, domains)   # actually-persisted subset
                     campaigns_scanned += 1
-                    registered.update(domains)
-        return {"campaigns_scanned": campaigns_scanned, "domains_registered": sorted(registered)}
+                    registered.update(persisted)
+        return {"campaigns_scanned": campaigns_scanned, "domains_registered": sorted(registered),
+                "skipped_malformed": skipped_malformed}
 
     def _load_findings(self, scout_run_id: str) -> List[Dict[str, Any]]:
         if not scout_run_id:
