@@ -2559,6 +2559,18 @@ def _norm_steps(raw: object) -> list:
     return out
 
 
+_HINT_MAX = 160  # visible chars for a one-line repro hint; the full path stays in the cell title
+
+
+def _clip(s: object, limit: int = _HINT_MAX) -> str:
+    """Bound a one-line string to a visible length with an ellipsis, so a very long value cannot
+    blow out the table cell (the muted class alone does not cap content). The full text is preserved
+    in the cell's ``title`` by the caller. Clips the RAW text (before HTML-escaping) so an escape
+    entity is never split."""
+    s = str("" if s is None else s)
+    return s if len(s) <= limit else s[: limit - 1].rstrip() + "…"
+
+
 def _confidence_label(f: dict) -> str:
     """One-line confidence label for a finding, or the neutral placeholder when absent (never
     invented). Returned RAW (unescaped) — the caller escapes it."""
@@ -2596,8 +2608,15 @@ def _problems_table_html(findings: list) -> str:
     rows = []
     for f in ordered:
         steps = _norm_steps(f.get("reproduction_steps"))
-        hint = steps[0] if steps else _NEUTRAL
-        title_attr = f' title="{_esc(" → ".join(steps))}"' if len(steps) > 1 else ""
+        if steps:
+            first = steps[0]
+            hint = _clip(first)
+            # Show the full path (or the un-clipped single step) on hover when the cell is bounded.
+            need_title = len(steps) > 1 or hint != first
+            title_attr = f' title="{_esc(" → ".join(steps))}"' if need_title else ""
+        else:
+            hint = _NEUTRAL
+            title_attr = ""
         evid = ", ".join(_collapse_ws(r) for r in (f.get("evidence_refs") or []) if _collapse_ws(r))
         rows.append(
             "<tr>"

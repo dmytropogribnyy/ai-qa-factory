@@ -14,6 +14,8 @@ import urllib.request
 
 from core.scout.campaign_service import _project_target_finding
 from core.scout.dashboard import (
+    _HINT_MAX,
+    _clip,
     _confidence_label,
     _finding_qa_value,
     _norm_steps,
@@ -114,6 +116,25 @@ def test_newline_in_step_is_collapsed_to_one_line():
     html = _problems_table_html([f])
     assert "line one line two line three" in html
     assert "line one\nline two" not in html
+
+
+def test_clip_bounds_a_long_value_with_ellipsis():
+    assert _clip("short") == "short"
+    long = "x" * (_HINT_MAX + 50)
+    clipped = _clip(long)
+    assert len(clipped) <= _HINT_MAX and clipped.endswith("…")
+    assert _clip(None) == ""
+
+
+def test_long_repro_step_is_clipped_in_cell_with_full_title():
+    """A single over-long step is bounded in the cell (ellipsis) while the full step stays available
+    as an escaped hover title."""
+    step = "Navigate to the extremely long checkout URL " + ("path/" * 60) + "and observe the error"
+    f = _finding(title="t", severity="high", confidence="high", reproduction_steps=[step])
+    html = _problems_table_html([f])
+    assert "…" in html                                 # cell is visibly bounded
+    assert f'title="{step}"' in html                   # full (unclipped) step preserved on hover
+    assert _repro_hint(f) == step                       # the logical hint is still the full step
 
 
 def test_scalar_legacy_reproduction_steps_not_char_joined():
