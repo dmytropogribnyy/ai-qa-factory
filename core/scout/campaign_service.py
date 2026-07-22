@@ -222,6 +222,49 @@ class CampaignService:
         self._write(cfg.campaign_id, "BRAIN_DECISIONS.json",
                     {"campaign_id": cfg.campaign_id, "at": _now(),
                      "allocator": alloc.snapshot(), "decisions": decisions})
+        self._register_analyzed(cfg.campaign_id, [d.get("domain", "") for d in decisions])
+
+    def _register_analyzed(self, campaign_id: str, domains: List[str]) -> None:
+        """P1 Golden-Path fix: every promoted/QA-analyzed domain must appear in the History registry
+        (/scout/history reads AnalyzedSiteRegistry; target-detail findings come from the brain). Only
+        promoted domains are passed here — rejected/failed/merely-discovered are never registered.
+        Idempotent: a new domain is added; a re-analysis updates the timestamp + appends the campaign;
+        no duplicate row is created. Never fails the run."""
+        from core.scout.discovery.analyzed_registry import ANALYZED, AnalyzedSiteRegistry
+        try:
+            reg = AnalyzedSiteRegistry(self.output_dir)
+            for dom in domains:
+                d = str(dom or "").strip()
+                if d:
+                    reg.record_analysis(d, status=ANALYZED, evidence_ref=f"scout/{d}/qa",
+                                        campaign_id=campaign_id)
+        except Exception:  # noqa: BLE001 - registry write must never crash a completed campaign
+            pass
+
+    def reconcile_history(self) -> Dict[str, Any]:
+        """Self-heal History from persisted brain decisions. Campaigns that ran before the
+        registration fix wrote ``BRAIN_DECISIONS.json`` but never registered their promoted domains,
+        so those analyzed companies are invisible in ``/scout/history``. This replays every saved
+        campaign's promoted domains through the SAME ``record_analysis`` path (never hardcoded);
+        already-registered domains are updated in place, never duplicated. Safe to run repeatedly.
+        Returns a summary of how many campaigns were scanned and which domains were registered."""
+        base = Path(self.output_dir) / "scout" / "_campaigns"
+        campaigns_scanned = 0
+        registered: set = set()
+        if base.is_dir():
+            for brain_path in sorted(base.glob("*/BRAIN_DECISIONS.json")):
+                try:
+                    data = json.loads(brain_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue                            # skip a malformed/unreadable brain file
+                cid = str(data.get("campaign_id") or brain_path.parent.name)
+                domains = [str(d.get("domain", "")).strip() for d in data.get("decisions", [])]
+                domains = [d for d in domains if d]
+                if domains:
+                    self._register_analyzed(cid, domains)
+                    campaigns_scanned += 1
+                    registered.update(domains)
+        return {"campaigns_scanned": campaigns_scanned, "domains_registered": sorted(registered)}
 
     def _load_findings(self, scout_run_id: str) -> List[Dict[str, Any]]:
         if not scout_run_id:
