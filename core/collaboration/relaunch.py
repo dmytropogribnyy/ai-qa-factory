@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Optional
 
 from core.collaboration.packet_phase import is_complete, phase_for_packet
-from core.collaboration.process_liveness import child_pids_of, local_host
+from core.collaboration.process_liveness import descendant_pids, local_host
 from core.collaboration.product_packet import DEFAULT_LEASE_SECONDS, ProductPacketStore, _iso, _now_dt
 from core.orchestration.claude_worker import WorkOrder
 
@@ -66,12 +66,16 @@ def _heartbeat_interval(lease_seconds: int) -> float:
 
 def _heartbeat_loop(store: ProductPacketStore, packet_id: str, claim_token: str, lease_seconds: int,
                     stop: threading.Event) -> None:
-    """Renew the claim's lease + refresh the owner process tree while the writer genuinely runs. Stops
-    as soon as ``stop`` is set (the writer returned) or the claim is lost/taken over (heartbeat no-op)."""
+    """Renew the claim's lease + refresh the FULL owner process subtree (recursively — a reparented
+    grandchild survivor was the P0-A gap) each interval while the writer genuinely runs. The interval is
+    well within the lease (<= lease/3), so the tree is captured long before the lease could expire; the
+    incomplete-capture window before the first tick is covered fail-closed by ``owner_liveness`` (a lone
+    recorded pid is never proof of tree death). Stops as soon as ``stop`` is set (the writer returned) or
+    the claim is lost/taken over (heartbeat no-op)."""
     interval = _heartbeat_interval(lease_seconds)
     while not stop.wait(interval):
         try:
-            pids = [os.getpid(), *child_pids_of(os.getpid())]
+            pids = [os.getpid(), *descendant_pids(os.getpid())]
             if store.heartbeat(packet_id, claim_token=claim_token, lease_seconds=lease_seconds,
                                owner_pids=pids) is None:
                 return                                   # claim gone / superseded -> stop heartbeating
@@ -204,8 +208,10 @@ def relaunch_once(store: ProductPacketStore, worker: Any, *, workspace: str = ".
     # P0-A: reclaim only claims whose owner process tree is provably dead (recover_orphaned_claims does
     # the liveness fencing) BEFORE the single-writer / eligibility checks.
     store.recover_orphaned_claims(now=dt)
-    # One writer at a time: never launch a second while a packet is genuinely in progress.
-    if any(p.get("status") == "in_progress" for p in store.list()):
+    # One writer at a time, fail closed: never launch a second while a packet is in progress OR blocked.
+    # A `blocked` packet is a claim whose owner liveness is unknowable (host mismatch / incomplete tree
+    # capture) — its writer MAY still be alive, so launching another would risk two writers.
+    if any(p.get("status") in ("in_progress", "blocked") for p in store.list()):
         return {"status": "writer_busy"}
     pending = store.next_pending(now=dt)
     if not pending:

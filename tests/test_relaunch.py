@@ -194,6 +194,19 @@ def test_single_writer_no_second_launch_while_one_in_progress(tmp_path):
     assert worker.calls == 0                               # B was not launched while A is in progress
 
 
+def test_blocked_packet_is_treated_as_writer_busy(tmp_path):
+    # P0-A fail-closed: a `blocked` packet (owner liveness unknowable) may still have a live writer, so
+    # relaunch_once must NOT launch a second writer on another pending packet.
+    store = ProductPacketStore(str(tmp_path))
+    a = store.create(objective="packet A")
+    store.update(a["packet_id"], status="blocked")        # unknowable owner -> fail closed
+    store.create(objective="packet B pending")            # B is eligible
+    worker = _Worker(ok=True)
+    out = relaunch_once(store, worker, workspace=str(tmp_path))
+    assert out["status"] == "writer_busy"
+    assert worker.calls == 0                               # B was not launched while A is blocked
+
+
 def test_summary_reports_status_counts(tmp_path):
     store = ProductPacketStore(str(tmp_path))
     _pkt(store)
@@ -304,8 +317,10 @@ def test_heartbeat_keeps_single_writer_during_a_run_longer_than_the_lease(tmp_pa
                 cur = store.get(pid)
                 if cur["lease_expires_at"] > first:            # heartbeat fired during the run
                     seen["renewed"] = True
-                    # a recovery pass with a far-future clock (lease "expired") must NOT reclaim a live owner
-                    store.recover_orphaned_claims(now=datetime.now(timezone.utc) + timedelta(days=1))
+                    # a recovery pass with a far-future clock (lease "expired") must NOT reclaim a
+                    # provably-alive owner (injected so the assertion never depends on the real tree).
+                    store.recover_orphaned_claims(now=datetime.now(timezone.utc) + timedelta(days=1),
+                                                  is_owner_alive=lambda rec: True)
                     seen["status_during"] = store.get(pid)["status"]
                     break
                 _time.sleep(0.2)

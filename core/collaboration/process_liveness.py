@@ -55,35 +55,75 @@ def any_alive(pids: Iterable[int]) -> bool:
     return any(pid_alive(p) for p in pids)
 
 
-def child_pids_of(pid: int) -> List[int]:
-    """Best-effort DIRECT children of ``pid`` on this host (one level is enough: relaunch -> claude).
-    Used by the heartbeat to persist the real worker child so a reparented survivor of a dead relaunch
-    parent is still detected. Never raises; returns [] when it cannot enumerate."""
+def _parent_map() -> dict:
+    """One snapshot of {pid: parent_pid} for this host (single query — cheap enough for a heartbeat)."""
+    out_map: dict = {}
+    if os.name == "nt":
+        ps = ("Get-CimInstance Win32_Process | ForEach-Object "
+              "{ \"$($_.ProcessId) $($_.ParentProcessId)\" }")
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True,
+                                 text=True, check=False, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return out_map
+        for line in (out.stdout or "").splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                out_map[int(parts[0])] = int(parts[1])
+        return out_map
+    try:
+        out = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True,
+                             check=False, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return out_map
+    for line in (out.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            out_map[int(parts[0])] = int(parts[1])
+    return out_map
+
+
+def descendant_pids(pid: int) -> List[int]:
+    """Best-effort FULL descendant subtree of ``pid`` on this host (all levels: relaunch -> claude ->
+    bash -> git/pytest), from a single process snapshot. The heartbeat persists this whole set so a
+    reparented survivor of a dead ancestor is still detected on recovery — direct children alone were
+    the P0-A gap (a grandchild could survive). Never raises; returns [] when it cannot enumerate."""
     try:
         pid = int(pid)
     except (TypeError, ValueError):
         return []
-    if os.name == "nt":
-        ps = f"(Get-CimInstance Win32_Process -Filter 'ParentProcessId={pid}').ProcessId"
-        try:
-            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True,
-                                 text=True, check=False, timeout=15)
-        except (OSError, subprocess.SubprocessError):
-            return []
-        return [int(x) for x in (out.stdout or "").split() if x.strip().isdigit()]
-    try:
-        out = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True,
-                             check=False, timeout=15)
-    except (OSError, subprocess.SubprocessError):
+    parents = _parent_map()
+    if not parents:
         return []
-    return [int(x) for x in (out.stdout or "").split() if x.strip().isdigit()]
+    children: dict = {}
+    for child, parent in parents.items():
+        children.setdefault(parent, []).append(child)
+    out: List[int] = []
+    seen = {pid}
+    stack = list(children.get(pid, []))
+    while stack:
+        c = stack.pop()
+        if c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+        stack.extend(children.get(c, []))
+    return out
+
+
+# Back-compat alias (now returns the FULL subtree, not just direct children).
+child_pids_of = descendant_pids
 
 
 def owner_liveness(*, owner_host: str, owner_pids: Iterable[int]) -> Optional[bool]:
     """Fencing verdict for a claim owner: ``True`` (a locally-verifiable owner process is alive → do
-    NOT reclaim), ``False`` (same host, every owner pid is dead → safe to reclaim), or ``None``
-    (liveness is unknowable here — different/empty host, or no pid info — the caller must FAIL CLOSED to
-    a visible blocked state, never time-reclaim)."""
+    NOT reclaim), ``False`` (same host, the FULLY-captured owner tree is every-pid dead → safe to
+    reclaim), or ``None`` (liveness is unknowable here — the caller must FAIL CLOSED to a visible
+    blocked state, never time-reclaim).
+
+    ``None`` (fail closed) when: the host is different/empty; OR fewer than two owner pids were captured
+    — a single recorded pid is typically just the relaunch parent before its worker child was persisted,
+    and a lone dead pid can NOT prove the whole writer tree is dead (the P0-A reclaim-too-early gap)."""
     host = str(owner_host or "").strip()
     if not host or host != local_host():
         return None
@@ -93,6 +133,6 @@ def owner_liveness(*, owner_host: str, owner_pids: Iterable[int]) -> Optional[bo
             pids.append(int(p))
         except (TypeError, ValueError):
             continue
-    if not pids:
-        return None
+    if len(pids) < 2:
+        return None                                       # incomplete tree capture -> cannot prove death
     return any_alive(pids)

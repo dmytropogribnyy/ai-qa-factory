@@ -130,6 +130,8 @@ def test_heartbeat_extends_only_matching_claim_token(tmp_path):
     stale = store.heartbeat(p["packet_id"], claim_token="not-the-token",
                             now=_T0 + timedelta(seconds=120))
     assert stale is None
+    # Empty/missing token is ALSO a no-op once the claim has a token (unconditional token gate).
+    assert store.heartbeat(p["packet_id"], claim_token="", now=_T0 + timedelta(seconds=125)) is None
     assert store.get(p["packet_id"])["lease_expires_at"] == \
         (_T0 + timedelta(seconds=210)).isoformat(timespec="seconds")
 
@@ -145,6 +147,8 @@ def test_resolve_is_token_gated_against_stale_owner(tmp_path):
     assert new != old
     # The stale owner A tries to finish the packet -> no-op.
     assert store.resolve(p["packet_id"], claim_token=old, status="done") is None
+    # An empty/missing token is ALSO a no-op (unconditional token gate).
+    assert store.resolve(p["packet_id"], claim_token="", status="done") is None
     assert store.get(p["packet_id"])["status"] == "in_progress"
     # The current owner B can resolve it.
     assert store.resolve(p["packet_id"], claim_token=new, status="pending") is not None

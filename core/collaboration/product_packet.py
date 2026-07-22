@@ -185,8 +185,10 @@ class ProductPacketStore:
         record = self.get(pid)
         if not record or record.get("status") != "in_progress":
             return None
-        if claim_token and record.get("claim_token") and record.get("claim_token") != claim_token:
-            return None                                        # stale owner / PID reuse -> no-op
+        # Unconditional token gate: once a claim has a token, ONLY that exact token may renew it. A
+        # missing/empty or mismatched token (a stale heartbeat thread or a reused PID) is a no-op.
+        if record.get("claim_token") and claim_token != record.get("claim_token"):
+            return None
         dt = _now_dt(now)
         changes: Dict[str, Any] = {
             "heartbeat_at": _iso(dt),
@@ -207,7 +209,9 @@ class ProductPacketStore:
         record = self.get(pid)
         if record is None:
             return None
-        if claim_token and record.get("claim_token") and record.get("claim_token") != claim_token:
+        # Unconditional token gate (see heartbeat): a missing/empty or mismatched token is a no-op, so a
+        # late/stale relaunch can never clobber a fresh claim's state.
+        if record.get("claim_token") and claim_token != record.get("claim_token"):
             return None
         return self.update(pid, **changes)
 

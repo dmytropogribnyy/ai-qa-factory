@@ -245,7 +245,9 @@ def writer_gate(store: Any, *, now: Any = None) -> str:
     """
     store.recover_orphaned_claims(now=now)
     packets = store.list()
-    if any(p.get("status") == "in_progress" for p in packets):
+    # Fail closed: an in_progress OR a blocked packet (unknowable owner liveness) means a writer may be
+    # alive — never launch a second one.
+    if any(p.get("status") in ("in_progress", "blocked") for p in packets):
         return "writer_active"
     if store.next_pending(now=now) is not None:
         return "eligible"
