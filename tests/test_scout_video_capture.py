@@ -9,12 +9,13 @@ live smoke. Here we pin the opt-in signature, the config plumbing, and the keep/
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from core.scout.backends import PageObservation, StaticHttpBackend
 from core.scout.config import ScoutConfigError, ScoutRunConfig
 from core.scout.engine import ScoutEngine
 from core.scout.findings import ScoutFinding
 from core.scout.presets import build_config
-from core.scout.scoring import build_scorecard
 from core.scout.store import RunStore
 
 
@@ -87,8 +88,7 @@ def test_qualified_interaction_defect_keeps_reproduction_webm(tmp_path):
     eng = _engine(tmp_path, "qualified_auto")
     pdir = _seed_temp_video(eng, "01-x")
     verified = [_finding("business_flow", "high"), _finding("functional", "medium")]
-    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified,
-                                        build_scorecard("01-x", verified))
+    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified)
     assert kept == "reproduction.webm"
     assert (pdir / "reproduction.webm").exists()          # promoted to a servable top-level clip
     assert not (pdir / "_vidtmp").exists()                # temp always cleaned
@@ -99,22 +99,58 @@ def test_non_interaction_defect_deletes_video(tmp_path):
     eng = _engine(tmp_path, "qualified_auto")
     pdir = _seed_temp_video(eng, "01-x")
     verified = [_finding("seo", "medium")]                # screenshots suffice for a static SEO issue
-    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified,
-                                        build_scorecard("01-x", verified))
+    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified)
     assert kept == ""
     assert not (pdir / "reproduction.webm").exists()
     assert not (pdir / "_vidtmp").exists()                # unqualified recording is never kept
+
+
+def test_unrelated_severe_static_defect_does_not_qualify_a_trivial_interaction_defect(tmp_path):
+    # An unrelated high-severity SEO (static) defect must NOT lend its severity or QA value to a
+    # low-severity business_flow finding — qualification is anchored on the interaction defect itself.
+    eng = _engine(tmp_path, "qualified_auto")
+    pdir = _seed_temp_video(eng, "01-x")
+    verified = [_finding("seo", "high"), _finding("business_flow", "low")]
+    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified)
+    assert kept == ""                                     # the interaction defect is only low severity
+    assert not (pdir / "reproduction.webm").exists()
+    assert not (pdir / "_vidtmp").exists()
 
 
 def test_manual_mode_never_keeps_a_video(tmp_path):
     eng = _engine(tmp_path, "manual")
     pdir = _seed_temp_video(eng, "01-x")
     verified = [_finding("business_flow", "high"), _finding("functional", "medium")]
-    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified,
-                                        build_scorecard("01-x", verified))
+    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified)
     assert kept == "" and not (pdir / "reproduction.webm").exists()
 
 
 def test_no_video_ref_is_a_noop(tmp_path):
     eng = _engine(tmp_path, "qualified_auto")
-    assert eng._finalize_prospect_video("01-x", "", [], build_scorecard("01-x", [])) == ""
+    assert eng._finalize_prospect_video("01-x", "", []) == ""
+
+
+class _CaptchaRecordingBackend:
+    """Records a temp video on the first observe, then reports a CAPTCHA (forcing an early exit)."""
+    name = "playwright"
+    screenshot_dir = None
+
+    def observe(self, url, timeout_s, max_bytes, *, record_video=False):
+        obs = PageObservation(url=url, backend=self.name, captcha_marker=True)
+        if record_video and self.screenshot_dir:
+            vt = Path(self.screenshot_dir) / "_vidtmp"
+            vt.mkdir(parents=True, exist_ok=True)
+            (vt / "clip.webm").write_bytes(b"FAKEWEBM")
+            obs.video_ref = "_vidtmp/clip.webm"
+        return obs
+
+
+def test_early_exit_still_cleans_the_temp_video(tmp_path):
+    # Recording happens on the first observe; a CAPTCHA early-return must still leave no temp clip.
+    cfg = _cfg(video_mode="qualified_auto", output_dir=str(tmp_path))
+    store = RunStore(str(tmp_path), "run-early")
+    eng = ScoutEngine(cfg, store, backend=_CaptchaRecordingBackend())
+    prospects = {"01-x": {"status": "PENDING", "url": "https://ex.com"}}
+    eng._process_prospect("01-x", "https://ex.com", prospects)
+    assert prospects["01-x"]["status"] == "MANUAL_ACTION_REQUIRED"     # early manual exit
+    assert not (Path(store.prospect_dir("01-x")) / "_vidtmp").exists()  # temp still cleaned

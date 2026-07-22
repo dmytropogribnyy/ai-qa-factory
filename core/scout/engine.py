@@ -150,93 +150,102 @@ class ScoutEngine:
                 pass
         obs = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes,
                                    record_video=(self._evidence.video_mode == VIDEO_QUALIFIED_AUTO))
-        self.store.save_prospect_artifact(pid, "observation.json", obs.to_dict())
+        try:
+            self.store.save_prospect_artifact(pid, "observation.json", obs.to_dict())
 
-        # CAPTCHA / access prohibition -> manual action, no interaction, continue others.
-        if obs.captcha_marker or obs.access_blocked_marker:
-            reason = "captcha_detected" if obs.captcha_marker else "access_prohibited"
-            prospects[pid].update({"status": P_MANUAL, "reason": reason})
-            self._event("manual_action_required", prospect=pid, reason=reason)
-            return
+            # CAPTCHA / access prohibition -> manual action, no interaction, continue others.
+            if obs.captcha_marker or obs.access_blocked_marker:
+                reason = "captcha_detected" if obs.captcha_marker else "access_prohibited"
+                prospects[pid].update({"status": P_MANUAL, "reason": reason})
+                self._event("manual_action_required", prospect=pid, reason=reason)
+                return
 
-        if not obs.ok and not obs.forms and not obs.headings:
-            prospects[pid].update({"status": P_FAILED, "reason": obs.fetch_error or f"status {obs.status}"})
-            self._event("prospect_unreachable", prospect=pid, reason=prospects[pid]["reason"])
-            return
+            if not obs.ok and not obs.forms and not obs.headings:
+                prospects[pid].update({"status": P_FAILED,
+                                       "reason": obs.fetch_error or f"status {obs.status}"})
+                self._event("prospect_unreachable", prospect=pid, reason=prospects[pid]["reason"])
+                return
 
-        link_status = self._probe_links(obs) if "links" in cfg.check_families else {}
-        flow_result = self._explore_flow(obs) if "business_flow" in cfg.check_families else None
-        ctx = CheckContext(run_id=self.store.root.name, prospect_ref=pid,
-                           backend=obs.backend, link_status=link_status, flow_result=flow_result,
-                           max_response_bytes=cfg.max_response_bytes)
+            link_status = self._probe_links(obs) if "links" in cfg.check_families else {}
+            flow_result = self._explore_flow(obs) if "business_flow" in cfg.check_families else None
+            ctx = CheckContext(run_id=self.store.root.name, prospect_ref=pid,
+                               backend=obs.backend, link_status=link_status, flow_result=flow_result,
+                               max_response_bytes=cfg.max_response_bytes)
 
-        first_pass = run_checks(obs, ctx, cfg.check_families)
+            first_pass = run_checks(obs, ctx, cfg.check_families)
 
-        # Independent second pass: a fresh observation + re-run of the same checks.
-        self.control.wait_while_paused()
-        if self.control.should_stop():
-            return
-        obs2 = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes)
-        link_status2 = self._probe_links(obs2) if "links" in cfg.check_families else {}
-        flow2 = self._explore_flow(obs2) if "business_flow" in cfg.check_families else None
-        ctx2 = CheckContext(run_id=self.store.root.name, prospect_ref=pid, backend=obs2.backend,
-                            link_status=link_status2, flow_result=flow2,
-                            max_response_bytes=cfg.max_response_bytes)
-        second_sigs = {f.signature for f in run_checks(obs2, ctx2, cfg.check_families)}
+            # Independent second pass: a fresh observation + re-run of the same checks.
+            self.control.wait_while_paused()
+            if self.control.should_stop():
+                return
+            obs2 = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes)
+            link_status2 = self._probe_links(obs2) if "links" in cfg.check_families else {}
+            flow2 = self._explore_flow(obs2) if "business_flow" in cfg.check_families else None
+            ctx2 = CheckContext(run_id=self.store.root.name, prospect_ref=pid, backend=obs2.backend,
+                                link_status=link_status2, flow_result=flow2,
+                                max_response_bytes=cfg.max_response_bytes)
+            second_sigs = {f.signature for f in run_checks(obs2, ctx2, cfg.check_families)}
 
-        evidence = self.sanitizer.build_evidence(obs)
-        evidence_ref = self.store.save_prospect_artifact(pid, "evidence.json", evidence)
+            evidence = self.sanitizer.build_evidence(obs)
+            evidence_ref = self.store.save_prospect_artifact(pid, "evidence.json", evidence)
 
-        verified, rejected = self.verifier.verify(first_pass, second_sigs, evidence_ref=evidence_ref)
-        self.store.save_prospect_artifact(
-            pid, "findings.json",
-            {"verified": [f.to_dict() for f in verified], "rejected": [f.to_dict() for f in rejected]},
-        )
-        scorecard = build_scorecard(pid, verified)
-        self.store.save_prospect_artifact(pid, "scorecard.json", scorecard.to_dict())
-        video_ref = self._finalize_prospect_video(pid, obs.video_ref, verified, scorecard)
+            verified, rejected = self.verifier.verify(first_pass, second_sigs,
+                                                      evidence_ref=evidence_ref)
+            self.store.save_prospect_artifact(
+                pid, "findings.json",
+                {"verified": [f.to_dict() for f in verified],
+                 "rejected": [f.to_dict() for f in rejected]},
+            )
+            scorecard = build_scorecard(pid, verified)
+            self.store.save_prospect_artifact(pid, "scorecard.json", scorecard.to_dict())
+            video_ref = self._finalize_prospect_video(pid, obs.video_ref, verified)
 
-        defects = [f for f in verified if f.severity != "info"]
-        prospects[pid].update({
-            "status": P_DONE, "priority": scorecard.priority,
-            "verified_findings": len(verified), "verified_defects": len(defects),
-            "rejected_findings": len(rejected), "evidence_ref": evidence_ref,
-            "video_ref": video_ref,
-        })
-        self._event("prospect_done", prospect=pid, verified=len(verified),
-                    defects=len(defects), rejected=len(rejected), priority=scorecard.priority)
+            defects = [f for f in verified if f.severity != "info"]
+            prospects[pid].update({
+                "status": P_DONE, "priority": scorecard.priority,
+                "verified_findings": len(verified), "verified_defects": len(defects),
+                "rejected_findings": len(rejected), "evidence_ref": evidence_ref,
+                "video_ref": video_ref,
+            })
+            self._event("prospect_done", prospect=pid, verified=len(verified),
+                        defects=len(defects), rejected=len(rejected), priority=scorecard.priority)
+        finally:
+            # Guarantee no temp recording is ever left behind — on an early manual/unreachable/stop
+            # return, an exception, or normal completion (a kept clip was already moved out of _vidtmp).
+            _rmtree(Path(self.store.prospect_dir(pid)) / "_vidtmp")
 
     def _finalize_prospect_video(self, pid: str, video_ref: str,
-                                 verified: List[ScoutFinding], scorecard) -> str:
+                                 verified: List[ScoutFinding]) -> str:
         """Keep a qualified reproduction clip or delete the unqualified temp recording.
 
-        A short video is kept ONLY for a reproduced visual/interaction defect of sufficient severity
-        and QA value where a screenshot is insufficient and the path is safe/deterministic (see
-        evidence_policy.video_qualified); otherwise the temp recording is removed — Scout never keeps
-        an unreproduced video. Two-pass verification IS the reproduction (a verified finding appeared
-        in two independent observations). Returns the kept servable path "reproduction.webm" or "".
+        A short video is kept ONLY for a reproduced INTERACTION defect (business_flow / functional)
+        of sufficient severity and QA value; otherwise the temp recording is removed — Scout never
+        keeps an unreproduced video. Two-pass verification IS the reproduction. Qualification is
+        anchored strictly on the interaction defects themselves: an unrelated static defect (e.g. a
+        high-severity SEO issue) must never lend its severity or QA value to a trivial interaction
+        finding. Returns the kept servable path "reproduction.webm" or "".
         """
         pdir = Path(self.store.prospect_dir(pid))
         vidtmp = pdir / "_vidtmp"
         kept = ""
         try:
             if video_ref:
-                defects = [f for f in verified if f.severity != "info"]
-                allowed = False
-                if defects:
-                    severity = max((f.severity for f in defects),
+                interaction = [f for f in verified
+                               if f.severity != "info" and f.category in _INTERACTION_CATEGORIES]
+                if interaction:
+                    severity = max((f.severity for f in interaction),
                                    key=lambda s: _SEV_ORDER.get(s, 0))
-                    visual = any(f.category in _INTERACTION_CATEGORIES for f in defects)
+                    # QA value from the interaction defects ONLY (not the prospect-wide scorecard).
+                    qa_score = _audit_opportunity(build_scorecard(pid, interaction))
                     allowed, _reason = video_qualified(
-                        self._evidence, severity=severity,
-                        qa_score=_audit_opportunity(scorecard), reproduced=True,
-                        visual_or_interaction=visual, screenshots_sufficient=not visual,
+                        self._evidence, severity=severity, qa_score=qa_score, reproduced=True,
+                        visual_or_interaction=True, screenshots_sufficient=False,
                         safe_deterministic_path=True, videos_recorded=self._videos_recorded)
-                clip = pdir / video_ref
-                if allowed and clip.exists():
-                    clip.replace(pdir / "reproduction.webm")   # promote to a servable top-level file
-                    self._videos_recorded += 1
-                    kept = "reproduction.webm"
+                    clip = pdir / video_ref
+                    if allowed and clip.exists():
+                        clip.replace(pdir / "reproduction.webm")   # promote to a servable top-level file
+                        self._videos_recorded += 1
+                        kept = "reproduction.webm"
         finally:
             _rmtree(vidtmp)          # always clean the temp dir (an unqualified clip is never kept)
         return kept
