@@ -1981,19 +1981,10 @@ function startCampaign(){{
                      f'<p class="muted">Extracted read-only from public pages. Use them to reach out '
                      f'yourself; the system never sends anything.</p></div>')
 
-            # Problem items with evidence references, highest-severity first.
-            prob_rows = "".join(
-                f'<tr><td>{_badge(f.get("severity") or "—", _sev_badge_kind(f.get("severity","")))}</td>'
-                f'<td class="muted">{_esc(f.get("category") or "—")}</td>'
-                f'<td>{_esc(f.get("title") or "—")}</td>'
-                f'<td class="muted">{_esc(f.get("business_impact") or "")}</td>'
-                f'<td class="muted">{_esc(", ".join(f.get("evidence_refs") or []) or "—")}</td></tr>'
-                for f in findings)
-            prob_table = (f'<table><caption>Problem items ({len(findings)})</caption>'
-                          f'<tr><th>Severity</th><th>Type</th><th>Issue</th><th>Business impact</th>'
-                          f'<th>Evidence</th></tr>{prob_rows}</table>' if findings else
-                          '<div class="empty muted">No verified problem items for this target yet. '
-                          'Run a live, bounded analysis to populate evidence.</div>')
+            # Problem items: ordered by qa_value_score desc, each with a confidence label + a
+            # one-line repro hint. Every dynamic cell is HTML-escaped and newline-collapsed; an
+            # absent field shows a neutral placeholder (never invented). See _problems_table_html.
+            prob_table = _problems_table_html(findings)
             body += (f'<div class="card"><h2>Problems found</h2><div class="scrollx">{prob_table}</div>'
                      f'</div>')
 
@@ -2537,6 +2528,91 @@ seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. N
 def _esc(s: str) -> str:
     return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;"))
+
+
+# Neutral placeholder for an absent field on a card — shown, never invented (see _target findings).
+_NEUTRAL = "—"  # em dash, matching the other absent-field cells on this page
+
+
+def _collapse_ws(s: object) -> str:
+    """Collapse any run of whitespace (newlines/tabs/spaces) to a single space and trim.
+
+    Keeps a dynamic finding value on one table line. Call BEFORE ``_esc`` (escaping does not remove
+    newlines). ``None`` collapses to ``""``."""
+    return " ".join(str("" if s is None else s).split())
+
+
+def _norm_steps(raw: object) -> list:
+    """Defensively normalize ``reproduction_steps`` into a clean list of one-line, non-empty strings.
+
+    Missing/``None`` -> ``[]``; a scalar legacy value (e.g. a single string) is treated as ONE step
+    (never iterated character-by-character); list/tuple items are newline-collapsed and empties
+    dropped. Never invents a step."""
+    if raw is None:
+        return []
+    items = list(raw) if isinstance(raw, (list, tuple)) else [raw]
+    out = []
+    for it in items:
+        s = _collapse_ws(it)
+        if s:
+            out.append(s)
+    return out
+
+
+def _confidence_label(f: dict) -> str:
+    """One-line confidence label for a finding, or the neutral placeholder when absent (never
+    invented). Returned RAW (unescaped) — the caller escapes it."""
+    return _collapse_ws(f.get("confidence")) or _NEUTRAL
+
+
+def _repro_hint(f: dict) -> str:
+    """One-line reproduction hint: the first concrete step, or the neutral placeholder when there are
+    no steps (never invented). Returned RAW (unescaped) — the caller escapes it."""
+    steps = _norm_steps(f.get("reproduction_steps"))
+    return steps[0] if steps else _NEUTRAL
+
+
+def _finding_qa_value(f: dict) -> int:
+    """Per-finding QA-opportunity contribution, reusing the canonical scorer (no second source of
+    truth) so the problems table can be ordered by qa_value_score desc. Imported lazily to keep the
+    dashboard import graph acyclic."""
+    from core.scout.priority import qa_value_score
+    return qa_value_score([f])
+
+
+def _problems_table_html(findings: list) -> str:
+    """Render the /target "Problems found" table.
+
+    Rows are ordered by qa_value_score desc (stable sort, so equal scores keep input order). Each
+    row shows Severity, Confidence, Type, Issue, Business impact, a one-line Repro hint, and
+    Evidence. Every dynamic cell is newline-collapsed then HTML-escaped; an absent confidence/repro/
+    type shows the neutral placeholder (never invented). When a finding has more than one step, the
+    full path is preserved as a hover ``title`` on the repro cell (escaped as an attribute). Returns
+    the empty-state card body when there are no findings."""
+    if not findings:
+        return ('<div class="empty muted">No verified problem items for this target yet. '
+                'Run a live, bounded analysis to populate evidence.</div>')
+    ordered = sorted(findings, key=_finding_qa_value, reverse=True)
+    rows = []
+    for f in ordered:
+        steps = _norm_steps(f.get("reproduction_steps"))
+        hint = steps[0] if steps else _NEUTRAL
+        title_attr = f' title="{_esc(" → ".join(steps))}"' if len(steps) > 1 else ""
+        evid = ", ".join(_collapse_ws(r) for r in (f.get("evidence_refs") or []) if _collapse_ws(r))
+        rows.append(
+            "<tr>"
+            f'<td>{_badge(_collapse_ws(f.get("severity")) or _NEUTRAL, _sev_badge_kind(f.get("severity") or ""))}</td>'
+            f'<td class="muted">{_esc(_confidence_label(f))}</td>'
+            f'<td class="muted">{_esc(_collapse_ws(f.get("category")) or _NEUTRAL)}</td>'
+            f'<td>{_esc(_collapse_ws(f.get("title")) or _NEUTRAL)}</td>'
+            f'<td class="muted">{_esc(_collapse_ws(f.get("business_impact")) or "")}</td>'
+            f'<td class="muted"{title_attr}>{_esc(hint)}</td>'
+            f'<td class="muted">{_esc(evid or _NEUTRAL)}</td>'
+            "</tr>")
+    return (f'<table><caption>Problem items ({len(findings)})</caption>'
+            '<tr><th>Severity</th><th>Confidence</th><th>Type</th><th>Issue</th>'
+            '<th>Business impact</th><th>Repro hint</th><th>Evidence</th></tr>'
+            + "".join(rows) + "</table>")
 
 
 def _client_work_brief(domain: str, findings: list) -> str:
