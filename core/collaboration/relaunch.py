@@ -61,11 +61,13 @@ _PROTOCOL = (
     "You are a session-independent writer; a successful process exit is NOT completion. Follow the "
     "canonical Direct-Driver protocol on collaboration thread '{tid}' (thread_id == this packet id): "
     "submit a PROPOSAL of your plan, wait for the GPT reviewer's response and ACK it, implement with "
-    "tests and real evidence, then submit an exact-SHA CHECKPOINT. Submit every protocol message with "
-    "the worker CLI 'tools/collab_worker_submit.py' (--kind PROPOSAL / CHECKPOINT / ACKNOWLEDGEMENT, "
-    "--thread '{tid}', --output-root <controller outputs>, --branch <this worktree branch>); the exact "
-    "command is given in the next action above. This packet is complete ONLY when the reviewer records a "
-    "GO decision on that exact head SHA.")
+    "tests and real evidence, then submit an exact-SHA CHECKPOINT. Drive it with the pull-first worker "
+    "CLI 'tools/collab_worker.py' (subcommands proposal / wait --in-reply-to <key> / ack --decision-key "
+    "<key> / checkpoint / status), always with --thread '{tid}' --output-root <controller outputs> "
+    "--branch <this worktree branch>; the exact commands are in the next action above. proposal and "
+    "checkpoint are restart-idempotent and 'wait' blocks free on the local store — never re-submit a "
+    "request you already sent. This packet is complete ONLY when the reviewer records a GO decision on "
+    "that exact head SHA.")
 
 
 def build_default_order(packet: Dict[str, Any], *, max_budget_usd: float = 2.0,
