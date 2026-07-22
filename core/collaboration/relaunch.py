@@ -58,11 +58,14 @@ def _owner_token() -> str:
 # P0-1: the writer must be told that a passing process run is NOT completion — the canonical
 # Direct-Driver protocol on the packet's bound thread is, and it completes only on an exact-SHA GO.
 _PROTOCOL = (
-    "Follow the canonical Direct-Driver protocol on collaboration thread '{tid}' (thread_id == this "
-    "packet id): submit a PROPOSAL for your plan, wait for the GPT reviewer's response and ACK it, then "
-    "implement with tests and real evidence and submit an exact-SHA CHECKPOINT. This packet is complete "
-    "ONLY when the reviewer records a GO decision on that exact head SHA — a successful process exit is "
-    "not completion.")
+    "You are a session-independent writer; a successful process exit is NOT completion. Follow the "
+    "canonical Direct-Driver protocol on collaboration thread '{tid}' (thread_id == this packet id): "
+    "submit a PROPOSAL of your plan, wait for the GPT reviewer's response and ACK it, implement with "
+    "tests and real evidence, then submit an exact-SHA CHECKPOINT. Submit every protocol message with "
+    "the worker CLI 'tools/collab_worker_submit.py' (--kind PROPOSAL / CHECKPOINT / ACKNOWLEDGEMENT, "
+    "--thread '{tid}', --output-root <controller outputs>, --branch <this worktree branch>); the exact "
+    "command is given in the next action above. This packet is complete ONLY when the reviewer records a "
+    "GO decision on that exact head SHA.")
 
 
 def build_default_order(packet: Dict[str, Any], *, max_budget_usd: float = 2.0,
