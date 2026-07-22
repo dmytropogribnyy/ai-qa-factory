@@ -52,6 +52,25 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _project_target_finding(f: Dict[str, Any]) -> Dict[str, Any]:
+    """Whitelist one finding for the /target card read-model.
+
+    Carries ``confidence`` and ``reproduction_steps`` alongside the existing public fields so the
+    page can render a confidence label and a one-line repro hint. Values are passed through as-is
+    (never invented); the page layer is responsible for HTML-escaping, newline-collapsing, and the
+    neutral placeholder for absent fields. This never widens beyond these sanitized public fields."""
+    return {
+        "severity": f.get("severity"),
+        "category": f.get("category"),
+        "title": f.get("title"),
+        "business_impact": f.get("business_impact"),
+        "url": f.get("url"),
+        "evidence_refs": f.get("evidence_refs", []),
+        "confidence": f.get("confidence"),
+        "reproduction_steps": f.get("reproduction_steps", []),
+    }
+
+
 class CampaignService:
     def __init__(self, output_dir: str = "outputs") -> None:
         self.output_dir = output_dir
@@ -326,10 +345,7 @@ class CampaignService:
              for f in findings], access_available=False)
         return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
                 "scout_run": scout_run, "media": media, "network": network,
-                "findings": [{"severity": f.get("severity"), "category": f.get("category"),
-                              "title": f.get("title"), "business_impact": f.get("business_impact"),
-                              "url": f.get("url"), "evidence_refs": f.get("evidence_refs", [])}
-                             for f in findings],
+                "findings": [_project_target_finding(f) for f in findings],
                 "contacts": contacts, "draft": draft, "fixability": fixability}
 
     def polish_draft(self, domain: str) -> Dict[str, Any]:
