@@ -1640,11 +1640,14 @@ function startCampaign(){{
             camps = [p for p in ProjectIndex(service.output_dir).list_projects()
                      if p.type == "scout_campaign"]
             rows = "".join(
-                f'<tr><td>{_esc(c.title)}</td><td>{_badge(c.lifecycle_state)}</td>'
+                f'<tr><td><a href="/scout/progress?id={_esc(c.project_id)}">{_esc(c.title)}</a></td>'
+                f'<td>{_badge(c.lifecycle_state)}</td>'
                 f'<td>{c.progress}%</td><td>{c.evidence_count}</td>'
-                f'<td class="muted">{_esc(c.operator_next_action)}</td></tr>' for c in camps)
+                f'<td class="muted">{_esc(c.operator_next_action)}</td>'
+                f'<td><a class="chip" href="/scout/progress?id={_esc(c.project_id)}">Open</a></td></tr>'
+                for c in camps)
             table = (f'<table><caption>Scout campaigns</caption><tr><th>Campaign</th><th>Status</th>'
-                     f'<th>Progress</th><th>Evidence</th><th>Next action</th></tr>{rows}</table>'
+                     f'<th>Progress</th><th>Evidence</th><th>Next action</th><th>Open</th></tr>{rows}</table>'
                      if rows else '<div class="card empty muted">No campaigns yet. '
                      '<a href="/scout">Open Scout to start one</a>.</div>')
             body = (f'<h1>Scout campaigns</h1><div class="row">'
@@ -1766,7 +1769,7 @@ function startCampaign(){{
                 '<pre id="pfout" class="scrollx muted"></pre>'
                 '<label><input type="checkbox" id="approve"> I approve one bounded LIVE discovery '
                 'run (real external sites, no submissions/purchases/messages)</label>'
-                '<div class="row"><button id="run" class="chip">Run campaign</button></div>'
+                '<div class="row"><button id="run" class="chip primary">Run campaign</button></div>'
                 '<div id="msg" class="muted"></div></div>')
             script = (
                 "const CSRF=" + json.dumps(csrf_token) + ";\n"
@@ -1813,9 +1816,9 @@ function startCampaign(){{
                     '<a class="chip" href="/scout/new">New campaign</a>'
                     '<a class="chip" href="/scout/history">History</a></div>'
                     '<div class="card"><div id="p" class="muted">loading…</div>'
-                    '<div class="row"><button class="chip" onclick="ctl(\'pause\')">Pause</button>'
-                    '<button class="chip" onclick="ctl(\'resume\')">Resume</button>'
-                    '<button class="chip" onclick="ctl(\'stop\')">Stop &amp; Save</button>'
+                    '<div class="row"><button id="bp" class="chip" onclick="ctl(\'pause\')">Pause</button>'
+                    '<button id="br" class="chip" onclick="ctl(\'resume\')">Resume</button>'
+                    '<button id="bs" class="chip danger" onclick="ctl(\'stop\')">Stop &amp; Save</button>'
                     '<button class="chip" onclick="exp()">Export evidence</button></div>'
                     '<div id="msg" class="muted"></div></div>')
             script = (
@@ -1828,7 +1831,12 @@ function startCampaign(){{
                 "function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
                 "function load(){fetch('/api/scout/progress?id='+encodeURIComponent(CID)).then(r=>r.json())"
                 ".then(function(j){var c=j.counters||{};var d=(j.decisions||[]);"
-                "var rows=d.map(function(x){return '<tr><td>'+esc(x.domain)+'</td><td>'+esc(x.priority)+"
+                # After a terminal state, Pause/Resume/Stop no longer apply -> disable them (honest UI).
+                "var term=['completed','stopped_with_checkpoint','failed','cancelled'].indexOf(String(j.run_state))>=0;"
+                "['bp','br','bs'].forEach(function(id){var b=document.getElementById(id);if(b)b.disabled=term;});"
+                # Each analyzed domain links to its target detail (findings/evidence); same tab.
+                "var rows=d.map(function(x){var enc=encodeURIComponent(x.domain||'');"
+                "return '<tr><td><a href=\"/scout/target?domain='+enc+'\">'+esc(x.domain)+'</a></td><td>'+esc(x.priority)+"
                 "'</td><td>'+esc((x.allocation||{}).depth)+'</td><td>'+esc((x.brain||{}).business_model||'')+"
                 "'</td></tr>';}).join('');"
                 "document.getElementById('p').innerHTML='<div class=row><span class=chip>State: '+esc(j.run_state)+"
@@ -2696,7 +2704,20 @@ tr:last-child td{border-bottom:none}
 .btn.danger{border-color:var(--error);color:var(--error)}
 .btn:disabled{opacity:.55;cursor:not-allowed}
 .btn:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
-.chip{display:inline-flex;gap:6px;align-items:center;padding:2px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;font-size:12px}
+.chip{display:inline-flex;gap:6px;align-items:center;padding:2px 10px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:999px;font-size:12px}
+/* Accessibility hotfix: chip-styled BUTTONS did not inherit a text colour (buttons don't inherit
+   `color`), so action buttons showed dark default text on the dark surface. Give every chip button a
+   contrasting text colour + clear hover/focus/active/disabled + semantic primary/danger variants.
+   Palette unchanged (uses existing tokens; text-on-surface and ink-on-accent are WCAG-AA). */
+button.chip,a.chip{color:var(--text);background:var(--surface-2)}
+button.chip:hover,a.chip:hover{background:var(--surface);border-color:var(--muted);text-decoration:none}
+button.chip:active{transform:translateY(1px)}
+button.chip:focus-visible,a.chip:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+button.chip:disabled,button.chip[disabled],a.chip[aria-disabled="true"]{opacity:.5;cursor:not-allowed;background:var(--bg);color:var(--muted);border-style:dashed;pointer-events:none}
+.chip.primary,button.chip.primary{background:var(--primary);color:var(--primary-ink);border-color:var(--primary);font-weight:600}
+button.chip.primary:hover{background:var(--primary);filter:brightness(1.08)}
+.chip.danger,button.chip.danger{background:var(--surface-2);color:var(--error);border-color:var(--error)}
+button.chip.danger:hover{background:var(--error);color:var(--primary-ink)}
 .empty{padding:2rem;text-align:center;color:var(--muted)}
 input,select,textarea{padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--input);color:var(--text);font-family:inherit;max-width:100%}
 textarea{width:100%;resize:vertical}

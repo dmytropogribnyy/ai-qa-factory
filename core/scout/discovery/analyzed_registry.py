@@ -187,7 +187,7 @@ class AnalyzedSiteRegistry:
     # -- record outcomes ---------------------------------------------------------------------------
     def record_analysis(self, url_or_domain: str, *, status: str = ANALYZED, evidence_ref: str = "",
                         fingerprint: str = "", rescan_mode: str = RESCAN_MANUAL,
-                        rescan_interval_s: float = 0.0) -> SiteEntry:
+                        rescan_interval_s: float = 0.0, campaign_id: str = "") -> SiteEntry:
         domain = canonical_domain(url_or_domain)
         e = self._entries.get(domain) or SiteEntry(domain=domain, first_seen=_now_iso())
         now = _now_iso()
@@ -195,6 +195,9 @@ class AnalyzedSiteRegistry:
         e.first_analysis_at = e.first_analysis_at or now
         e.last_analysis_at = now
         e.evidence_ref = evidence_ref or e.evidence_ref
+        # Idempotent campaign attribution: a re-analysis by another campaign appends (never duplicates).
+        if campaign_id and campaign_id not in e.campaign_ids:
+            e.campaign_ids.append(campaign_id)
         if fingerprint:
             e.fingerprint = fingerprint
         e.rescan_mode, e.rescan_interval_s = rescan_mode, rescan_interval_s
