@@ -1,8 +1,18 @@
 """Issue #17 — session-independent writer relaunch cycle."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from core.collaboration.product_packet import ProductPacketStore
-from core.collaboration.relaunch import relaunch_once, summary
+from core.collaboration.relaunch import (
+    BACKOFF_BASE_S,
+    RELAUNCH_MAX_ATTEMPTS,
+    build_default_order,
+    relaunch_once,
+    summary,
+)
+
+_T0 = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
 
 
 class _Worker:
@@ -29,12 +39,14 @@ def _pkt(store):
                         next_action="reuse core/scout/priority.py to rank + show confidence")
 
 
-def test_relaunch_launches_bounded_writer_and_marks_done(tmp_path):
+def test_relaunch_launches_bounded_writer_and_completes_only_on_go(tmp_path):
     store = ProductPacketStore(str(tmp_path))
     p = _pkt(store)
     worker = _Worker(ok=True)
-    out = relaunch_once(store, worker, workspace=str(tmp_path))
-    assert out["status"] == "launched" and out["ok"] is True
+    # P0-1: completion is gated on persisted GO evidence, not the worker return code.
+    out = relaunch_once(store, worker, workspace=str(tmp_path), now=_T0,
+                        completion_check=lambda pkt: "decided_go")
+    assert out["status"] == "completed"
     assert worker.calls == 1
     assert store.get(p["packet_id"])["status"] == "done"
     # The launched WorkOrder reuses the bounded adapter with writer tools + a real budget bound.
@@ -69,19 +81,101 @@ def test_restart_does_not_relaunch_a_completed_packet(tmp_path):
     store = ProductPacketStore(str(tmp_path))
     _pkt(store)
     worker = _Worker(ok=True)
-    relaunch_once(store, worker, workspace=str(tmp_path))       # done
-    second = relaunch_once(store, worker, workspace=str(tmp_path))  # simulated restart cycle
+    go = lambda pkt: "decided_go"  # noqa: E731 - completed via persisted GO evidence
+    relaunch_once(store, worker, workspace=str(tmp_path), now=_T0, completion_check=go)      # done
+    second = relaunch_once(store, worker, workspace=str(tmp_path), now=_T0 + timedelta(hours=2),
+                           completion_check=go)                # simulated restart cycle
     assert second["status"] == "idle"                          # not relaunched
     assert worker.calls == 1                                    # no duplicate writer
+
+
+def test_ok_run_does_not_complete_a_packet_without_go_evidence(tmp_path):
+    # P0-1: a fresh writer that merely exits ok has NOT completed the product packet.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    out = relaunch_once(store, _Worker(ok=True), workspace=str(tmp_path), now=_T0,
+                        completion_check=lambda pkt: "new")
+    assert out["ok"] is True and out.get("complete") is False
+    rec = store.get(p["packet_id"])
+    assert rec["status"] != "done"                             # not a completed product packet
+    assert rec["phase"] == "new"
+
+
+def test_ok_run_completes_only_on_persisted_exact_sha_go(tmp_path):
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    out = relaunch_once(store, _Worker(ok=True), workspace=str(tmp_path), now=_T0,
+                        completion_check=lambda pkt: "decided_go")
+    assert out["status"] == "completed"
+    rec = store.get(p["packet_id"])
+    assert rec["status"] == "done"
+    assert rec["phase"] == "decided_go"
+
+
+def test_incomplete_ok_run_backs_off_and_caps_to_needs_owner(tmp_path):
+    # P0-1 x P0-3: a writer that keeps exiting ok but never reaches GO must neither spin nor falsely
+    # complete; it backs off and, at the total launch cap, becomes a durable owner-visible stop.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    t = _T0
+    for _ in range(RELAUNCH_MAX_ATTEMPTS):
+        relaunch_once(store, _Worker(ok=True), workspace=str(tmp_path), now=t,
+                      completion_check=lambda pkt: "checkpointed")
+        t = t + timedelta(hours=2)
+    rec = store.get(p["packet_id"])
+    assert rec["status"] == "needs_owner"
+    assert rec["phase"] == "checkpointed"
 
 
 def test_retry_resumes_the_same_writer_session(tmp_path):
     store = ProductPacketStore(str(tmp_path))
     _pkt(store)
-    relaunch_once(store, _Worker(ok=False, session_id="sess-x"), workspace=str(tmp_path))  # attempt 1
+    relaunch_once(store, _Worker(ok=False, session_id="sess-x"), workspace=str(tmp_path),
+                  now=_T0)                                      # attempt 1 (not ok -> backoff)
     worker2 = _Worker(ok=True, session_id="sess-x")
-    relaunch_once(store, worker2, workspace=str(tmp_path))      # attempt 2 -> resume
+    relaunch_once(store, worker2, workspace=str(tmp_path),
+                  now=_T0 + timedelta(hours=2))                 # past backoff -> attempt 2 resumes
     assert worker2.last_resume == "sess-x"                      # resumed the same writer session
+
+
+def test_not_ok_sets_durable_backoff_and_free_no_op_until_retry_time(tmp_path):
+    # P0-3: a transient/quota failure must not let the supervisor relaunch Claude every interval.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    out = relaunch_once(store, _Worker(ok=False, reason="usage limit reached"),
+                        workspace=str(tmp_path), now=_T0)
+    assert out["ok"] is False and out["retry"] is True
+    rec = store.get(p["packet_id"])
+    assert rec["status"] == "pending"
+    assert rec["next_retry_at"] == (_T0 + timedelta(seconds=BACKOFF_BASE_S)).isoformat(timespec="seconds")
+    # A cycle before the retry time launches nothing (free no-op), and truthfully reports backoff.
+    worker2 = _Worker(ok=True)
+    blocked = relaunch_once(store, worker2, workspace=str(tmp_path), now=_T0 + timedelta(seconds=5))
+    assert blocked["status"] == "backoff"
+    assert worker2.calls == 0
+    # After the retry time it is eligible again.
+    worker3 = _Worker(ok=True)
+    relaunch_once(store, worker3, workspace=str(tmp_path), now=_T0 + timedelta(hours=2))
+    assert worker3.calls == 1
+
+
+def test_exhausted_attempts_escalate_to_needs_owner(tmp_path):
+    # P0-3: a total launch cap turns an endless quota loop into a durable, owner-visible stop.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    t = _T0
+    for _ in range(RELAUNCH_MAX_ATTEMPTS):
+        relaunch_once(store, _Worker(ok=False, reason="usage limit reached"),
+                      workspace=str(tmp_path), now=t)
+        t = t + timedelta(hours=4)                             # jump past any backoff between attempts
+    rec = store.get(p["packet_id"])
+    assert rec["status"] == "needs_owner"                      # durable BLOCKED/NEEDS_OWNER, not pending
+    assert rec["attempts"] == RELAUNCH_MAX_ATTEMPTS
+    # Once escalated it is no longer pending, so no further Claude launch can happen.
+    worker = _Worker(ok=False)
+    after = relaunch_once(store, worker, workspace=str(tmp_path), now=t)
+    assert after["status"] == "idle"
+    assert worker.calls == 0
 
 
 def test_single_writer_no_second_launch_while_one_in_progress(tmp_path):
@@ -102,3 +196,24 @@ def test_summary_reports_status_counts(tmp_path):
     s = summary(store)
     assert s["total"] == 1
     assert s["next_pending"] is not None
+
+
+def test_summary_surfaces_needs_owner_packets(tmp_path):
+    # /collab must truthfully surface a capped/escalated packet (P0-3), not silently hide it.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    store.update(p["packet_id"], status="needs_owner", last_result="exhausted 8 attempts")
+    s = summary(store)
+    assert s["by_status"].get("needs_owner") == 1
+    assert any(x.get("packet_id") == p["packet_id"] for x in s["needs_owner"])
+
+
+def test_default_order_carries_the_canonical_protocol_and_thread(tmp_path):
+    # P0-1: the writer's WorkOrder must state the canonical protocol + completion boundary, so a fresh
+    # session knows a passing run is not completion — an exact-SHA GO on the bound thread is.
+    store = ProductPacketStore(str(tmp_path))
+    p = _pkt(store)
+    order = build_default_order(store.get(p["packet_id"]))
+    blob = (order.objective + " " + order.acceptance).upper()
+    assert "PROPOSAL" in blob and "CHECKPOINT" in blob and "GO" in blob
+    assert p["packet_id"] in (order.objective + order.acceptance)   # thread_id == packet id

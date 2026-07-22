@@ -1,7 +1,11 @@
 """Issue #17 — persisted product packets for the session-independent writer loop."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from core.collaboration.product_packet import ProductPacketError, ProductPacketStore
+
+_T0 = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def test_create_and_next_pending(tmp_path):
@@ -41,6 +45,40 @@ def test_release_back_to_pending_allows_reclaim(tmp_path):
     reclaimed = store.claim(p["packet_id"])                # can be claimed again
     assert reclaimed is not None
     assert reclaimed["attempts"] == 2
+
+
+def test_claim_records_owner_and_lease(tmp_path):
+    # P0-2: a claim must be attributable and time-bounded, not an anonymous forever-hold.
+    store = ProductPacketStore(str(tmp_path))
+    p = store.create(objective="x")
+    claimed = store.claim(p["packet_id"], owner="pid-123@host", lease_seconds=600, now=_T0)
+    assert claimed["claim_owner"] == "pid-123@host"
+    assert claimed["claimed_at"] == _T0.isoformat(timespec="seconds")
+    assert claimed["lease_expires_at"] == (_T0 + timedelta(seconds=600)).isoformat(timespec="seconds")
+
+
+def test_live_claim_is_not_recovered_before_lease_expiry(tmp_path):
+    # P0-2: a genuinely-running writer (lease still valid) must keep single-writer behaviour.
+    store = ProductPacketStore(str(tmp_path))
+    p = store.create(objective="x")
+    store.claim(p["packet_id"], owner="w1", lease_seconds=600, now=_T0)
+    recovered = store.recover_orphaned_claims(now=_T0 + timedelta(seconds=300))
+    assert recovered == []
+    assert store.get(p["packet_id"])["status"] == "in_progress"
+
+
+def test_orphaned_claim_is_recovered_after_lease_expiry(tmp_path):
+    # P0-2: a writer that died after claim but before update must not stick the queue forever.
+    store = ProductPacketStore(str(tmp_path))
+    p = store.create(objective="x")
+    store.claim(p["packet_id"], owner="w1", lease_seconds=600, now=_T0)
+    recovered = store.recover_orphaned_claims(now=_T0 + timedelta(seconds=601))
+    assert [r["packet_id"] for r in recovered] == [p["packet_id"]]
+    rec = store.get(p["packet_id"])
+    assert rec["status"] == "pending"                          # resumable, not stuck in_progress
+    # The stale claim marker was cleared, so a fresh cycle can re-claim it (no duplicate launch risk).
+    reclaimed = store.claim(p["packet_id"], owner="w2", now=_T0 + timedelta(seconds=602))
+    assert reclaimed is not None and reclaimed["attempts"] == 2
 
 
 def test_invalid_status_and_id_are_rejected(tmp_path):

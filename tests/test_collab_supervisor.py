@@ -6,16 +6,21 @@ Scheduled Task. The Windows Scheduled Task + live recovery are proven operationa
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import time
 
+from core.collaboration.product_packet import ProductPacketStore
 from tools.collab_supervisor import (
     SupervisorConfig,
     SupervisorDeps,
     _run_with_timeout,
     supervise_once,
+    writer_gate,
 )
+
+_WT0 = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def test_hung_driver_tick_times_out_without_blocking_supervision():
@@ -106,6 +111,39 @@ def test_started_dashboard_status_is_not_mislabelled_as_currently_up(tmp_path):
     assert status["dashboard_up_at_check"] is False       # honest: down at check
     assert status["dashboard_action"] == "started"        # and we started it
     assert "dashboard_up" not in status                   # no misleading "current" up field
+
+
+def test_writer_gate_recovers_orphaned_claim_and_becomes_eligible(tmp_path):
+    # P0-2 at the supervisor level: a dead writer's in_progress claim must not report writer_active
+    # forever. writer_gate recovers the expired lease each cycle and re-eligibles the packet.
+    store = ProductPacketStore(str(tmp_path))
+    p = store.create(objective="rank scout findings")
+    store.claim(p["packet_id"], owner="dead-writer", lease_seconds=600, now=_WT0)
+    gate = writer_gate(store, now=_WT0 + timedelta(seconds=601))
+    assert gate == "eligible"
+    assert store.get(p["packet_id"])["status"] == "pending"
+
+
+def test_writer_gate_reports_writer_active_while_lease_valid(tmp_path):
+    store = ProductPacketStore(str(tmp_path))
+    p = store.create(objective="x")
+    store.claim(p["packet_id"], owner="live-writer", lease_seconds=600, now=_WT0)
+    assert writer_gate(store, now=_WT0 + timedelta(seconds=60)) == "writer_active"
+
+
+def test_writer_gate_reports_backoff_then_eligible(tmp_path):
+    # P0-3 at the supervisor level: a packet waiting out its backoff is a free no-op, not a launch.
+    store = ProductPacketStore(str(tmp_path))
+    p = store.create(objective="x")
+    store.update(p["packet_id"],
+                 next_retry_at=(_WT0 + timedelta(seconds=300)).isoformat(timespec="seconds"))
+    assert writer_gate(store, now=_WT0) == "backoff"
+    assert writer_gate(store, now=_WT0 + timedelta(seconds=301)) == "eligible"
+
+
+def test_writer_gate_no_work_when_nothing_pending(tmp_path):
+    store = ProductPacketStore(str(tmp_path))
+    assert writer_gate(store, now=_WT0) == "no_work"
 
 
 def test_owner_action_from_driver_is_surfaced(tmp_path):

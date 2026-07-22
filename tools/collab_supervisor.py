@@ -235,15 +235,33 @@ def _relaunch_running() -> bool:
     return bool((out.stdout or "").strip())
 
 
-def _maybe_launch_writer(output_root: str, workspace: str) -> str:
-    """Session-independent WRITER: if a packet is pending and no writer/relaunch is active, spawn the
-    relaunch runner DETACHED (non-blocking, single-writer). A fresh claude process does the next step."""
-    from core.collaboration.product_packet import ProductPacketStore
-    packets = ProductPacketStore(output_root).list()
+def writer_gate(store: Any, *, now: Any = None) -> str:
+    """Pure writer-launch decision, testable without spawning a process (Issue #17 P0-2/P0-3).
+
+    Recovers any orphaned claim FIRST — a writer that died mid-run left an in_progress claim that would
+    otherwise report ``writer_active`` forever — then classifies the queue: ``writer_active`` (a live
+    lease is held), ``eligible`` (a pending packet is ready to launch now), ``backoff`` (pending but
+    waiting out its ``next_retry_at``), or ``no_work``.
+    """
+    store.recover_orphaned_claims(now=now)
+    packets = store.list()
     if any(p.get("status") == "in_progress" for p in packets):
         return "writer_active"
-    if not any(p.get("status") == "pending" for p in packets):
-        return "no_work"
+    if store.next_pending(now=now) is not None:
+        return "eligible"
+    if any(p.get("status") == "pending" for p in packets):
+        return "backoff"
+    return "no_work"
+
+
+def _maybe_launch_writer(output_root: str, workspace: str) -> str:
+    """Session-independent WRITER: if a packet is eligible and no writer/relaunch is active, spawn the
+    relaunch runner DETACHED (non-blocking, single-writer). A fresh claude process does the next step.
+    Orphaned claims are recovered and backoffs respected via ``writer_gate`` (never a per-interval spam)."""
+    from core.collaboration.product_packet import ProductPacketStore
+    gate = writer_gate(ProductPacketStore(output_root))
+    if gate != "eligible":
+        return gate                                     # writer_active / backoff / no_work
     if _relaunch_running():
         return "relaunch_active"
     flags = 0

@@ -2829,9 +2829,20 @@ def _collab_body(snap: dict) -> str:
                      if not sup.get("fresh") else "supervisor alive")
         pk = sup.get("packets", {}) or {}
         active = pk.get("active") or pk.get("next_pending") or {}
-        obj = _esc((active.get("objective") or "—")[:120]) if isinstance(active, dict) else "—"
-        pk_line = (f'<p class="muted">product work: {obj} '
-                   f'&middot; {_esc(str(pk.get("by_status", {})))}</p>' if pk else "")
+        active = active if isinstance(active, dict) else {}
+        pk_line = ""
+        if pk:
+            obj = _esc((active.get("objective") or "—")[:120])
+            phase = _esc(str(active.get("phase", "—")))
+            attempts = _esc(str(active.get("attempts", 0)))
+            retry = active.get("next_retry_at") or ""
+            backoff = f' &middot; retry after {_esc(_fmt_ts(retry))}' if retry else ""
+            need = pk.get("needs_owner") or []
+            need_line = ('<p class="muted" style="color:var(--attention);font-weight:600">'
+                         f'&#9888; {len(need)} product packet(s) need owner</p>' if need else "")
+            pk_line = (f'<p class="muted">product work: {obj} &middot; phase <code>{phase}</code> '
+                       f'&middot; attempts {attempts}{backoff} &middot; '
+                       f'{_esc(str(pk.get("by_status", {})))}</p>{need_line}')
         driver_card += (
             '<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'
             f'<p class="muted">{sup_state} &middot; last check {_esc(_fmt_ts(sup.get("checked_at","")))} '
