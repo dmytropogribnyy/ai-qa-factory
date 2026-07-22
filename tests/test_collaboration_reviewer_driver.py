@@ -48,6 +48,49 @@ def _checkpoint(store, thread="t-1"):
                                       pr_number=14, requested_next_action="GO/NO-GO"))
 
 
+def _proposal(store, thread="t-1"):
+    return store.append(make_envelope(kind="PROPOSAL", thread_id=thread, actor="claude-worker",
+                                      body="plan", head_sha=_SHA, branch="feat/x"))
+
+
+def test_proposal_is_reviewed_even_when_the_branch_head_moved(tmp_path):
+    # Issue #17: an isolated writer commits AFTER proposing, so the branch head moves past the proposal.
+    # A PROPOSAL is advisory (it yields a RECOMMENDATION, not a code-exact GO) and must still be reviewed
+    # at its submitted head — only a CHECKPOINT is stale-rejected on a moved head.
+    store, budget, client, driver = _driver(
+        tmp_path, lambda m: {"decision_type": "RECOMMENDATION", "reviewed_sha": m["head_sha"],
+                             "message": "plan looks good"}, head=_MOVED)
+    _proposal(store)
+    result = driver.process_once()
+    assert result["status"] == "reviewed" and result["decision_type"] == "RECOMMENDATION"
+
+
+def test_checkpoint_staleness_resolves_the_request_branch_head(tmp_path):
+    # The driver must resolve the head of the REQUEST'S branch (worktrees share one .git), never a single
+    # global controller HEAD — otherwise an isolated writer on another branch is always "stale".
+    _write_criteria(tmp_path)
+    store = CollaborationStore(str(tmp_path))
+    budget = BudgetLedger(str(tmp_path), policy=BudgetPolicy(
+        per_thread_calls=5, per_thread_usd=5.0, daily_calls=20, daily_usd=20.0, max_retries=2,
+        backoff_base_seconds=0.0), clock=lambda: "2026-07-21T20:00:00+00:00")
+    seen = {}
+
+    def branch_head(branch=""):
+        seen["branch"] = branch
+        return _SHA if branch == "feat/x" else _MOVED       # only the request's branch is at _SHA
+
+    driver = ReviewerDriver(
+        store, budget,
+        FixtureReviewerClient(lambda m: {"decision_type": "DECISION", "verdict": "GO",
+                                         "reviewed_sha": m["head_sha"], "message": "ok"}),
+        repo_root=str(tmp_path), head_resolver=branch_head, git_runner=_complete_git,
+        manifest_provider=_trusted, clock=lambda: "2026-07-21T20:00:00+00:00", sleep=lambda _s: None)
+    _checkpoint(store)                                       # branch feat/x at _SHA
+    result = driver.process_once()
+    assert seen["branch"] == "feat/x"                       # resolved the request's branch, not a global HEAD
+    assert result["status"] == "reviewed"                   # _SHA == branch head -> not stale -> reviewed
+
+
 def test_process_once_reviews_open_checkpoint_and_posts_a_go(tmp_path):
     store, budget, client, driver = _driver(
         tmp_path, lambda m: {"decision_type": "DECISION", "verdict": "GO",

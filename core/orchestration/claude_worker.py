@@ -265,13 +265,26 @@ class ClaudeCodeWorker:
         self._write_session(ws, order, result, version)
         return result
 
+    def _subprocess_env(self) -> Dict[str, str]:
+        """Environment for the ``claude`` subprocess. By DEFAULT strip ``ANTHROPIC_API_KEY`` /
+        ``ANTHROPIC_AUTH_TOKEN`` so an unattended autonomous writer uses the interactive Claude
+        SUBSCRIPTION (OAuth Pro/Max) and can never silently burn Anthropic API credits — even when the
+        key is set at user/machine scope and inherited. Set ``AIQA_WORKER_USE_API=1`` to deliberately
+        bill the API instead."""
+        env = dict(self._env)
+        if str(env.get("AIQA_WORKER_USE_API", "")).strip().lower() not in ("1", "true", "yes", "on"):
+            env.pop("ANTHROPIC_API_KEY", None)
+            env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        return env
+
     def _run_controlled(self, cmd, ws, order, cancel):
         """Popen-based execution with a hard wall-clock timeout, genuine cancellation, and a safe
         process-tree kill on both Windows and POSIX. No shell; output is drained without deadlock and
         bounded. Returns (returncode, stdout, stderr, stop_reason)."""
         import time
         popen_kwargs: Dict[str, Any] = dict(
-            cwd=str(ws), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            cwd=str(ws), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env=self._subprocess_env())
         if os.name == "nt":
             popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         else:

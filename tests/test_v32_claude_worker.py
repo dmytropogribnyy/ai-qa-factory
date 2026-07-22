@@ -91,6 +91,45 @@ def test_worker_run_success_records_real_change(tmp_path):
     assert (ws / "evidence" / "worker" / "stdout.txt").exists()
 
 
+def test_worker_strips_anthropic_api_key_so_it_uses_the_subscription(tmp_path):
+    # An unattended autonomous writer must NOT silently burn Anthropic API credits: the API key is
+    # stripped from the subprocess env so `claude` falls back to the interactive OAuth subscription.
+    ws = tmp_path / "ws"
+    seen = {}
+
+    def _popen(argv, **kw):
+        seen["env"] = kw.get("env")
+        return _FakePopen(argv, edit=("x.py", "y = 1\n"), **kw)
+
+    def _run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="2.1.198 (Claude Code)", stderr="")
+
+    ClaudeCodeWorker(which=lambda n: "/usr/bin/claude", run=_run, popen=_popen,
+                     env={"ANTHROPIC_API_KEY": "sk-ant-secret", "ANTHROPIC_AUTH_TOKEN": "tok",
+                          "PATH": "/x"}).run(_ORDER, str(ws))
+    assert seen["env"] is not None
+    assert "ANTHROPIC_API_KEY" not in seen["env"]
+    assert "ANTHROPIC_AUTH_TOKEN" not in seen["env"]
+    assert seen["env"].get("PATH") == "/x"                 # unrelated env is preserved
+
+
+def test_worker_keeps_api_key_only_when_explicitly_opted_in(tmp_path):
+    ws = tmp_path / "ws"
+    seen = {}
+
+    def _popen(argv, **kw):
+        seen["env"] = kw.get("env")
+        return _FakePopen(argv, edit=("x.py", "y = 1\n"), **kw)
+
+    def _run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="2.1.198 (Claude Code)", stderr="")
+
+    ClaudeCodeWorker(which=lambda n: "/usr/bin/claude", run=_run, popen=_popen,
+                     env={"ANTHROPIC_API_KEY": "sk-ant-secret", "AIQA_WORKER_USE_API": "1"}
+                     ).run(_ORDER, str(ws))
+    assert seen["env"].get("ANTHROPIC_API_KEY") == "sk-ant-secret"
+
+
 def test_worker_hard_timeout_kills_tree(tmp_path):
     ws = tmp_path / "ws"
 

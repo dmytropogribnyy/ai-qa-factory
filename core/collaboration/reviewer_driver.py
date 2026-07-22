@@ -114,6 +114,14 @@ class ReviewerDriver:
                        encoding="utf-8")
         tmp.replace(self._state_path)
 
+    def _resolve_head(self, branch: str) -> str:
+        """Head of the request's branch (isolated worktrees share one .git). Accepts both a branch-aware
+        resolver and a legacy zero-arg one (Issue #17)."""
+        try:
+            return str(self._head_resolver(branch) or "")
+        except TypeError:
+            return str(self._head_resolver() or "")
+
     def health(self) -> Dict[str, Any]:
         daily = self._budget.usage("")                     # thread "" -> daily totals only
         return {"reviewer_id": self._reviewer_id, "stage": self._state.get("stage", "IDLE"),
@@ -140,12 +148,16 @@ class ReviewerDriver:
         thread = request["thread_id"]
         self._save_state(stage="REVIEWING", current_thread=thread, last_error="")
 
-        # Stale head: never fabricate a fresh decision for a moved branch head.
-        current_head = str(self._head_resolver() or "").lower()
-        if current_head and str(request.get("head_sha", "")).lower() != current_head:
-            self._escalate(request, f"checkpoint head {request['head_sha'][:12]} is stale; branch is "
-                                    f"now at {current_head[:12]} — resubmit for the current head")
-            return {"status": "stale"}
+        # Stale head: never fabricate a fresh DECISION for a moved branch head. Only a CHECKPOINT is
+        # code-exact (a GO binds to the reviewed SHA); a QUESTION/PROPOSAL is advisory and is reviewed at
+        # its submitted head. Resolve the REQUEST'S branch head (isolated worktrees share one .git), not a
+        # single global controller HEAD — otherwise a writer on another branch is always "stale" (#17).
+        if request["kind"] == "CHECKPOINT":
+            current_head = str(self._resolve_head(request.get("branch", "")) or "").lower()
+            if current_head and str(request.get("head_sha", "")).lower() != current_head:
+                self._escalate(request, f"checkpoint head {request['head_sha'][:12]} is stale; branch is "
+                                        f"now at {current_head[:12]} — resubmit for the current head")
+                return {"status": "stale"}
 
         # Budget: fail closed BEFORE any spend.
         verdict = self._budget.check(thread)

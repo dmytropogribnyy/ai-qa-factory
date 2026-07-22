@@ -79,8 +79,13 @@ def build_reviewer_driver(output_root: str, repo_root: str = ".", *,
     store = CollaborationStore(output_root)
     budget = BudgetLedger(output_root, policy=policy or BudgetPolicy())
     client = reviewer_client or OpenAIReviewerClient()
+    # Branch-aware head resolver (Issue #17): resolve the head of the REQUEST'S branch (isolated
+    # worktrees share one .git), not a single global controller HEAD — otherwise a writer on another
+    # branch is always "stale". Falls back to the global HEAD when no branch is given.
+    def _head(branch: str = "") -> str:
+        return resolve_branch_head(repo_root, branch) if branch else resolve_git_head(repo_root)
     return ReviewerDriver(store, budget, client, repo_root=repo_root,
-                          head_resolver=lambda: resolve_git_head(repo_root), reviewer_id=reviewer_id,
+                          head_resolver=_head, reviewer_id=reviewer_id,
                           manifest_provider=lambda sha: build_trusted_manifest(output_root, repo_root, sha))
 
 

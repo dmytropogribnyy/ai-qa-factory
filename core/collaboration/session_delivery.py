@@ -11,6 +11,7 @@ persisted marker means a restart re-delivers nothing. If no valid session is bou
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -20,17 +21,30 @@ from typing import Any, Callable, Dict, Optional
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
-def billing_mode() -> Dict[str, str]:
-    """Honestly report how the local Claude delivery is billed (invariant 9): a Claude subscription
-    (Max/Pro allocation) via OAuth, or Anthropic API credits, or unknown. Reads structure only — never
-    a token value."""
+def billing_mode(env: Optional[Dict[str, str]] = None, home: Optional[Path] = None) -> Dict[str, str]:
+    """Honestly report how a local Claude process is billed (invariant 9). CRITICAL: an
+    ``ANTHROPIC_API_KEY`` / ``ANTHROPIC_AUTH_TOKEN`` present in the environment OVERRIDES the OAuth login,
+    so a plain ``claude`` bills Anthropic API credits even when a Pro/Max subscription is logged in —
+    reading the credentials file alone would misreport this. The bounded worker strips that key so its
+    own runs use the subscription; this reports the ambient default and flags the override. Reads
+    structure/presence only — never a token value."""
+    env = env if env is not None else dict(os.environ)
+    home = home if home is not None else Path.home()
+    api_key_in_env = bool(str(env.get("ANTHROPIC_API_KEY") or "").strip()
+                          or str(env.get("ANTHROPIC_AUTH_TOKEN") or "").strip())
     try:
-        data = json.loads((Path.home() / ".claude" / ".credentials.json").read_text(encoding="utf-8"))
+        data = json.loads((home / ".claude" / ".credentials.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {"source": "unknown", "plan": ""}
+        data = {}
     oauth = data.get("claudeAiOauth") or data.get("oauth") or {}
-    if isinstance(oauth, dict) and oauth:
-        plan = str(oauth.get("subscriptionType") or oauth.get("subscription") or "").strip()
+    subscribed = isinstance(oauth, dict) and bool(oauth)
+    plan = (str(oauth.get("subscriptionType") or oauth.get("subscription") or "").strip()
+            if subscribed else "")
+    if api_key_in_env:
+        # A plain claude would bill the API; note whether a subscription is nonetheless available.
+        return {"source": "api_credits", "plan": "env ANTHROPIC_API_KEY overrides OAuth"
+                + (f" (subscription {plan} present)" if subscribed else "")}
+    if subscribed:
         return {"source": "subscription", "plan": plan or "unknown"}
     if any("apikey" in k.lower() or "api_key" in k.lower() for k in data):
         return {"source": "api_credits", "plan": ""}
