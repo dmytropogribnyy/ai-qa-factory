@@ -41,6 +41,17 @@ def test_history_shows_shown_of_total_when_a_filter_hides_rows(tmp_path):
         server.shutdown()
 
 
+def test_history_zero_result_filter_is_not_mistaken_for_empty_history(tmp_path):
+    CampaignService(str(tmp_path))._register_analyzed("c1", ["alpha.com", "beta.com"])
+    server, url = _dash(tmp_path)
+    try:
+        _, body = _get(url + "/scout/history?text=zzz-no-match")   # a filter that hides every row
+        assert "No analyzed sites yet" not in body       # must NOT read as an empty history
+        assert "2 total" in body                          # the true total is still surfaced
+    finally:
+        server.shutdown()
+
+
 def test_history_notes_shows_reason_not_the_internal_evidence_path(tmp_path):
     reg = AnalyzedSiteRegistry(str(tmp_path))
     reg.record_analysis("clean.com", status=ANALYZED, evidence_ref="scout/clean.com/qa")

@@ -1885,11 +1885,15 @@ function startCampaign(){{
                 f'<td class="muted">{_fmt_ts(r.get("last_analysis_at",""))}</td>'
                 f'<td class="muted">{_esc(r.get("reason","")) or "&mdash;"}</td></tr>'
                 for r in rows)
+            # Empty state stays honest too: a filter that hides every row must not read as an empty
+            # history — say "0 shown of T total" whenever the unfiltered history actually has entries.
+            empty_msg = (f'0 shown of {total} total &mdash; no sites match this filter.'
+                         if filtered and total > 0 else 'No analyzed sites yet.')
             table = (f'<table><caption>Analyzed-site history &mdash; {count_label}</caption>'
                      f'<tr><th>Domain</th>'
                      f'<th>Status</th><th>Funnel</th><th>Campaigns</th><th>Analyzed</th>'
                      f'<th>Notes</th></tr>{trs}</table>'
-                     if rows else '<div class="card empty muted">No analyzed sites yet.</div>')
+                     if rows else f'<div class="card empty muted">{empty_msg}</div>')
             body = (f'<h1>Scout history</h1><div class="row">'
                     f'<a class="chip" href="/scout/new">New campaign</a></div>'
                     f'<div class="row" style="margin-bottom:6px">{range_chips}</div>'
@@ -2505,9 +2509,10 @@ function startCampaign(){{
                      f'<th>Required scope</th><th>Setup / Verify</th></tr>{rows}</table>')
             return (f'<div class="card"><h2>Access &amp; Integrations</h2>'
                     f'<p class="muted"><strong>The operator/client items here are opt-in.</strong> '
-                    f"Scout's own discovery + QA pipeline runs on the local Python + Playwright "
-                    f'runtime; the entries below add autonomous execution, email, and client-work '
-                    f'capabilities you enable only per need. Real local readiness (cached; probes '
+                    f"Scout's own discovery + QA runs on the local Python runtime (deep browser "
+                    f'capture + video use Playwright); the entries below add autonomous execution, '
+                    f'email, and client-work capabilities you enable only per need. Real local '
+                    f'readiness (cached; probes '
                     f'never block a request). Secrets are referenced by env-var name only, never '
                     f'shown or persisted. Client-owned items stay Needs Client; Upwork intake is '
                     f'always manual. <a href="/settings?refresh=1">Refresh readiness</a></p>'
