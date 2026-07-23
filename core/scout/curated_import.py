@@ -45,6 +45,8 @@ class ImportRow:
     seed_url: str
     valid: bool
     disposition: str                 # new | already_analyzed | rejected | duplicate | invalid
+    recommended_action: str = ""     # from a "Recommended action" column (e.g. "Scout now" / "Backlog")
+    preselect: bool = False          # whether the UI should pre-check this row (see _preselect)
     metadata: Dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -58,10 +60,12 @@ class ImportResult:
     column: str                      # detected seed-column header
     rows: List[ImportRow]
     counters: Dict[str, int]
+    has_recommended_action: bool = False   # True when the file had a "Recommended action" column
 
     def to_dict(self) -> Dict[str, Any]:
         return {"import_id": self.import_id, "kind": self.kind, "column": self.column,
-                "rows": [r.to_dict() for r in self.rows], "counters": self.counters}
+                "rows": [r.to_dict() for r in self.rows], "counters": self.counters,
+                "has_recommended_action": self.has_recommended_action}
 
 
 def _now_stamp() -> str:
@@ -162,25 +166,31 @@ def parse_curated_list(data: bytes, filename: str, *, registry: Optional[Analyze
         raise CuratedImportError("no rows in file")
     header = grid[0]                                       # per-row col/row bounds enforced in readers
     col = _detect_column(header)
+    norm_hdr = [h.strip().lower() for h in header]
+    rec_idx = norm_hdr.index("recommended action") if "recommended action" in norm_hdr else -1
+    has_rec = rec_idx >= 0
 
     rows: List[ImportRow] = []
     seen: set = set()
     counters = {"total": 0, "valid_unique": 0, "invalid": 0, "dup_in_file": 0,
-                "already_analyzed": 0, "rejected": 0}
+                "already_analyzed": 0, "rejected": 0, "preselected": 0}
     for idx, raw in enumerate(grid[1:], start=2):
         counters["total"] += 1
         original = (raw[col] if col < len(raw) else "").strip()[:_MAX_CELL]
         dom = canonical_domain(original).lower()
+        rec = (str(raw[rec_idx]).strip()[:_MAX_CELL] if 0 <= rec_idx < len(raw) else "")
         meta = {header[j].strip()[:_MAX_CELL]: str(raw[j]).strip()[:_MAX_CELL]
                 for j in range(min(len(header), _MAX_META_COLS)) if j != col and j < len(raw)
                 and header[j].strip()}
         if not _plausible_domain(dom):                    # not a real domain -> invalid, never run
             counters["invalid"] += 1
-            rows.append(ImportRow(idx, original, "", "", False, "invalid", meta))
+            rows.append(ImportRow(idx, original, "", "", False, "invalid",
+                                  recommended_action=rec, preselect=False, metadata=meta))
             continue
         if dom in seen:
             counters["dup_in_file"] += 1
-            rows.append(ImportRow(idx, original, dom, f"https://{dom}", False, "duplicate", meta))
+            rows.append(ImportRow(idx, original, dom, f"https://{dom}", False, "duplicate",
+                                  recommended_action=rec, preselect=False, metadata=meta))
             continue
         seen.add(dom)
         disposition = "new"
@@ -195,7 +205,23 @@ def parse_curated_list(data: bytes, filename: str, *, registry: Optional[Analyze
                 counters["already_analyzed"] += 1
         if disposition == "new":
             counters["valid_unique"] += 1
-        rows.append(ImportRow(idx, original, dom, f"https://{dom}", True, disposition, meta))
+        pre = _preselect(disposition, has_rec, rec)
+        if pre:
+            counters["preselected"] += 1
+        rows.append(ImportRow(idx, original, dom, f"https://{dom}", True, disposition,
+                              recommended_action=rec, preselect=pre, metadata=meta))
 
     import_id = f"imp-{_now_stamp()}-{hashlib.sha1(bytes(data)).hexdigest()[:8]}"
-    return ImportResult(import_id=import_id, kind=kind, column=header[col], rows=rows, counters=counters)
+    return ImportResult(import_id=import_id, kind=kind, column=header[col], rows=rows,
+                        counters=counters, has_recommended_action=has_rec)
+
+
+def _preselect(disposition: str, has_rec: bool, rec: str) -> bool:
+    """Pre-check ONLY a scannable NEW target. When a 'Recommended action' column exists, honour it —
+    only 'Scout now' is preselected; Backlog / Exclude stay unchecked. Otherwise every valid-new row is
+    preselected. already_analyzed / rejected / invalid / duplicate are never preselected."""
+    if disposition != "new":
+        return False
+    if has_rec:
+        return rec.strip().lower() == "scout now"
+    return True
