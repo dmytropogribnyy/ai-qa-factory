@@ -47,8 +47,32 @@ class TavilyAuthError(DiscoveryError):
     """Authentication failed (e.g. HTTP 401) — fail closed, never retried into success."""
 
 
+class TavilyUsageLimit(DiscoveryError):
+    """Account credit exhaustion — HTTP 432 (plan limit) / 433 (PAYGO limit). NOT transient: retrying
+    cannot help, so it is distinct from a 429 rate-limit and from a generic HTTP error. The operator
+    must upgrade the plan / raise the PAYGO limit; existing results are preserved."""
+
+
 class TavilyTransient(Exception):
-    """A transient failure (HTTP 429/5xx/timeout) eligible for bounded retry/backoff."""
+    """A transient failure (HTTP 429/5xx/timeout) eligible for bounded retry/backoff. Distinct from a
+    432/433 credit exhaustion, which is permanent until the operator raises the limit."""
+
+
+def _raise_for_tavily_status(status_code: int) -> None:
+    """Map a Tavily HTTP status to the right exception (testable without the network). 432/433 are
+    honest, actionable credit-exhaustion errors — never lumped into a generic HTTP failure."""
+    if status_code in (401, 403):
+        raise TavilyAuthError("tavily authentication failed")
+    if status_code == 429 or 500 <= status_code < 600:
+        raise TavilyTransient(f"tavily transient http {status_code}")
+    if status_code == 432:
+        raise TavilyUsageLimit("tavily plan credit limit reached (HTTP 432) — upgrade your plan or "
+                               "wait for the monthly reset; existing results are preserved")
+    if status_code == 433:
+        raise TavilyUsageLimit("tavily pay-as-you-go limit reached (HTTP 433) — raise your PAYGO "
+                               "limit to continue; existing results are preserved")
+    if status_code != 200:
+        raise DiscoveryError(f"tavily http {status_code}")
 
 
 @dataclass
@@ -125,8 +149,9 @@ def tavily_country(cell: Dict[str, Any]) -> str:
 
 def real_tavily_transport(config: TavilyRequestConfig) -> Callable[[Dict[str, Any], str], Dict[str, Any]]:
     """Return a transport that POSTs to Tavily with the key in the Authorization header ONLY.
-    Raises TavilyAuthError on 401/403, TavilyTransient on 429/5xx/timeout, DiscoveryError otherwise.
-    The key is never logged; errors carry only the status class."""
+    Raises TavilyAuthError on 401/403, TavilyTransient on 429/5xx/timeout, TavilyUsageLimit on
+    432/433 (credit exhaustion — upgrade/raise PAYGO), DiscoveryError otherwise. The key is never
+    logged; errors carry only the status class."""
     def _transport(body: Dict[str, Any], api_key: str) -> Dict[str, Any]:
         import requests  # local import; the deterministic core/tests never touch the network
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -136,12 +161,7 @@ def real_tavily_transport(config: TavilyRequestConfig) -> Callable[[Dict[str, An
             raise TavilyTransient("tavily read timeout") from exc
         except requests.RequestException as exc:
             raise TavilyTransient(f"tavily transport error: {type(exc).__name__}") from exc
-        if resp.status_code in (401, 403):
-            raise TavilyAuthError("tavily authentication failed")
-        if resp.status_code == 429 or 500 <= resp.status_code < 600:
-            raise TavilyTransient(f"tavily transient http {resp.status_code}")
-        if resp.status_code != 200:
-            raise DiscoveryError(f"tavily http {resp.status_code}")
+        _raise_for_tavily_status(resp.status_code)     # 401/403 auth · 429/5xx transient · 432/433 usage
         try:
             return resp.json()
         except ValueError as exc:

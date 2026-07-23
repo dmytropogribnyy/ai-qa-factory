@@ -230,3 +230,34 @@ def test_key_never_appears_in_readiness_or_outputs():
     blob = json.dumps(p.readiness()) + json.dumps([c.to_dict() for c in cands]) + json.dumps(p.rejections)
     assert _KEY not in blob                                     # the secret is never surfaced
     assert p.readiness()["configured"] is True and is_company_domain("https://acme.com")
+
+
+# -- credit-exhaustion classification (HTTP 432 plan / 433 PAYGO) — the Tavily Usage Guard core ------
+
+
+def test_tavily_432_433_are_distinct_usage_limits_not_generic_or_transient():
+    from core.scout.discovery.tavily_provider import (
+        DiscoveryError, TavilyAuthError, TavilyTransient, TavilyUsageLimit, _raise_for_tavily_status)
+    for code in (432, 433):
+        with pytest.raises(TavilyUsageLimit):
+            _raise_for_tavily_status(code)               # credit exhaustion -> its own actionable error
+    with pytest.raises(TavilyTransient):
+        _raise_for_tavily_status(429)                    # rate-limit stays transient (wait/retry)
+    with pytest.raises(TavilyAuthError):
+        _raise_for_tavily_status(401)
+    with pytest.raises(DiscoveryError):
+        _raise_for_tavily_status(418)                    # any other non-200 -> generic
+    _raise_for_tavily_status(200)                        # 200 -> no raise
+    # A usage limit must never be retried (it is a DiscoveryError, NOT a TavilyTransient).
+    assert issubclass(TavilyUsageLimit, DiscoveryError)
+    assert not issubclass(TavilyUsageLimit, TavilyTransient)
+
+
+def test_tavily_usage_limit_messages_are_actionable():
+    from core.scout.discovery.tavily_provider import TavilyUsageLimit, _raise_for_tavily_status
+    with pytest.raises(TavilyUsageLimit) as e432:
+        _raise_for_tavily_status(432)
+    assert "432" in str(e432.value) and "upgrade" in str(e432.value).lower()
+    with pytest.raises(TavilyUsageLimit) as e433:
+        _raise_for_tavily_status(433)
+    assert "433" in str(e433.value) and "paygo" in str(e433.value).lower()
