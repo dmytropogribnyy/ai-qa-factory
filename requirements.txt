@@ -2,7 +2,9 @@ python-dotenv>=1.0.1
 litellm>=1.60.0
 tenacity>=8.0.0
 pytest>=8.0.0
-ruff>=0.4.0
+# Pin the lint contract: Ruff 0.16.0 expanded its zero-config default rules and made the
+# previously-green repository fail on 4,920 unrelated baseline diagnostics.
+ruff==0.15.22
 
 pyyaml>=6.0
 
