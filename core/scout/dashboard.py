@@ -333,6 +333,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._scout_preflight()
             if parsed.path == "/api/scout/launch":
                 return self._scout_launch()
+            if parsed.path == "/api/scout/import":
+                return self._scout_import()
             if parsed.path == "/api/scout/control":
                 return self._scout_control(parsed)
             if parsed.path == "/api/scout/export":
@@ -374,6 +376,62 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             ok, status, message = service.control(action)
             return self._json(status, {"ok": ok, "action": action, "message": message,
                                        "status": service.status()})
+
+        def _scout_import(self):
+            """Parse an uploaded curated .xlsx/.csv into canonical seed rows for Manual Scan — behind
+            the shared mutation guard. A base64 file rides in a bounded JSON body (larger than the
+            control cap, still bounded). The workbook is NEVER persisted; only the parsed manifest is.
+            This produces seeds only — launch reuses /api/campaign/start."""
+            import base64
+            _cap = 8 * 1024 * 1024                         # ~5MB file base64-encoded + JSON overhead
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                return self._json(400, {"ok": False, "error": "bad Content-Length"})
+            raw = b""
+            if length > _cap:
+                try:
+                    self.rfile.read(min(length, _cap))     # drain bounded, then refuse
+                except OSError:
+                    pass
+                return self._json(413, {"ok": False, "error": "import body too large"})
+            if length > 0:
+                try:
+                    raw = self.rfile.read(length)
+                except OSError:
+                    return self._json(400, {"ok": False, "error": "read error"})
+            try:
+                body = json.loads(raw.decode("utf-8")) if raw else {}
+            except ValueError:
+                return self._json(400, {"ok": False, "error": "invalid JSON body"})
+            if not isinstance(body, dict):
+                return self._json(400, {"ok": False, "error": "invalid JSON body"})
+            self._body_csrf = body.get("csrf_token")
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            filename = str(body.get("filename") or "")[:200]
+            try:
+                data = base64.b64decode(str(body.get("content_b64") or ""), validate=True)
+            except Exception:  # noqa: BLE001 - any decode failure is a bad request, never a crash
+                return self._json(400, {"ok": False, "error": "invalid base64 content"})
+            from core.scout.curated_import import CuratedImportError, parse_curated_list
+            from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry
+            try:
+                res = parse_curated_list(data, filename,
+                                         registry=AnalyzedSiteRegistry(service.output_dir))
+            except CuratedImportError as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
+            manifest_saved = True
+            try:                                           # persist the MANIFEST only — never the workbook
+                imp_dir = Path(service.output_dir) / "scout" / "_imports"
+                imp_dir.mkdir(parents=True, exist_ok=True)
+                (imp_dir / f"{res.import_id}.json").write_text(
+                    json.dumps(res.to_dict(), indent=2), encoding="utf-8")
+            except OSError:
+                manifest_saved = False                     # reported honestly, never a false success
+            return self._json(200, {"ok": True, "result": res.to_dict(),
+                                    "manifest_saved": manifest_saved})
 
         # --- guarded client-work mutations (v3.1) — NEVER a command/argv over HTTP -------------
         def _work_action(self, action: str):
@@ -1630,6 +1688,46 @@ function startCampaign(){{
                 "max_pages:parseInt(document.getElementById('maxpages').value||'5',10)})})"
                 ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
                 "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
+                "alert('start failed: '+e);});}\n"
+                "function esc(s){return String(s).replace(/[&<>\"]/g,function(c){"
+                "return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c];});}\n"
+                "function importList(){var f=document.getElementById('impfile').files[0];"
+                "if(!f){alert('choose a .xlsx or .csv file');return;}var rd=new FileReader();"
+                "rd.onload=function(){var b64=String(rd.result).split(',').pop();"
+                "fetch('/api/scout/import',{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify({filename:f.name,content_b64:b64})})"
+                ".then(r=>r.json()).then(function(j){if(!j.ok){document.getElementById('imppreview')"
+                ".innerHTML='<p class=muted>Import refused: '+esc(j.error||'')+'</p>';return;}"
+                "renderImport(j.result);}).catch(function(e){alert('import failed: '+e);});};"
+                "rd.readAsDataURL(f);}\n"
+                "function renderImport(res){var c=res.counters;var head='<p class=muted>'+c.valid_unique"
+                "+' new \\u00b7 '+c.already_analyzed+' already \\u00b7 '+c.rejected+' rejected \\u00b7 '"
+                "+c.dup_in_file+' dup \\u00b7 '+c.invalid+' invalid ('+c.total+' rows; column '"
+                "+esc(res.column)+')</p>';var trs=res.rows.map(function(r){"
+                "var pre=(r.disposition==='new')?'checked':'';"
+                "var dis=(r.valid&&r.disposition!=='duplicate')?'':'disabled';"
+                "return '<tr><td><input type=checkbox class=impsel '+pre+' '+dis+' data-seed=\"'"
+                "+esc(r.seed_url)+'\"></td><td>'+esc(r.canonical_domain||r.original)+'</td><td>'"
+                "+esc(r.disposition)+'</td><td class=muted>'+esc(r.original)+'</td></tr>';}).join('');"
+                "document.getElementById('imppreview').innerHTML=head+'<table><tr><th></th><th>Domain"
+                "</th><th>Disposition</th><th>Original</th></tr>'+trs+'</table>'+'<p><label>Campaign name: "
+                "<input id=impcampaign value=curated></label> &nbsp;<label>Max pages/site: <input "
+                "id=impmaxpages type=number value=5 min=1 max=50 style=\"width:5rem\"></label></p>"
+                "<p><label><input type=checkbox id=impconfirm> I confirm this is an authorized, "
+                "bounded, read-only scan.</label></p>"
+                "<p><button class=\"btn primary\" onclick=\"launchImport()\">Scan selected</button></p>';}\n"
+                "function launchImport(){var seeds=[].slice.call(document.querySelectorAll("
+                "'.impsel:checked')).map(function(x){return x.getAttribute('data-seed');});"
+                "if(!seeds.length){alert('select at least one domain');return;}"
+                "if(!document.getElementById('impconfirm').checked){"
+                "alert('please confirm the bounded read-only scan');return;}"
+                "var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();"
+                "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
+                "campaign:document.getElementById('impcampaign').value||'curated',"
+                "max_pages:parseInt(document.getElementById('impmaxpages').value||'5',10)})})"
+                ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
+                "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
                 "alert('start failed: '+e);});}\n")
             return _page("AI QA Factory — Scout", "/scout", body, script)
 
@@ -2547,6 +2645,14 @@ seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. N
 &nbsp;<label>Max pages/site: <input id="maxpages" type="number" value="5" min="1" max="50" style="width:5rem"></label></p>
 <p><label><input type="checkbox" id="confirm"> I confirm this is an authorized, bounded, read-only scan.</label></p>
 <p><button class="btn primary" onclick="startCampaign()">Start campaign</button></p>
+<hr>
+<h3>Import a curated list (.xlsx / .csv)</h3>
+<p class="muted">Upload a spreadsheet with a URL / Website / Domain / &ldquo;Scout seed URL&rdquo; column.
+Bounded &amp; read-only: the file is parsed into seed domains (never stored, never executed) and you pick
+which to scan &mdash; it runs the same manual Scout, with zero discovery/Tavily calls.</p>
+<p><label>Curated list file (.xlsx / .csv): <input type="file" id="impfile" accept=".xlsx,.csv"></label>
+&nbsp;<button class="btn" onclick="importList()">Parse file</button></p>
+<div id="imppreview" class="scrollx"></div>
 </div>"""
 
 
