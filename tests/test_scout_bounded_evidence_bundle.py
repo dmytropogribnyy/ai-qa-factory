@@ -142,3 +142,28 @@ def test_dashboard_and_observer_link_the_same_promoted_evidence(tmp_path):
         e["ref"].endswith("/landing.png") and e["hash_source"] == "evidence_manifest"
         for e in result["evidence"]
     )
+
+
+def test_evidence_finalization_failure_is_visible_but_bounded(tmp_path, monkeypatch):
+    backend = _EvidenceBackend()
+    cfg = ScoutRunConfig(
+        campaign_name="bounded-evidence",
+        seeds=["https://ex.com/path"],
+        browser_mode="playwright",
+        output_dir=str(tmp_path),
+        max_pages_per_site=1,
+        resolve_dns=False,
+    )
+    store = RunStore(str(tmp_path), "run-finalization-failure")
+    engine = ScoutEngine(cfg, store, backend=backend)
+
+    def _fail_manifest(_pid):
+        raise OSError("https://secret.example/path?token=must-not-persist")
+
+    monkeypatch.setattr(engine, "_write_evidence_manifest", _fail_manifest)
+    state = engine.run()
+
+    assert state["status"] == "COMPLETED"
+    events = (store.root / "events.jsonl").read_text(encoding="utf-8")
+    assert '"event": "evidence_finalization_failed"' in events
+    assert "must-not-persist" not in events and "secret.example" not in events

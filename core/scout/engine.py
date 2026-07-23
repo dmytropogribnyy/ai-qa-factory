@@ -273,7 +273,12 @@ class ScoutEngine:
                     self._save_browser_trace(pid, obs, obs2)
                 self._write_evidence_manifest(pid)
             except Exception:  # evidence finalization must never mask the prospect's real outcome
-                pass
+                # Keep the failure visible to the operator without persisting exception text, which
+                # may contain a target URL, local path, or other unredacted diagnostic detail.
+                try:
+                    self._event("evidence_finalization_failed", prospect=pid)
+                except Exception:
+                    pass  # a broken event sink still must not replace the prospect's real outcome
 
     def _save_browser_trace(self, pid: str, first: PageObservation,
                             second: Optional[PageObservation]) -> str:
