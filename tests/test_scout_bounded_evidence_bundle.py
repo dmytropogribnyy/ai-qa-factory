@@ -43,6 +43,7 @@ class _EvidenceBackend:
             console_errors=["Bearer abcdefghijklmnopqrstuvwxyz"],
             failed_resources=[f"{url}/broken.js?secret=do-not-persist"],
             blocked_requests=["http://user:password@10.0.0.5/private?token=x"],
+            links=["mailto:person@example.com?subject=private"],
             timing_ms={"load": 12.5},
         )
 
@@ -78,6 +79,7 @@ def test_evidence_bundle_keeps_two_frames_redacts_and_cleans(tmp_path):
     assert "abcdefghijklmnopqrstuvwxyz" not in observation_text
     observation = json.loads(observation_text)
     assert observation["url"] == "https://ex.com/path"
+    assert observation["links"] == ["mailto:[REDACTED_EMAIL]"]
     assert observation["redaction_applied"] is True
 
     trace = json.loads((pdir / "browser_trace.json").read_text(encoding="utf-8"))
@@ -135,3 +137,7 @@ def test_dashboard_and_observer_link_the_same_promoted_evidence(tmp_path):
     assert any(ref.endswith("/landing.png") for ref in refs)
     assert all(not Path(ref).is_absolute() for ref in refs)
     assert all(len(e["sha256"]) == 64 for e in result["evidence"])
+    assert any(
+        e["ref"].endswith("/landing.png") and e["hash_source"] == "evidence_manifest"
+        for e in result["evidence"]
+    )

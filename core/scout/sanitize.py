@@ -57,8 +57,8 @@ class Sanitizer:
                 path = self.redact(parts.path)
                 return urlunsplit((parts.scheme.lower(), netloc, path, "", ""))
             if parts.scheme.lower() == "mailto":
-                # The address is public contact data; drop subject/body query parameters.
-                return f"mailto:{parts.path}"
+                # Preserve only the contact intent. The address itself is PII in persisted evidence.
+                return f"mailto:{self.redact(parts.path)}"
         except (TypeError, ValueError):
             pass
         return self.redact(text)

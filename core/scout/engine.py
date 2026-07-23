@@ -234,7 +234,6 @@ class ScoutEngine:
 
             evidence = self.sanitizer.build_evidence(obs)
             evidence_ref = self.store.save_prospect_artifact(pid, "evidence.json", evidence)
-            self._save_browser_trace(pid, obs, obs2)
 
             verified, rejected = self.verifier.verify(first_pass, second_sigs,
                                                       evidence_ref=evidence_ref)

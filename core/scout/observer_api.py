@@ -272,7 +272,7 @@ class ObserverAPI:
                 "finding_id": finding_id}
 
     def get_evidence_manifest(self, campaign_id: str) -> Dict[str, Any]:
-        """List evidence artifacts for a campaign as RELATIVE paths under the evidence root."""
+        """List campaign evidence using refs relative to the output root (`scout/<run>/...`)."""
         campaign_id = self._cid(campaign_id)
         items = []
         allowed = {".json", ".png", ".webm"}
@@ -296,14 +296,22 @@ class ObserverAPI:
                     rel = f.resolve().relative_to(self._root)
                 except ValueError:
                     continue
-                digest = hashlib.sha256()
-                with f.open("rb") as fh:
-                    for chunk in iter(lambda: fh.read(64 * 1024), b""):
-                        digest.update(chunk)
+                baseline = self._prospect_manifest_entry(f)
+                if baseline is not None:
+                    sha256 = baseline["sha256"]
+                    hash_source = "evidence_manifest"
+                else:
+                    digest = hashlib.sha256()
+                    with f.open("rb") as fh:
+                        for chunk in iter(lambda: fh.read(64 * 1024), b""):
+                            digest.update(chunk)
+                    sha256 = digest.hexdigest()
+                    hash_source = "computed"
                 items.append({
                     "ref": str(rel).replace("\\", "/"),
                     "bytes": f.stat().st_size,
-                    "sha256": digest.hexdigest(),
+                    "sha256": sha256,
+                    "hash_source": hash_source,
                     "kind": {
                         ".json": "structured",
                         ".png": "screenshot",
@@ -312,6 +320,28 @@ class ObserverAPI:
                 })
         return {"api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id,
                 "count": len(items), "evidence": items[:500]}
+
+    @staticmethod
+    def _prospect_manifest_entry(path: Path) -> Optional[Dict[str, Any]]:
+        """Return a validated baseline hash for an immediate prospect artifact, when available."""
+        manifest_path = path.parent / "evidence_manifest.json"
+        if path.name == manifest_path.name or not manifest_path.is_file():
+            return None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        entries = manifest.get("entries") if isinstance(manifest, dict) else None
+        if not isinstance(entries, list):
+            return None
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("ref") != path.name:
+                continue
+            sha256 = str(entry.get("sha256", ""))
+            size = entry.get("bytes")
+            if re.fullmatch(r"[0-9a-f]{64}", sha256) and size == path.stat().st_size:
+                return {"sha256": sha256, "bytes": size}
+        return None
 
     def get_evidence_item(self, ref: str) -> Dict[str, Any]:
         """Return bounded metadata + integrity hash for one confined evidence artifact (never raw
