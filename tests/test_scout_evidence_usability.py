@@ -204,6 +204,24 @@ def test_manual_source_renders_a_truthful_label(tmp_path):
     assert "manual url scan" in html.lower()
 
 
+def test_unknown_campaign_name_is_never_guessed_as_manual(tmp_path):
+    # Copilot review thread (PR-A2 NO-GO): source_kind must never default to "manual" just because
+    # there is no brain and campaign_name != "curated". An unrecognised/legacy/future campaign_name
+    # must stay genuinely unknown — never mislabelled as a "manual URL scan" it may not have been.
+    out = str(tmp_path)
+    det = None
+    server, url = _serve(out, campaign_name="some-future-campaign-type")
+    try:
+        _s, html, _ct = _get(f"{url}/scout/target?run={_RUN}&domain=alpha.example")
+        det = CampaignService(out).target_detail("alpha.example", run=_RUN)
+    finally:
+        server.shutdown()
+    assert det["source_kind"] == ""
+    assert "manual url scan" not in html.lower()
+    assert "curated list import" not in html.lower()
+    assert "not applicable for this source" in html.lower()
+
+
 # -- 8: a completed run does not render "No activity yet" ----------------------------------------
 
 

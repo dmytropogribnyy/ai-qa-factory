@@ -63,6 +63,12 @@ _RAW_EVIDENCE_ARTIFACTS: tuple = (
     ("manual_action.json", "Manual-action record (raw)"),
 )
 
+# campaign_name values that are positive evidence of a manual/operator-initiated scan (single-URL
+# CLI scan, the built-in demo, or a headed replay launched from the Dashboard). Any OTHER value —
+# including an unknown/legacy/custom campaign_name — must NOT be guessed as "manual"; source_kind
+# stays "" (genuinely unknown) so the UI never mislabels an unrecognised run type.
+KNOWN_MANUAL_CAMPAIGN_NAMES = frozenset({"adhoc", "scout-demo", "headed-replay"})
+
 
 def _project_target_finding(f: Dict[str, Any]) -> Dict[str, Any]:
     """Whitelist one finding for the /target card read-model.
@@ -448,15 +454,20 @@ class CampaignService:
                 except StoreError:
                     cfg = {}
                 video_mode = str(cfg.get("video_mode") or "") or video_mode
-                # Truthful source label: prefer the strongest evidence we actually have. A brain
-                # decision means adaptive discovery ran; otherwise a curated/manual import is
-                # distinguished by its persisted campaign_name (never guessed for a resolved run).
+                # Truthful source label: only assign a label when we have POSITIVE evidence of it. A
+                # brain decision means adaptive discovery ran; a curated import and a known manual
+                # campaign_name are each recognised explicitly. Any other/unknown campaign_name (a
+                # legacy run, a future campaign type, a typo, etc.) must stay "" — never guessed —
+                # so the UI falls back to the genuinely-unknown state instead of mislabelling it.
+                run_campaign_name = str(cfg.get("campaign_name") or "")
                 if brain:
                     source_kind = "discovery"
-                elif str(cfg.get("campaign_name") or "") == "curated":
+                elif run_campaign_name == "curated":
                     source_kind = "curated"
-                else:
+                elif run_campaign_name in KNOWN_MANUAL_CAMPAIGN_NAMES:
                     source_kind = "manual"
+                else:
+                    source_kind = ""
                 want = canonical_domain(domain) or domain
                 # Bind to THIS domain's prospect only. A shared multi-target run must never surface
                 # another prospect's findings/screenshots/network/reproduction on this card, so we

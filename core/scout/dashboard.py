@@ -2244,9 +2244,11 @@ function startCampaign(){{
                               'and stronger evidence.</div>')
             body += f'<div class="card"><h2>Screenshots &amp; evidence files</h2>{media_html}</div>'
 
-            # Video is an intentional capture POLICY (video_mode), not a pass/fail check: a manual or
-            # disabled policy with no clip is normal, expected behaviour — never render it next to the
-            # screenshots as though it were a missing/failed capture.
+            # Video is an intentional capture POLICY (video_mode), not a pass/fail check. A captured
+            # video is still shown inline above, in the "Screenshots & evidence files" card, exactly
+            # like any other captured artifact. This card only appears when NO video exists, and its
+            # job is to say why: a manual/disabled policy with no clip is normal, expected behaviour
+            # — never presented as a missing/failed capture.
             _VIDEO_POLICY_NOTE = {
                 "off": "Video capture is disabled for this run (video_mode=off). This is an "
                       "intentional policy, not a failed capture.",
