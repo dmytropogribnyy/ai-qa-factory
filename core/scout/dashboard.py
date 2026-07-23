@@ -1355,7 +1355,7 @@ function startCampaign(){{
  fetch('/api/campaign/start',{{method:'POST',headers:{{'Content-Type':'application/json','X-Scout-CSRF':CSRF}},
   body:JSON.stringify({{confirm:true,idempotency_key:key,seeds:seeds,
    campaign:document.getElementById('campaign').value||'adhoc',
-   max_pages:parseInt(document.getElementById('maxpages').value||'5',10)}})}})
+   coverage:(document.getElementById('coverage')||{{}}).value||'adaptive'}})}})
  .then(r=>r.json()).then(j=>{{if(j.ok){{location.reload();}}
   else{{alert('start refused: '+(j.message||j.error)+(j.rejected&&j.rejected.length?'\\n'+j.rejected.map(x=>x.url+': '+x.reason).join('\\n'):''));}}}})
  .catch(e=>alert('start failed: '+e));}}
@@ -1713,7 +1713,7 @@ function startCampaign(){{
                 "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
                 "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
                 "campaign:document.getElementById('campaign').value||'adhoc',browser_mode:mode,"
-                "max_pages:parseInt(document.getElementById('maxpages').value||'5',10)})})"
+                "coverage:(document.getElementById('coverage')||{}).value||'adaptive'})})"
                 ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
                 "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
                 "alert('start failed: '+e);});}\n"
@@ -1745,14 +1745,17 @@ function startCampaign(){{
                 "document.getElementById('imppreview').innerHTML=head+'<table><tr><th></th><th>Domain</th>"
                 "<th>Product</th><th>Priority</th><th>Rec. action</th><th>Score</th><th>Disposition</th>"
                 "</tr>'+trs+'</table>'+'<p><label>Campaign name: "
-                "<input id=impcampaign value=curated></label> &nbsp;<label>Max pages/site: <input "
-                "id=impmaxpages type=number value=5 min=1 max=50 style=\"width:5rem\"></label>"
+                "<input id=impcampaign value=curated></label> &nbsp;<label>Coverage: <select "
+                "id=impcoverage><option value=adaptive selected>Adaptive (recommended) \u2014 up to "
+                "12 pages/site</option><option value=deep>Deep \u2014 up to 20 pages/site</option>"
+                "</select></label>"
                 " &nbsp;<label>Scan mode: <select id=impscanmode>"
                 "<option value=playwright selected>Deep Capture (Playwright)</option>"
                 "<option value=static>Static (faster)</option></select></label></p>"
                 "<p class=muted>Static = faster HTTP/HTML checks. Deep Capture = real browser: "
                 "screenshots, axe accessibility, perf timing and console/network evidence (needs "
-                "Chromium).</p>"
+                "Chromium). Coverage bounds how many same-site pages are explored (never a quota); "
+                "both profiles can stop early once further pages add no new coverage.</p>"
                 "<p><label><input type=checkbox id=impconfirm> I confirm this is an authorized, "
                 "bounded, read-only scan.</label></p>"
                 "<p><button class=\"btn primary\" onclick=\"launchImport()\">Scan selected</button></p>';}\n"
@@ -1766,7 +1769,7 @@ function startCampaign(){{
                 "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
                 "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
                 "campaign:document.getElementById('impcampaign').value||'curated',browser_mode:mode,"
-                "max_pages:parseInt(document.getElementById('impmaxpages').value||'5',10)})})"
+                "coverage:(document.getElementById('impcoverage')||{}).value||'adaptive'})})"
                 ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
                 "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
                 "alert('start failed: '+e);});}\n")
@@ -2144,6 +2147,12 @@ function startCampaign(){{
                 + '<p class="muted">Recheck / Reproduce / Record short video / Capture stronger '
                 'evidence are available on a live-analyzed target (bounded, fail-closed).</p></div>')
 
+            # Within-site coverage (PR-B): how many meaningful pages Scout explored on THIS target,
+            # under which profile, and why it stopped. Independent of how many domains a campaign
+            # analyzes (that is the separate campaign-budget axis).
+            body += (f'<div class="card"><h2>Coverage</h2>{_coverage_card_html(det.get("coverage"))}'
+                     f'</div>')
+
             # Honest evidence-binding state: a shared multi-target run may register a domain whose own
             # analyzed prospect is not in the store. We refuse to borrow another target's evidence, so
             # the card shows nothing here — say so plainly rather than look like a clean empty result.
@@ -2500,13 +2509,28 @@ function startCampaign(){{
                 complete = "complete" if status == "DONE" else "incomplete"
                 details = (f'<a href="/scout/target?run={_esc(run_id)}&domain={_esc(dom)}">Details</a>'
                            if dom else '<span class="muted">—</span>')
+                # Coverage (PR-B): a compact readout from the ALREADY-persisted compact state row.
+                # The "coverage" key is entirely absent for pre-coverage-feature legacy runs — that
+                # must render as unavailable, distinct from a present key whose value is "explicit"
+                # (a legacy/back-compat profile that still carries real, honest coverage data).
+                if "coverage" in p:
+                    cov_profile = p.get("coverage")
+                    cov_label = _COVERAGE_PROFILE_LABEL.get(cov_profile, cov_profile or "—")
+                    cov_pages = p.get("meaningful_pages_tested")
+                    cov_stop = str(p.get("page_stop_reason") or "")
+                    cov_stop_label = _PAGE_STOP_LABEL.get(cov_stop, cov_stop or "—")
+                    cov_cell = (f'{_esc(cov_label)} · {_esc(cov_pages if cov_pages is not None else "—")} '
+                                f'pages · {_esc(cov_stop_label)}')
+                else:
+                    cov_cell = '<span class="muted">—</span>'
                 rows.append(
                     f'<tr><td>{_esc(pid)}</td><td>{_esc(dom)}</td><td>{_badge(status)}</td>'
                     f'<td>{actionable}</td><td>{info}</td><td>{_esc(complete)}</td>'
+                    f'<td>{cov_cell}</td>'
                     f'<td>{details} · <a href="/api/prospect?run={_esc(run_id)}&id={_esc(pid)}">raw JSON</a></td></tr>')
             table = (f'<table><caption>Targets in run {_esc(run_id)}</caption><tr><th>ID</th>'
                      f'<th>Domain</th><th>Status</th><th>Actionable defects</th>'
-                     f'<th>Informational</th><th>Analysis</th><th>Details</th></tr>{"".join(rows)}</table>')
+                     f'<th>Informational</th><th>Analysis</th><th>Coverage</th><th>Details</th></tr>{"".join(rows)}</table>')
             body = (f'<h1>Run results</h1><div class="row">'
                     f'<a class="chip" href="/scout">Manual URL Scan</a>'
                     f'<a class="chip" href="/scout/history">History</a></div>'
@@ -2924,12 +2948,17 @@ seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. N
 <p><label>Public seed URLs (one per line):<br>
 <textarea id="seeds" rows="4" placeholder="https://example.com/"></textarea></label></p>
 <p><label>Campaign name: <input id="campaign" value="adhoc"></label>
-&nbsp;<label>Max pages/site: <input id="maxpages" type="number" value="5" min="1" max="50" style="width:5rem"></label></p>
+&nbsp;<label>Coverage: <select id="coverage">
+<option value="adaptive" selected>Adaptive (recommended) &mdash; up to 12 pages/site</option>
+<option value="deep">Deep &mdash; up to 20 pages/site</option></select></label></p>
 <p><label>Scan mode: <select id="scanmode">
 <option value="playwright" selected>Deep Capture (Playwright)</option>
 <option value="static">Static (faster)</option></select></label></p>
 <p class="muted">Static = faster HTTP/HTML checks. Deep Capture = real browser: screenshots, axe
-accessibility, performance timing, and console/network evidence (needs Chromium installed).</p>
+accessibility, performance timing, and console/network evidence (needs Chromium installed).
+Coverage decides how many same-site pages Scout explores for meaningful, non-duplicate content
+&mdash; an upper bound, never a quota; both profiles can stop early once further pages add no new
+coverage. This is separate from how many domains a campaign analyzes.</p>
 <p><label><input type="checkbox" id="confirm"> I confirm this is an authorized, bounded, read-only scan.</label></p>
 <p><button class="btn primary" onclick="startCampaign()">Start campaign</button></p>
 <hr>
@@ -2996,6 +3025,67 @@ def _finding_qa_value(f: dict) -> int:
     dashboard import graph acyclic."""
     from core.scout.priority import qa_value_score
     return qa_value_score([f])
+
+
+# Human-readable within-site coverage profile label (PR-B). "explicit" is the internal/back-compat
+# mode (never offered as an operator choice) — shown honestly as "Legacy explicit" rather than hidden.
+_COVERAGE_PROFILE_LABEL = {"adaptive": "Adaptive", "deep": "Deep", "explicit": "Legacy explicit"}
+
+# Honest, human-readable page-coverage stop reasons (core/scout/coverage.py CoveragePlanner).
+_PAGE_STOP_LABEL = {
+    "page_ceiling_reached": "Reached the page ceiling for this profile",
+    "no_new_meaningful_coverage": "Stopped early — further pages added no new meaningful coverage",
+    "links_exhausted": "All discovered same-site links were explored",
+    "links_check_disabled": "Link discovery was disabled for this scan",
+}
+
+# Honest, human-readable flow-coverage stop reasons (core/scout/engine.py _flow_coverage).
+_FLOW_STOP_LABEL = {
+    "flow_check_disabled": "Business-flow check was disabled for this scan",
+    "single_step_supported": "A flow entry was detected and its one supported step was checked",
+    "no_flow_entry_detected": "No flow entry was detected on this page",
+}
+
+
+def _coverage_card_html(coverage: Optional[dict]) -> str:
+    """Render the Target page's compact, truthful within-site Coverage card.
+
+    Uses ONLY the persisted exact-prospect ``coverage.json`` record (see ``coverage.py`` /
+    ``engine.py``) — never invents a number. A missing record (historical/legacy run, or a run that
+    stopped before any page finished, e.g. manual action) shows an honest unavailable state rather
+    than a fabricated zero. The page ceiling is always phrased as an "up to" cap, never a quota, and
+    the copy never implies it was fully consumed. Multi-step flow support is never overstated: when
+    ``flow_steps_supported == 1`` (true today) it is described plainly as single-step coverage."""
+    if not coverage:
+        return ('<div class="empty muted">Coverage data is not available for this target — this run '
+                'predates within-site coverage tracking, or stopped (e.g. manual action / failure) '
+                'before any page finished. This is not the same as zero coverage.</div>')
+    profile = _COVERAGE_PROFILE_LABEL.get(coverage.get("coverage"), str(coverage.get("coverage") or "—"))
+    ceiling = coverage.get("page_ceiling")
+    tested = coverage.get("meaningful_pages_tested")
+    noise = coverage.get("pages_skipped_noise")
+    dup = coverage.get("pages_skipped_near_duplicate")
+    stop = str(coverage.get("page_stop_reason") or "")
+    stop_label = _PAGE_STOP_LABEL.get(stop, stop or "—")
+    html = (f'<p><b>Profile:</b> {_badge(profile)} · '
+            f'<b>Page ceiling:</b> up to {_esc(ceiling if ceiling is not None else "—")} pages '
+            f'(a cap, never a quota) · <b>Meaningful pages tested:</b> {_esc(tested if tested is not None else "—")}</p>'
+            f'<p><b>Skipped as obvious noise:</b> {_esc(noise if noise is not None else "—")} · '
+            f'<b>Skipped as near-duplicates:</b> {_esc(dup if dup is not None else "—")}</p>'
+            f'<p><b>Stop reason:</b> {_esc(stop_label)}</p>')
+    flows_detected = coverage.get("flows_detected")
+    if flows_detected is not None:
+        supported = coverage.get("flow_steps_supported")
+        used = coverage.get("flow_steps_used")
+        fstop = str(coverage.get("flow_stop_reason") or "")
+        fstop_label = _FLOW_STOP_LABEL.get(fstop, fstop or "—")
+        flow_note = ('Single-step flow coverage — multi-step flows are not implemented yet.'
+                     if supported == 1 else f'Supports up to {supported} flow step(s).')
+        html += (f'<p><b>Flows detected:</b> {_esc(flows_detected)} · '
+                f'<b>Flow entries checked:</b> {_esc(coverage.get("flow_entries_checked", "—"))} · '
+                f'<b>Flow steps used:</b> {_esc(used if used is not None else "—")}</p>'
+                f'<p class="muted">{_esc(flow_note)} {_esc(fstop_label)}.</p>')
+    return html
 
 
 def _problems_table_html(findings: list) -> str:

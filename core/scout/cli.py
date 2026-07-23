@@ -38,6 +38,7 @@ def _run_config(args, seeds, allowed_local_hosts=frozenset(), resolve_dns=True) 
         max_pages_per_site=args.max_pages,
         concurrency=args.concurrency,
         browser_mode=args.browser,
+        coverage=getattr(args, "coverage", "adaptive") or "adaptive",
         output_dir=args.output,
         resume=args.resume,
         run_id=args.run_id or "",

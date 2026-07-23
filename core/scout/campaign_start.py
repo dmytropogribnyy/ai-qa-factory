@@ -10,7 +10,11 @@ carefully guarded one for the local operator, keeping every existing safety cont
   mode: ``static`` (default, HTTP/HTML only) or ``playwright`` (Deep Capture — real screenshots,
   axe-core, perf timing, browser console/network evidence, qualified reproduction). Only those two
   exact values are accepted; Deep Capture runs a real Chromium preflight and refuses honestly when
-  unavailable — it never silently downgrades to static.
+  unavailable — it never silently downgrades to static. The operator also picks a within-site
+  **coverage** profile: ``adaptive`` (default, up to 12 same-site pages) or ``deep`` (up to 20).
+  Only those two exact values are accepted here — ``explicit`` (the raw/back-compat mode) is never
+  exposed to an operator request, and a selected profile always overrides a client-supplied
+  ``max_pages``.
 - **Unsafe targets rejected.** Every seed passes ``url_safety.check_url`` (public http(s) only; no
   credentials, loopback, private/link-local/reserved IPs, odd ports, or DNS-rebinding). The
   local-fixture allowlist is a SERVER-side setting, never taken from the request (no SSRF bypass).
@@ -35,6 +39,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from core.scout.config import BROWSER_MODES, MAX_SEEDS, ScoutConfigError, ScoutRunConfig, fresh_run_id
+from core.scout.coverage import OPERATOR_COVERAGE
 from core.scout.url_safety import Resolver, UrlPolicy, dedupe_eligible
 
 _REGISTRY_DIRNAME = "_campaigns"
@@ -207,21 +212,33 @@ class CampaignLauncher:
         ``browser_mode`` is operator-selectable but strictly validated: only the exact strings
         ``static`` (default) or ``playwright`` are accepted — never an arbitrary backend name,
         command, path or browser argument. ``concurrency`` stays 1 and every other bound is unchanged
-        for both modes."""
+        for both modes.
+
+        ``coverage`` is operator-selectable but strictly validated: only the exact strings
+        ``adaptive`` (default) or ``deep`` are accepted — ``explicit`` (the raw/back-compat mode) is
+        never offered here. A selected profile DERIVES the per-site page ceiling and overrides a
+        client-supplied ``max_pages`` — an untrusted request can never widen its own coverage past
+        the profile it chose."""
         campaign = request.get("campaign")
         name = _safe_name(campaign) if isinstance(campaign, str) else "adhoc"
         families = request.get("check_families")
         mode = request.get("browser_mode", "static")
         if not isinstance(mode, str) or mode not in BROWSER_MODES:
             raise ScoutConfigError("browser_mode must be exactly 'static' or 'playwright'")
+        coverage = request.get("coverage", "adaptive")
+        if not isinstance(coverage, str) or coverage not in OPERATOR_COVERAGE:
+            raise ScoutConfigError("coverage must be exactly 'adaptive' or 'deep'")
         kwargs: Dict[str, Any] = {
-            "campaign_name": name, "seeds": seeds, "browser_mode": mode,
+            "campaign_name": name, "seeds": seeds, "browser_mode": mode, "coverage": coverage,
             "output_dir": str(self._service.output_dir), "concurrency": 1,
             "allowed_local_hosts": self._allowed, "resolve_dns": self._resolve_dns,
         }
         if isinstance(request.get("max_sites"), int) and not isinstance(request.get("max_sites"), bool):
             kwargs["max_sites"] = request["max_sites"]
         if isinstance(request.get("max_pages"), int) and not isinstance(request.get("max_pages"), bool):
+            # A selected adaptive/deep profile DERIVES its own ceiling in ScoutRunConfig.__post_init__
+            # and overrides this value; it only takes effect if coverage somehow ended up "explicit"
+            # (never reachable from this operator-facing launcher, kept for forward-compat only).
             kwargs["max_pages_per_site"] = request["max_pages"]
         if isinstance(families, list) and families and all(isinstance(f, str) for f in families):
             kwargs["check_families"] = families
