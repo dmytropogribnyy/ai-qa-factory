@@ -113,6 +113,35 @@ def test_malformed_xlsx_is_refused_not_crashed():
         parse_curated_list(b"PK\x03\x04 not really a workbook", "bad.xlsx")
 
 
+def test_row_limit_is_exact_no_off_by_one():
+    ok = [["URL"]] + [[f"d{i}.com"] for i in range(500)]       # exactly 500 data rows -> allowed
+    assert parse_curated_list(_csv_bytes(ok), "l.csv", max_rows=500).counters["total"] == 500
+    over = [["URL"]] + [[f"d{i}.com"] for i in range(501)]     # 501 data rows -> refused
+    with pytest.raises(CuratedImportError):
+        parse_curated_list(_csv_bytes(over), "l.csv", max_rows=500)
+
+
+def test_rejects_too_many_columns_early():
+    wide = [["URL"] + [f"c{i}" for i in range(40)], ["acme.com"] + ["x"] * 40]   # 41 columns
+    with pytest.raises(CuratedImportError):
+        parse_curated_list(_csv_bytes(wide), "l.csv", max_cols=40)
+
+
+def test_malformed_csv_oversized_field_is_refused_not_crashed():
+    huge = "x" * 200000                                        # exceeds csv's default field-size limit
+    with pytest.raises(CuratedImportError):
+        parse_curated_list(("URL\n" + huge + "\n").encode(), "l.csv")   # csv.Error wrapped, not a 500
+
+
+def test_zip_bomb_ratio_is_refused_before_openpyxl():
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("payload.bin", b"\x00" * (10 * 1024 * 1024))   # 10MB zeros -> tiny; ratio huge
+    with pytest.raises(CuratedImportError):
+        parse_curated_list(buf.getvalue(), "bomb.xlsx")
+
+
 def test_formula_like_cell_is_treated_as_untrusted_text_never_evaluated():
     # A cell that looks like a formula must be handled as data (and rejected as a non-URL), never run.
     data = _csv_bytes([["URL"], ["=cmd|' /c calc'!A1"], ["good.com"]])
@@ -158,6 +187,7 @@ def test_import_endpoint_parses_and_persists_manifest_only(tmp_path):
         res = out["result"]
         assert res["counters"]["valid_unique"] == 2
         assert {r["canonical_domain"] for r in res["rows"]} == {"acme.com", "beta.io"}
+        assert out["manifest_saved"] is True              # persistence reported honestly
         manifest = tmp_path / "scout" / "_imports" / (res["import_id"] + ".json")
         assert manifest.exists()                          # the parsed manifest is persisted
     finally:
@@ -171,5 +201,6 @@ def test_manual_scan_page_shows_import_ui(tmp_path):
             body = r.read().decode()
         assert 'id="impfile"' in body and "function importList()" in body   # upload + parse wired
         assert "/api/scout/import" in body                                  # posts to the guarded endpoint
+        assert "impconfirm" in body                                         # launch requires explicit confirm
     finally:
         server.shutdown()

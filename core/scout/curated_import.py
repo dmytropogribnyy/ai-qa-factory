@@ -68,20 +68,49 @@ def _now_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _grid_from_csv(data: bytes, max_rows: int) -> List[List[str]]:
+def _grid_from_csv(data: bytes, max_rows: int, max_cols: int) -> List[List[str]]:
     text = data.decode("utf-8", errors="replace")
     grid: List[List[str]] = []
-    for i, row in enumerate(csv.reader(io.StringIO(text))):
-        if i > max_rows + 1:                              # header + max_rows data rows
-            raise CuratedImportError(f"too many rows (limit {max_rows})")
-        grid.append([("" if c is None else str(c)) for c in row])
+    try:
+        # row 0 is the header; rows 1..max_rows are the allowed data rows (max_rows data rows).
+        for i, row in enumerate(csv.reader(io.StringIO(text))):
+            if i > max_rows:
+                raise CuratedImportError(f"too many rows (limit {max_rows})")
+            if len(row) > max_cols:
+                raise CuratedImportError(f"too many columns (limit {max_cols})")
+            grid.append([("" if c is None else str(c)) for c in row])
+    except CuratedImportError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a malformed CSV (e.g. NUL bytes) is a refusal, not a crash
+        raise CuratedImportError(f"unreadable CSV: {type(exc).__name__}") from exc
     return grid
 
 
-def _grid_from_xlsx(data: bytes, max_rows: int, max_sheets: int) -> List[List[str]]:
+def _guard_zip_bomb(data: bytes, *, max_uncompressed: int = 64 * 1024 * 1024,
+                    max_ratio: int = 200) -> None:
+    """An .xlsx IS a zip. Read the central-directory member sizes (no decompression) and refuse a
+    decompression bomb BEFORE openpyxl parses it — the upload-size limit alone does not bound the
+    decompressed size."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            infos = zf.infolist()
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise CuratedImportError("not a valid .xlsx (zip) container") from exc
+    total = sum(int(getattr(i, "file_size", 0)) for i in infos)
+    comp = sum(int(getattr(i, "compress_size", 0)) for i in infos) or 1
+    if total > max_uncompressed:
+        raise CuratedImportError(f"workbook decompresses too large (> {max_uncompressed} bytes)")
+    if total // comp > max_ratio:
+        raise CuratedImportError("workbook compression ratio too high (possible zip bomb)")
+
+
+def _grid_from_xlsx(data: bytes, max_rows: int, max_cols: int, max_sheets: int) -> List[List[str]]:
+    _guard_zip_bomb(data)                                 # bound decompression before openpyxl runs
     try:
         import openpyxl
-        # read_only + data_only: never evaluate a formula; cached values / text only.
+        # read_only + data_only: a formula is NEVER evaluated; the presented cached value / text is
+        # returned and later validated as data (never trusted just because a cell exists).
         wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     except CuratedImportError:
         raise
@@ -91,10 +120,17 @@ def _grid_from_xlsx(data: bytes, max_rows: int, max_sheets: int) -> List[List[st
         raise CuratedImportError(f"too many sheets (limit {max_sheets})")
     ws = wb[wb.sheetnames[0]]
     grid: List[List[str]] = []
-    for i, row in enumerate(ws.iter_rows(values_only=True)):
-        if i > max_rows + 1:
-            raise CuratedImportError(f"too many rows (limit {max_rows})")
-        grid.append([("" if c is None else str(c)) for c in row])
+    try:
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            if i > max_rows:
+                raise CuratedImportError(f"too many rows (limit {max_rows})")
+            if len(row) > max_cols:
+                raise CuratedImportError(f"too many columns (limit {max_cols})")
+            grid.append([("" if c is None else str(c)) for c in row])
+    except CuratedImportError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a corrupt lazy read is a refusal, not a crash
+        raise CuratedImportError(f"unreadable workbook rows: {type(exc).__name__}") from exc
     return grid
 
 
@@ -117,16 +153,14 @@ def parse_curated_list(data: bytes, filename: str, *, registry: Optional[Analyze
         raise CuratedImportError(f"file too large (limit {max_bytes} bytes)")
     ext = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
     if ext == ".csv":
-        kind, grid = "csv", _grid_from_csv(bytes(data), max_rows)
+        kind, grid = "csv", _grid_from_csv(bytes(data), max_rows, max_cols)
     elif ext == ".xlsx":
-        kind, grid = "xlsx", _grid_from_xlsx(bytes(data), max_rows, max_sheets)
+        kind, grid = "xlsx", _grid_from_xlsx(bytes(data), max_rows, max_cols, max_sheets)
     else:
         raise CuratedImportError(f"unsupported file type {ext or '(none)'} — use .xlsx or .csv")
     if not grid:
         raise CuratedImportError("no rows in file")
-    header = grid[0]
-    if len(header) > max_cols:
-        raise CuratedImportError(f"too many columns (limit {max_cols})")
+    header = grid[0]                                       # per-row col/row bounds enforced in readers
     col = _detect_column(header)
 
     rows: List[ImportRow] = []

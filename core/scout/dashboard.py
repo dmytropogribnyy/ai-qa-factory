@@ -422,14 +422,16 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                                          registry=AnalyzedSiteRegistry(service.output_dir))
             except CuratedImportError as exc:
                 return self._json(400, {"ok": False, "error": str(exc)})
+            manifest_saved = True
             try:                                           # persist the MANIFEST only — never the workbook
                 imp_dir = Path(service.output_dir) / "scout" / "_imports"
                 imp_dir.mkdir(parents=True, exist_ok=True)
                 (imp_dir / f"{res.import_id}.json").write_text(
                     json.dumps(res.to_dict(), indent=2), encoding="utf-8")
             except OSError:
-                pass
-            return self._json(200, {"ok": True, "result": res.to_dict()})
+                manifest_saved = False                     # reported honestly, never a false success
+            return self._json(200, {"ok": True, "result": res.to_dict(),
+                                    "manifest_saved": manifest_saved})
 
         # --- guarded client-work mutations (v3.1) — NEVER a command/argv over HTTP -------------
         def _work_action(self, action: str):
@@ -1710,11 +1712,15 @@ function startCampaign(){{
                 "document.getElementById('imppreview').innerHTML=head+'<table><tr><th></th><th>Domain"
                 "</th><th>Disposition</th><th>Original</th></tr>'+trs+'</table>'+'<p><label>Campaign name: "
                 "<input id=impcampaign value=curated></label> &nbsp;<label>Max pages/site: <input "
-                "id=impmaxpages type=number value=5 min=1 max=50 style=\"width:5rem\"></label> "
-                "<button class=\"btn primary\" onclick=\"launchImport()\">Scan selected</button></p>';}\n"
+                "id=impmaxpages type=number value=5 min=1 max=50 style=\"width:5rem\"></label></p>"
+                "<p><label><input type=checkbox id=impconfirm> I confirm this is an authorized, "
+                "bounded, read-only scan.</label></p>"
+                "<p><button class=\"btn primary\" onclick=\"launchImport()\">Scan selected</button></p>';}\n"
                 "function launchImport(){var seeds=[].slice.call(document.querySelectorAll("
                 "'.impsel:checked')).map(function(x){return x.getAttribute('data-seed');});"
                 "if(!seeds.length){alert('select at least one domain');return;}"
+                "if(!document.getElementById('impconfirm').checked){"
+                "alert('please confirm the bounded read-only scan');return;}"
                 "var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();"
                 "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
                 "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
