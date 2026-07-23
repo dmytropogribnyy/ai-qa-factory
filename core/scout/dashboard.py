@@ -1682,9 +1682,10 @@ function startCampaign(){{
                 "if(!document.getElementById('confirm').checked){alert('please confirm the bounded "
                 "read-only scan');return;}var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():"
                 "String(Date.now())+Math.random();"
+                "var mode=(document.getElementById('scanmode')||{}).value||'static';"
                 "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
                 "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
-                "campaign:document.getElementById('campaign').value||'adhoc',"
+                "campaign:document.getElementById('campaign').value||'adhoc',browser_mode:mode,"
                 "max_pages:parseInt(document.getElementById('maxpages').value||'5',10)})})"
                 ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
                 "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
@@ -1718,7 +1719,13 @@ function startCampaign(){{
                 "<th>Product</th><th>Priority</th><th>Rec. action</th><th>Score</th><th>Disposition</th>"
                 "</tr>'+trs+'</table>'+'<p><label>Campaign name: "
                 "<input id=impcampaign value=curated></label> &nbsp;<label>Max pages/site: <input "
-                "id=impmaxpages type=number value=5 min=1 max=50 style=\"width:5rem\"></label></p>"
+                "id=impmaxpages type=number value=5 min=1 max=50 style=\"width:5rem\"></label>"
+                " &nbsp;<label>Scan mode: <select id=impscanmode>"
+                "<option value=playwright selected>Deep Capture (Playwright)</option>"
+                "<option value=static>Static (faster)</option></select></label></p>"
+                "<p class=muted>Static = faster HTTP/HTML checks. Deep Capture = real browser: "
+                "screenshots, axe accessibility, perf timing and console/network evidence (needs "
+                "Chromium).</p>"
                 "<p><label><input type=checkbox id=impconfirm> I confirm this is an authorized, "
                 "bounded, read-only scan.</label></p>"
                 "<p><button class=\"btn primary\" onclick=\"launchImport()\">Scan selected</button></p>';}\n"
@@ -1728,9 +1735,10 @@ function startCampaign(){{
                 "if(!document.getElementById('impconfirm').checked){"
                 "alert('please confirm the bounded read-only scan');return;}"
                 "var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();"
+                "var mode=(document.getElementById('impscanmode')||{}).value||'static';"
                 "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
                 "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
-                "campaign:document.getElementById('impcampaign').value||'curated',"
+                "campaign:document.getElementById('impcampaign').value||'curated',browser_mode:mode,"
                 "max_pages:parseInt(document.getElementById('impmaxpages').value||'5',10)})})"
                 ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
                 "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
@@ -2659,6 +2667,11 @@ seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. N
 <textarea id="seeds" rows="4" placeholder="https://example.com/"></textarea></label></p>
 <p><label>Campaign name: <input id="campaign" value="adhoc"></label>
 &nbsp;<label>Max pages/site: <input id="maxpages" type="number" value="5" min="1" max="50" style="width:5rem"></label></p>
+<p><label>Scan mode: <select id="scanmode">
+<option value="playwright" selected>Deep Capture (Playwright)</option>
+<option value="static">Static (faster)</option></select></label></p>
+<p class="muted">Static = faster HTTP/HTML checks. Deep Capture = real browser: screenshots, axe
+accessibility, performance timing, and console/network evidence (needs Chromium installed).</p>
 <p><label><input type="checkbox" id="confirm"> I confirm this is an authorized, bounded, read-only scan.</label></p>
 <p><button class="btn primary" onclick="startCampaign()">Start campaign</button></p>
 <hr>

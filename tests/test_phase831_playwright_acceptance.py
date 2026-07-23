@@ -25,9 +25,11 @@ import pytest
 pytest.importorskip("playwright", reason="playwright not installed")
 
 from core.scout.backends import PlaywrightBackend  # noqa: E402
+from core.scout.campaign_start import CampaignLauncher  # noqa: E402
 from core.scout.config import ScoutRunConfig  # noqa: E402
 from core.scout.engine import ScoutEngine  # noqa: E402
 from core.scout.report import build_report  # noqa: E402
+from core.scout.service import ScoutService  # noqa: E402
 from core.scout.store import RunStore  # noqa: E402
 from core.scout.url_safety import UrlPolicy  # noqa: E402
 
@@ -245,3 +247,46 @@ def test_real_browser_engine_pipeline_and_report(tmp_path):
     report = json.loads((store.report_dir() / "REPORT.json").read_text(encoding="utf-8"))
     assert all(f["is_client_safe"] for f in report["verified_findings"])
     assert posts == []                                       # engine never submitted a form
+
+
+def _launch_via_manual_path(tmp_path, base, host, *, mode):
+    """Drive the SAME guarded manual/import endpoint the operator uses (CampaignLauncher ->
+    ScoutService), so this proves the imported/manual Deep Capture path end to end — not a bespoke
+    engine call. Returns (store, first_prospect_dir, observation_dict)."""
+    svc = ScoutService(str(tmp_path))
+    launcher = CampaignLauncher(svc, registry_dir=str(tmp_path / "reg"),
+                                allowed_local_hosts=frozenset({host}), resolve_dns=False)
+    res = launcher.start({"confirm": True, "idempotency_key": f"{mode}-1",
+                          "seeds": [f"{base}/a11y/index.html"], "browser_mode": mode,
+                          "campaign": "curated", "max_pages": 2})
+    assert res.ok and res.run_id, f"manual {mode} launch refused: {res.message}"
+    svc.join(timeout=120)
+    store = RunStore(str(tmp_path), res.run_id)
+    state = store.load_state()
+    pid = next(iter(state["prospects"]))
+    pdir = store.prospect_dir(pid)
+    obs = store.load_prospect_artifact(pid, "observation.json") or {}
+    return store, pdir, obs
+
+
+def test_imported_deep_capture_target_creates_real_screenshot_and_axe_perf(tmp_path):
+    """Deep Capture through the manual/import launcher launches a REAL Chromium: an imported target
+    yields a genuine screenshot on disk plus real axe-core + navigation-timing evidence."""
+    with _serve() as (base, host, posts, gets):
+        _store, pdir, obs = _launch_via_manual_path(tmp_path, base, host, mode="playwright")
+    assert (pdir / "page.png").exists() and (pdir / "page.png").stat().st_size > 0   # real screenshot
+    assert obs.get("axe_status") == "ok"                                    # real axe-core ran
+    assert any(v.get("rule") == "image-alt" for v in obs.get("axe_violations", []))
+    assert obs.get("perf", {}).get("loadEvent") is not None                 # real navigation timing
+    assert posts == []                                                      # never submitted a form
+
+
+def test_static_import_creates_no_browser_artifacts(tmp_path):
+    """Static mode through the SAME launcher launches no browser: no screenshot, no axe, no perf —
+    the honest cheaper path (and proof there is no silent Deep-Capture behaviour on a static run)."""
+    with _serve() as (base, host, posts, gets):
+        _store, pdir, obs = _launch_via_manual_path(tmp_path, base, host, mode="static")
+    assert not (pdir / "page.png").exists()                                 # no browser screenshot
+    assert not obs.get("axe_status")                                        # no axe run
+    assert not obs.get("perf")                                              # no navigation timing
+    assert posts == []
