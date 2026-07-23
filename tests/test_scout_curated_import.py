@@ -272,7 +272,8 @@ def test_target_detail_resolves_a_manual_run_via_registry(tmp_path):
     reg = AnalyzedSiteRegistry(str(tmp_path))
     reg.record_analysis("acme.com", status=ANALYZED, campaign_id="curated-run-9")
     store = RunStore(str(tmp_path), "curated-run-9")
-    store.save_state({"status": "COMPLETED", "prospects": {"01-a": {"status": "DONE"}}})
+    store.save_state({"status": "COMPLETED",
+                      "prospects": {"01-a": {"status": "DONE", "url": "https://acme.com/"}}})
     store.save_prospect_artifact("01-a", "findings.json", {"verified": [
         {"finding_id": "f1", "signature": "missing_meta_description", "category": "seo",
          "severity": "low", "title": "Missing meta description", "is_client_safe": True}], "rejected": []})

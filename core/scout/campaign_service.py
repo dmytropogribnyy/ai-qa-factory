@@ -71,6 +71,27 @@ def _project_target_finding(f: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _resolve_prospect(prospects: Dict[str, Any], want_domain: str) -> str:
+    """Return the prospect_id in a run store whose canonical domain EXACTLY matches ``want_domain``.
+
+    A manual / imported (curated-list) run may analyze many domains in one store, each registering the
+    same run_id as its History campaign. The Target card for a domain must therefore bind to that
+    domain's own prospect — never the first prospect and never the whole-run aggregate — or client
+    evidence (findings, screenshots, network, a reproduction video) from one company leaks onto
+    another's card. Empty string when no prospect canonicalises to the domain: the caller then fails
+    honestly (``prospect_not_found``) rather than borrowing another prospect's evidence."""
+    if not want_domain:
+        return ""
+    from core.scout.discovery.domain_intel import canonical_domain
+    for pid, p in (prospects or {}).items():
+        rec = p if isinstance(p, dict) else {}
+        for key in ("url", "final_url", "domain"):  # url is authoritative (matches registration)
+            val = rec.get(key)
+            if val and canonical_domain(val) == want_domain:
+                return pid
+    return ""
+
+
 class CampaignService:
     def __init__(self, output_dir: str = "outputs") -> None:
         self.output_dir = output_dir
@@ -353,6 +374,9 @@ class CampaignService:
         contacts: List[str] = []
         media: List[str] = []                 # rel paths under the run, servable via /scout/artifact
         network: Dict[str, Any] = {}          # already-captured Chrome/Playwright network evidence
+        reproduction: Optional[Dict[str, Any]] = None   # this domain's reproduction record, if any
+        prospect_id = ""                      # the exact prospect this card is bound to
+        evidence_status = "not_scanned"       # ok | prospect_not_found | error | not_scanned
         scout_run = (brain or {}).get("scout_run", "")
         if not scout_run:
             # Fall back to the most recent headed-replay run for this domain, so a replay's fresh
@@ -380,28 +404,41 @@ class CampaignService:
                     continue
         _MEDIA_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4", ".har")
         if scout_run:
+            from core.scout.discovery.domain_intel import canonical_domain
             from core.scout.outreach.qa_draft import extract_public_emails
-            from core.scout.priority import load_verified_findings
             from core.scout.store import RunStore
             try:
                 st = RunStore(self.output_dir, scout_run)
-                findings = load_verified_findings(st)
                 state = st.load_state() or {}
-                for pid in list(state.get("prospects", {}).keys())[:1]:
-                    obs = st.load_prospect_artifact(pid, "observation.json") or {}
+                want = canonical_domain(domain) or domain
+                # Bind to THIS domain's prospect only. A shared multi-target run must never surface
+                # another prospect's findings/screenshots/network/reproduction on this card, so we
+                # resolve the exact prospect and load only its artifacts (no whole-run aggregate, no
+                # first-prospect fallback).
+                prospect_id = _resolve_prospect(state.get("prospects", {}), want)
+                if prospect_id:
+                    evidence_status = "ok"
+                    fdata = st.load_prospect_artifact(prospect_id, "findings.json") or {}
+                    findings = list(fdata.get("verified", []))
+                    obs = st.load_prospect_artifact(prospect_id, "observation.json") or {}
                     contacts = extract_public_emails(obs, domain=domain)
                     network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),
                                "console_errors": obs.get("console_errors", [])[:10],
                                "failed_resources": obs.get("failed_resources", [])[:10],
                                "blocked_requests": obs.get("blocked_requests", [])[:10]}
+                    reproduction = st.load_prospect_artifact(prospect_id, "reproduction.json") or None
                     try:
-                        pdir = st.prospect_dir(pid)
-                        media = [f"prospects/{pid}/{fp.name}" for fp in sorted(pdir.iterdir())
+                        pdir = st.prospect_dir(prospect_id)
+                        media = [f"prospects/{prospect_id}/{fp.name}" for fp in sorted(pdir.iterdir())
                                  if fp.is_file() and fp.suffix.lower() in _MEDIA_EXT]
                     except Exception:
                         media = []
+                else:
+                    # The run exists but no prospect canonicalises to this domain: fail honestly rather
+                    # than borrow another company's evidence.
+                    evidence_status = "prospect_not_found"
             except Exception:
-                findings, contacts = findings, contacts
+                evidence_status = "error"
         # Copy-only outreach draft from the target's problems (the system never sends it).
         # A READ is $0: the draft is always deterministic here (router=None). AI prose polish is an
         # explicit, operator-triggered mutation (see ``polish_draft``) — never a page/refresh read.
@@ -419,7 +456,9 @@ class CampaignService:
               "title": f.get("title"), "business_impact": f.get("business_impact")}
              for f in findings], access_available=False)
         return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
-                "scout_run": scout_run, "media": media, "network": network,
+                "scout_run": scout_run, "prospect_id": prospect_id,
+                "evidence_status": evidence_status, "media": media, "network": network,
+                "reproduction": reproduction,
                 "findings": [_project_target_finding(f) for f in findings],
                 "contacts": contacts, "draft": draft, "fixability": fixability}
 
