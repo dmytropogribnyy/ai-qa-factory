@@ -168,7 +168,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._json(200, {"prospects": st.get("prospects", {})})
             if path == "/api/prospect":
                 pid = (q.get("id") or [""])[0]
-                return self._json(200, self._prospect(pid))
+                return self._json(200, self._prospect(pid, (q.get("run") or [""])[0]))
             if path == "/api/events":
                 return self._json(200, {"events": service.recent_events(200)})
             if path == "/api/campaign":
@@ -760,11 +760,30 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             return origin in allowed
 
         # --- data ---
-        def _prospect(self, pid: str):
-            store = service.store
+        def _prospect(self, pid: str, run: str = ""):
+            # Optional EXACT-run scoping: a raw-JSON diagnostic opened from a historical run page must
+            # read that exact confined RunStore and NEVER fall back to the active/attached run.
+            run = str(run or "").strip()
+            if run:
+                try:
+                    store = RunStore(service.output_dir, run)
+                except StoreError:
+                    return {"error": "invalid run", "run": run}
+                if not store.exists():
+                    return {"error": "run not found", "run": run}
+                try:
+                    state = store.load_state() or {}
+                except StoreError:
+                    state = {}
+                if not pid or pid not in (state.get("prospects", {}) or {}):
+                    return {"error": "prospect not found in run", "run": run, "prospect_id": pid}
+            else:
+                store = service.store
             if store is None or not pid:
                 return {"error": "no prospect"}
             out = {"prospect_id": pid}
+            if run:
+                out["run"] = run
             for name in ("observation.json", "findings.json", "evidence.json", "scorecard.json"):
                 try:
                     out[name.split(".")[0]] = store.load_prospect_artifact(pid, name)
@@ -2393,7 +2412,7 @@ function startCampaign(){{
                 rows.append(
                     f'<tr><td>{_esc(pid)}</td><td>{_esc(dom)}</td><td>{_badge(status)}</td>'
                     f'<td>{actionable}</td><td>{info}</td><td>{_esc(complete)}</td>'
-                    f'<td>{details} · <a href="/api/prospect?id={_esc(pid)}">raw JSON</a></td></tr>')
+                    f'<td>{details} · <a href="/api/prospect?run={_esc(run_id)}&id={_esc(pid)}">raw JSON</a></td></tr>')
             table = (f'<table><caption>Targets in run {_esc(run_id)}</caption><tr><th>ID</th>'
                      f'<th>Domain</th><th>Status</th><th>Actionable defects</th>'
                      f'<th>Informational</th><th>Analysis</th><th>Details</th></tr>{"".join(rows)}</table>')
@@ -2927,7 +2946,11 @@ def _scout_details_cell(run_id: str, pid: str, prospect: dict) -> str:
         primary = (f'<a href="/scout/target?run={_esc(run_id)}&domain={_esc(dom)}">Details</a>')
     else:
         primary = '<span class="muted">—</span>'
-    return f'{primary} · <a href="/api/prospect?id={_esc(pid)}">View raw JSON</a>'
+    # Raw JSON is EXACT-run scoped when a run is known, so a diagnostic opened from a historical run
+    # reads that run's confined store — never the active/attached run.
+    raw = (f'/api/prospect?run={_esc(run_id)}&id={_esc(pid)}' if run_id
+           else f'/api/prospect?id={_esc(pid)}')
+    return f'{primary} · <a href="{raw}">View raw JSON</a>'
 
 
 def _looks_blocked(status: str, reason: str) -> bool:

@@ -385,9 +385,13 @@ class CampaignService:
         prospect_status = ""                  # DONE | MANUAL_ACTION_REQUIRED | FAILED | ...
         analysis_complete: Optional[bool] = None
         evidence_status = "not_scanned"       # ok | prospect_not_found | error | not_scanned
+        # Normalize the caller-supplied run EXACTLY ONCE: a whitespace-only value must behave like
+        # "no run given" (registry resolution), never pin an empty/whitespace run id. Only
+        # normalized_run drives exact-run pinning, fallback decisions, and the returned run identity.
+        normalized_run = str(run or "").strip()
         # An explicit run pins that exact store; otherwise resolve via brain/replay/registry.
-        scout_run = str(run).strip() or (brain or {}).get("scout_run", "")
-        if not scout_run and not run:
+        scout_run = normalized_run or (brain or {}).get("scout_run", "")
+        if not scout_run and not normalized_run:
             # Fall back to the most recent headed-replay run for this domain, so a replay's fresh
             # screenshots/evidence show up on the card even without a campaign brain decision.
             try:
@@ -399,7 +403,7 @@ class CampaignService:
                     scout_run = cands[0].name
             except Exception:
                 scout_run = scout_run
-        if not scout_run and not run and entry is not None:
+        if not scout_run and not normalized_run and entry is not None:
             # A manual / imported run registers its run_id as the domain's campaign — resolve the
             # findings/evidence from that run store so an imported target opens a working detail card
             # (the discovery path uses the brain; this covers the manual Scout path).
@@ -436,6 +440,14 @@ class CampaignService:
                     if incomplete:
                         analysis_complete = False
                     manual_action = st.load_prospect_artifact(prospect_id, "manual_action.json") or None
+                    if manual_action is None and prospect_status == "MANUAL_ACTION_REQUIRED":
+                        # Legacy/historical runs pre-date manual_action.json. Build a MINIMAL read
+                        # model from persisted prospect state — surface pstate.reason EXACTLY and
+                        # invent nothing (stage / stop_boundary / chromium_started / landing_loaded
+                        # stay genuinely absent so the UI renders them as unavailable, not guessed).
+                        legacy_reason = str(pstate.get("reason", "") or "").strip()
+                        if legacy_reason:
+                            manual_action = {"reason": legacy_reason}
                     obs = st.load_prospect_artifact(prospect_id, "observation.json") or {}
                     contacts = extract_public_emails(obs, domain=domain)
                     network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),

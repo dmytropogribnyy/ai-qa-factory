@@ -186,8 +186,8 @@ def test_run_page_details_link_is_human_readable_not_raw_json(tmp_path):
     # Every prospect row's primary Details link points to the human-readable exact-run Target.
     assert f"/scout/target?run={_RUN}&domain=alpha.example" in html
     assert f"/scout/target?run={_RUN}&domain=beta.example" in html
-    # A raw-JSON diagnostic remains available as a SEPARATE secondary action.
-    assert "/api/prospect?id=01-alpha" in html and "View raw JSON" in html
+    # A raw-JSON diagnostic remains available as a SEPARATE secondary action, EXACT-run scoped.
+    assert f"/api/prospect?run={_RUN}&id=01-alpha" in html and "View raw JSON" in html
 
 
 def test_api_prospect_remains_json(tmp_path):
@@ -259,4 +259,90 @@ def test_history_to_target_still_works_without_a_run_param(tmp_path):
         server.shutdown()
     assert status == 200 and "missing meta description" in html
     assert "Back to history" in html
+
+
+# -- PR-A1 wave 2: legacy reason fallback, exact-run raw JSON, whitespace-run normalization --------
+
+
+def test_legacy_manual_action_reason_falls_back_to_prospect_state(tmp_path):
+    # A historical MANUAL_ACTION_REQUIRED run created before manual_action.json existed persisted the
+    # reason only in prospect state. target_detail must surface that reason exactly (never claim no
+    # reason was persisted) and invent no stage/boundary/browser/landing values.
+    out = str(tmp_path)
+    store = RunStore(out, "legacy-bookoo")
+    store.save_state({"status": "COMPLETED", "prospects": {
+        "01-bookoo": {"status": "MANUAL_ACTION_REQUIRED", "url": "https://bookoo.example/",
+                      "reason": "captcha_detected"}}})
+    store.save_prospect_artifact("01-bookoo", "observation.json",
+                                 {"status": 200, "final_url": "https://bookoo.example/"})
+    # No manual_action.json artifact is written (pre-artifact historical run).
+    det = CampaignService(out).target_detail("bookoo.example", run="legacy-bookoo")
+    assert det["prospect_status"] == "MANUAL_ACTION_REQUIRED"
+    ma = det["manual_action"]
+    assert ma and ma["reason"] == "captcha_detected"          # persisted reason surfaced exactly
+    assert "stage" not in ma and "stop_boundary" not in ma    # nothing invented
+    assert "chromium_started" not in ma and "landing_loaded" not in ma
+    # The human-readable Target shows the persisted reason and 0 confirmed findings.
+    svc = ScoutService(out)
+    svc.attach("legacy-bookoo")
+    server, url = start_dashboard(svc, operator_home=True)
+    try:
+        status, html, _ = _get(f"{url}/scout/target?run=legacy-bookoo&domain=bookoo.example")
+    finally:
+        server.shutdown()
+    assert status == 200
+    assert "captcha_detected" in html                          # persisted reason rendered
+    assert "0 confirmed findings" in html and "analysis incomplete" in html.lower()
+    assert "no problems" not in html.lower()
+
+
+def test_raw_json_is_exact_run_scoped_never_the_active_run(tmp_path):
+    # Dashboard attached to run-new; the operator opens a historical run-old page. Its raw-JSON link
+    # must return ONLY run-old prospect data, never the active run's, with honest error responses.
+    out = str(tmp_path)
+    old = RunStore(out, "run-old")
+    old.save_state({"status": "COMPLETED", "prospects": {
+        "01-alpha": {"status": "DONE", "url": "https://alpha.example/"}}})
+    old.save_prospect_artifact("01-alpha", "findings.json", {"verified": [
+        ScoutFinding(signature="missing_meta_description", category="seo", severity="low",
+                     title="alpha.example: OLD RUN finding").to_dict()], "rejected": []})
+    new = RunStore(out, "run-new")
+    new.save_state({"status": "COMPLETED", "prospects": {
+        "09-zeta": {"status": "DONE", "url": "https://zeta.example/"}}})
+    new.save_prospect_artifact("09-zeta", "findings.json", {"verified": [
+        ScoutFinding(signature="broken_link", category="functional", severity="high",
+                     title="zeta.example: NEW RUN finding").to_dict()], "rejected": []})
+    svc = ScoutService(out)
+    svc.attach("run-new")                                      # the ACTIVE run is run-new
+    server, url = start_dashboard(svc, operator_home=True)
+    try:
+        # The historical run's results page carries an exact-run-scoped raw JSON link.
+        _s, run_html, _ = _get(f"{url}/scout/run?id=run-old")
+        assert "/api/prospect?run=run-old&id=01-alpha" in run_html
+        # The run-scoped raw JSON returns run-old's prospect, never the active run-new's.
+        st, body, ctype = _get(f"{url}/api/prospect?run=run-old&id=01-alpha")
+        assert st == 200 and "application/json" in ctype
+        assert "OLD RUN finding" in body and "NEW RUN finding" not in body
+        # Honest responses: missing run, invalid run id, and wrong prospect.
+        _m, missing, _ = _get(f"{url}/api/prospect?run=nope-run&id=01-alpha")
+        assert "run not found" in missing.lower()
+        _i, invalid, _ = _get(f"{url}/api/prospect?run=..&id=01-alpha")
+        assert "invalid run" in invalid.lower()
+        _w, wrong, _ = _get(f"{url}/api/prospect?run=run-old&id=99-nope")
+        assert "prospect not found" in wrong.lower()
+    finally:
+        server.shutdown()
+
+
+def test_whitespace_only_run_is_normalized_to_registry_resolution(tmp_path):
+    # Copilot review thread: a whitespace-only run must be normalized once and behave exactly like
+    # "no run given" (registry resolution) — never pin an empty/whitespace run id.
+    out = str(tmp_path)
+    store = _build_run(out)
+    ScoutService(out)._register_analyzed_run(store, store.load_state())
+    det = CampaignService(out).target_detail("alpha.example", run="   ")
+    assert det["prospect_id"] == "01-alpha"
+    assert det["run"] == _RUN                                  # resolved via registry, not an empty pin
+    assert any("missing meta description" in f["title"] for f in det["findings"])
+
 
