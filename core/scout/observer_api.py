@@ -275,16 +275,41 @@ class ObserverAPI:
         """List evidence artifacts for a campaign as RELATIVE paths under the evidence root."""
         campaign_id = self._cid(campaign_id)
         items = []
+        allowed = {".json", ".png", ".webm"}
         for run_id in self._promoted_runs(campaign_id):
-            run_dir = (self._evidence_root.parent / run_id)
+            run_dir = (self._evidence_root / run_id).resolve()
+            try:
+                run_dir.relative_to(self._evidence_root)
+            except ValueError:
+                continue
             if not run_dir.exists():
                 continue
-            for f in run_dir.rglob("*.json"):
+            # Evidence is prospect-scoped. Run config/state/event files can contain operational
+            # inputs and are intentionally excluded from this campaign evidence surface.
+            prospects_dir = run_dir / "prospects"
+            if not prospects_dir.is_dir():
+                continue
+            for f in prospects_dir.rglob("*"):
+                if not f.is_file() or f.suffix.lower() not in allowed:
+                    continue
                 try:
                     rel = f.resolve().relative_to(self._root)
                 except ValueError:
                     continue
-                items.append({"ref": str(rel).replace("\\", "/"), "bytes": f.stat().st_size})
+                digest = hashlib.sha256()
+                with f.open("rb") as fh:
+                    for chunk in iter(lambda: fh.read(64 * 1024), b""):
+                        digest.update(chunk)
+                items.append({
+                    "ref": str(rel).replace("\\", "/"),
+                    "bytes": f.stat().st_size,
+                    "sha256": digest.hexdigest(),
+                    "kind": {
+                        ".json": "structured",
+                        ".png": "screenshot",
+                        ".webm": "reproduction_video",
+                    }[f.suffix.lower()],
+                })
         return {"api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id,
                 "count": len(items), "evidence": items[:500]}
 

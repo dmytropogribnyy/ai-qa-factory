@@ -52,10 +52,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# Known per-prospect raw diagnostic artifacts the engine may persist, with human-readable labels.
+# Known per-prospect structured evidence artifacts the engine may persist, with readable labels.
 # target_detail() only exposes an entry when the file genuinely exists on disk (never a dead link).
 _RAW_EVIDENCE_ARTIFACTS: tuple = (
-    ("observation.json", "Page observation (raw)"),
+    ("observation.json", "Page observation (redacted)"),
+    ("evidence.json", "Sanitized fact sheet"),
+    ("browser_trace.json", "Browser trace (redacted)"),
+    ("evidence_manifest.json", "Evidence manifest + integrity hashes"),
     ("findings.json", "Findings (raw)"),
     ("scorecard.json", "Scorecard (raw)"),
     ("coverage.json", "Coverage (raw)"),

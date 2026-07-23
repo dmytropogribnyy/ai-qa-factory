@@ -274,7 +274,8 @@ def test_imported_deep_capture_target_creates_real_screenshot_and_axe_perf(tmp_p
     yields a genuine screenshot on disk plus real axe-core + navigation-timing evidence."""
     with _serve() as (base, host, posts, gets):
         _store, pdir, obs = _launch_via_manual_path(tmp_path, base, host, mode="playwright")
-    assert (pdir / "page.png").exists() and (pdir / "page.png").stat().st_size > 0   # real screenshot
+    assert (pdir / "landing.png").stat().st_size > 0       # real first-pass screenshot
+    assert (pdir / "verification.png").stat().st_size > 0  # independent verification screenshot
     assert obs.get("axe_status") == "ok"                                    # real axe-core ran
     assert any(v.get("rule") == "image-alt" for v in obs.get("axe_violations", []))
     assert obs.get("perf", {}).get("loadEvent") is not None                 # real navigation timing

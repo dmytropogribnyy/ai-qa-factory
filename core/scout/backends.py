@@ -354,6 +354,7 @@ class PlaywrightBackend:
                  _playwright_factory=None, headful: Optional[bool] = None) -> None:
         self.policy = policy or UrlPolicy()
         self.screenshot_dir = screenshot_dir
+        self.screenshot_filename = "page.png"
         self._playwright_factory = _playwright_factory
         self.headful = headful          # None -> follow SCOUT_HEADFUL env; True/False -> force
 
@@ -466,9 +467,12 @@ class PlaywrightBackend:
         if self.screenshot_dir:
             import os
             os.makedirs(self.screenshot_dir, exist_ok=True)
-            shot = os.path.join(self.screenshot_dir, "page.png")
+            filename = os.path.basename(str(self.screenshot_filename or "page.png"))
+            if not filename.lower().endswith(".png"):
+                filename = "page.png"
+            shot = os.path.join(self.screenshot_dir, filename)
             page.screenshot(path=shot)
-            obs.screenshot_ref = "page.png"  # basename only — never leak an absolute path
+            obs.screenshot_ref = filename  # basename only — never leak an absolute path
 
     def _collect_deep_qa(self, page, obs: PageObservation) -> None:
         """Deep-QA on the already-open page: real navigation timing (captured BEFORE axe adds CPU
@@ -537,7 +541,7 @@ class PlaywrightBackend:
                 try:
                     page.goto(start_url, wait_until="load", timeout=timeout_s * 1000)
                     result["precondition_ok"] = True
-                    result["action_log"].append(f"goto {start_url}")
+                    result["action_log"].append("goto start_url")
                 except Exception as exc:
                     result["action_log"].append(f"precondition failed: {type(exc).__name__}")
                 if result["precondition_ok"]:
@@ -549,7 +553,7 @@ class PlaywrightBackend:
                     except Exception as exc:
                         result["action_log"].append(f"action navigation error: {type(exc).__name__}")
                         result["actual_status"] = 0            # unreachable action = broken
-                    result["action_log"].append(f"follow flow entry -> {action_url}")
+                    result["action_log"].append("follow flow entry")
                     result["final_url"] = page.url
                     video = page.video                        # captured ONLY on the interaction path
                     # Cleanup is by construction: this method performs ONLY read-only navigations (it
