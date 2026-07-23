@@ -119,6 +119,8 @@ def test_dashboard_and_observer_link_the_same_promoted_evidence(tmp_path):
         server.shutdown()
     assert "Browser trace (redacted)" in html
     assert "Evidence manifest + integrity hashes" in html
+    assert "Structured evidence files (diagnostic)" in html
+    assert "Raw evidence files" not in html
     assert "landing.png" in html and "verification.png" in html
 
     campaign = RunStore(str(tmp_path), "campaign-evidence")
