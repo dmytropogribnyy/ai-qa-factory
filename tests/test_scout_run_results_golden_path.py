@@ -160,6 +160,9 @@ def test_manual_target_page_shows_incomplete_analysis_not_a_healthy_conclusion(t
     assert "0 confirmed findings" in html and "analysis incomplete" in html.lower()
     assert "captcha_detected" in html                 # the persisted reason is shown
     assert "Solve the CAPTCHA" in html                # the persisted recommended action
+    assert "post_landing_precheck" in html            # the persisted stage boundary
+    assert "stopped_before_interaction" in html       # the persisted stop boundary
+    assert "landing HTTP 200" in html                 # partial evidence when available
     assert "no problems" not in html.lower() and "no verified problem" not in html.lower()
     assert "Back to run" in html
 
@@ -236,3 +239,24 @@ def test_run_scoped_target_does_not_leak_across_domains(tmp_path):
     assert da["prospect_id"] == "01-alpha"
     assert da.get("manual_action") in (None, {})
     assert all("beta" not in f["title"] for f in da["findings"])
+
+
+def test_history_to_target_still_works_without_a_run_param(tmp_path):
+    # Point 9: the History -> Target path (no ?run=) must keep resolving via the analyzed registry
+    # and render the DONE target's evidence — the new run param is additive, never a regression.
+    out = str(tmp_path)
+    store = _build_run(out)
+    ScoutService(out)._register_analyzed_run(store, store.load_state())   # History registration
+    det = CampaignService(out).target_detail("alpha.example")            # no run= (History link)
+    assert det["prospect_id"] == "01-alpha"
+    assert any("missing meta description" in f["title"] for f in det["findings"])
+    svc = ScoutService(out)
+    svc.attach(_RUN)
+    server, url = start_dashboard(svc, operator_home=True)
+    try:
+        status, html, _ = _get(f"{url}/scout/target?domain=alpha.example")   # History deep-link
+    finally:
+        server.shutdown()
+    assert status == 200 and "missing meta description" in html
+    assert "Back to history" in html
+
