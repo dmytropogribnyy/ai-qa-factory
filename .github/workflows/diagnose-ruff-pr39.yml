@@ -20,16 +20,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements.txt
-      - name: Capture Ruff version, settings, and output
+      - run: python -m pip install 'ruff==0.15.22'
+      - name: Capture pinned Ruff result
         shell: bash
         run: |
           set +e
           {
             python -m ruff --version
-            echo '--- SETTINGS ---'
-            python -m ruff check --show-settings core/scout/config.py
-            echo '--- CHECK ---'
             python -m ruff check .
             code=$?
             echo "exit_code=$code"
