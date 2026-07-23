@@ -119,6 +119,7 @@ def test_dashboard_and_observer_link_the_same_promoted_evidence(tmp_path):
             html = response.read().decode("utf-8")
     finally:
         server.shutdown()
+        server.server_close()
     assert "Browser trace (redacted)" in html
     assert "Evidence manifest + integrity hashes" in html
     assert "Structured evidence files (diagnostic)" in html
