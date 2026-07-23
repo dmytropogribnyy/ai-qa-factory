@@ -1,14 +1,53 @@
 # Current Cross-Agent Handoff
 
-**Author of this handoff:** GitHub Copilot (temporary reviewer session)
-**Date:** 2026-07-17
+**Author of this handoff:** GitHub Copilot (coding agent session)
+**Date:** 2026-07-23
 **Purpose:** Independent verification of the Phase 8.2 documentation branch and
 preparation of handoff + reuse analysis for the next Claude Code session.
 **This file records the *verified* state, not merely the expected state.**
 
 ---
 
-## Operator-Path Hotfix — Prospect QA Radar v2.0.2 — READ FIRST (latest)
+## Scout Dashboard — PR-A1 + PR-A2 merged — READ FIRST (latest)
+
+**Author:** GitHub Copilot (coding agent). Both PRs based on exact `main` heads, squash-merged
+after an owner-relayed independent GPT exact-head GO review (never self-approved/self-merged
+without that verdict).
+
+- **PR-A1 "Run Results Golden Path + Manual-Action Truthfulness"** — merged as `main@637490b`
+  (squash of PR #34). Exact-run pinning for `CampaignService.target_detail()`, truthful
+  MANUAL_ACTION_REQUIRED rendering (no invented stage/boundary/browser/landing values),
+  cross-domain/cross-run isolation. `tests/test_scout_run_results_golden_path.py` (16 tests).
+- **PR-A2 "Evidence Usability + Operator UI Truthfulness"** — merged as `main@6cd61b6` (squash
+  of PR #35, from branch `feat/scout-evidence-usability`, base exactly `main@637490b`). Adds
+  `source_kind` (discovery/curated/manual/`""`), `video_mode`, and a bounded `evidence_files`
+  list to `target_detail()`; surfaces axe-core (`axe_status`/`axe_violations`) and raw `perf`
+  evidence; Dashboard Target page gains truthful curated/manual source labels, a
+  video-policy-vs-failure card, an axe-core accessibility card, a raw-evidence-files card, and
+  a Problems-table Informational/Defect column; Activity page no longer falsely claims "No
+  activity yet" for an attached run with only engine-level history.
+  `tests/test_scout_evidence_usability.py` (16 tests).
+  - **NO-GO → fix → GO cycle:** first review round (exact head `ba8d98a`) was NO-GO —
+    `source_kind` defaulted to `"manual"` for ANY unrecognised/legacy `campaign_name`
+    (mislabelling unknown sources). Fixed in `27b5415`: `source_kind` is now `"manual"` only
+    for a known manual `campaign_name` (`adhoc`, `scout-demo`, `headed-replay`); anything else
+    stays `""` (genuinely unknown). A second minor thread (a code comment implying video no
+    longer renders next to screenshots — untrue, only the wording was ambiguous) was reworded.
+    Both Copilot review threads replied-to and resolved. Re-reviewed exact head `27b5415` → GO
+    → squash-merged.
+  - Both PRs' full quality gates were green at merge time: `ruff check .` clean, `docs_audit.py`
+    PASS, `agent_readiness_audit.py` PASS, full `pytest tests/ -q` (5332 passed, 5 skipped, 0
+    failed on the PR-A2 head), and PR CI (`fast`, `scout-smoke`, `browser-acceptance`, `meta`
+    green; `provider-contract`/`relay-smoke`/`windows-full`/`windows-targeted` skipped by the
+    expected tiered path-filter).
+- **Not started (explicit non-goals for both PRs):** PR-B (coverage/adaptive work), PR-C
+  (multi-step flows), outreach, CAPTCHA solving, a new evidence store, a broad Dashboard
+  redesign, or any LLM calls added to a read path.
+
+---
+
+## Operator-Path Hotfix — Prospect QA Radar v2.0.2 — earlier
+
 
 **Author:** Claude Code. **Branch:** `fix/scout-v2.0.2-gmail-operator-path` (from `main@11a7b8a`, the
 v2.0.1 release). Earlier tags (incl. `scout-v2.0.1`) are **not** moved. **Not** a new functional phase.
