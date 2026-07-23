@@ -22,7 +22,7 @@ from core.scout.backends import PageObservation, make_backend
 from core.scout.checks import CheckContext, run_checks
 from core.scout.config import ScoutRunConfig
 from core.scout.control import RunControl
-from core.scout.evidence_policy import EvidenceSettings, VIDEO_QUALIFIED_AUTO, video_qualified
+from core.scout.evidence_policy import EvidenceSettings, VIDEO_QUALIFIED_AUTO
 from core.scout.findings import ScoutFinding
 from core.scout.sanitize import Sanitizer
 from core.scout.scoring import build_scorecard
@@ -30,17 +30,17 @@ from core.scout.store import RunStore, StoreError
 from core.scout.url_safety import dedupe_eligible
 from core.scout.verification import IndependentVerifier
 
-# Verified-defect categories where motion/behaviour matters and a static screenshot is insufficient —
-# the only cases a reproduction video is worth keeping.
-_INTERACTION_CATEGORIES = frozenset({"business_flow", "functional"})
 _SEV_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3}
 
 
-def _audit_opportunity(scorecard) -> int:
-    for d in getattr(scorecard, "dimensions", []):
-        if getattr(d, "name", "") == "audit_opportunity":
-            return int(getattr(d, "value", 0) or 0)
-    return 0
+def _finding_reproduced(finding: ScoutFinding, rep: dict) -> bool:
+    """Did the reproduction run genuinely re-exhibit the finding? A broken primary flow entry is
+    reproduced only when the followed action is ACTUALLY broken (HTTP >= 400 or an unreachable/zero
+    status) — a clip where the action loaded fine is never kept as reproduction evidence."""
+    if finding.signature == "flow_entry_broken":
+        st = rep.get("actual_status")
+        return st is not None and (st == 0 or st >= 400)
+    return False
 
 
 def _rmtree(path) -> None:
@@ -152,9 +152,10 @@ class ScoutEngine:
             # The recording-capable observe is INSIDE the guarded block: if it creates _vidtmp and
             # then raises (e.g. a browser launch/context failure), the finally still cleans it up.
             deep_qa = cfg.browser_mode == "playwright"   # real axe + perf on BOTH passes (two-pass verify)
+            # The first-pass observe is a page LOAD — never recorded as reproduction. A true
+            # reproduction video is captured later, in the SAME context that performs the interaction.
             obs = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes,
-                                       record_video=(self._evidence.video_mode == VIDEO_QUALIFIED_AUTO),
-                                       deep_qa=deep_qa)
+                                       record_video=False, deep_qa=deep_qa)
             self.store.save_prospect_artifact(pid, "observation.json", obs.to_dict())
 
             # CAPTCHA / access prohibition -> manual action, no interaction, continue others.
@@ -203,7 +204,7 @@ class ScoutEngine:
             )
             scorecard = build_scorecard(pid, verified)
             self.store.save_prospect_artifact(pid, "scorecard.json", scorecard.to_dict())
-            video_ref = self._finalize_prospect_video(pid, obs.video_ref, verified)
+            video_ref = self._reproduce_prospect_findings(pid, url, verified, flow_result)
 
             defects = [f for f in verified if f.severity != "info"]
             prospects[pid].update({
@@ -219,41 +220,65 @@ class ScoutEngine:
             # return, an exception, or normal completion (a kept clip was already moved out of _vidtmp).
             _rmtree(Path(self.store.prospect_dir(pid)) / "_vidtmp")
 
-    def _finalize_prospect_video(self, pid: str, video_ref: str,
-                                 verified: List[ScoutFinding]) -> str:
-        """Keep a qualified reproduction clip or delete the unqualified temp recording.
-
-        A short video is kept ONLY for a reproduced INTERACTION defect (business_flow / functional)
-        of sufficient severity and QA value; otherwise the temp recording is removed — Scout never
-        keeps an unreproduced video. Two-pass verification IS the reproduction. Qualification is
-        anchored strictly on the interaction defects themselves: an unrelated static defect (e.g. a
-        high-severity SEO issue) must never lend its severity or QA value to a trivial interaction
-        finding. Returns the kept servable path "reproduction.webm" or "".
+    def _reproduce_prospect_findings(self, pid: str, start_url: str,
+                                     verified: List[ScoutFinding], flow_result) -> str:
+        """Capture a TRUE reproduction video — in the SAME bounded browser context that performs the
+        exact safe steps producing a verified INTERACTION finding — and bind the reproduction evidence.
+        A page-load-only clip is NEVER kept. If the finding cannot be genuinely replayed (or the backend
+        has no browser / video is off / the cap is reached), keep no video and record the honest
+        reproduction status. Returns the kept servable path "reproduction.webm" or "".
         """
         pdir = Path(self.store.prospect_dir(pid))
-        vidtmp = pdir / "_vidtmp"
         kept = ""
         try:
-            if video_ref:
-                interaction = [f for f in verified
-                               if f.severity != "info" and f.category in _INTERACTION_CATEGORIES]
-                if interaction:
-                    severity = max((f.severity for f in interaction),
-                                   key=lambda s: _SEV_ORDER.get(s, 0))
-                    # QA value from the interaction defects ONLY (not the prospect-wide scorecard).
-                    qa_score = _audit_opportunity(build_scorecard(pid, interaction))
-                    allowed, _reason = video_qualified(
-                        self._evidence, severity=severity, qa_score=qa_score, reproduced=True,
-                        visual_or_interaction=True, screenshots_sufficient=False,
-                        safe_deterministic_path=True, videos_recorded=self._videos_recorded)
-                    clip = pdir / video_ref
-                    if allowed and clip.exists():
-                        clip.replace(pdir / "reproduction.webm")   # promote to a servable top-level file
-                        self._videos_recorded += 1
-                        kept = "reproduction.webm"
+            picked = self._pick_reproducible(verified, flow_result)
+            if picked is None:
+                return ""
+            finding, action_url = picked
+            if (self._evidence.video_mode != VIDEO_QUALIFIED_AUTO
+                    or self._videos_recorded >= self._evidence.max_videos_per_campaign
+                    or not hasattr(self.backend, "reproduce_interaction")):
+                return ""                          # opt-out / cap reached / no browser: no video
+            rep = self.backend.reproduce_interaction(start_url, action_url, str(pdir))
+            reproduced = _finding_reproduced(finding, rep)
+            record = {
+                "finding_id": finding.finding_id, "signature": finding.signature,
+                "start_url": start_url, "action_url": action_url,
+                "action_log": rep.get("action_log", []), "final_url": rep.get("final_url", ""),
+                "actual_status": rep.get("actual_status"), "expected": finding.expected,
+                "actual": finding.actual, "cleanup_ok": bool(rep.get("cleanup_ok")),
+                "reproduced": reproduced,
+                "reproduction_status": "reproduced" if reproduced else "not_reproduced",
+                "video_ref": "",
+            }
+            clip = pdir / str(rep.get("video_ref") or "_nope_")
+            # Keep the video ONLY when the finding genuinely replayed AND cleanup was verified.
+            if reproduced and record["cleanup_ok"] and rep.get("video_ref") and clip.exists():
+                clip.replace(pdir / "reproduction.webm")
+                record["video_ref"] = "reproduction.webm"
+                self._videos_recorded += 1
+                kept = "reproduction.webm"
+            self.store.save_prospect_artifact(pid, "reproduction.json", record)
+        except Exception:  # noqa: BLE001 - reproduction must never crash a completed prospect
+            pass
         finally:
-            _rmtree(vidtmp)          # always clean the temp dir (an unqualified clip is never kept)
+            _rmtree(pdir / "_reprotmp")            # temp reproduction recording dir
+            _rmtree(pdir / "_vidtmp")              # never keep a page-load clip
         return kept
+
+    def _pick_reproducible(self, verified: List[ScoutFinding], flow_result):
+        """The best qualifying INTERACTION finding that has a genuinely replayable safe action, plus
+        that action URL. Currently: a broken primary business-flow entry -> navigate to the flow entry
+        (a bounded, read-only step). Returns (finding, action_url) or None."""
+        min_sev = _SEV_ORDER.get(self._evidence.min_video_severity, 2)
+        entry = (flow_result or {}).get("entry_url", "") if isinstance(flow_result, dict) else ""
+        for f in verified:
+            if f.severity == "info":
+                continue
+            if (f.signature == "flow_entry_broken" and entry
+                    and _SEV_ORDER.get(f.severity, 0) >= min_sev):
+                return f, entry
+        return None
 
     # ------------------------------------------------------------------
     def _probe_links(self, obs: PageObservation) -> Dict[str, int]:

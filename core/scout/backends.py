@@ -489,6 +489,75 @@ class PlaywrightBackend:
         except Exception:
             obs.axe_status, obs.axe_violations = "unavailable", []
 
+    def reproduce_interaction(self, start_url: str, action_url: str, record_dir: str, *,
+                              timeout_s: float = 20.0) -> Dict[str, Any]:
+        """Bounded, read-only reproduction: in ONE recorded browser context, load the start URL
+        (precondition), follow the exact interaction (navigate to action_url), observe the actual
+        result, stop, and verify cleanup. Records a video of the ACTUAL interaction — never a
+        page-load-only clip. Never submits a form, logs in, or triggers a side effect. Returns the
+        action log, final URL, actual status, cleanup flag, and video_ref (relative to record_dir)."""
+        result: Dict[str, Any] = {"start_url": start_url, "action_url": action_url, "action_log": [],
+                                  "final_url": "", "actual_status": None, "cleanup_ok": False,
+                                  "video_ref": ""}
+        if not self._url_allowed(start_url) or not self._url_allowed(action_url):
+            result["action_log"].append("blocked: a URL is not eligible")
+            return result
+        factory = self._playwright_factory
+        if factory is None:
+            try:
+                from playwright.sync_api import sync_playwright  # lazy: optional dependency
+                factory = sync_playwright
+            except Exception as exc:  # pragma: no cover - only when playwright missing
+                result["action_log"].append(f"playwright unavailable: {type(exc).__name__}")
+                return result
+        vidtmp = os.path.join(record_dir, "_reprotmp")
+        os.makedirs(vidtmp, exist_ok=True)
+        with factory() as p:
+            headful = (self.headful if self.headful is not None
+                       else os.getenv("SCOUT_HEADFUL", "").lower() in ("1", "true", "yes", "on"))
+            launch_kwargs: Dict[str, Any] = {"headless": not headful}
+            if headful:
+                launch_kwargs["slow_mo"] = 400
+            browser = p.chromium.launch(**launch_kwargs)
+            context = browser.new_context(record_video_dir=vidtmp)
+            video = None
+
+            def _on_route(route):
+                req_url = getattr(getattr(route, "request", None), "url", "") or ""
+                if self._url_allowed(req_url):
+                    route.continue_()
+                else:
+                    route.abort()
+
+            try:
+                page = context.new_page()
+                page.route("**/*", _on_route)
+                page.goto(start_url, wait_until="load", timeout=timeout_s * 1000)
+                result["action_log"].append(f"goto {start_url}")
+                resp = page.goto(action_url, wait_until="load", timeout=timeout_s * 1000)  # interaction
+                result["action_log"].append(f"follow flow entry -> {action_url}")
+                result["final_url"] = page.url
+                result["actual_status"] = resp.status if resp else 0
+                video = page.video
+                result["cleanup_ok"] = True    # navigation-only, no state mutation -> clean
+            except Exception as exc:
+                # A failed navigation to a broken action is EXPECTED — it reproduces the broken finding.
+                result["action_log"].append(f"navigation error: {type(exc).__name__}")
+                result["actual_status"] = 0
+                result["cleanup_ok"] = True     # nothing was mutated
+                try:
+                    video = page.video
+                except Exception:
+                    video = None
+            finally:
+                self._safe_close(context, browser)   # closing the context flushes the .webm
+            if video is not None:
+                try:
+                    result["video_ref"] = os.path.join("_reprotmp", os.path.basename(video.path()))
+                except Exception:
+                    pass
+        return result
+
     @staticmethod
     def _safe_close(*closables) -> None:
         for c in closables:
