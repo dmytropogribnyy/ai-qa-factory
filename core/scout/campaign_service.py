@@ -366,6 +366,18 @@ class CampaignService:
                     scout_run = cands[0].name
             except Exception:
                 scout_run = scout_run
+        if not scout_run and entry is not None:
+            # A manual / imported run registers its run_id as the domain's campaign — resolve the
+            # findings/evidence from that run store so an imported target opens a working detail card
+            # (the discovery path uses the brain; this covers the manual Scout path).
+            from core.scout.store import RunStore as _RunStore
+            for cid in reversed(list(getattr(entry, "campaign_ids", []) or [])):
+                try:
+                    if _RunStore(self.output_dir, cid).exists():
+                        scout_run = cid
+                        break
+                except Exception:
+                    continue
         _MEDIA_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4", ".har")
         if scout_run:
             from core.scout.outreach.qa_draft import extract_public_emails

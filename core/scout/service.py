@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.scout.config import ScoutRunConfig, fresh_run_id
 from core.scout.control import RunControl
-from core.scout.engine import RUN_COMPLETED, RUN_FAILED, ScoutEngine
+from core.scout.engine import P_DONE, RUN_COMPLETED, RUN_FAILED, ScoutEngine
 from core.scout.store import RunStore
 
 _CONTROL_ACTIONS = ("pause", "resume", "cancel", "kill")
@@ -67,11 +67,33 @@ class ScoutService:
             self._record_failure(store, exc)
             return
         if state.get("status") == RUN_COMPLETED:
+            self._register_analyzed_run(store, state)
             try:
                 from core.scout.report import build_report
                 build_report(store)
             except Exception as exc:  # report failure is recorded, run stays completed
                 self._events.append({"event": "report_failed", "error": str(exc)[:160]})
+
+    def _register_analyzed_run(self, store: RunStore, state: Dict[str, Any]) -> None:
+        """Register every COMPLETED (analyzed) target of a manual / imported run in the shared History
+        registry, so an imported curated-list run's targets appear in /scout/history and open a working
+        /scout/target — the SAME model the discovery path uses. Idempotent (record_analysis dedups by
+        canonical domain); the run_id is recorded as the campaign so target-detail can bind back to it.
+        Never fails the run."""
+        from core.scout.discovery.analyzed_registry import ANALYZED, AnalyzedSiteRegistry
+        from core.scout.discovery.domain_intel import canonical_domain
+        try:
+            reg = AnalyzedSiteRegistry(self.output_dir)
+            run_id = store.root.name
+            for p in (state.get("prospects") or {}).values():
+                if p.get("status") != P_DONE:
+                    continue                          # only genuinely analyzed targets, never failed
+                dom = canonical_domain(p.get("url", "") or p.get("final_url", ""))
+                if dom:
+                    reg.record_analysis(dom, status=ANALYZED, evidence_ref=f"scout/{dom}/qa",
+                                        campaign_id=run_id)
+        except Exception:  # noqa: BLE001 - a registry write must never crash a completed run
+            pass
 
     @staticmethod
     def _record_failure(store: RunStore, exc: Exception) -> None:

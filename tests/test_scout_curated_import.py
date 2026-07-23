@@ -16,10 +16,14 @@ import urllib.request
 
 import pytest
 
+from core.scout.backends import PageObservation
+from core.scout.campaign_service import CampaignService
+from core.scout.config import ScoutRunConfig
 from core.scout.curated_import import CuratedImportError, parse_curated_list
 from core.scout.dashboard import start_dashboard
-from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry
+from core.scout.discovery.analyzed_registry import ANALYZED, AnalyzedSiteRegistry
 from core.scout.service import ScoutService
+from core.scout.store import RunStore
 
 
 def _csv_bytes(rows):
@@ -142,6 +146,37 @@ def test_zip_bomb_ratio_is_refused_before_openpyxl():
         parse_curated_list(buf.getvalue(), "bomb.xlsx")
 
 
+# -- golden path: Recommended-action preselection + metadata ---------------------------------------
+
+
+def test_recommended_action_preselects_only_scout_now():
+    data = _csv_bytes([["URL", "Recommended action", "Priority"],
+                       ["a.com", "Scout now", "A"], ["b.com", "Backlog", "C"],
+                       ["c.com", "scout now", "B"], ["d.com", "Exclude", "D"]])   # case-insensitive
+    res = parse_curated_list(data, "l.csv")
+    assert res.has_recommended_action is True
+    pre = {r.canonical_domain: r.preselect for r in res.rows}
+    assert pre == {"a.com": True, "b.com": False, "c.com": True, "d.com": False}
+    assert res.counters["preselected"] == 2
+
+
+def test_without_recommended_action_preselects_valid_new_only(tmp_path):
+    reg = AnalyzedSiteRegistry(str(tmp_path))
+    reg.record_analysis("done.com", status="analyzed")
+    res = parse_curated_list(_csv_bytes([["URL"], ["fresh.com"], ["done.com"]]), "l.csv", registry=reg)
+    assert res.has_recommended_action is False
+    pre = {r.canonical_domain: r.preselect for r in res.rows}
+    assert pre["fresh.com"] is True and pre["done.com"] is False   # already-analyzed never preselected
+
+
+def test_metadata_columns_captured_and_recommended_action_exposed():
+    data = _csv_bytes([["url", "Product", "Priority", "Weighted score", "Recommended action"],
+                       ["a.com", "Widget", "A", "87", "Scout now"]])
+    row = parse_curated_list(data, "l.csv").rows[0]
+    assert row.metadata.get("Product") == "Widget" and row.metadata.get("Weighted score") == "87"
+    assert row.recommended_action == "Scout now"
+
+
 def test_formula_like_cell_is_treated_as_untrusted_text_never_evaluated():
     # A cell that looks like a formula must be handled as data (and rejected as a non-URL), never run.
     data = _csv_bytes([["URL"], ["=cmd|' /c calc'!A1"], ["good.com"]])
@@ -204,3 +239,72 @@ def test_manual_scan_page_shows_import_ui(tmp_path):
         assert "impconfirm" in body                                         # launch requires explicit confirm
     finally:
         server.shutdown()
+
+
+# -- golden path: imported/manual run registers completed targets in History + Target detail --------
+
+
+class _FakeAnalyzeBackend:
+    """A no-network backend: every seed yields a valid observation so the engine reaches P_DONE and
+    the domain is registered as analyzed (proves the manual/imported run -> History/Target model)."""
+    name = "static"
+    screenshot_dir = None
+
+    def observe(self, url, timeout_s, max_bytes, *, record_video=False, deep_qa=False):
+        return PageObservation(url=url, final_url=url, ok=True, status=200, backend=self.name,
+                               title="T", meta_description="d", html_bytes=1000,
+                               headings=[{"level": 1, "text": "h"}], landmarks={"main": 1},
+                               headers={"content-type": "text/html", "cache-control": "max-age=60"})
+
+
+def test_register_analyzed_run_puts_completed_targets_in_history(tmp_path):
+    svc = ScoutService(str(tmp_path))
+    store = RunStore(str(tmp_path), "curated-run-1")
+    state = {"prospects": {"01-a": {"status": "DONE", "url": "https://acme.com/"},
+                           "02-b": {"status": "FAILED", "url": "https://broken.com/"}}}
+    svc._register_analyzed_run(store, state)
+    hist = {r["domain"] for r in CampaignService(str(tmp_path)).history()}
+    assert "acme.com" in hist and "broken.com" not in hist    # only DONE targets are registered
+
+
+def test_target_detail_resolves_a_manual_run_via_registry(tmp_path):
+    # A manual run registers run_id as the domain's campaign; target_detail must find its findings.
+    reg = AnalyzedSiteRegistry(str(tmp_path))
+    reg.record_analysis("acme.com", status=ANALYZED, campaign_id="curated-run-9")
+    store = RunStore(str(tmp_path), "curated-run-9")
+    store.save_state({"status": "COMPLETED", "prospects": {"01-a": {"status": "DONE"}}})
+    store.save_prospect_artifact("01-a", "findings.json", {"verified": [
+        {"finding_id": "f1", "signature": "missing_meta_description", "category": "seo",
+         "severity": "low", "title": "Missing meta description", "is_client_safe": True}], "rejected": []})
+    detail = CampaignService(str(tmp_path)).target_detail("acme.com")
+    assert detail.get("entry") is not None
+    assert detail.get("scout_run") == "curated-run-9"          # resolved via the registry campaign id
+    assert any(f.get("title") == "Missing meta description" for f in (detail.get("findings") or []))
+
+
+def test_curated_import_end_to_end_launch_history_target_no_dupes(tmp_path):
+    rows = [["URL", "Recommended action", "Product", "Weighted score"]]
+    rows += [[f"scoutnow{i}.com", "Scout now", f"P{i}", str(90 - i)] for i in range(10)]
+    rows += [[f"backlog{i}.com", "Backlog", f"B{i}", str(40 - i)] for i in range(5)]
+    res = parse_curated_list(_xlsx_bytes(rows), "curated.xlsx")
+    assert res.counters["total"] == 15 and res.counters["preselected"] == 10   # 10 Scout now, 5 Backlog
+    selected = [r.seed_url for r in res.rows if r.preselect]
+    assert len(selected) == 10 and all("scoutnow" in s for s in selected)
+
+    svc = ScoutService(str(tmp_path))
+    svc.start(ScoutRunConfig(campaign_name="curated", seeds=selected, browser_mode="static",
+                             resolve_dns=False, output_dir=str(tmp_path)), backend=_FakeAnalyzeBackend())
+    svc.join(timeout=60)
+    cs = CampaignService(str(tmp_path))
+    hist = {r["domain"] for r in cs.history()}
+    assert "scoutnow0.com" in hist and "backlog0.com" not in hist   # only launched (Scout now) targets
+    detail = cs.target_detail("scoutnow0.com")
+    assert detail.get("entry") is not None                          # target detail opens for it
+
+    before = len(cs.history())                                      # re-run the same target -> no dup row
+    svc2 = ScoutService(str(tmp_path))
+    svc2.start(ScoutRunConfig(campaign_name="curated2", seeds=["https://scoutnow0.com"],
+                              browser_mode="static", resolve_dns=False, output_dir=str(tmp_path)),
+               backend=_FakeAnalyzeBackend())
+    svc2.join(timeout=60)
+    assert len(cs.history()) == before
