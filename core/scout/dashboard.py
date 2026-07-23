@@ -2070,6 +2070,16 @@ function startCampaign(){{
                 + '<p class="muted">Recheck / Reproduce / Record short video / Capture stronger '
                 'evidence are available on a live-analyzed target (bounded, fail-closed).</p></div>')
 
+            # Honest evidence-binding state: a shared multi-target run may register a domain whose own
+            # analyzed prospect is not in the store. We refuse to borrow another target's evidence, so
+            # the card shows nothing here — say so plainly rather than look like a clean empty result.
+            if det.get("evidence_status") == "prospect_not_found":
+                body += ('<div class="banner warn">Evidence for this domain could not be bound to its '
+                         'own analyzed page in the run, so no findings, screenshots, network capture '
+                         'or reproduction are shown here — deliberately, rather than surface evidence '
+                         'from a different target. Re-run a scan for this domain to rebuild its own '
+                         'evidence.</div>')
+
             # Sales funnel (engagement pipeline). Won/Delivered come from client-work; the
             # outreach-side transitions are set here. The system never emails anyone.
             if entry:
