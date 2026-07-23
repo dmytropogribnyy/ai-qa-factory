@@ -652,6 +652,10 @@ def main(argv: list[str] | None = None) -> int:
     scout_cmd.add_argument("--browser", choices=["static", "playwright"], default="static")
     scout_cmd.add_argument("--max-sites", type=int, default=10, dest="max_sites")
     scout_cmd.add_argument("--max-pages", type=int, default=5, dest="max_pages")
+    scout_cmd.add_argument("--coverage", choices=["adaptive", "deep"], default="adaptive",
+                           help="Within-site coverage profile for 'run'/'smoke' (adaptive=up to 12 "
+                                "pages/site, deep=up to 20; default adaptive). A selected profile "
+                                "overrides --max-pages.")
     scout_cmd.add_argument("--concurrency", type=int, default=1,
                            help="Must be 1 in v1.0.x (parallel execution is deferred)")
     scout_cmd.add_argument("--run-id", dest="run_id", default="")

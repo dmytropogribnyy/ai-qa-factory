@@ -406,6 +406,9 @@ class CampaignService:
         # Truthful provenance + capture-policy fields (never invented — "" means genuinely unknown).
         source_kind = ""                      # discovery | curated | manual | "" (unknown)
         video_mode = ""                       # off | manual | qualified_auto | "" (unknown)
+        # This prospect's persisted within-site coverage record (coverage.json), or None when a
+        # historical/legacy run never wrote one — never fabricated (see coverage.py / engine.py).
+        coverage: Optional[Dict[str, Any]] = None
         # Raw evidence files that ACTUALLY exist on disk for this prospect, so the UI never links to
         # an artifact that isn't there. Each entry is safely servable via /scout/artifact.
         evidence_files: List[Dict[str, str]] = []
@@ -493,6 +496,10 @@ class CampaignService:
                         legacy_reason = str(pstate.get("reason", "") or "").strip()
                         if legacy_reason:
                             manual_action = {"reason": legacy_reason}
+                    # Within-site coverage (coverage.json) — exact-run/exact-prospect confined. A
+                    # historical/legacy run (or one stopped before any page finished, e.g. manual
+                    # action) never wrote one; that stays None — never a fabricated zero.
+                    coverage = st.load_prospect_artifact(prospect_id, "coverage.json") or None
                     obs = st.load_prospect_artifact(prospect_id, "observation.json") or {}
                     contacts = extract_public_emails(obs, domain=domain)
                     network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),
@@ -552,7 +559,7 @@ class CampaignService:
                 "scout_run": scout_run, "run": scout_run, "prospect_id": prospect_id,
                 "prospect_status": prospect_status, "analysis_complete": analysis_complete,
                 "manual_action": manual_action, "source_kind": source_kind,
-                "video_mode": video_mode, "evidence_files": evidence_files,
+                "video_mode": video_mode, "evidence_files": evidence_files, "coverage": coverage,
                 "evidence_status": evidence_status, "media": media, "network": network,
                 "reproduction": reproduction,
                 "findings": [_project_target_finding(f) for f in findings],
