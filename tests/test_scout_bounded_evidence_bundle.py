@@ -134,11 +134,15 @@ def test_dashboard_and_observer_link_the_same_promoted_evidence(tmp_path):
         "status": "COMPLETED",
         "candidates": [{"promoted_scout_run": store.root.name}],
     })
+    temp_recording = store.prospect_dir(pid) / "_vidtmp"
+    temp_recording.mkdir()
+    (temp_recording / "unqualified-page-load.webm").write_bytes(b"not-durable")
     result = ObserverAPI(str(tmp_path)).get_evidence_manifest("campaign-evidence")
     refs = {e["ref"] for e in result["evidence"]}
     assert any(ref.endswith("/browser_trace.json") for ref in refs)
     assert any(ref.endswith("/landing.png") for ref in refs)
     assert all(not Path(ref).is_absolute() for ref in refs)
+    assert all("_vidtmp" not in ref and "_reprotmp" not in ref for ref in refs)
     assert all(len(e["sha256"]) == 64 for e in result["evidence"])
     assert any(
         e["ref"].endswith("/landing.png") and e["hash_source"] == "evidence_manifest"

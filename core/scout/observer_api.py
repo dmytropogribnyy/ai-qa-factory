@@ -296,37 +296,48 @@ class ObserverAPI:
             prospects_dir = run_dir / "prospects"
             if not prospects_dir.is_dir():
                 continue
-            for f in prospects_dir.rglob("*"):
-                if not f.is_file() or f.suffix.lower() not in allowed:
-                    continue
+            # Publish only durable, immediate per-prospect artifacts. Nested directories are
+            # intentionally invisible: a failed cleanup must never expose `_vidtmp` / `_reprotmp`
+            # page-load clips or other non-manifested working files.
+            for prospect_dir in prospects_dir.iterdir():
                 try:
-                    resolved = self._confine(str(f))
-                    resolved.relative_to(run_dir)
-                    rel = resolved.relative_to(self._root)
+                    resolved_prospect = self._confine(str(prospect_dir))
+                    resolved_prospect.relative_to(run_dir)
                 except (ObserverError, ValueError):
                     continue
-                baseline = self._prospect_manifest_entry(resolved)
-                if baseline is not None:
-                    sha256 = baseline["sha256"]
-                    hash_source = "evidence_manifest"
-                else:
-                    digest = hashlib.sha256()
-                    with resolved.open("rb") as fh:
-                        for chunk in iter(lambda: fh.read(64 * 1024), b""):
-                            digest.update(chunk)
-                    sha256 = digest.hexdigest()
-                    hash_source = "computed"
-                items.append({
-                    "ref": str(rel).replace("\\", "/"),
-                    "bytes": resolved.stat().st_size,
-                    "sha256": sha256,
-                    "hash_source": hash_source,
-                    "kind": {
-                        ".json": "structured",
-                        ".png": "screenshot",
-                        ".webm": "reproduction_video",
-                    }[f.suffix.lower()],
-                })
+                if not resolved_prospect.is_dir():
+                    continue
+                for f in prospect_dir.iterdir():
+                    if not f.is_file() or f.suffix.lower() not in allowed:
+                        continue
+                    try:
+                        resolved = self._confine(str(f))
+                        resolved.relative_to(resolved_prospect)
+                        rel = resolved.relative_to(self._root)
+                    except (ObserverError, ValueError):
+                        continue
+                    baseline = self._prospect_manifest_entry(resolved)
+                    if baseline is not None:
+                        sha256 = baseline["sha256"]
+                        hash_source = "evidence_manifest"
+                    else:
+                        digest = hashlib.sha256()
+                        with resolved.open("rb") as fh:
+                            for chunk in iter(lambda: fh.read(64 * 1024), b""):
+                                digest.update(chunk)
+                        sha256 = digest.hexdigest()
+                        hash_source = "computed"
+                    items.append({
+                        "ref": str(rel).replace("\\", "/"),
+                        "bytes": resolved.stat().st_size,
+                        "sha256": sha256,
+                        "hash_source": hash_source,
+                        "kind": {
+                            ".json": "structured",
+                            ".png": "screenshot",
+                            ".webm": "reproduction_video",
+                        }[f.suffix.lower()],
+                    })
         return {"api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id,
                 "count": len(items), "evidence": items[:500]}
 
