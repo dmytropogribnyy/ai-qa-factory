@@ -928,3 +928,14 @@ No contact lookup, outreach, dashboard, or execution runtime.
 - no destructive actions;
 - no project-memory updates;
 - no hidden cleanup of failures.
+
+---
+
+## Final handoff after PR #37
+
+- Canonical main: `d054c303c76fe03a9fb7466ee80663f2e09ddb06`.
+- Completed: PR #34, PR #35 and PR #37.
+- Current state: local operator-ready Scout with exact-run Results/Target evidence and Adaptive/Deep coverage UI.
+- Next Claude Code task: perform one real operator smoke, then create only a bounded fix PR for confirmed defects.
+- Later work: safe multi-step flows, client report/export and outreach workflow.
+- Current limits: single-step flows only; no CAPTCHA solver; no autonomous outreach.
