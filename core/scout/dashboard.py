@@ -2086,15 +2086,37 @@ function startCampaign(){{
             network = det.get("network") or {}
             fixability = det.get("fixability") or {}
             scout_run = det.get("scout_run") or ""
+            source_kind = det.get("source_kind") or ""
+            video_mode = det.get("video_mode") or ""
+            evidence_files = det.get("evidence_files") or []
             status = (entry or {}).get("analysis_status", "")
             reason = (entry or {}).get("reason", "")
+            # Truthful "what is this" card: an AI understanding card is only produced by adaptive
+            # discovery (the Scout Brain). A curated/manual import never runs that step BY DESIGN, so
+            # showing bare "—" dashes there looks like broken/missing data. Say plainly which is true.
+            _SOURCE_LABEL = {
+                "curated": "This target came from a curated list import. Automatic AI understanding "
+                           "(archetype / business model / journeys) is not computed for curated "
+                           "imports — that is expected, not missing data.",
+                "manual": "This target came from a manual URL scan. Automatic AI understanding "
+                         "(archetype / business model / journeys) is not computed for manual scans "
+                         "— that is expected, not missing data.",
+            }
+            if bs:
+                understanding_html = (
+                    f'<p><b>Archetype:</b> {_esc(bs.get("archetype","—"))} · '
+                    f'<b>Business model:</b> {_esc(bs.get("business_model","—"))} · '
+                    f'<b>Understanding confidence:</b> {_esc(bs.get("understanding_confidence","—"))}%</p>'
+                    f'<p><b>Critical journeys:</b> {_esc(", ".join(bs.get("primary_journeys",[])))}</p>')
+            elif source_kind in _SOURCE_LABEL:
+                understanding_html = f'<p class="muted">{_esc(_SOURCE_LABEL[source_kind])}</p>'
+            else:
+                understanding_html = ('<p class="muted">No AI understanding was computed for this '
+                                      'target (not applicable for this source).</p>')
             body = (
                 f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
                 f'<div class="card"><h2>What Scout thinks this is</h2>'
-                f'<p><b>Archetype:</b> {_esc(bs.get("archetype","—"))} · '
-                f'<b>Business model:</b> {_esc(bs.get("business_model","—"))} · '
-                f'<b>Understanding confidence:</b> {_esc(bs.get("understanding_confidence","—"))}%</p>'
-                f'<p><b>Critical journeys:</b> {_esc(", ".join(bs.get("primary_journeys",[])))}</p>'
+                + understanding_html +
                 f'<p><b>Priority:</b> {_badge(b.get("priority","—"))} · '
                 f'<b>Scores</b> commercial {scores.get("commercial","—")} / QA {scores.get("qa_value","—")} / '
                 f'evidence {scores.get("evidence_confidence","—")} / safety {scores.get("safety_confidence","—")} / '
@@ -2222,6 +2244,49 @@ function startCampaign(){{
                               'and stronger evidence.</div>')
             body += f'<div class="card"><h2>Screenshots &amp; evidence files</h2>{media_html}</div>'
 
+            # Video is an intentional capture POLICY (video_mode), not a pass/fail check: a manual or
+            # disabled policy with no clip is normal, expected behaviour — never render it next to the
+            # screenshots as though it were a missing/failed capture.
+            _VIDEO_POLICY_NOTE = {
+                "off": "Video capture is disabled for this run (video_mode=off). This is an "
+                      "intentional policy, not a failed capture.",
+                "manual": "Video capture is manual/opt-in for this run and none was recorded for "
+                         "this target. This is expected, not a defect.",
+                "qualified_auto": "No qualifying interaction finding triggered an automatic "
+                                  "reproduction video for this target.",
+            }
+            if not vids:
+                note = _VIDEO_POLICY_NOTE.get(video_mode,
+                    "No reproduction video was captured for this target.")
+                body += f'<div class="card"><h2>Reproduction video</h2><p class="muted">{_esc(note)}</p></div>'
+
+            # Accessibility (axe-core) evidence: distinguish "ran, N violations" from "browser
+            # evidence unavailable" from "not attempted" (static/non-deep-capture scan) — never
+            # conflate a capture-mode limitation with a real defect-free result.
+            axe_status = network.get("axe_status", "")
+            axe_violations = network.get("axe_violations") or []
+            if axe_status == "ok":
+                if axe_violations:
+                    a_rows = "".join(
+                        f'<tr><td>{_esc(str(v.get("id","—")))}</td>'
+                        f'<td class="muted">{_esc(str(v.get("impact","—")))}</td>'
+                        f'<td>{_esc(_collapse_ws(str(v.get("help",""))) or "—")}</td>'
+                        f'<td class="muted">{_esc(str(len(v.get("nodes") or [])))}</td></tr>'
+                        for v in axe_violations)
+                    axe_html = (f'<div class="scrollx"><table><caption>axe-core violations '
+                               f'({len(axe_violations)})</caption><tr><th>Rule</th><th>Impact</th>'
+                               f'<th>Description</th><th>Nodes</th></tr>{a_rows}</table></div>')
+                else:
+                    axe_html = ('<p class="muted">axe-core ran on this page and found 0 '
+                               'violations.</p>')
+            elif axe_status == "unavailable":
+                axe_html = ('<p class="muted">Deep-capture ran but axe-core evidence was unavailable '
+                           'for this page (browser/script limitation) — not a defect-free result.</p>')
+            else:
+                axe_html = ('<div class="empty muted">Accessibility (axe-core) was not attempted for '
+                           'this scan mode. Use <b>Deep Capture (Playwright)</b> to run axe-core.</div>')
+            body += f'<div class="card"><h2>Accessibility evidence (axe-core)</h2>{axe_html}</div>'
+
             # Network evidence already captured by Chromium/Playwright (from observation.json).
             if network:
                 ce = network.get("console_errors") or []
@@ -2241,6 +2306,21 @@ function startCampaign(){{
                             '(Playwright) records console errors, failed resources and load timing '
                             'from Chromium.</div>')
             body += f'<div class="card"><h2>Network evidence (Chrome/Playwright)</h2>{net_html}</div>'
+
+            # Raw evidence files — a safe, exact-run/exact-prospect-confined "open" action for the
+            # underlying JSON evidence (observation/findings/scorecard/coverage/reproduction/manual
+            # action), reusing the SAME /scout/artifact route as screenshots. Only files that
+            # genuinely exist are linked (never a dead link).
+            if evidence_files:
+                ev_rows = "".join(
+                    f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
+                    f'{_esc(e["label"])}</a></li>' for e in evidence_files)
+                ev_html = f'<ul>{ev_rows}</ul>'
+            else:
+                ev_html = '<p class="muted">No raw evidence files are available for this target.</p>'
+            body += (f'<div class="card"><h2>Raw evidence files (diagnostic)</h2>{ev_html}'
+                     f'<p class="muted">Opens the underlying captured JSON directly (read-only, '
+                     f'served as source text/JSON — never executed).</p></div>')
 
             # Copy-only outreach draft (never sent). Haiku polishes prose when LLM is live.
             to_addr = _esc(draft.get("contact", "") or (contacts[0] if contacts else ""))
@@ -2341,6 +2421,10 @@ function startCampaign(){{
             status = det.get("prospect_status") or "INCOMPLETE"
             network = det.get("network") or {}
             media = det.get("media") or []
+            evidence_files = det.get("evidence_files") or []
+
+            def _art_url(rel: str) -> str:
+                return f'/scout/artifact?run={_esc(run_id)}&rel={_esc(rel)}'
 
             def _yn(v):
                 return "yes" if v is True else ("no" if v is False else "—")
@@ -2365,6 +2449,11 @@ function startCampaign(){{
                 partial.append(f'landing HTTP {_esc(str(network.get("status")))}')
             partial_html = ('<p><b>Partial evidence:</b> ' + _esc("; ".join(partial)) + '</p>'
                             if partial else '<p class="muted">No partial evidence was collected.</p>')
+            if evidence_files:
+                ev_items = "".join(
+                    f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
+                    f'{_esc(e["label"])}</a></li>' for e in evidence_files)
+                partial_html += f'<p><b>Raw evidence files:</b></p><ul>{ev_items}</ul>'
             body = (
                 f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
                 f'<div class="card"><div class="banner warn">'
@@ -2567,8 +2656,27 @@ function startCampaign(){{
                     events.append({"time": hd.get("at", ""), "actor": hd.get("actor", ""),
                                    "action": f'{hd.get("from_state")} -> {hd.get("to_state")}',
                                    "object": pid, "result": hd.get("reason", "")})
+            scout_run_id = ""
+            # A Scout campaign is real, persisted activity even when it never became a "work"
+            # project — merge in the CURRENTLY attached run's own events (same store every other
+            # Scout page reads) so a completed scan is never falsely reported as "no activity".
+            if not project:
+                try:
+                    scout_run_id = str(service.status().get("run_id") or "")
+                    store = service.store
+                    if store is not None:
+                        for ev in store.read_events()[-100:]:
+                            events.append({
+                                "time": str(ev.get("at", "")), "actor": "scout-engine",
+                                "action": str(ev.get("event", "scout_event")),
+                                "object": scout_run_id or str(ev.get("prospect", "")),
+                                "result": ", ".join(
+                                    f"{k}={v}" for k, v in ev.items() if k not in ("at", "event"))})
+                except Exception:
+                    pass
             events.sort(key=lambda e: e["time"], reverse=True)
-            return {"schema": "dashboard-read-model/v1", "events": events[:200]}
+            return {"schema": "dashboard-read-model/v1", "events": events[:200],
+                    "scout_run_partial": bool(scout_run_id) and not events}
 
         def _activity_page(self, q) -> str:
             diag = self._want_diagnostics(q)
@@ -2577,9 +2685,17 @@ function startCampaign(){{
                 f'<tr><td class="muted">{_esc(e["time"])}</td><td>{_esc(e["actor"])}</td>'
                 f'<td>{_esc(e["action"])}</td><td>{_esc(e["object"])}</td>'
                 f'<td class="muted">{_esc(e["result"])}</td></tr>' for e in data["events"])
-            table = (f'<table><caption>Recent state transitions</caption><tr><th>Time</th><th>Actor</th>'
-                     f'<th>Action</th><th>Project</th><th>Result</th></tr>{rows}</table>' if rows
-                     else '<div class="card empty muted">No activity yet.</div>')
+            if rows:
+                table = (f'<table><caption>Recent state transitions</caption><tr><th>Time</th>'
+                        f'<th>Actor</th><th>Action</th><th>Project</th><th>Result</th></tr>{rows}'
+                        f'</table>')
+            elif data.get("scout_run_partial"):
+                # A Scout run is attached but has no persisted events (e.g. an older run pre-dating
+                # event logging) — say that plainly rather than pretend nothing has happened.
+                table = ('<div class="card empty muted">A Scout run is attached, but detailed '
+                        'historical activity is unavailable for it.</div>')
+            else:
+                table = '<div class="card empty muted">No activity yet.</div>'
             toggle = (
                 '<a class="chip" href="/activity">&#10003; Production only</a>' if diag else
                 '<a class="chip" href="/activity?diagnostics=1">Show diagnostics</a>')
@@ -2588,6 +2704,7 @@ function startCampaign(){{
             return _page("AI QA Factory — Activity", "/activity",
                          f'<h1>Activity</h1>{banner}<div class="row">{toggle}</div>'
                          f'<div class="scrollx">{table}</div>')
+
 
         def _settings_page(self) -> str:
             from core.orchestration.tool_broker import ToolBroker
@@ -2898,9 +3015,15 @@ def _problems_table_html(findings: list) -> str:
         hint = steps[0] if steps else _NEUTRAL
         title_attr = f' title="{_esc(" → ".join(steps))}"' if len(steps) > 1 else ""
         evid = ", ".join(_collapse_ws(r) for r in (f.get("evidence_refs") or []) if _collapse_ws(r))
+        # Informational vs actionable: the SAME rule the engine uses to compute verified_defects
+        # (severity == "info" is informational, everything else counts as an actionable defect) —
+        # so the per-target table never contradicts the run-results totals.
+        is_info = str(f.get("severity") or "").strip().lower() == "info"
+        kind_label = "Informational" if is_info else "Defect"
         rows.append(
             "<tr>"
             f'<td>{_badge(_collapse_ws(f.get("severity")) or _NEUTRAL, _sev_badge_kind(f.get("severity") or ""))}</td>'
+            f'<td class="muted">{_esc(kind_label)}</td>'
             f'<td class="muted">{_esc(_confidence_label(f))}</td>'
             f'<td class="muted">{_esc(_collapse_ws(f.get("category")) or _NEUTRAL)}</td>'
             f'<td>{_esc(_collapse_ws(f.get("title")) or _NEUTRAL)}</td>'
@@ -2909,7 +3032,7 @@ def _problems_table_html(findings: list) -> str:
             f'<td class="muted">{_esc(evid or _NEUTRAL)}</td>'
             "</tr>")
     return (f'<table><caption>Problem items ({len(findings)})</caption>'
-            '<tr><th>Severity</th><th>Confidence</th><th>Type</th><th>Issue</th>'
+            '<tr><th>Severity</th><th>Kind</th><th>Confidence</th><th>Type</th><th>Issue</th>'
             '<th>Business impact</th><th>Repro hint</th><th>Evidence</th></tr>'
             + "".join(rows) + "</table>")
 

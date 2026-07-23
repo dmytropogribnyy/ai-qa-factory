@@ -52,6 +52,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Known per-prospect raw diagnostic artifacts the engine may persist, with human-readable labels.
+# target_detail() only exposes an entry when the file genuinely exists on disk (never a dead link).
+_RAW_EVIDENCE_ARTIFACTS: tuple = (
+    ("observation.json", "Page observation (raw)"),
+    ("findings.json", "Findings (raw)"),
+    ("scorecard.json", "Scorecard (raw)"),
+    ("coverage.json", "Coverage (raw)"),
+    ("reproduction.json", "Reproduction (raw)"),
+    ("manual_action.json", "Manual-action record (raw)"),
+)
+
+
 def _project_target_finding(f: Dict[str, Any]) -> Dict[str, Any]:
     """Whitelist one finding for the /target card read-model.
 
@@ -385,6 +397,12 @@ class CampaignService:
         prospect_status = ""                  # DONE | MANUAL_ACTION_REQUIRED | FAILED | ...
         analysis_complete: Optional[bool] = None
         evidence_status = "not_scanned"       # ok | prospect_not_found | error | not_scanned
+        # Truthful provenance + capture-policy fields (never invented — "" means genuinely unknown).
+        source_kind = ""                      # discovery | curated | manual | "" (unknown)
+        video_mode = ""                       # off | manual | qualified_auto | "" (unknown)
+        # Raw evidence files that ACTUALLY exist on disk for this prospect, so the UI never links to
+        # an artifact that isn't there. Each entry is safely servable via /scout/artifact.
+        evidence_files: List[Dict[str, str]] = []
         # Normalize the caller-supplied run EXACTLY ONCE: a whitespace-only value must behave like
         # "no run given" (registry resolution), never pin an empty/whitespace run id. Only
         # normalized_run drives exact-run pinning, fallback decisions, and the returned run identity.
@@ -419,10 +437,26 @@ class CampaignService:
         if scout_run:
             from core.scout.discovery.domain_intel import canonical_domain
             from core.scout.outreach.qa_draft import extract_public_emails
-            from core.scout.store import RunStore
+            from core.scout.store import RunStore, StoreError
             try:
                 st = RunStore(self.output_dir, scout_run)
                 state = st.load_state() or {}
+                # config.json is missing for some historical/legacy or test-built run stores; a
+                # missing config must never abort prospect resolution — fall back to "unknown".
+                try:
+                    cfg = st.load_config() or {}
+                except StoreError:
+                    cfg = {}
+                video_mode = str(cfg.get("video_mode") or "") or video_mode
+                # Truthful source label: prefer the strongest evidence we actually have. A brain
+                # decision means adaptive discovery ran; otherwise a curated/manual import is
+                # distinguished by its persisted campaign_name (never guessed for a resolved run).
+                if brain:
+                    source_kind = "discovery"
+                elif str(cfg.get("campaign_name") or "") == "curated":
+                    source_kind = "curated"
+                else:
+                    source_kind = "manual"
                 want = canonical_domain(domain) or domain
                 # Bind to THIS domain's prospect only. A shared multi-target run must never surface
                 # another prospect's findings/screenshots/network/reproduction on this card, so we
@@ -453,7 +487,13 @@ class CampaignService:
                     network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),
                                "console_errors": obs.get("console_errors", [])[:10],
                                "failed_resources": obs.get("failed_resources", [])[:10],
-                               "blocked_requests": obs.get("blocked_requests", [])[:10]}
+                               "blocked_requests": obs.get("blocked_requests", [])[:10],
+                               # "" = not attempted (static backend / not deep-capture), "ok" = ran
+                               # (violations may be empty), "unavailable" = deep-capture ran but axe
+                               # itself could not run. Never invented — surfaced exactly as captured.
+                               "axe_status": obs.get("axe_status", ""),
+                               "axe_violations": (obs.get("axe_violations") or [])[:20],
+                               "perf": obs.get("perf", {})}
                     # Confirmed findings exist only for a completed analysis. A manual/failed target
                     # has 0 confirmed findings — never surface a healthy conclusion for it.
                     if not incomplete:
@@ -464,6 +504,15 @@ class CampaignService:
                         pdir = st.prospect_dir(prospect_id)
                         media = [f"prospects/{prospect_id}/{fp.name}" for fp in sorted(pdir.iterdir())
                                  if fp.is_file() and fp.suffix.lower() in _MEDIA_EXT]
+                        # Raw diagnostic evidence files: only listed when they genuinely exist on
+                        # disk, so the operator UI never links to an artifact that isn't there.
+                        # Labels are human-readable; the rel path is exact-run/exact-prospect
+                        # confined and servable via the SAME safe /scout/artifact route as media.
+                        for _name, _label in _RAW_EVIDENCE_ARTIFACTS:
+                            if (pdir / _name).is_file():
+                                evidence_files.append({
+                                    "name": _name, "label": _label,
+                                    "rel": f"prospects/{prospect_id}/{_name}"})
                     except Exception:
                         media = []
                 else:
@@ -491,7 +540,8 @@ class CampaignService:
         return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
                 "scout_run": scout_run, "run": scout_run, "prospect_id": prospect_id,
                 "prospect_status": prospect_status, "analysis_complete": analysis_complete,
-                "manual_action": manual_action,
+                "manual_action": manual_action, "source_kind": source_kind,
+                "video_mode": video_mode, "evidence_files": evidence_files,
                 "evidence_status": evidence_status, "media": media, "network": network,
                 "reproduction": reproduction,
                 "findings": [_project_target_finding(f) for f in findings],
