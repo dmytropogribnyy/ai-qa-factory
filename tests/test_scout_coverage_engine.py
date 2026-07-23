@@ -80,6 +80,7 @@ def test_adaptive_run_skips_noise_suppresses_dups_and_persists_honest_coverage(t
     assert cov["pages_skipped_near_duplicate"] == 2        # /c-dup and /d-dup (template of /a)
     # landing + /a + /b + /checkout meaningful = 4
     assert cov["meaningful_pages_tested"] == 4
+    assert cov["meaningful_pages_tested"] <= cov["page_ceiling"]   # never reported above the ceiling
     assert cov["page_stop_reason"] == "links_exhausted"    # ceiling not reached, coverage exhausted
     # honest single-step flow metadata — never an invented 10/15 multi-step ceiling
     assert cov["flow_steps_supported"] == 1
@@ -96,7 +97,55 @@ def test_explicit_run_preserves_legacy_behaviour_no_filtering(tmp_path):
     assert cov["pages_skipped_near_duplicate"] == 0        # explicit never suppresses duplicates
     # all 7 same-host links fetched + landing counted meaningful (passive planner)
     assert cov["meaningful_pages_tested"] == 8
+    assert cov["meaningful_pages_tested"] <= cov["page_ceiling"]   # landing-inclusive ceiling (7+1)
     assert cov["flow_steps_supported"] == 1
+
+
+# -- honest flow / links metadata: "disabled" is never reported as "looked and found none" ---------
+
+
+class _SimpleBackend:
+    name = "static"
+    screenshot_dir = None
+
+    def __init__(self, links):
+        self._links = links
+
+    def observe(self, url, timeout_s, max_bytes, *, record_video=False, deep_qa=False):
+        is_landing = url.rstrip("/") == _BASE
+        return PageObservation(url=url, final_url=url, ok=True, status=200, backend=self.name,
+                               title="T", meta_description="d", html_bytes=1000,
+                               headings=[{"level": 1, "text": "h"}], landmarks={"main": 1},
+                               links=(self._links if is_landing else []),
+                               headers={"content-type": "text/html", "cache-control": "max-age=60"})
+
+
+def _run_cf(tmp_path, check_families, links, run_id):
+    cfg = ScoutRunConfig(campaign_name="cf", seeds=[f"{_BASE}/"], browser_mode="static",
+                         resolve_dns=False, output_dir=str(tmp_path), run_id=run_id,
+                         coverage="adaptive", check_families=check_families)
+    store = RunStore(str(tmp_path), run_id)
+    ScoutEngine(cfg, store, backend=_SimpleBackend(links)).run()
+    pid = next(iter(store.load_state()["prospects"]))
+    return store.load_prospect_artifact(pid, "coverage.json") or {}
+
+
+def test_flow_check_disabled_is_reported_honestly_not_as_no_entry(tmp_path):
+    cov = _run_cf(tmp_path, ["links"], [f"{_BASE}/a"], "cf-flowoff")
+    assert cov["flow_stop_reason"] == "flow_check_disabled"     # honest: the check never ran
+    assert cov["flows_detected"] == 0 and cov["flow_entries_checked"] == 0
+
+
+def test_flow_enabled_but_no_entry_reports_no_entry_detected(tmp_path):
+    cov = _run_cf(tmp_path, ["links", "business_flow"], [f"{_BASE}/a"], "cf-noentry")
+    assert cov["flow_stop_reason"] == "no_flow_entry_detected"  # looked, genuinely found none
+
+
+def test_links_disabled_reports_landing_only_within_ceiling(tmp_path):
+    cov = _run_cf(tmp_path, ["business_flow"], [f"{_BASE}/a"], "cf-linksoff")
+    assert cov["page_stop_reason"] == "links_check_disabled"
+    assert cov["meaningful_pages_tested"] == 1                  # just the landing page
+    assert cov["meaningful_pages_tested"] <= cov["page_ceiling"]
 
 
 def test_deep_run_uses_the_deep_ceiling(tmp_path):

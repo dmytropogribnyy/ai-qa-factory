@@ -218,7 +218,7 @@ class ScoutEngine:
             video_ref = self._reproduce_prospect_findings(pid, url, verified, flow_result)
 
             coverage_record = dict(planner.summary())
-            coverage_record.update(self._flow_coverage(flow_result))
+            coverage_record.update(self._flow_coverage(flow_result, "business_flow" in cfg.check_families))
             self.store.save_prospect_artifact(pid, "coverage.json", coverage_record)
 
             defects = [f for f in verified if f.severity != "info"]
@@ -363,18 +363,25 @@ class ScoutEngine:
                 "reached_form": bool(nxt.forms), "stopped_before_side_effect": True}
 
     @staticmethod
-    def _flow_coverage(flow_result) -> Dict[str, Any]:
+    def _flow_coverage(flow_result, flow_enabled: bool) -> Dict[str, Any]:
         """Honest flow-coverage metadata. The engine follows ONE bounded flow step today, so we report
-        exactly that (flow_steps_supported == 1) and never advertise a multi-step ceiling. Real
-        multi-step exploration is a separate, safety-reviewed change."""
+        exactly that (flow_steps_supported == 1) and never advertise a multi-step ceiling. The stop
+        reason distinguishes a disabled flow check from a genuine 'looked, found no entry' — reporting
+        'no_flow_entry_detected' when the check never ran would be a false claim of having looked."""
         fr = flow_result if isinstance(flow_result, dict) else None
         detected = 1 if (fr and fr.get("entry_url")) else 0
+        if not flow_enabled:
+            stop_reason = "flow_check_disabled"
+        elif detected:
+            stop_reason = "single_step_supported"
+        else:
+            stop_reason = "no_flow_entry_detected"
         return {
             "flows_detected": detected,
             "flow_entries_checked": detected,          # the single detected entry, observed once
             "flow_steps_supported": 1,                 # engine supports one bounded read-only step
             "flow_steps_used": int(fr.get("steps", 0)) if fr else 0,
-            "flow_stop_reason": "single_step_supported" if detected else "no_flow_entry_detected",
+            "flow_stop_reason": stop_reason,
         }
 
     # ------------------------------------------------------------------

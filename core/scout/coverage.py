@@ -29,7 +29,7 @@ is recorded by the engine, not invented here.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from urllib.parse import urlsplit
 
 OPERATOR_COVERAGE = ("adaptive", "deep")          # the only two operator-facing choices
@@ -109,14 +109,18 @@ class CoveragePlanner:
         self.active = coverage in OPERATOR_COVERAGE
         self._seen_sigs: set = set()
         self._meaningful = 0
+        self._seeded = False
         self._skipped_noise = 0
         self._skipped_dup = 0
         self._consec_dup = 0
         self._stop_reason = ""
 
     def seed(self, observation: Any) -> None:
-        """Register the landing page's template so a link that merely re-renders it is a near-dup."""
+        """Count the landing page as meaningful page #1 and register its template, so a link that
+        merely re-renders it is a near-duplicate and the ceiling counts the landing honestly."""
         self._seen_sigs.add(page_signature(observation))
+        self._meaningful = 1
+        self._seeded = True
 
     def pre_fetch_skip(self, url: str) -> str:
         """Return ``"noise"`` if this URL should be skipped BEFORE fetching (operator profiles only)."""
@@ -157,18 +161,24 @@ class CoveragePlanner:
             self._stop_reason = "links_exhausted"
 
     def summary(self) -> Dict[str, Any]:
+        # meaningful_pages_tested counts the landing (once seeded) plus meaningful additional pages,
+        # and is bounded by page_ceiling — it is never reported above the ceiling it was capped at.
         return {
             "coverage": self.coverage,
             "page_ceiling": self.page_ceiling,
-            # meaningful additional pages + the landing page (always tested and meaningful).
-            "meaningful_pages_tested": self._meaningful + 1,
+            "meaningful_pages_tested": self._meaningful,
             "pages_skipped_noise": self._skipped_noise,
             "pages_skipped_near_duplicate": self._skipped_dup,
             "page_stop_reason": self._stop_reason,
         }
 
 
-def make_planner(coverage: str, explicit_max_pages: int) -> Optional["CoveragePlanner"]:
-    """Build the planner for a run's coverage mode (ceiling derived from the profile)."""
-    return CoveragePlanner(coverage=coverage,
-                           page_ceiling=derive_page_ceiling(coverage, explicit_max_pages))
+def make_planner(coverage: str, explicit_max_pages: int) -> "CoveragePlanner":
+    """Build the planner for a run's coverage mode. The ceiling is landing-inclusive (total meaningful
+    pages): an operator profile derives 12/20; ``explicit`` allows the landing plus its legacy
+    ``max_pages_per_site`` links, preserving prior behaviour exactly."""
+    if coverage in OPERATOR_COVERAGE:
+        ceiling = _PAGE_CEILING[coverage]
+    else:
+        ceiling = int(explicit_max_pages) + 1          # landing + legacy per-site link cap
+    return CoveragePlanner(coverage=coverage, page_ceiling=ceiling)

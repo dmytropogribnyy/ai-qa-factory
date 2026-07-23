@@ -107,6 +107,8 @@ def test_adaptive_skips_obvious_noise_before_fetch():
 
 def test_adaptive_suppresses_structural_near_duplicates_only_after_evidence():
     p = _planner()
+    p.seed(_obs("https://x.com/", headings=[{"level": 1, "text": "home"}],
+                landmarks={"main": 1, "nav": 1}))            # landing = a distinct template (page #1)
     tmpl = dict(headings=[{"level": 1, "text": "x"}], landmarks={"main": 1})
     assert p.record("https://x.com/p1", _obs("https://x.com/p1", **tmpl)) == "meaningful"
     # Same template observed again -> near-duplicate (structural evidence, not URL).
@@ -114,6 +116,14 @@ def test_adaptive_suppresses_structural_near_duplicates_only_after_evidence():
     s = p.summary()
     assert s["meaningful_pages_tested"] == 2          # landing (1) + first template page (1)
     assert s["pages_skipped_near_duplicate"] == 1
+    assert s["meaningful_pages_tested"] <= s["page_ceiling"]   # never reported above the ceiling
+
+
+def test_seed_counts_the_landing_as_the_first_meaningful_page():
+    p = _planner(ceiling=12)
+    assert p.summary()["meaningful_pages_tested"] == 0        # nothing tested before seeding
+    p.seed(_obs("https://x.com/", headings=[{"level": 1, "text": "h"}], landmarks={"main": 1}))
+    assert p.summary()["meaningful_pages_tested"] == 1        # the landing page
 
 
 def test_adaptive_stops_early_on_no_new_meaningful_coverage():
@@ -136,12 +146,19 @@ def test_adaptive_stops_at_page_ceiling():
 
 
 def test_explicit_is_passive_no_filtering_and_matches_max_pages():
-    p = _planner(coverage="explicit", ceiling=1)
+    p = _planner(coverage="explicit", ceiling=2)
     assert p.pre_fetch_skip("https://x.com/blog/post") == ""          # explicit never skips noise
     tmpl = dict(headings=[{"level": 1, "text": "x"}], landmarks={"main": 1})
     assert p.record("https://x.com/a", _obs("https://x.com/a", **tmpl)) == "meaningful"
     assert p.record("https://x.com/b", _obs("https://x.com/b", **tmpl)) == "meaningful"  # no near-dup
     assert p.should_stop() == "page_ceiling_reached"                  # only the ceiling stops explicit
+
+
+def test_make_planner_ceiling_is_landing_inclusive():
+    from core.scout.coverage import make_planner
+    assert make_planner("adaptive", 5).page_ceiling == 12            # profile derives the total
+    assert make_planner("deep", 5).page_ceiling == 20
+    assert make_planner("explicit", 5).page_ceiling == 6            # landing + 5 legacy link probes
 
 
 def test_planner_records_links_exhausted_when_nothing_else_stopped():
