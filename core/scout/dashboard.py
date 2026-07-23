@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 59184)
-Total output lines: 3665
-
 """Localhost Scout dashboard (Phase 8.3; v3.0.0 M4b guarded start).
 
 A dependency-light stdlib HTTP dashboard bound to 127.0.0.1 only. It reads the run store and
@@ -1353,7 +1350,1046 @@ function ctl(a){{fetch('/api/control?action='+a,{{method:'POST',headers:{{'X-Sco
 function startCampaign(){{
  var seeds=(document.getElementById('seeds').value||'').split(/[\\n,]+/).map(s=>s.trim()).filter(Boolean);
  if(!seeds.length){{alert('enter at least one public https URL');return;}}
- if(!document.getEle…19184 tokens truncated…getElementById("cwmsg");'
+ if(!document.getElementById('confirm').checked){{alert('please confirm the bounded read-only scan');return;}}
+ var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();
+ fetch('/api/campaign/start',{{method:'POST',headers:{{'Content-Type':'application/json','X-Scout-CSRF':CSRF}},
+  body:JSON.stringify({{confirm:true,idempotency_key:key,seeds:seeds,
+   campaign:document.getElementById('campaign').value||'adhoc',
+   coverage:(document.getElementById('coverage')||{{}}).value||'adaptive'}})}})
+ .then(r=>r.json()).then(j=>{{if(j.ok){{location.reload();}}
+  else{{alert('start refused: '+(j.message||j.error)+(j.rejected&&j.rejected.length?'\\n'+j.rejected.map(x=>x.url+': '+x.reason).join('\\n'):''));}}}})
+ .catch(e=>alert('start failed: '+e));}}
+</script>
+</body></html>"""
+
+        # --- v3.1 operator dashboard pages (Overview / Work / Activity / Settings) -------------
+        def _work_actions_script(self) -> str:
+            return (
+                "const CSRF=" + json.dumps(csrf_token) + ";\n"
+                "function setStatus(m,ok){var s=document.getElementById('copystatus');"
+                "if(s){s.textContent=m;s.className=ok?'copyok':'muted';}}\n"
+                # Double-submit safe: the initiating button is disabled while the mutation is in
+                # flight and only re-enabled on failure (success reloads).
+                "function wact(btn,action,extra){if(btn){if(btn.dataset.busy)return;"
+                "btn.dataset.busy='1';btn.disabled=true;}var b=Object.assign({},extra||{});"
+                "fetch('/api/work/'+action,{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json()).then(function(j){"
+                "if(j.ok){location.reload();}else{alert(j.error||'refused');"
+                "if(btn){btn.disabled=false;delete btn.dataset.busy;}}}).catch(function(e){"
+                "alert(''+e);if(btn){btn.disabled=false;delete btn.dataset.busy;}});}\n"
+                "function copyText(id){var el=document.getElementById(id);var t=el?el.textContent:'';"
+                "if(navigator.clipboard&&navigator.clipboard.writeText){"
+                "navigator.clipboard.writeText(t).then(function(){setStatus('Copied \\u2713',true);},"
+                "function(){setStatus('Copy failed \\u2014 select the text manually',false);});}"
+                "else{setStatus('Copy not supported \\u2014 select the text manually',false);}}\n")
+
+        def _poll_html(self) -> str:
+            return ('<div class="row" style="font-size:12px"><span id="pollstate" class="muted" '
+                    'aria-live="polite">Live</span><span class="muted">·</span>'
+                    '<span class="muted">Last updated <span id="lastupd">just now</span></span>'
+                    '<span id="pollbanner" hidden> · <a href="#" '
+                    'onclick="location.reload();return false">Updates available — Refresh</a></span></div>')
+
+        def _poll_script(self, endpoint: str, sig_keys: str) -> str:
+            # Bounded same-origin polling: refresh a freshness indicator and flag when the persisted
+            # state changed; it NEVER auto-reloads (so typing / confirm dialogs are never interrupted)
+            # - the operator clicks Refresh. Pauses when the tab is hidden.
+            return (
+                "(function(){var base=null;var url=" + json.dumps(endpoint) + ";"
+                "function sig(j){try{return JSON.stringify((" + sig_keys + ")(j));}catch(e){return '';}}"
+                "function tick(){if(document.hidden)return;"
+                "fetch(url,{headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
+                "var s=sig(j);if(base===null)base=s;"
+                "var d=new Date();var lu=document.getElementById('lastupd');"
+                "if(lu)lu.textContent=d.toLocaleTimeString();"
+                "var ps=document.getElementById('pollstate');if(ps)ps.textContent='Live';"
+                "if(s!==base){var b=document.getElementById('pollbanner');if(b)b.hidden=false;}"
+                "}).catch(function(){var p=document.getElementById('pollstate');"
+                "if(p)p.textContent='offline (retrying)';});}"
+                "setInterval(tick,10000);tick();})();\n")
+
+        def _operator_overview_page(self, q=None) -> str:
+            diag = self._want_diagnostics(q or {})
+            ov = self._read_model().overview(include_diagnostics=diag)
+            def _att(a):
+                return (f'<div class="card"><div class="row" style="justify-content:space-between">'
+                        f'<div><strong>{_esc(a["title"])}</strong> {_badge(a["status"], "attention")}<br>'
+                        f'<span class="muted">{_esc(a["project_id"])} — {_esc(a["reason"])}</span></div>'
+                        f'<a class="btn primary" href="{_esc(a["href"])}">Open</a></div></div>')
+            att = "".join(_att(a) for a in ov.attention) or (
+                '<div class="card empty"><strong>You\'re all caught up</strong>'
+                '<div class="muted">No projects require your attention.</div></div>')
+            def _wrow(p):
+                return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></td>'
+                        f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
+                        f'<td>{_esc(p["next_action"])}</td></tr>')
+            work = "".join(_wrow(p) for p in ov.active_work)
+            work_tbl = (f'<table><caption>Active work</caption><tr><th>Project</th><th>Stage</th>'
+                        f'<th>Health</th><th>Next action</th></tr>{work}</table>'
+                        if work else '<div class="card empty muted">No active work.</div>')
+            def _crow(c):
+                return (f'<tr><td>{_esc(c["title"])}</td><td>{_badge(c["status"])}</td>'
+                        f'<td>{_esc(c["next_action"])}</td></tr>')
+            camps = "".join(_crow(c) for c in ov.active_campaigns)
+            camp_tbl = (f'<table><caption>Active Scout campaigns</caption><tr><th>Campaign</th>'
+                        f'<th>Status</th><th>Next action</th></tr>{camps}</table>'
+                        if camps else '<div class="card empty muted">No active Scout campaigns. '
+                        '<a href="/scout">Open Scout</a></div>')
+            hidden = ov.counts.get("diagnostics_hidden", 0)
+            diag_toggle = (
+                '<a class="chip" href="/">&#10003; Production only — hide diagnostics</a>' if diag else
+                (f'<a class="chip" href="/?diagnostics=1">Show diagnostics ({hidden})</a>'
+                 if hidden else ''))
+            diag_banner = ('<div class="banner warn">Showing diagnostic data (smoke/acceptance/'
+                           'replay/demo). These are not production work.</div>' if diag else '')
+            body = (f'<h1>Overview</h1>{diag_banner}'
+                    f'<div class="row"><span class="chip">Projects {ov.counts.get("projects", 0)}</span>'
+                    f'<span class="chip">Needs attention {ov.counts.get("attention", 0)}</span>'
+                    f'<span class="chip">Active Scout campaigns {ov.counts.get("active_campaigns", 0)}'
+                    f'</span>{diag_toggle}'
+                    f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                    f'{self._poll_html()}'
+                    f'<h2>Needs your attention</h2>{att}'
+                    f'<h2>Active work</h2><div class="scrollx">{work_tbl}</div>'
+                    f'<h2>Scout</h2><div class="scrollx">{camp_tbl}</div>')
+            script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
+                      + self._poll_script(
+                          "/api/overview",
+                          "function(j){return [(j.attention||[]).map(function(a){return a.project_id"
+                          "+'|'+a.status+'|'+a.next_action}),(j.active_work||[]).map(function(p){"
+                          "return p.project_id+'|'+p.status+'|'+p.progress+'|'+p.next_action}),"
+                          "(j.active_campaigns||[]).map(function(c){return c.campaign_id+'|'+c.status"
+                          "+'|'+c.progress})]}"))
+            return _page("AI QA Factory — Overview", "/", body, script)
+
+        _WORK_VIEWS = (("all", "All Work"), ("needs_attention", "Needs Attention"),
+                       ("ready_to_execute", "Ready to Execute"), ("in_progress", "In Progress"),
+                       ("blocked", "Blocked"), ("ready_for_review", "Ready for Review"),
+                       ("ready_for_delivery", "Ready for Delivery"),
+                       ("delivery_prepared", "Delivery Prepared"), ("completed", "Completed"))
+
+        def _work_list_page(self, q) -> str:
+            view = (q.get("view") or ["all"])[0]
+            diag = self._want_diagnostics(q)
+            data = self._read_model().project_list(view=view, include_diagnostics=diag)
+            _dsuffix = "&diagnostics=1" if diag else ""
+            views = "".join(
+                f'<a class="chip" href="/work?view={v}{_dsuffix}" '
+                f'{"style=font-weight:600" if v == view else ""}>{_esc(lbl)}</a>'
+                for v, lbl in self._WORK_VIEWS)
+            views += (
+                f'<a class="chip" href="/work?view={view}">&#10003; Production only</a>' if diag else
+                f'<a class="chip" href="/work?view={view}&diagnostics=1">Show diagnostics</a>')
+            def _row(p):
+                return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a>'
+                        f'<div class="muted">{_esc(p["project_id"])}</div></td>'
+                        f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
+                        f'<td>{_esc(p["next_action"])}</td>'
+                        f'<td class="muted">{_esc(_fmt_ts(p["updated"]))}</td></tr>')
+
+            def _card(p):
+                return (f'<li><div class="card"><h3><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></h3>'
+                        f'<div class="muted meta">{_esc(p["project_id"])}</div>'
+                        f'<div class="row" style="margin:.4rem 0">{_badge(p["stage"])} '
+                        f'{_badge(p["health"], p["health"])}</div>'
+                        f'<div><strong>Next:</strong> {_esc(p["next_action"])}</div>'
+                        f'<div class="muted meta">Updated {_esc(_fmt_ts(p["updated"]))}</div></div></li>')
+
+            if data["projects"]:
+                rows = "".join(_row(p) for p in data["projects"])
+                desktop = (f'<div class="scrollx only-desktop"><table><caption>{data["total"]} '
+                           f'project(s) — view: {_esc(view)}</caption><tr><th>Project</th><th>Stage</th>'
+                           f'<th>Health</th><th>Next action</th><th>Updated</th></tr>{rows}</table></div>')
+                cards = ('<ul class="cards only-mobile" aria-label="Projects">'
+                         + "".join(_card(p) for p in data["projects"]) + "</ul>")
+                table = desktop + cards
+            else:
+                table = ('<div class="card empty">No projects in this view. '
+                         '<a href="/work?view=all">Clear filter</a></div>')
+            create = (
+                '<details class="card"><summary>Create work from a pasted client brief</summary>'
+                '<p class="muted">Analysis only — nothing is executed. This reuses analyze-job.</p>'
+                '<p><label>Project name (optional)<br><input id="cw_pid" placeholder="my-project"></label></p>'
+                '<p><label>Source platform (optional)<br><input id="cw_src" placeholder="upwork / direct"></label></p>'
+                '<p><label>Client brief<br><textarea id="cw_brief" rows="5" style="width:100%"></textarea></label></p>'
+                '<p><button class="btn primary" onclick="createWork(this)">Analyze brief</button></p>'
+                '<p class="muted">No Upwork API — paste the brief and (optionally) a source reference.</p>'
+                '</details>')
+            script = (self._work_actions_script() +
+                      "function createWork(btn){var b=document.getElementById('cw_brief').value.trim();"
+                      "if(!b){alert('paste a client brief');return;}"
+                      "if(btn){if(btn.dataset.busy)return;btn.dataset.busy='1';btn.disabled=true;}"
+                      "fetch('/api/work/analyze',{method:'POST',headers:{'Content-Type':'application/json',"
+                      "'X-Scout-CSRF':CSRF},body:JSON.stringify({text:b,"
+                      "project_id:document.getElementById('cw_pid').value.trim(),"
+                      "source_platform:document.getElementById('cw_src').value.trim()})})"
+                      ".then(r=>r.json()).then(function(j){if(j.ok){location.href='/work/'+j.project_id;}"
+                      "else{alert(j.error||'refused');if(btn){btn.disabled=false;delete btn.dataset.busy;}}})"
+                      ".catch(function(e){alert(''+e);if(btn){btn.disabled=false;delete btn.dataset.busy;}});}")
+            body = (f'<h1>Work</h1><div class="row">{views}'
+                    f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                    f'{self._poll_html()}'
+                    f'{table}{create}')
+            # Poll the current view; the banner never auto-reloads, so the Create-work form is safe.
+            # The signature notices same-status changes (progress/updated/blockers/evidence/next).
+            script = (script + self._poll_script(
+                "/api/work?view=" + view,
+                "function(j){return (j.projects||[]).map(function(p){return p.project_id+'|'+p.status"
+                "+'|'+p.progress+'|'+p.updated+'|'+p.blockers+'|'+p.evidence_count+'|'+p.next_action})}"))
+            return _page("AI QA Factory — Work", "/work", body, script)
+
+        def _work_detail_json(self, pid):
+            from core.dashboard.actions import ProjectDetailBuilder
+            d = ProjectDetailBuilder(service.output_dir).detail(pid)
+            return d or {"error": "not found", "project_id": pid}
+
+        _DETAIL_TABS = (("summary", "Summary"), ("plan", "Plan"), ("results", "Results"),
+                        ("delivery", "Delivery"))
+
+        def _work_detail_page(self, pid, q=None) -> str:
+            from core.dashboard.actions import ProjectDetailBuilder
+            b = ProjectDetailBuilder(service.output_dir)
+            d = b.detail(pid)
+            if d is None:
+                return _page("Project not found", "/work",
+                             '<h1>Project not found</h1><p><a href="/work">&larr; Work</a></p>')
+            q = q or {}
+            sel = (q.get("tab") or ["summary"])[0]
+            if sel not in [t[0] for t in self._DETAIL_TABS]:
+                sel = "summary"
+            h = d["header"]
+            safe_pid = "".join(c for c in pid if c.isalnum() or c in "._-")
+            actbtns = []
+            for a in d["allowed_actions"]:
+                cls = "btn primary" if a.get("primary") else "btn"
+                if a["kind"] == "http_mutation":
+                    act = a["endpoint"].split("/")[-1]
+                    fixed = "Object.assign({project_id:'" + safe_pid + "'}," + json.dumps(
+                        a.get("body") or {}) + ")"
+                    if a.get("fields"):
+                        fields_js = "[" + ",".join("'" + f + "'" for f in a["fields"]) + "]"
+                        extra = "Object.assign(" + fixed + ",promptFields(" + fields_js + "))"
+                    else:
+                        extra = fixed
+                    conf = ("if(!confirm('" + _esc(a["label"]) + "?'))return;" if a.get("confirm") else "")
+                    onclick = conf + "wact(this,'" + act + "'," + extra + ")"
+                    actbtns.append(f'<button class="{cls}" onclick="{onclick}">{_esc(a["label"])}</button>')
+                elif a["id"] == "open_vscode":
+                    actbtns.append(f'<a class="{cls}" href="{_esc(_vscode_file_uri(d["workspace_path"]))}">'
+                                   f'{_esc(a["label"])}</a>')
+                elif a["id"] == "copy_work_order":
+                    actbtns.append('<button class="btn" onclick="copyText(\'workorder\')">'
+                                   'Copy Work Order</button>')
+                elif a["id"] == "copy_workspace":
+                    actbtns.append('<button class="btn" onclick="copyText(\'wspath\')">'
+                                   'Copy Workspace Path</button>')
+                elif a["id"] == "refresh":
+                    actbtns.append('<button class="btn" onclick="location.reload()">Refresh</button>')
+            header = (f'<p><a href="/work">&larr; Work</a></p><h1>{_esc(h["title"])}</h1>'
+                      f'<div class="row">{_badge(h["stage"])} {_badge(h["health"], h["health"])} '
+                      f'<span class="muted">{_esc(h["source"])} · {h["progress"]}%</span></div>'
+                      f'{self._poll_html()}'
+                      f'<div class="row" style="margin:.6rem 0">{"".join(actbtns)}'
+                      f'<span id="copystatus" class="muted" aria-live="polite"></span></div>')
+            summary = d["summary"]
+            blockers = "".join(f"<li>{_esc(x)}</li>" for x in summary["blockers"]) or "<li class=muted>none</li>"
+            panel = {
+                "summary": (
+                    '<div class="card">'
+                    f'<p><strong>Next:</strong> {_esc(summary["next_action"])}</p>'
+                    f'<p><strong>Validation:</strong> {summary["tests_passed"]}/{summary["tests_run"]} · '
+                    f'evidence {summary["evidence_count"]}</p>'
+                    f'<p><strong>Blockers:</strong></p><ul>{blockers}</ul></div>'),
+                "plan": (
+                    '<div class="card">'
+                    f'<p><strong>Intent:</strong> {_esc(d["plan"]["client_intent"])}</p>'
+                    f'<p><strong>Verdict:</strong> {_badge(d["plan"]["verdict"] or "n/a")}</p>'
+                    f'<details><summary>Requirements &amp; questions</summary>'
+                    f'<ul>{"".join(f"<li>{_esc(r)}</li>" for r in d["plan"]["requirements"]) or "<li class=muted>none</li>"}</ul>'
+                    f'</details></div>'),
+                "results": (
+                    '<div class="card">'
+                    f'<p>Validation: {_badge("PASS" if d["results"]["validation_passed"] else "pending", "ok" if d["results"]["validation_passed"] else "")}</p>'
+                    f'<p class="muted">Artifacts: {_esc(", ".join(str(a) for a in d["results"]["artifacts"]) or "none")}</p>'
+                    f'<details open><summary>Evidence ({len(d["results"]["evidence"])})</summary>'
+                    f'<ul>{"".join(self._evidence_li(e) for e in d["results"]["evidence"]) or "<li class=muted>none</li>"}</ul>'
+                    f'</details></div>'),
+                "delivery": (
+                    '<div class="card">'
+                    f'<p>State: {_badge(d["delivery"]["status"], "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
+                    f'<p class="muted">Reviewed by {_esc(d["delivery"]["reviewed_by"] or "—")} · '
+                    f'digest {_esc((d["delivery"]["manifest_digest"] or "—")[:23])}</p>'
+                    f'<details><summary>Included files ({len(d["delivery"]["included_files"])})</summary>'
+                    f'<ul>{"".join(f"<li>{_esc(x)}</li>" for x in d["delivery"]["included_files"]) or "<li class=muted>not prepared</li>"}</ul>'
+                    f'</details>'
+                    '<p class="muted">mark-delivered records your manual send; the Dashboard sends nothing.</p></div>'),
+            }
+            tablist = ('<div class="tabs" role="tablist" aria-label="Project sections">' + "".join(
+                f'<button role="tab" id="tab-{tid}" aria-controls="panel-{tid}" '
+                f'aria-selected="{"true" if tid == sel else "false"}" '
+                f'tabindex="{"0" if tid == sel else "-1"}" onclick="selTab(\'{tid}\')">{label}</button>'
+                for tid, label in self._DETAIL_TABS) + '</div>')
+            panels = "".join(
+                f'<div role="tabpanel" id="panel-{tid}" aria-labelledby="tab-{tid}" '
+                f'{"" if tid == sel else "hidden"}>{panel[tid]}</div>' for tid, _l in self._DETAIL_TABS)
+            hidden = (f'<div style="display:none"><pre id="wspath">{_esc(d["workspace_path"])}</pre>'
+                      f'<pre id="workorder">{_esc(b.work_order(pid) or "")}</pre></div>')
+            script = (
+                self._work_actions_script() +
+                "function promptFields(names){var o={};for(var i=0;i<names.length;i++){"
+                "var v=prompt(names[i]);if(v===null)throw 'cancelled';o[names[i]]=v;}return o;}\n"
+                "function selTab(id){document.querySelectorAll('[role=tab]').forEach(function(t){"
+                "var on=t.id==='tab-'+id;t.setAttribute('aria-selected',on?'true':'false');"
+                "t.tabIndex=on?0:-1;});document.querySelectorAll('[role=tabpanel]').forEach(function(p){"
+                "p.hidden=p.id!=='panel-'+id;});var u=new URL(location);u.searchParams.set('tab',id);"
+                "history.replaceState(null,'',u);}\n"
+                "var tl=document.querySelector('[role=tablist]');if(tl){tl.addEventListener('keydown',"
+                "function(e){var ts=[].slice.call(document.querySelectorAll('[role=tab]'));"
+                "var i=ts.findIndex(function(t){return t.getAttribute('aria-selected')==='true';});"
+                "if(e.key==='ArrowRight'||e.key==='ArrowLeft'){var n=(i+(e.key==='ArrowRight'?1:"
+                "ts.length-1))%ts.length;var id=ts[n].id.replace('tab-','');selTab(id);ts[n].focus();"
+                "e.preventDefault();}});}\n" +
+                self._poll_script(
+                    "/api/work/" + safe_pid,
+                    "function(j){var h=j.header||{},s=j.summary||{},d=j.delivery||{},r=j.results||{};"
+                    "return [h.status,h.progress,h.updated_at,h.activity_count,s.next_action,"
+                    "(s.blockers||[]).length,s.tests_passed,s.tests_run,s.evidence_count,"
+                    "r.validation_passed,d.status,d.manifest_digest]}"))
+            return _page(f"AI QA Factory — {pid}", "/work", header + tablist + panels + hidden, script)
+
+        def _scout_home_page(self) -> str:
+            # The operator Scout home in the shared layout, reusing the SAME ScoutService status and
+            # the SAME guarded /api/control + /api/campaign/start endpoints (no second service/state).
+            status = service.status()
+            st = status.get("state", {})
+            mode = status.get("mode", "IDLE")
+            controllable = bool(status.get("controllable"))
+            running = bool(status.get("running"))
+            prospects = st.get("prospects", {})
+            if controllable:
+                controls = ('<button class="btn" onclick="ctl(\'pause\')">Pause</button>'
+                            '<button class="btn" onclick="ctl(\'resume\')">Resume</button>'
+                            '<button class="btn" onclick="ctl(\'cancel\')">Stop Safely</button>'
+                            '<button class="btn danger" onclick="ctl(\'kill\')">Cancel (kill)</button>')
+            else:
+                controls = (f'<em class="muted">Controls unavailable — this run is '
+                            f'<strong>{_esc(mode)}</strong> (read-only).</em>')
+            run_id = status.get("run_id", "")
+            prows = "".join(
+                f'<tr><td>{_esc(pid)}</td><td class="muted">{_esc(p.get("url", ""))}</td>'
+                f'<td>{_badge(p.get("status", ""))}</td><td>{_esc(p.get("priority", ""))}</td>'
+                f'<td>{_esc(p.get("verified_defects", 0))}</td>'
+                f'<td>{_scout_details_cell(run_id, pid, p)}</td></tr>'
+                for pid, p in sorted(prospects.items()))
+            table = (f'<table><caption>Prospects in this run</caption><tr><th>ID</th><th>URL</th>'
+                     f'<th>Status</th><th>Priority</th><th>Defects</th><th>Details</th></tr>{prows}</table>'
+                     if prows else '<div class="card empty muted">No prospects in this run.</div>')
+            start_panel = "" if running else _START_PANEL_HTML
+            results_link = (f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Run results</a>'
+                            if run_id else '')
+            body = (f'<h1>Manual URL Scan</h1><p class="muted">{_esc(SCOUT_PRODUCT_NAME)} — bounded, '
+                    f'read-only scan of URLs you paste. For automatic prospect discovery use '
+                    f'<a href="/scout/new">Discover Prospects</a>. Nothing is sent without your action.</p>'
+                    f'<div class="row"><a class="chip" href="/scout/new">Discover Prospects (adaptive)</a>'
+                    f'<a class="chip" href="/scout/history">History</a></div>'
+                    f'<div class="card"><p>Run <code>{_esc(run_id)}</code> · mode '
+                    f'{_badge(mode)} · status {_badge(st.get("status", "n/a"))}</p>'
+                    f'<div class="row">{controls}</div></div>'
+                    f'<div class="row"><a class="chip" href="/scout/campaigns">Campaigns</a>'
+                    f'{results_link}</div>'
+                    f'<div class="scrollx">{table}</div>{start_panel}')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";\n"
+                "function ctl(a){fetch('/api/control?action='+a,{method:'POST',"
+                "headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
+                "if(!j.ok)alert('control refused: '+(j.message||j.error));location.reload();});}\n"
+                "function startCampaign(){var seeds=(document.getElementById('seeds').value||'')"
+                ".split(/[\\n,]+/).map(function(s){return s.trim();}).filter(Boolean);"
+                "if(!seeds.length){alert('enter at least one public https URL');return;}"
+                "if(!document.getElementById('confirm').checked){alert('please confirm the bounded "
+                "read-only scan');return;}var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():"
+                "String(Date.now())+Math.random();"
+                "var mode=(document.getElementById('scanmode')||{}).value||'static';"
+                "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
+                "campaign:document.getElementById('campaign').value||'adhoc',browser_mode:mode,"
+                "coverage:(document.getElementById('coverage')||{}).value||'adaptive'})})"
+                ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
+                "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
+                "alert('start failed: '+e);});}\n"
+                "function esc(s){return String(s).replace(/[&<>\"]/g,function(c){"
+                "return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c];});}\n"
+                "function importList(){var f=document.getElementById('impfile').files[0];"
+                "if(!f){alert('choose a .xlsx or .csv file');return;}var rd=new FileReader();"
+                "rd.onload=function(){var b64=String(rd.result).split(',').pop();"
+                "fetch('/api/scout/import',{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify({filename:f.name,content_b64:b64})})"
+                ".then(r=>r.json()).then(function(j){if(!j.ok){document.getElementById('imppreview')"
+                ".innerHTML='<p class=muted>Import refused: '+esc(j.error||'')+'</p>';return;}"
+                "renderImport(j.result);}).catch(function(e){alert('import failed: '+e);});};"
+                "rd.readAsDataURL(f);}\n"
+                "function mget(r,k){var m=r.metadata||{};for(var kk in m){"
+                "if(kk.toLowerCase()===k)return m[kk];}return '';}\n"
+                "function renderImport(res){var c=res.counters;var head='<p class=muted>'+c.preselected"
+                "+' preselected \\u00b7 '+c.valid_unique+' new \\u00b7 '+c.already_analyzed+' already \\u00b7 '"
+                "+c.rejected+' rejected \\u00b7 '+c.dup_in_file+' dup \\u00b7 '+c.invalid+' invalid ('"
+                "+c.total+' rows; column '+esc(res.column)+')</p>';var trs=res.rows.map(function(r){"
+                "var pre=(r.preselect)?'checked':'';"
+                "var dis=(r.valid&&r.disposition!=='duplicate')?'':'disabled';"
+                "var score=mget(r,'weighted score')||mget(r,'qa potential');"
+                "return '<tr><td><input type=checkbox class=impsel '+pre+' '+dis+' data-seed=\"'"
+                "+esc(r.seed_url)+'\"></td><td>'+esc(r.canonical_domain||r.original)+'</td><td>'"
+                "+esc(mget(r,'product'))+'</td><td>'+esc(mget(r,'priority'))+'</td><td>'"
+                "+esc(r.recommended_action||'')+'</td><td>'+esc(score)+'</td><td>'"
+                "+esc(r.disposition)+'</td></tr>';}).join('');"
+                "document.getElementById('imppreview').innerHTML=head+'<table><tr><th></th><th>Domain</th>"
+                "<th>Product</th><th>Priority</th><th>Rec. action</th><th>Score</th><th>Disposition</th>"
+                "</tr>'+trs+'</table>'+'<p><label>Campaign name: "
+                "<input id=impcampaign value=curated></label> &nbsp;<label>Coverage: <select "
+                "id=impcoverage><option value=adaptive selected>Adaptive (recommended) \u2014 up to "
+                "12 pages/site</option><option value=deep>Deep \u2014 up to 20 pages/site</option>"
+                "</select></label>"
+                " &nbsp;<label>Scan mode: <select id=impscanmode>"
+                "<option value=playwright selected>Deep Capture (Playwright)</option>"
+                "<option value=static>Static (faster)</option></select></label></p>"
+                "<p class=muted>Static = faster HTTP/HTML checks. Deep Capture = real browser: "
+                "screenshots, axe accessibility, perf timing and console/network evidence (needs "
+                "Chromium). Coverage bounds how many same-site pages are explored (never a quota); "
+                "both profiles can stop early once further pages add no new coverage.</p>"
+                "<p><label><input type=checkbox id=impconfirm> I confirm this is an authorized, "
+                "bounded, read-only scan.</label></p>"
+                "<p><button class=\"btn primary\" onclick=\"launchImport()\">Scan selected</button></p>';}\n"
+                "function launchImport(){var seeds=[].slice.call(document.querySelectorAll("
+                "'.impsel:checked')).map(function(x){return x.getAttribute('data-seed');});"
+                "if(!seeds.length){alert('select at least one domain');return;}"
+                "if(!document.getElementById('impconfirm').checked){"
+                "alert('please confirm the bounded read-only scan');return;}"
+                "var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();"
+                "var mode=(document.getElementById('impscanmode')||{}).value||'static';"
+                "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
+                "campaign:document.getElementById('impcampaign').value||'curated',browser_mode:mode,"
+                "coverage:(document.getElementById('impcoverage')||{}).value||'adaptive'})})"
+                ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
+                "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
+                "alert('start failed: '+e);});}\n")
+            return _page("AI QA Factory — Scout", "/scout", body, script)
+
+        def _scout_campaigns_page(self) -> str:
+            ov = self._read_model().overview()
+            # Reuse the unified project index for scout campaigns (no second store).
+            from core.orchestration.project_index import ProjectIndex
+            camps = [p for p in ProjectIndex(service.output_dir).list_projects()
+                     if p.type == "scout_campaign"]
+            rows = "".join(
+                f'<tr><td><a href="/scout/progress?id={_esc(c.project_id)}">{_esc(c.title)}</a></td>'
+                f'<td>{_badge(c.lifecycle_state)}</td>'
+                f'<td>{c.progress}%</td><td>{c.evidence_count}</td>'
+                f'<td class="muted">{_esc(c.operator_next_action)}</td>'
+                f'<td><a class="chip" href="/scout/progress?id={_esc(c.project_id)}">Open</a></td></tr>'
+                for c in camps)
+            table = (f'<table><caption>Scout campaigns</caption><tr><th>Campaign</th><th>Status</th>'
+                     f'<th>Progress</th><th>Evidence</th><th>Next action</th><th>Open</th></tr>{rows}</table>'
+                     if rows else '<div class="card empty muted">No campaigns yet. '
+                     '<a href="/scout">Open Scout to start one</a>.</div>')
+            body = (f'<h1>Scout campaigns</h1><div class="row">'
+                    f'<a class="chip" href="/scout/new">New adaptive campaign</a>'
+                    f'<a class="chip" href="/scout/history">History</a>'
+                    f'<a class="chip" href="/scout">Manual URL Scan</a>'
+                    f'<a class="chip" href="/results">Results</a>'
+                    f'<span class="chip">Active {len(ov.active_campaigns)}</span></div>'
+                    f'<div class="scrollx">{table}</div>'
+                    f'<p class="muted">Campaign start + Pause/Resume/Stop Safely/Cancel controls are '
+                    f'on <a href="/scout">Manual URL Scan</a> (bounded, read-only; nothing is sent).</p>')
+            return _page("AI QA Factory — Scout campaigns", "/scout", body)
+
+        # --- v3.3 adaptive Scout operator workflow -------------------------------------------
+        def _campaign_service(self):
+            from core.scout.campaign_service import CampaignService
+            return CampaignService(service.output_dir)
+
+        def _scout_preflight(self):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            body = body or {}
+            preset = str(body.get("campaign_preset") or "balanced-production")
+            try:
+                out = self._campaign_service().preflight(
+                    campaign_preset=preset,
+                    probe_browser_launch=bool(body.get("probe_browser", True)),
+                    do_network=bool(body.get("probe_network", True)))
+            except Exception as exc:
+                return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return self._json(200, {"ok": True, **out})
+
+        def _scout_launch(self):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            body = body or {}
+            overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else None
+            try:
+                res = self._campaign_service().launch(
+                    campaign_preset=str(body.get("campaign_preset") or "balanced-production"),
+                    session_preset=body.get("session_preset") or None, overrides=overrides,
+                    approve_live_discovery=bool(body.get("approve_live_discovery")),
+                    background=True)
+            except Exception as exc:
+                return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return self._json(200, {"ok": True, **res})
+
+        def _scout_control(self, parsed):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            qs = parse_qs(parsed.query)
+            return self._json(200, self._campaign_service().control(
+                (qs.get("id") or [""])[0], (qs.get("action") or [""])[0]))
+
+        def _scout_export(self, parsed):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            cid = (parse_qs(parsed.query).get("id") or [""])[0]
+            try:
+                return self._json(200, {"ok": True, "bundle": self._campaign_service().export_bundle(cid)})
+            except Exception as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
+
+        def _scout_new_page(self) -> str:
+            cat = self._campaign_service().catalog()
+            opts = "".join(
+                f'<option value="{_esc(p["key"])}"{" selected" if p["key"]==cat["default_campaign_preset"] else ""}>'
+                f'{_esc(p["label"])}{" (smoke)" if p.get("is_smoke") else ""}</option>'
+                for p in cat["campaign_presets"])
+            sess = "".join(f'<option value="{_esc(s["key"])}">{_esc(s["label"])} '
+                           f'({s["max_discovered"]} discovered / {s["max_qa_analyzed"]} QA / '
+                           f'{s["max_duration_min"]}m)</option>' for s in cat["session_presets"])
+            strat = "".join(f'<option value="{_esc(s)}">{_esc(s)}</option>'
+                            for s in cat["strategies"])
+            ind_opts = "".join(f'<option value="{_esc(i)}">{_esc(i)}</option>'
+                               for i in cat["industries"])
+            site_opts = "".join(f'<option value="{_esc(s)}">{_esc(s.replace("_", " "))}</option>'
+                                for s in cat["site_types"])
+            body = (
+                '<h1>New Scout campaign</h1>'
+                '<div class="row"><a class="chip" href="/scout/history">History</a>'
+                '<a class="chip" href="/scout">Manual URL Scan</a></div>'
+                '<div class="card formstack"><label>Preset<br><select id="preset">' + opts + '</select></label>'
+                '<label> Session (budget)<br><select id="session"><option value="">preset default</option>'
+                + sess + '</select></label>'
+                '<label> Strategy<br><select id="strategy"><option value="">preset default</option>'
+                + strat + '</select></label>'
+                '<label> Countries (comma, blank = no restriction)<br>'
+                '<input id="countries" placeholder="us, de"></label>'
+                '<label> Languages (comma)<br><input id="languages" placeholder="en, de"></label>'
+                '<label> Industries (multi-select; blank = preset)<br>'
+                '<select id="industries" multiple size="6">' + ind_opts + '</select></label>'
+                '<label> Site types (multi-select; blank = preset)<br>'
+                '<select id="sitetypes" multiple size="6">' + site_opts + '</select></label>'
+                '<label> Keywords / commercial signals (comma)<br>'
+                '<input id="keywords" placeholder="pricing, free trial, book demo"></label>'
+                '<label> Exclude keywords (comma)<br><input id="excludekw"></label>'
+                '<label> Min commercial score 0-100 (blank = preset)<br>'
+                '<input id="minscore" type="number" min="0" max="100" placeholder="preset default"></label>'
+                '<details><summary class="muted">Advanced limits</summary>'
+                '<label> Max discovered domains<br><input id="maxdisc" type="number" min="1"></label>'
+                '<label> Max pages per site<br><input id="maxpages" type="number" min="1"></label>'
+                '</details>'
+                '<label><input type="checkbox" id="deepcapture"> Deep capture (Playwright): real '
+                'screenshots + network evidence (console errors, failed resources, timing). Slower; '
+                'needs Chromium installed. Off = fast static analysis.</label>'
+                '<p class="muted">Presets are editable templates. Every run is finite (hard '
+                'ceilings) and never sends anything. Live discovery needs your explicit approval '
+                'and a configured Tavily key.</p>'
+                '<div class="row"><button id="pf" class="chip">Run readiness preflight</button></div>'
+                '<pre id="pfout" class="scrollx muted"></pre>'
+                '<label><input type="checkbox" id="approve"> I approve one bounded LIVE discovery '
+                'run (real external sites, no submissions/purchases/messages)</label>'
+                '<div class="row"><button id="run" class="chip primary">Run campaign</button></div>'
+                '<div id="msg" class="muted"></div></div>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";\n"
+                "function J(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json());}\n"
+                "function v(id){var e=document.getElementById(id);return e?e.value.trim():'';}\n"
+                "function csv(s){return s.split(',').map(x=>x.trim()).filter(Boolean);}\n"
+                "function multi(id){var e=document.getElementById(id);"
+                "return e?Array.from(e.selectedOptions).map(o=>o.value):[];}\n"
+                "function ov(){var o={};"
+                "var c=v('countries');if(c)o.countries=csv(c);"
+                "var lg=v('languages');if(lg)o.languages=csv(lg);"
+                "var st=document.getElementById('strategy').value;if(st)o.strategy=st;"
+                "var ind=multi('industries');if(ind.length)o.industries=ind;"
+                "var sty=multi('sitetypes');if(sty.length)o.site_types=sty;"
+                "var kw=v('keywords');if(kw)o.keywords=csv(kw);"
+                "var ex=v('excludekw');if(ex)o.exclude_keywords=csv(ex);"
+                "var ms=v('minscore');if(ms)o.min_commercial_threshold=parseInt(ms,10);"
+                "var md=v('maxdisc');if(md)o.max_candidates=parseInt(md,10);"
+                "var mp=v('maxpages');if(mp)o.max_pages_per_site=parseInt(mp,10);"
+                "var dc=document.getElementById('deepcapture');"
+                "if(dc&&dc.checked)o.browser_mode='playwright';"
+                "return o;}\n"
+                "document.getElementById('pf').onclick=function(){"
+                "document.getElementById('pfout').textContent='running real probes (browser launch"
+                " + network)…';"
+                "J('/api/scout/preflight',{campaign_preset:document.getElementById('preset').value})"
+                ".then(function(j){document.getElementById('pfout').textContent="
+                "JSON.stringify(j.preflight||j,null,2);}).catch(e=>{"
+                "document.getElementById('pfout').textContent='preflight failed: '+e;});};\n"
+                "document.getElementById('run').onclick=function(){"
+                "if(!document.getElementById('approve').checked){alert('approve the bounded live run"
+                " first');return;}var msg=document.getElementById('msg');msg.textContent='launching…';"
+                "J('/api/scout/launch',{campaign_preset:document.getElementById('preset').value,"
+                "session_preset:document.getElementById('session').value||null,"
+                "approve_live_discovery:true,overrides:ov()}).then(function(j){"
+                "if(j.ok){location.href='/scout/progress?id='+encodeURIComponent(j.campaign_id);}"
+                "else{msg.textContent='launch refused: '+(j.error||'unknown');}})"
+                ".catch(e=>{msg.textContent='launch failed: '+e;});};\n")
+            return _page("AI QA Factory — New Scout campaign", "/scout", body, script)
+
+        def _scout_progress_page(self, cid: str) -> str:
+            body = ('<h1>Campaign progress</h1><div class="row">'
+                    '<a class="chip" href="/scout/new">New campaign</a>'
+                    '<a class="chip" href="/scout/history">History</a></div>'
+                    '<div class="card"><div id="p" class="muted">loading…</div>'
+                    '<div class="row"><button id="bp" class="chip" onclick="ctl(\'pause\')">Pause</button>'
+                    '<button id="br" class="chip" onclick="ctl(\'resume\')">Resume</button>'
+                    '<button id="bs" class="chip danger" onclick="ctl(\'stop\')">Stop &amp; Save</button>'
+                    '<button class="chip" onclick="exp()">Export evidence</button></div>'
+                    '<div id="msg" class="muted"></div></div>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";const CID=" + json.dumps(cid) + ";\n"
+                "function ctl(a){fetch('/api/scout/control?id='+encodeURIComponent(CID)+'&action='+a,"
+                "{method:'POST',headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(load);}\n"
+                "function exp(){fetch('/api/scout/export?id='+encodeURIComponent(CID),{method:'POST',"
+                "headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
+                "document.getElementById('msg').textContent=j.ok?('bundle: '+j.bundle):('export failed: '+j.error);});}\n"
+                "function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
+                "function load(){fetch('/api/scout/progress?id='+encodeURIComponent(CID)).then(r=>r.json())"
+                ".then(function(j){var c=j.counters||{};var d=(j.decisions||[]);"
+                # After a terminal state, Pause/Resume/Stop no longer apply -> disable them (honest UI).
+                "var term=['completed','stopped_with_checkpoint','failed','cancelled'].indexOf(String(j.run_state))>=0;"
+                "['bp','br','bs'].forEach(function(id){var b=document.getElementById(id);if(b)b.disabled=term;});"
+                # Each analyzed domain links to its target detail (findings/evidence); same tab.
+                "var rows=d.map(function(x){var enc=encodeURIComponent(x.domain||'');"
+                "return '<tr><td><a href=\"/scout/target?domain='+enc+'\">'+esc(x.domain)+'</a></td><td>'+esc(x.priority)+"
+                "'</td><td>'+esc((x.allocation||{}).depth)+'</td><td>'+esc((x.brain||{}).business_model||'')+"
+                "'</td></tr>';}).join('');"
+                "document.getElementById('p').innerHTML='<div class=row><span class=chip>State: '+esc(j.run_state)+"
+                "'</span><span class=chip>Stop: '+esc(j.stop_reason||'—')+'</span></div>'+"
+                "'<table><tr><th>Discovered</th><th>Eligible</th><th>QA analyzed</th><th>Actionable</th>'+"
+                "'<th>Already</th><th>Rejected</th><th>Failed</th></tr><tr><td>'+[c.discovered,c.eligible,"
+                "c.qa_analyzed,c.actionable,c.already_analyzed,c.rejected,c.failed].map(v=>esc(v==null?0:v)).join('</td><td>')+"
+                "'</td></tr></table>'+(rows?('<table><caption>Adaptive decisions</caption><tr><th>Domain</th>'+"
+                "'<th>Priority</th><th>Depth</th><th>Business model</th></tr>'+rows+'</table>'):'');});}\n"
+                "load();setInterval(load,3000);\n")
+            return _page("AI QA Factory — Campaign progress", "/scout", body, script)
+
+        def _scout_history_page(self, q) -> str:
+            from datetime import datetime, timedelta, timezone
+            qtext = (q.get("text") or [""])[0]
+            frm = (q.get("from") or [""])[0].strip()      # explicit YYYY-MM-DD lower bound
+            to = (q.get("to") or [""])[0].strip()          # explicit YYYY-MM-DD upper bound
+            try:
+                days = int((q.get("days") or ["0"])[0])    # any custom N days back
+            except ValueError:
+                days = 0
+            since, until = "", ""
+            if frm or to:
+                since = frm
+                until = (to + "T23:59:59+00:00") if to else ""
+            elif days > 0:
+                since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            rows = self._campaign_service().history(
+                filters={"text": qtext, "since": since, "until": until})
+            active_days = days if (days > 0 and not (frm or to)) else 0
+            # Honest count: when a filter hides rows, say "N shown of T total" so a filtered view is
+            # never mistaken for the whole history (the confusion that motivated this).
+            filtered = bool(qtext or since or until)
+            total = len(self._campaign_service().history()) if filtered else len(rows)
+            count_label = (f"{len(rows)} shown of {total} total"
+                           if filtered and len(rows) != total else f"{total} total")
+            range_chips = "".join(
+                f'<a class="chip{" active" if active_days == val else ""}" '
+                f'href="/scout/history?days={val}{("&text=" + _esc(qtext)) if qtext else ""}">{lbl}</a>'
+                for val, lbl in ((1, "Today"), (7, "7 days"), (30, "30 days"), (0, "All")))
+            trs = "".join(
+                f'<tr><td><a href="/scout/target?domain={_esc(r.get("domain",""))}">{_esc(r.get("domain",""))}</a></td>'
+                f'<td>{_badge(r.get("analysis_status",""))}</td>'
+                f'<td>{_badge(r.get("engagement_status","prospect"))}</td>'
+                f'<td class="muted">{_esc(", ".join(r.get("campaign_ids",[])[:2]))}</td>'
+                f'<td class="muted">{_fmt_ts(r.get("last_analysis_at",""))}</td>'
+                f'<td class="muted">{_esc(r.get("reason","")) or "&mdash;"}</td></tr>'
+                for r in rows)
+            # Empty state stays honest too: a filter that hides every row must not read as an empty
+            # history — say "0 shown of T total" whenever the unfiltered history actually has entries.
+            empty_msg = (f'0 shown of {total} total &mdash; no sites match this filter.'
+                         if filtered and total > 0 else 'No analyzed sites yet.')
+            table = (f'<table><caption>Analyzed-site history &mdash; {count_label}</caption>'
+                     f'<tr><th>Domain</th>'
+                     f'<th>Status</th><th>Funnel</th><th>Campaigns</th><th>Analyzed</th>'
+                     f'<th>Notes</th></tr>{trs}</table>'
+                     if rows else f'<div class="card empty muted">{empty_msg}</div>')
+            body = (f'<h1>Scout history</h1><div class="row">'
+                    f'<a class="chip" href="/scout/new">New campaign</a></div>'
+                    f'<div class="row" style="margin-bottom:6px">{range_chips}</div>'
+                    f'<form method="get" class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
+                    f'<label class="muted">Last <input name="days" type="number" min="1" max="3650" '
+                    f'style="width:64px" value="{active_days or ""}"> days</label>'
+                    f'<span class="muted">or</span>'
+                    f'<label class="muted">from <input name="from" type="date" value="{_esc(frm)}"></label>'
+                    f'<label class="muted">to <input name="to" type="date" value="{_esc(to)}"></label>'
+                    f'<input name="text" placeholder="filter domain/text" value="{_esc(qtext)}">'
+                    f'<button class="chip">Filter</button>'
+                    f'<a class="chip" href="/scout/history">Reset</a></form>'
+                    f'<div class="scrollx">{table}</div>'
+                    f'<p class="muted">Processed targets are skipped by future campaigns; rescan is '
+                    f'explicit. B/C and clean results are retained, never auto-deleted.</p>')
+            return _page("AI QA Factory — Scout history", "/scout", body)
+
+        def _scout_target_page(self, domain: str, run: str = "") -> str:
+            det = self._campaign_service().target_detail(domain, run=run)
+            entry, brain = det.get("entry"), det.get("brain")
+            prospect_id = det.get("prospect_id") or ""
+            prospect_status = det.get("prospect_status") or ""
+            run_id = det.get("run") or det.get("scout_run") or ""
+            nav = ((f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Back to run</a>'
+                    if run_id else '')
+                   + '<a class="chip" href="/scout/history">Back to history</a>')
+            # A run-pinned target whose domain is not in that run: honest, never another target's data.
+            if run and det.get("evidence_status") == "prospect_not_found":
+                return _page("AI QA Factory — Target", "/scout",
+                             f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
+                             f'<div class="card"><div class="banner warn">No prospect for '
+                             f'{_esc(domain)} exists in run <code>{_esc(run_id)}</code>. This target\'s '
+                             f'own evidence is unavailable — Scout never shows another target\'s '
+                             f'evidence in its place.</div></div>')
+            # A run-pinned incomplete target (manual action / failed): honest incomplete-analysis view,
+            # never a healthy "0 defects" conclusion.
+            if run and prospect_status and prospect_status != "DONE":
+                return self._scout_incomplete_target_html(domain, det, nav)
+            if not entry and not brain and not prospect_id:
+                return _page("AI QA Factory — Target", "/scout",
+                             f'<h1>Target</h1><div class="card empty muted">No record for '
+                             f'{_esc(domain)}.</div>')
+            b = brain or {}
+            bs = (b.get("brain") or {})
+            scores = bs.get("scores", {})
+            plan = (b.get("plan") or {})
+            findings = det.get("findings") or []
+            contacts = det.get("contacts") or []
+            draft = det.get("draft") or {}
+            media = det.get("media") or []
+            network = det.get("network") or {}
+            fixability = det.get("fixability") or {}
+            scout_run = det.get("scout_run") or ""
+            source_kind = det.get("source_kind") or ""
+            video_mode = det.get("video_mode") or ""
+            evidence_files = det.get("evidence_files") or []
+            status = (entry or {}).get("analysis_status", "")
+            reason = (entry or {}).get("reason", "")
+            # Truthful "what is this" card: an AI understanding card is only produced by adaptive
+            # discovery (the Scout Brain). A curated/manual import never runs that step BY DESIGN, so
+            # showing bare "—" dashes there looks like broken/missing data. Say plainly which is true.
+            _SOURCE_LABEL = {
+                "curated": "This target came from a curated list import. Automatic AI understanding "
+                           "(archetype / business model / journeys) is not computed for curated "
+                           "imports — that is expected, not missing data.",
+                "manual": "This target came from a manual URL scan. Automatic AI understanding "
+                         "(archetype / business model / journeys) is not computed for manual scans "
+                         "— that is expected, not missing data.",
+            }
+            if bs:
+                understanding_html = (
+                    f'<p><b>Archetype:</b> {_esc(bs.get("archetype","—"))} · '
+                    f'<b>Business model:</b> {_esc(bs.get("business_model","—"))} · '
+                    f'<b>Understanding confidence:</b> {_esc(bs.get("understanding_confidence","—"))}%</p>'
+                    f'<p><b>Critical journeys:</b> {_esc(", ".join(bs.get("primary_journeys",[])))}</p>')
+            elif source_kind in _SOURCE_LABEL:
+                understanding_html = f'<p class="muted">{_esc(_SOURCE_LABEL[source_kind])}</p>'
+            else:
+                understanding_html = ('<p class="muted">No AI understanding was computed for this '
+                                      'target (not applicable for this source).</p>')
+            body = (
+                f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
+                f'<div class="card"><h2>What Scout thinks this is</h2>'
+                + understanding_html +
+                f'<p><b>Priority:</b> {_badge(b.get("priority","—"))} · '
+                f'<b>Scores</b> commercial {scores.get("commercial","—")} / QA {scores.get("qa_value","—")} / '
+                f'evidence {scores.get("evidence_confidence","—")} / safety {scores.get("safety_confidence","—")} / '
+                f'combined {scores.get("combined_opportunity","—")}</p></div>'
+                f'<div class="card"><h2>Why Scout tested this / what it skipped</h2>'
+                f'<p><b>Depth:</b> {_esc((b.get("allocation") or {}).get("depth","—"))} · '
+                f'<b>Allowed interaction:</b> {_esc(plan.get("allowed_interaction_mode","—"))}</p>'
+                f'<p><b>Checks selected:</b> {_esc(", ".join(plan.get("checks_selected",[])))}</p>'
+                f'<p><b>Checks skipped:</b> {_esc(", ".join(plan.get("checks_skipped",[])))}</p>'
+                f'<p><b>Stop boundary:</b> {_esc(", ".join(plan.get("stop_boundaries",[])) or "—")}</p>'
+                f'<p class="muted"><b>Decisions:</b> {_esc(" · ".join(plan.get("decisions",[])))}</p></div>'
+                f'<div class="card"><h2>Persisted record</h2>'
+                f'<p><b>Status:</b> {_badge((entry or {}).get("analysis_status","—"))} · '
+                f'<b>Evidence ref:</b> <code>{_esc((entry or {}).get("evidence_ref","—"))}</code></p>'
+                + ('<div class="banner warn">This target was not analyzed unattended'
+                   + (f' — {_esc(reason)}' if reason else '')
+                   + '. Scout never solves CAPTCHAs. Solve it yourself in your browser, then use '
+                     'the button below and re-run a campaign including this target.</div>'
+                   if _looks_blocked(status, reason) else '')
+                + ('<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">'
+                   '<button class="chip" type="button" onclick="rescan()">I handled it — rescan '
+                   'this target</button>'
+                   '<button class="chip" type="button" onclick="replay()">Watch headed replay'
+                   '</button><span id="rescanmsg" class="muted"></span></div>' if entry else '')
+                + '<p class="muted">Recheck / Reproduce / Record short video / Capture stronger '
+                'evidence are available on a live-analyzed target (bounded, fail-closed).</p></div>')
+
+            # Within-site coverage (PR-B): how many meaningful pages Scout explored on THIS target,
+            # under which profile, and why it stopped. Independent of how many domains a campaign
+            # analyzes (that is the separate campaign-budget axis).
+            body += (f'<div class="card"><h2>Coverage</h2>{_coverage_card_html(det.get("coverage"))}'
+                     f'</div>')
+
+            # Honest evidence-binding state: a shared multi-target run may register a domain whose own
+            # analyzed prospect is not in the store. We refuse to borrow another target's evidence, so
+            # the card shows nothing here — say so plainly rather than look like a clean empty result.
+            if det.get("evidence_status") == "prospect_not_found":
+                body += ('<div class="banner warn">Evidence for this domain could not be bound to its '
+                         'own analyzed page in the run, so no findings, screenshots, network capture '
+                         'or reproduction are shown here — deliberately, rather than surface evidence '
+                         'from a different target. Re-run a scan for this domain to rebuild its own '
+                         'evidence.</div>')
+
+            # Sales funnel (engagement pipeline). Won/Delivered come from client-work; the
+            # outreach-side transitions are set here. The system never emails anyone.
+            if entry:
+                eng = (entry or {}).get("engagement_status", "prospect")
+                wid = (entry or {}).get("work_id", "")
+                funnel_btns = "".join(
+                    f'<button class="chip" type="button" onclick="setEng(\'{s}\')">{lbl}</button>'
+                    for s, lbl in (("contacted", "Contacted"), ("replied", "Replied"),
+                                   ("won", "Won"), ("delivered", "Delivered"), ("lost", "Lost")))
+                body += ('<div class="card"><h2>Sales funnel</h2>'
+                         f'<p><b>Stage:</b> {_badge(eng)}'
+                         + (f' · <b>Work:</b> <code>{_esc(wid)}</code>' if wid else '')
+                         + '</p><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
+                         + funnel_btns + '<span id="engmsg" class="muted"></span></div>'
+                         '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;'
+                         'margin-top:10px"><button class="btn primary" type="button" '
+                         'onclick="startCW()">Start client work</button>'
+                         + (f'<a class="chip" href="/work/{_esc(wid)}">open work &#8599;</a>'
+                            if wid else '')
+                         + '<span id="cwmsg" class="muted"></span></div>'
+                         '<p class="muted">Start client work builds a job brief from these findings, '
+                         'runs the read-only analyze-job (feasibility + proposal), and links it as a '
+                         'proposal. It does NOT change the sales stage. Won / Delivered are '
+                         'commitments — set them only after a real, confirmed client agreement '
+                         '(they ask for confirmation); Contacted / Replied you set freely here. '
+                         'Nothing is emailed by the system.</p></div>')
+
+            # Public contacts (read-only; the system never emails anyone).
+            contacts_html = ("".join(f'<span class="chip">{_esc(e)}</span> ' for e in contacts)
+                             or '<span class="muted">None found on public pages.</span>')
+            body += (f'<div class="card"><h2>Public contact(s)</h2><p>{contacts_html}</p>'
+                     f'<p class="muted">Extracted read-only from public pages. Use them to reach out '
+                     f'yourself; the system never sends anything.</p></div>')
+
+            # Problem items: ordered by qa_value_score desc, each with a confidence label + a
+            # one-line repro hint. Every dynamic cell is HTML-escaped and newline-collapsed; an
+            # absent field shows a neutral placeholder (never invented). See _problems_table_html.
+            prob_table = _problems_table_html(findings)
+            body += (f'<div class="card"><h2>Problems found</h2><div class="scrollx">{prob_table}</div>'
+                     f'</div>')
+
+            # Fixability (stage 3 — paid fix scoping). Conservative: nothing is "ready" for a cold
+            # prospect (no access yet); this is what we could offer to fix ourselves.
+            fx_items = fixability.get("items") or []
+            _FX_LABEL = {"fix_ready": "fix ready", "fix_after_access": "fix after access",
+                         "out_of_scope": "out of scope"}
+            if fx_items:
+                fx_rows = "".join(
+                    f'<tr><td>{_badge(_FX_LABEL.get(i.get("fix_tier"), i.get("fix_tier","")))}</td>'
+                    f'<td class="muted">{_esc(i.get("category") or "—")}</td>'
+                    f'<td>{_esc(i.get("title") or "—")}</td>'
+                    f'<td class="muted">{_esc(i.get("fix_reason") or "")}</td></tr>' for i in fx_items)
+                fx_html = (f'<p class="muted">{_esc(fixability.get("summary",""))}</p>'
+                           f'<div class="scrollx"><table><caption>Fixability ({len(fx_items)})'
+                           f'</caption><tr><th>Tier</th><th>Type</th><th>Issue</th><th>Why</th></tr>'
+                           f'{fx_rows}</table></div>')
+            else:
+                fx_html = ('<div class="empty muted">No findings to scope yet. After a bounded QA '
+                           'analysis, this shows what we could fix ourselves (paid, stage 3).</div>')
+            body += ('<div class="card"><h2>Fixability — what we could fix (stage 3, paid)</h2>'
+                     + fx_html +
+                     '<p class="muted">Conservative + honest: nothing is "ready" for a cold prospect '
+                     '(no repo/staging access yet). We never promise a fix outside proven '
+                     'capability.</p></div>')
+
+            # Captured evidence media: screenshots inline, video playable, other files downloadable.
+            def _art_url(rel: str) -> str:
+                return f'/scout/artifact?run={_esc(scout_run)}&rel={_esc(rel)}'
+
+            def _ext(m: str) -> str:
+                return m.lower().rsplit(".", 1)[-1] if "." in m else ""
+            imgs = [m for m in media if _ext(m) in ("png", "jpg", "jpeg", "webp", "gif")]
+            vids = [m for m in media if _ext(m) in ("webm", "mp4")]
+            others = [m for m in media if m not in imgs and m not in vids]
+            media_html = "".join(
+                f'<a href="{_art_url(m)}" target="_blank" rel="noopener"><img src="{_art_url(m)}" '
+                f'alt="screenshot" style="max-width:280px;max-height:200px;margin:4px;'
+                f'border:1px solid var(--border,#ccc)"></a>' for m in imgs)
+            media_html += "".join(
+                f'<video src="{_art_url(m)}" controls preload="metadata" '
+                f'style="max-width:360px;margin:4px"></video>' for m in vids)
+            media_html += "".join(
+                f'<div><a href="{_art_url(m)}" download>{_esc(m.split("/")[-1])}</a></div>'
+                for m in others)
+            if not media:
+                media_html = ('<div class="empty muted">No screenshots/media captured yet. Launch a '
+                              'campaign with <b>Deep capture (Playwright)</b> to record screenshots '
+                              'and stronger evidence.</div>')
+            body += f'<div class="card"><h2>Screenshots &amp; evidence files</h2>{media_html}</div>'
+
+            # Video is an intentional capture POLICY (video_mode), not a pass/fail check. A captured
+            # video is still shown inline above, in the "Screenshots & evidence files" card, exactly
+            # like any other captured artifact. This card only appears when NO video exists, and its
+            # job is to say why: a manual/disabled policy with no clip is normal, expected behaviour
+            # — never presented as a missing/failed capture.
+            _VIDEO_POLICY_NOTE = {
+                "off": "Video capture is disabled for this run (video_mode=off). This is an "
+                      "intentional policy, not a failed capture.",
+                "manual": "Video capture is manual/opt-in for this run and none was recorded for "
+                         "this target. This is expected, not a defect.",
+                "qualified_auto": "No qualifying interaction finding triggered an automatic "
+                                  "reproduction video for this target.",
+            }
+            if not vids:
+                note = _VIDEO_POLICY_NOTE.get(video_mode,
+                    "No reproduction video was captured for this target.")
+                body += f'<div class="card"><h2>Reproduction video</h2><p class="muted">{_esc(note)}</p></div>'
+
+            # Accessibility (axe-core) evidence: distinguish "ran, N violations" from "browser
+            # evidence unavailable" from "not attempted" (static/non-deep-capture scan) — never
+            # conflate a capture-mode limitation with a real defect-free result.
+            axe_status = network.get("axe_status", "")
+            axe_violations = network.get("axe_violations") or []
+            if axe_status == "ok":
+                if axe_violations:
+                    a_rows = "".join(
+                        f'<tr><td>{_esc(str(v.get("id","—")))}</td>'
+                        f'<td class="muted">{_esc(str(v.get("impact","—")))}</td>'
+                        f'<td>{_esc(_collapse_ws(str(v.get("help",""))) or "—")}</td>'
+                        f'<td class="muted">{_esc(str(len(v.get("nodes") or [])))}</td></tr>'
+                        for v in axe_violations)
+                    axe_html = (f'<div class="scrollx"><table><caption>axe-core violations '
+                               f'({len(axe_violations)})</caption><tr><th>Rule</th><th>Impact</th>'
+                               f'<th>Description</th><th>Nodes</th></tr>{a_rows}</table></div>')
+                else:
+                    axe_html = ('<p class="muted">axe-core ran on this page and found 0 '
+                               'violations.</p>')
+            elif axe_status == "unavailable":
+                axe_html = ('<p class="muted">Deep-capture ran but axe-core evidence was unavailable '
+                           'for this page (browser/script limitation) — not a defect-free result.</p>')
+            else:
+                axe_html = ('<div class="empty muted">Accessibility (axe-core) was not attempted for '
+                           'this scan mode. Use <b>Deep Capture (Playwright)</b> to run axe-core.</div>')
+            body += f'<div class="card"><h2>Accessibility evidence (axe-core)</h2>{axe_html}</div>'
+
+            # Network evidence already captured by Chromium/Playwright (from observation.json).
+            if network:
+                ce = network.get("console_errors") or []
+                fr = network.get("failed_resources") or []
+                br = network.get("blocked_requests") or []
+                timing = network.get("timing_ms") or {}
+                net_html = (
+                    f'<p><b>HTTP status:</b> {_esc(str(network.get("status") or "—"))} · '
+                    f'<b>Load:</b> {_esc(str(timing.get("load", "—")))} ms</p>'
+                    f'<p><b>Console errors ({len(ce)}):</b> {_esc(", ".join(map(str, ce)) or "none")}</p>'
+                    f'<p><b>Failed resources ({len(fr)}):</b> '
+                    f'{_esc(", ".join(map(str, fr)) or "none")}</p>'
+                    f'<p><b>Blocked requests ({len(br)}):</b> '
+                    f'{_esc(", ".join(map(str, br)) or "none")}</p>')
+            else:
+                net_html = ('<div class="empty muted">No network capture yet. Deep capture '
+                            '(Playwright) records console errors, failed resources and load timing '
+                            'from Chromium.</div>')
+            body += f'<div class="card"><h2>Network evidence (Chrome/Playwright)</h2>{net_html}</div>'
+
+            # Structured evidence files — a safe, exact-run/exact-prospect-confined "open" action
+            # for redacted observations/traces plus findings/scorecard/coverage/reproduction/manual
+            # records, reusing the SAME /scout/artifact route as screenshots. Only files that
+            # genuinely exist are linked (never a dead link).
+            if evidence_files:
+                ev_rows = "".join(
+                    f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
+                    f'{_esc(e["label"])}</a></li>' for e in evidence_files)
+                ev_html = f'<ul>{ev_rows}</ul>'
+            else:
+                ev_html = '<p class="muted">No structured evidence files are available.</p>'
+            body += (f'<div class="card"><h2>Structured evidence files (diagnostic)</h2>{ev_html}'
+                     f'<p class="muted">Opens the underlying captured JSON directly (read-only, '
+                     f'served as source text/JSON — never executed).</p></div>')
+
+            # Copy-only outreach draft (never sent). Haiku polishes prose when LLM is live.
+            to_addr = _esc(draft.get("contact", "") or (contacts[0] if contacts else ""))
+            to_html = to_addr or '<span class="muted">add a recipient manually</span>'
+            body += (
+                '<div class="card"><h2>Outreach draft — copy only</h2>'
+                '<div class="banner warn">The system never sends this. Copy &amp; send it yourself '
+                'after review — public information only, nothing was submitted to the site.</div>'
+                f'<p><b>Subject:</b> {_esc(draft.get("subject",""))}</p>'
+                f'<p><b>To:</b> {to_html}</p>'
+                f'<textarea id="draftbody" readonly rows="11" style="width:100%;box-sizing:border-box">'
+                f'{_esc(draft.get("body",""))}</textarea>'
+                '<div class="row" style="margin-top:8px;align-items:center;gap:10px">'
+                '<button class="chip" type="button" onclick="copyDraft()">Copy draft</button>'
+                '<button class="chip" id="polishbtn" type="button" onclick="polishDraft()">'
+                'Polish with AI</button>'
+                f'<span class="muted">Generated by: <span id="draftgen">'
+                f'{_esc(draft.get("generated_by","deterministic"))}</span></span>'
+                '<span id="polishmsg" class="muted"></span></div>'
+                '<p class="muted">This page loads $0 — the draft above is deterministic. "Polish with '
+                'AI" is an explicit, opt-in action that makes a PAID model call only when a live LLM '
+                'is configured (it asks for confirmation first). Per-campaign/daily/monthly budget '
+                'controls and a no-repeat cache are pending (Slice 3), so each confirmed click may '
+                'repeat the call; it never runs automatically on open or refresh.</p></div>'
+                '<script>function copyDraft(){var t=document.getElementById("draftbody");'
+                't.focus();t.select();try{document.execCommand("copy");}catch(e){}}</script>')
+
+            # Human-in-the-loop rescan (CSRF-guarded POST). Never solves a challenge automatically.
+            body += ('<script>var CSRF=' + json.dumps(csrf_token) + ';var DOM=' + json.dumps(domain)
+                     + ';function rescan(){var m=document.getElementById("rescanmsg");'
+                     'if(m){m.textContent="working…";}'
+                     'fetch("/api/scout/rescan?domain="+encodeURIComponent(DOM),{method:"POST",'
+                     'headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},body:"{}"})'
+                     '.then(function(r){return r.json();}).then(function(j){'
+                     'if(m){m.textContent=j.message||(j.ok?"marked for re-analysis":"failed");}})'
+                     '.catch(function(){if(m){m.textContent="request error";}});}'
+                     'function replay(){var m=document.getElementById("rescanmsg");'
+                     'if(m){m.textContent="opening a browser window…";}'
+                     'fetch("/api/scout/replay?domain="+encodeURIComponent(DOM),{method:"POST",'
+                     'headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},body:"{}"})'
+                     '.then(function(r){return r.json();}).then(function(j){'
+                     'if(m){m.textContent=j.message||(j.ok?"replay started":"replay failed");}})'
+                     '.catch(function(){if(m){m.textContent="replay request error";}});}'
+                     'function setEng(s){var m=document.getElementById("engmsg");'
+                     # Won/Delivered are commitments: require an explicit operator confirmation
+                     # (they map to confirm=1; the server refuses them otherwise).
+                     'var need=(s==="won"||s==="delivered");'
+                     'if(need&&!window.confirm("Mark this prospect \\""+s+"\\"? Do this only after a '
+                     'real, confirmed client agreement/delivery.")){return;}'
+                     'if(m){m.textContent="saving…";}'
+                     'fetch("/api/scout/engagement?domain="+encodeURIComponent(DOM)+"&status="+'
+                     'encodeURIComponent(s)+(need?"&confirm=1":""),{method:"POST",'
+                     'headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},body:"{}"})'
+                     '.then(function(r){return r.json();}).then(function(j){'
+                     'if(j.ok){location.reload();}else if(m){m.textContent='
+                     '(j.needs_confirmation?"confirmation required":"failed");}})'
+                     '.catch(function(){if(m){m.textContent="request error";}});}'
+                     'function startCW(){var m=document.getElementById("cwmsg");'
                      'if(m){m.textContent="running analyze-job…";}'
                      'fetch("/api/scout/start-client-work?domain="+encodeURIComponent(DOM),'
                      '{method:"POST",headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},'
