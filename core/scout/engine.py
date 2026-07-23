@@ -60,6 +60,14 @@ P_PENDING, P_DONE, P_MANUAL, P_FAILED, P_SKIPPED = (
     "PENDING", "DONE", "MANUAL_ACTION_REQUIRED", "FAILED", "SKIPPED",
 )
 
+# Safe operator next-step per fail-closed reason (persisted; never invented in the UI).
+_MANUAL_RECOMMENDED_ACTION = {
+    "captcha_detected": "Scout never solves CAPTCHAs. Solve it yourself in a browser, then rescan "
+                        "this target.",
+    "access_prohibited": "The site blocked automated access. Confirm you are authorized, open it in "
+                         "your browser, then rescan this target.",
+}
+
 _FLOW_HINTS = ("book", "buy", "cart", "checkout", "signup", "sign-up", "subscribe",
                "contact", "start", "appointment", "reserve", "order", "quote", "demo")
 
@@ -166,7 +174,10 @@ class ScoutEngine:
             # CAPTCHA / access prohibition -> manual action, no interaction, continue others.
             if obs.captcha_marker or obs.access_blocked_marker:
                 reason = "captcha_detected" if obs.captcha_marker else "access_prohibited"
-                prospects[pid].update({"status": P_MANUAL, "reason": reason})
+                record = self._manual_action_record(reason, obs)
+                self.store.save_prospect_artifact(pid, "manual_action.json", record)
+                prospects[pid].update({"status": P_MANUAL, "reason": reason,
+                                       "stage": record["stage"], "analysis_complete": False})
                 self._event("manual_action_required", prospect=pid, reason=reason)
                 return
 
@@ -361,6 +372,26 @@ class ScoutEngine:
                     "stopped_before_side_effect": True}
         return {"entry_url": entry, "entry_broken": False, "steps": 1,
                 "reached_form": bool(nxt.forms), "stopped_before_side_effect": True}
+
+    @staticmethod
+    def _manual_action_record(reason: str, obs: PageObservation) -> Dict[str, Any]:
+        """Canonical, persisted MANUAL_ACTION_REQUIRED contract (rendered as-is by the operator UI —
+        never guessed there). We fail closed right after the landing observation and before any
+        interaction, so the stage/boundary are known; whether a browser started and whether the
+        landing loaded are read from the actual observation, not assumed."""
+        return {
+            "reason": reason,
+            "stage": "post_landing_precheck",
+            "stop_boundary": "stopped_before_interaction",
+            "chromium_started": (obs.backend == "playwright"),
+            "landing_loaded": bool(obs.ok),
+            "landing_status": obs.status,
+            "final_url": obs.final_url or obs.url,
+            "screenshot_ref": obs.screenshot_ref or "",
+            "analysis_complete": False,
+            "recommended_action": _MANUAL_RECOMMENDED_ACTION.get(
+                reason, "Review this target yourself in a browser, then rescan it."),
+        }
 
     @staticmethod
     def _flow_coverage(flow_result, flow_enabled: bool) -> Dict[str, Any]:

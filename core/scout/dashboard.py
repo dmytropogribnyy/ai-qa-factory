@@ -168,7 +168,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._json(200, {"prospects": st.get("prospects", {})})
             if path == "/api/prospect":
                 pid = (q.get("id") or [""])[0]
-                return self._json(200, self._prospect(pid))
+                return self._json(200, self._prospect(pid, (q.get("run") or [""])[0]))
             if path == "/api/events":
                 return self._json(200, {"events": service.recent_events(200)})
             if path == "/api/campaign":
@@ -253,7 +253,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                              "status": (q.get("status") or [""])[0]})})
             if path == "/api/scout/target":
                 return self._json(200, self._campaign_service().target_detail(
-                    (q.get("domain") or [""])[0]))
+                    (q.get("domain") or [""])[0], run=(q.get("run") or [""])[0]))
             if path == "/scout/new":
                 return self._html(200, self._scout_new_page())
             if path == "/scout/progress":
@@ -261,7 +261,10 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/scout/history":
                 return self._html(200, self._scout_history_page(q))
             if path == "/scout/target":
-                return self._html(200, self._scout_target_page((q.get("domain") or [""])[0]))
+                return self._html(200, self._scout_target_page(
+                    (q.get("domain") or [""])[0], run=(q.get("run") or [""])[0]))
+            if path == "/scout/run":
+                return self._html(200, self._scout_run_results_page((q.get("id") or [""])[0]))
             if path == "/docs":
                 return self._html(200, self._docs_page())
             if path == "/api/results":
@@ -757,11 +760,30 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             return origin in allowed
 
         # --- data ---
-        def _prospect(self, pid: str):
-            store = service.store
+        def _prospect(self, pid: str, run: str = ""):
+            # Optional EXACT-run scoping: a raw-JSON diagnostic opened from a historical run page must
+            # read that exact confined RunStore and NEVER fall back to the active/attached run.
+            run = str(run or "").strip()
+            if run:
+                try:
+                    store = RunStore(service.output_dir, run)
+                except StoreError:
+                    return {"error": "invalid run", "run": run}
+                if not store.exists():
+                    return {"error": "run not found", "run": run}
+                try:
+                    state = store.load_state() or {}
+                except StoreError:
+                    state = {}
+                if not pid or pid not in (state.get("prospects", {}) or {}):
+                    return {"error": "prospect not found in run", "run": run, "prospect_id": pid}
+            else:
+                store = service.store
             if store is None or not pid:
                 return {"error": "no prospect"}
             out = {"prospect_id": pid}
+            if run:
+                out["run"] = run
             for name in ("observation.json", "findings.json", "evidence.json", "scorecard.json"):
                 try:
                     out[name.split(".")[0]] = store.load_prospect_artifact(pid, name)
@@ -1280,6 +1302,7 @@ was sent (any_real_send={_esc(s['any_real_send'])}).</p>
             prospects = st.get("prospects", {})
             controllable = bool(status.get("controllable"))
             mode = status.get("mode", "IDLE")
+            legacy_run_id = status.get("run_id", "")
             rows = []
             for pid, p in sorted(prospects.items()):
                 epid = _esc(pid)
@@ -1287,7 +1310,7 @@ was sent (any_real_send={_esc(s['any_real_send'])}).</p>
                     f"<tr><td>{epid}</td><td>{_esc(p.get('url', ''))}</td>"
                     f"<td>{_esc(p.get('status', ''))}</td><td>{_esc(p.get('priority', ''))}</td>"
                     f"<td>{_esc(p.get('verified_defects', 0))}</td>"
-                    f"<td><a href='/api/prospect?id={_esc(pid)}'>details</a></td></tr>"
+                    f"<td>{_scout_details_cell(legacy_run_id, pid, p)}</td></tr>"
                 )
             manual = [pid for pid, p in prospects.items() if p.get("status") == "MANUAL_ACTION_REQUIRED"]
             running = bool(status.get("running"))
@@ -1651,25 +1674,29 @@ function startCampaign(){{
             else:
                 controls = (f'<em class="muted">Controls unavailable — this run is '
                             f'<strong>{_esc(mode)}</strong> (read-only).</em>')
+            run_id = status.get("run_id", "")
             prows = "".join(
                 f'<tr><td>{_esc(pid)}</td><td class="muted">{_esc(p.get("url", ""))}</td>'
                 f'<td>{_badge(p.get("status", ""))}</td><td>{_esc(p.get("priority", ""))}</td>'
-                f'<td>{_esc(p.get("verified_defects", 0))}</td></tr>'
+                f'<td>{_esc(p.get("verified_defects", 0))}</td>'
+                f'<td>{_scout_details_cell(run_id, pid, p)}</td></tr>'
                 for pid, p in sorted(prospects.items()))
             table = (f'<table><caption>Prospects in this run</caption><tr><th>ID</th><th>URL</th>'
-                     f'<th>Status</th><th>Priority</th><th>Defects</th></tr>{prows}</table>'
+                     f'<th>Status</th><th>Priority</th><th>Defects</th><th>Details</th></tr>{prows}</table>'
                      if prows else '<div class="card empty muted">No prospects in this run.</div>')
             start_panel = "" if running else _START_PANEL_HTML
+            results_link = (f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Run results</a>'
+                            if run_id else '')
             body = (f'<h1>Manual URL Scan</h1><p class="muted">{_esc(SCOUT_PRODUCT_NAME)} — bounded, '
                     f'read-only scan of URLs you paste. For automatic prospect discovery use '
                     f'<a href="/scout/new">Discover Prospects</a>. Nothing is sent without your action.</p>'
                     f'<div class="row"><a class="chip" href="/scout/new">Discover Prospects (adaptive)</a>'
                     f'<a class="chip" href="/scout/history">History</a></div>'
-                    f'<div class="card"><p>Run <code>{_esc(status.get("run_id", ""))}</code> · mode '
+                    f'<div class="card"><p>Run <code>{_esc(run_id)}</code> · mode '
                     f'{_badge(mode)} · status {_badge(st.get("status", "n/a"))}</p>'
                     f'<div class="row">{controls}</div></div>'
                     f'<div class="row"><a class="chip" href="/scout/campaigns">Campaigns</a>'
-                    f'<a class="chip" href="/results">Results</a></div>'
+                    f'{results_link}</div>'
                     f'<div class="scrollx">{table}</div>{start_panel}')
             script = (
                 "const CSRF=" + json.dumps(csrf_token) + ";\n"
@@ -2023,10 +2050,28 @@ function startCampaign(){{
                     f'explicit. B/C and clean results are retained, never auto-deleted.</p>')
             return _page("AI QA Factory — Scout history", "/scout", body)
 
-        def _scout_target_page(self, domain: str) -> str:
-            det = self._campaign_service().target_detail(domain)
+        def _scout_target_page(self, domain: str, run: str = "") -> str:
+            det = self._campaign_service().target_detail(domain, run=run)
             entry, brain = det.get("entry"), det.get("brain")
-            if not entry and not brain:
+            prospect_id = det.get("prospect_id") or ""
+            prospect_status = det.get("prospect_status") or ""
+            run_id = det.get("run") or det.get("scout_run") or ""
+            nav = ((f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Back to run</a>'
+                    if run_id else '')
+                   + '<a class="chip" href="/scout/history">Back to history</a>')
+            # A run-pinned target whose domain is not in that run: honest, never another target's data.
+            if run and det.get("evidence_status") == "prospect_not_found":
+                return _page("AI QA Factory — Target", "/scout",
+                             f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
+                             f'<div class="card"><div class="banner warn">No prospect for '
+                             f'{_esc(domain)} exists in run <code>{_esc(run_id)}</code>. This target\'s '
+                             f'own evidence is unavailable — Scout never shows another target\'s '
+                             f'evidence in its place.</div></div>')
+            # A run-pinned incomplete target (manual action / failed): honest incomplete-analysis view,
+            # never a healthy "0 defects" conclusion.
+            if run and prospect_status and prospect_status != "DONE":
+                return self._scout_incomplete_target_html(domain, det, nav)
+            if not entry and not brain and not prospect_id:
                 return _page("AI QA Factory — Target", "/scout",
                              f'<h1>Target</h1><div class="card empty muted">No record for '
                              f'{_esc(domain)}.</div>')
@@ -2044,8 +2089,7 @@ function startCampaign(){{
             status = (entry or {}).get("analysis_status", "")
             reason = (entry or {}).get("reason", "")
             body = (
-                f'<h1>{_esc(domain)}</h1><div class="row">'
-                f'<a class="chip" href="/scout/history">Back to history</a></div>'
+                f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
                 f'<div class="card"><h2>What Scout thinks this is</h2>'
                 f'<p><b>Archetype:</b> {_esc(bs.get("archetype","—"))} · '
                 f'<b>Business model:</b> {_esc(bs.get("business_model","—"))} · '
@@ -2285,6 +2329,101 @@ function startCampaign(){{
                      '.then(function(){POLISHING=false;if(b){b.disabled=false;}});}</script>')
 
             return _page("AI QA Factory — Target detail", "/scout", body)
+
+        def _scout_incomplete_target_html(self, domain: str, det: dict, nav: str) -> str:
+            """Honest incomplete-analysis Target view for a MANUAL_ACTION_REQUIRED / FAILED prospect.
+
+            Renders ONLY persisted truth (never a guessed reason) and never a healthy conclusion:
+            0 confirmed findings, the persisted reason/stage/stop-boundary, whether Chromium started
+            and the landing loaded, any partial evidence, and the safe recommended operator action."""
+            ma = det.get("manual_action") or {}
+            run_id = det.get("run") or det.get("scout_run") or ""
+            status = det.get("prospect_status") or "INCOMPLETE"
+            network = det.get("network") or {}
+            media = det.get("media") or []
+
+            def _yn(v):
+                return "yes" if v is True else ("no" if v is False else "—")
+
+            if ma:
+                reason_html = (
+                    f'<p><b>Reason:</b> <code>{_esc(str(ma.get("reason","—")))}</code></p>'
+                    f'<p><b>Stage:</b> {_esc(str(ma.get("stage","—")))} · '
+                    f'<b>Stop boundary:</b> {_esc(str(ma.get("stop_boundary","—")))}</p>'
+                    f'<p><b>Chromium started:</b> {_yn(ma.get("chromium_started"))} · '
+                    f'<b>Landing page loaded:</b> {_yn(ma.get("landing_loaded"))} · '
+                    f'<b>Landing status:</b> {_esc(str(ma.get("landing_status","—")))}</p>'
+                    f'<p><b>Recommended action:</b> {_esc(str(ma.get("recommended_action","—")))}</p>')
+            else:
+                reason_html = ('<p class="muted">No machine-readable reason was persisted for this '
+                               'incomplete analysis (older run). It is shown as unavailable rather '
+                               'than guessed.</p>')
+            partial = []
+            if media:
+                partial.append(f'{len(media)} evidence file(s) captured before stopping')
+            if network.get("status"):
+                partial.append(f'landing HTTP {_esc(str(network.get("status")))}')
+            partial_html = ('<p><b>Partial evidence:</b> ' + _esc("; ".join(partial)) + '</p>'
+                            if partial else '<p class="muted">No partial evidence was collected.</p>')
+            body = (
+                f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
+                f'<div class="card"><div class="banner warn">'
+                f'<b>Status:</b> {_badge(status)} — analysis incomplete. '
+                f'<b>0 confirmed findings — analysis incomplete.</b> '
+                f'This target was not fully checked, so no healthy or unhealthy conclusion can be '
+                f'drawn.</div></div>'
+                f'<div class="card"><h2>Why the analysis stopped</h2>{reason_html}</div>'
+                f'<div class="card"><h2>What was collected</h2>{partial_html}'
+                f'<p class="muted">Run <code>{_esc(run_id)}</code> · domain '
+                f'<code>{_esc(domain)}</code>. Raw diagnostic: '
+                f'<a href="/scout/run?id={_esc(run_id)}">back to run results</a>.</p></div>')
+            return _page("AI QA Factory — Target (incomplete)", "/scout", body)
+
+        def _scout_run_results_page(self, run_id: str) -> str:
+            """Run-scoped result list for ONE exact run: DONE and MANUAL_ACTION_REQUIRED targets, with
+            counts and a human-readable Details link each. Never the generic client/project /results."""
+            run_id = str(run_id or "").strip()
+            try:
+                store = RunStore(service.output_dir, run_id) if run_id else None
+            except StoreError:
+                store = None
+            state = {}
+            if store is not None and store.exists():
+                try:
+                    state = store.load_state() or {}
+                except StoreError:
+                    state = {}
+            prospects = state.get("prospects", {}) or {}
+            if not run_id or not prospects:
+                return _page("AI QA Factory — Run results", "/scout",
+                             f'<h1>Run results</h1><div class="card empty muted">No results for run '
+                             f'<code>{_esc(run_id)}</code>.</div>')
+            from core.scout.discovery.domain_intel import canonical_domain
+            rows = []
+            for pid, p in sorted(prospects.items()):
+                dom = canonical_domain(p.get("url", "") or p.get("final_url", "")) or ""
+                status = p.get("status", "")
+                total = int(p.get("verified_findings", 0) or 0)
+                actionable = int(p.get("verified_defects", 0) or 0)
+                info = max(total - actionable, 0)
+                complete = "complete" if status == "DONE" else "incomplete"
+                details = (f'<a href="/scout/target?run={_esc(run_id)}&domain={_esc(dom)}">Details</a>'
+                           if dom else '<span class="muted">—</span>')
+                rows.append(
+                    f'<tr><td>{_esc(pid)}</td><td>{_esc(dom)}</td><td>{_badge(status)}</td>'
+                    f'<td>{actionable}</td><td>{info}</td><td>{_esc(complete)}</td>'
+                    f'<td>{details} · <a href="/api/prospect?run={_esc(run_id)}&id={_esc(pid)}">raw JSON</a></td></tr>')
+            table = (f'<table><caption>Targets in run {_esc(run_id)}</caption><tr><th>ID</th>'
+                     f'<th>Domain</th><th>Status</th><th>Actionable defects</th>'
+                     f'<th>Informational</th><th>Analysis</th><th>Details</th></tr>{"".join(rows)}</table>')
+            body = (f'<h1>Run results</h1><div class="row">'
+                    f'<a class="chip" href="/scout">Manual URL Scan</a>'
+                    f'<a class="chip" href="/scout/history">History</a></div>'
+                    f'<div class="card"><p>Run <code>{_esc(run_id)}</code> · '
+                    f'{len(prospects)} target(s)</p><div class="scrollx">{table}</div>'
+                    f'<p class="muted">Actionable defects + informational observations = total findings. '
+                    f'Details opens the human-readable target; raw JSON is a diagnostic.</p></div>')
+            return _page("AI QA Factory — Run results", "/scout", body)
 
         # --- Scout data pages, unified into the shared layout (reuse existing data) -----------
         def _results_page(self, q) -> str:
@@ -2796,6 +2935,22 @@ def _client_work_brief(domain: str, findings: list) -> str:
               "to be provided by the client.",
               "", f"Stage-3 (optional paid fix) scoping: {fx['summary']}"]
     return "\n".join(lines)
+
+
+def _scout_details_cell(run_id: str, pid: str, prospect: dict) -> str:
+    """Details cell for a run prospect row: the PRIMARY link is the human-readable exact-run Target
+    (never raw JSON), with a separate secondary 'View raw JSON' diagnostic to the technical API."""
+    from core.scout.discovery.domain_intel import canonical_domain
+    dom = canonical_domain(prospect.get("url", "") or prospect.get("final_url", "")) or ""
+    if run_id and dom:
+        primary = (f'<a href="/scout/target?run={_esc(run_id)}&domain={_esc(dom)}">Details</a>')
+    else:
+        primary = '<span class="muted">—</span>'
+    # Raw JSON is EXACT-run scoped when a run is known, so a diagnostic opened from a historical run
+    # reads that run's confined store — never the active/attached run.
+    raw = (f'/api/prospect?run={_esc(run_id)}&id={_esc(pid)}' if run_id
+           else f'/api/prospect?id={_esc(pid)}')
+    return f'{primary} · <a href="{raw}">View raw JSON</a>'
 
 
 def _looks_blocked(status: str, reason: str) -> bool:
