@@ -81,6 +81,14 @@ _A11Y = (
     "<main><h1>Issues</h1><img src='/logo.png'>"
     "<form><input type='text' name='q'></form></main></body></html>"
 )
+# The start page loads fine; the primary flow entry (/checkout) is BROKEN (404). The defect is only
+# visible AFTER following the flow link — so a page-load clip of this page proves nothing.
+_FLOWSTART = (
+    "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+    "<title>Shop</title></head><body><main><h1>Shop</h1>"
+    "<a href='/checkout'>Start checkout</a></main></body></html>"
+)
 
 
 def _make_handler(post_counter, get_counter):
@@ -106,6 +114,9 @@ def _make_handler(post_counter, get_counter):
                 return self._send(200, _CAPTCHA)
             if path == "/a11y/index.html":
                 return self._send(200, _A11Y)
+            if path == "/flowstart/index.html":
+                return self._send(200, _FLOWSTART)
+            # /checkout is intentionally NOT served -> 404 (the broken flow entry).
             return self._send(404, "<title>nope</title><h1>404</h1>")
 
         do_HEAD = do_GET
@@ -191,6 +202,23 @@ def test_real_browser_deep_qa_runs_axe_and_perf_without_network_fetch(tmp_path):
         assert not any("axe" in r.lower() or "cdn" in r.lower()
                        for r in obs.blocked_requests + obs.failed_resources)
         assert posts == []                                     # still never submits a form
+
+
+def test_real_browser_reproduces_a_broken_flow_in_the_same_context(tmp_path):
+    """Live proof of TRUE reproduction: in ONE recorded context the backend loads the start page
+    (which is fine) and follows the primary flow entry to the broken /checkout (404) — the ACTUAL
+    interaction that exhibits the defect — recording a genuine .webm and a verified cleanup. A
+    page-load clip of the start page could never prove this."""
+    with _serve() as (base, host, posts, gets):
+        backend = PlaywrightBackend(policy=_policy(host))
+        rep = backend.reproduce_interaction(f"{base}/flowstart/index.html", f"{base}/checkout",
+                                             str(tmp_path / "p"))
+        assert rep["cleanup_ok"] is True
+        assert rep["actual_status"] and rep["actual_status"] >= 400     # the followed action is broken
+        assert any("follow flow entry" in s for s in rep["action_log"])  # the interaction was performed
+        clip = tmp_path / "p" / rep["video_ref"]
+        assert rep["video_ref"] and clip.exists() and clip.stat().st_size > 0   # real interaction clip
+        assert "/checkout" in gets and posts == []          # navigated to the flow entry; never submitted
 
 
 def test_real_browser_engine_pipeline_and_report(tmp_path):

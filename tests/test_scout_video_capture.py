@@ -1,17 +1,17 @@
-"""Scout — qualified reproduction-video capture (slice D).
+"""Scout — TRUE reproduction-video capture.
 
-Video is adaptive and rare (evidence_policy §9): a short clip is kept ONLY for a reproduced
-visual/interaction defect of sufficient severity when screenshots are insufficient and the path is
-safe/deterministic; otherwise the temp recording is deleted (Scout never keeps an unreproduced video).
+A reproduction video is kept ONLY when a verified INTERACTION finding is genuinely re-exhibited in the
+SAME bounded browser context that performs the exact safe steps (precondition -> interaction -> actual
+result -> stop -> cleanup). A page-load-only recording is never surfaced as reproduction evidence, and
+when a finding cannot be genuinely replayed the run keeps no video and records `not_reproduced` honestly.
 
-These are deterministic (no browser): the actual Playwright `.webm` recording is proven by a separate
-live smoke. Here we pin the opt-in signature, the config plumbing, and the keep/delete decision.
+Deterministic here (a fake backend exposing reproduce_interaction); the real Chromium capture — where
+the defect is visible only AFTER a navigation — is proven by a separate live acceptance test.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
-
-import pytest
 
 from core.scout.backends import PageObservation, StaticHttpBackend
 from core.scout.config import ScoutConfigError, ScoutRunConfig
@@ -26,14 +26,11 @@ from core.scout.store import RunStore
 
 def test_page_observation_has_video_ref_defaulting_empty():
     obs = PageObservation()
-    assert obs.video_ref == ""
-    assert "video_ref" in obs.to_dict()
+    assert obs.video_ref == "" and "video_ref" in obs.to_dict()
 
 
 def test_static_backend_accepts_record_video_and_never_records():
-    # The static backend has no browser; record_video is accepted but ignored (video_ref stays empty).
-    obs = StaticHttpBackend().observe("http://169.254.169.254/latest/", 5.0, 10_000,
-                                      record_video=True)
+    obs = StaticHttpBackend().observe("http://169.254.169.254/latest/", 5.0, 10_000, record_video=True)
     assert obs.video_ref == ""
 
 
@@ -66,117 +63,129 @@ def test_build_config_threads_video_mode():
     assert cfg.video_mode == "qualified_auto"
 
 
-# -- engine: keep a qualified reproduction video / delete everything else ---------------------------
+# -- TRUE reproduction: same-context interaction replay + honest not_reproduced --------------------
 
 
-def _engine(tmp_path, video_mode):
-    cfg = _cfg(video_mode=video_mode, output_dir=str(tmp_path))
-    return ScoutEngine(cfg, RunStore(str(tmp_path), "run-vid"))
+class _FakeReproBackend:
+    """Exposes reproduce_interaction, returning a crafted reproduction result (+ a fake .webm) so the
+    engine's keep / not-reproduced / binding logic is testable without a real browser."""
+    name = "playwright"
+    screenshot_dir = None
+
+    def __init__(self, actual_status, cleanup_ok=True, make_video=True, precondition_ok=True):
+        self._status, self._cleanup, self._make_video = actual_status, cleanup_ok, make_video
+        self._precondition_ok = precondition_ok
+        self.calls = []
+
+    def observe(self, url, timeout_s, max_bytes, *, record_video=False, deep_qa=False):
+        return PageObservation(url=url, final_url=url, ok=True, backend=self.name)
+
+    def reproduce_interaction(self, start_url, action_url, record_dir, *, timeout_s=20.0):
+        self.calls.append((start_url, action_url))
+        vref = ""
+        if self._make_video:
+            vt = Path(record_dir) / "_reprotmp"
+            vt.mkdir(parents=True, exist_ok=True)
+            (vt / "clip.webm").write_bytes(b"FAKEWEBM")
+            vref = "_reprotmp/clip.webm"
+        return {"start_url": start_url, "action_url": action_url, "action_log": ["goto", "follow"],
+                "precondition_ok": self._precondition_ok, "final_url": action_url,
+                "actual_status": self._status, "cleanup_ok": self._cleanup, "video_ref": vref}
 
 
-def _seed_temp_video(engine, pid):
-    pdir = engine.store.prospect_dir(pid)
-    (pdir / "_vidtmp").mkdir(parents=True, exist_ok=True)
-    (pdir / "_vidtmp" / "clip.webm").write_bytes(b"FAKEWEBM")
-    return pdir
+def _repro_engine(tmp_path, backend, video_mode="qualified_auto"):
+    cfg = ScoutRunConfig(campaign_name="repro", seeds=["https://ex.com"], browser_mode="playwright",
+                         video_mode=video_mode, output_dir=str(tmp_path))
+    return ScoutEngine(cfg, RunStore(str(tmp_path), "run-repro"), backend=backend)
 
 
-def _finding(category, severity):
-    return ScoutFinding(category=category, severity=severity, check_family=category,
-                        title=f"{category} {severity}", confidence="high")
+def _broken_flow_finding():
+    return ScoutFinding(signature="flow_entry_broken", category="business_flow",
+                        check_family="business_flow", severity="high", confidence="high",
+                        title="Primary business flow entry is broken",
+                        actual="Flow entry link failed: https://ex.com/checkout")
 
 
-def test_qualified_interaction_defect_keeps_reproduction_webm(tmp_path):
-    eng = _engine(tmp_path, "qualified_auto")
-    pdir = _seed_temp_video(eng, "01-x")
-    verified = [_finding("business_flow", "high"), _finding("functional", "medium")]
-    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified)
-    assert kept == "reproduction.webm"
-    assert (pdir / "reproduction.webm").exists()          # promoted to a servable top-level clip
-    assert not (pdir / "_vidtmp").exists()                # temp always cleaned
-    assert eng._videos_recorded == 1
+_FLOW = {"entry_url": "https://ex.com/checkout", "entry_broken": True}
 
 
-def test_non_interaction_defect_deletes_video(tmp_path):
-    eng = _engine(tmp_path, "qualified_auto")
-    pdir = _seed_temp_video(eng, "01-x")
-    verified = [_finding("seo", "medium")]                # screenshots suffice for a static SEO issue
-    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified)
-    assert kept == ""
-    assert not (pdir / "reproduction.webm").exists()
-    assert not (pdir / "_vidtmp").exists()                # unqualified recording is never kept
+def test_reproduced_broken_flow_keeps_video_and_binds_evidence(tmp_path):
+    backend = _FakeReproBackend(actual_status=404)          # flow entry genuinely broken -> reproduced
+    eng = _repro_engine(tmp_path, backend)
+    pdir = Path(eng.store.prospect_dir("01-x"))
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    assert kept == "reproduction.webm" and (pdir / "reproduction.webm").exists()
+    assert not (pdir / "_reprotmp").exists()               # temp always cleaned
+    assert backend.calls == [("https://ex.com", "https://ex.com/checkout")]   # SAME-context interaction
+    rec = json.loads((pdir / "reproduction.json").read_text(encoding="utf-8"))
+    assert rec["reproduced"] is True and rec["signature"] == "flow_entry_broken"
+    assert rec["action_url"] == "https://ex.com/checkout" and rec["video_ref"] == "reproduction.webm"
+    assert rec["action_log"] and rec["cleanup_ok"] is True and rec["start_url"] == "https://ex.com"
 
 
-def test_unrelated_severe_static_defect_does_not_qualify_a_trivial_interaction_defect(tmp_path):
-    # An unrelated high-severity SEO (static) defect must NOT lend its severity or QA value to a
-    # low-severity business_flow finding — qualification is anchored on the interaction defect itself.
-    eng = _engine(tmp_path, "qualified_auto")
-    pdir = _seed_temp_video(eng, "01-x")
-    verified = [_finding("seo", "high"), _finding("business_flow", "low")]
-    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified)
-    assert kept == ""                                     # the interaction defect is only low severity
-    assert not (pdir / "reproduction.webm").exists()
-    assert not (pdir / "_vidtmp").exists()
-
-
-def test_manual_mode_never_keeps_a_video(tmp_path):
-    eng = _engine(tmp_path, "manual")
-    pdir = _seed_temp_video(eng, "01-x")
-    verified = [_finding("business_flow", "high"), _finding("functional", "medium")]
-    kept = eng._finalize_prospect_video("01-x", "_vidtmp/clip.webm", verified)
+def test_flow_entry_that_loads_fine_is_not_reproduced_no_video(tmp_path):
+    backend = _FakeReproBackend(actual_status=200)          # followed action loads OK -> NOT reproduced
+    eng = _repro_engine(tmp_path, backend)
+    pdir = Path(eng.store.prospect_dir("01-x"))
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
     assert kept == "" and not (pdir / "reproduction.webm").exists()
+    rec = json.loads((pdir / "reproduction.json").read_text(encoding="utf-8"))
+    assert rec["reproduced"] is False and rec["reproduction_status"] == "not_reproduced"
 
 
-def test_no_video_ref_is_a_noop(tmp_path):
-    eng = _engine(tmp_path, "qualified_auto")
-    assert eng._finalize_prospect_video("01-x", "", []) == ""
+def test_no_interaction_finding_no_reproduction_attempted(tmp_path):
+    backend = _FakeReproBackend(actual_status=404)
+    eng = _repro_engine(tmp_path, backend)
+    seo = ScoutFinding(signature="missing_title", category="seo", severity="medium", title="x")
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [seo], {"entry_url": ""})
+    assert kept == "" and backend.calls == []              # no replayable interaction -> no repro run
 
 
-class _CaptchaRecordingBackend:
-    """Records a temp video on the first observe, then reports a CAPTCHA (forcing an early exit)."""
-    name = "playwright"
-    screenshot_dir = None
-
-    def observe(self, url, timeout_s, max_bytes, *, record_video=False, deep_qa=False):
-        obs = PageObservation(url=url, backend=self.name, captcha_marker=True)
-        if record_video and self.screenshot_dir:
-            vt = Path(self.screenshot_dir) / "_vidtmp"
-            vt.mkdir(parents=True, exist_ok=True)
-            (vt / "clip.webm").write_bytes(b"FAKEWEBM")
-            obs.video_ref = "_vidtmp/clip.webm"
-        return obs
+def test_manual_mode_never_reproduces(tmp_path):
+    backend = _FakeReproBackend(actual_status=404)
+    eng = _repro_engine(tmp_path, backend, video_mode="manual")
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    assert kept == "" and backend.calls == []              # opt-in only
 
 
-def test_early_exit_still_cleans_the_temp_video(tmp_path):
-    # Recording happens on the first observe; a CAPTCHA early-return must still leave no temp clip.
-    cfg = _cfg(video_mode="qualified_auto", output_dir=str(tmp_path))
-    store = RunStore(str(tmp_path), "run-early")
-    eng = ScoutEngine(cfg, store, backend=_CaptchaRecordingBackend())
-    prospects = {"01-x": {"status": "PENDING", "url": "https://ex.com"}}
-    eng._process_prospect("01-x", "https://ex.com", prospects)
-    assert prospects["01-x"]["status"] == "MANUAL_ACTION_REQUIRED"     # early manual exit
-    assert not (Path(store.prospect_dir("01-x")) / "_vidtmp").exists()  # temp still cleaned
+def test_reproduction_without_verified_cleanup_keeps_no_video(tmp_path):
+    backend = _FakeReproBackend(actual_status=404, cleanup_ok=False)
+    eng = _repro_engine(tmp_path, backend)
+    pdir = Path(eng.store.prospect_dir("01-x"))
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    assert kept == "" and not (pdir / "reproduction.webm").exists()   # unclean session -> no evidence
 
 
-class _RaisingRecordingBackend:
-    """Creates a temp recording on observe, then raises (e.g. a browser context failure mid-record)."""
-    name = "playwright"
-    screenshot_dir = None
+def test_precondition_failure_is_not_reproduced_and_keeps_no_video(tmp_path):
+    # The start page (precondition) never loaded -> even a "broken" (0) action is NOT a reproduction.
+    backend = _FakeReproBackend(actual_status=0, precondition_ok=False, make_video=False)
+    eng = _repro_engine(tmp_path, backend)
+    pdir = Path(eng.store.prospect_dir("01-x"))
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    assert kept == "" and not (pdir / "reproduction.webm").exists()
+    rec = json.loads((pdir / "reproduction.json").read_text(encoding="utf-8"))
+    assert rec["precondition_ok"] is False and rec["reproduced"] is False
+    assert rec["reproduction_status"] == "not_reproduced"
 
-    def observe(self, url, timeout_s, max_bytes, *, record_video=False, deep_qa=False):
-        if record_video and self.screenshot_dir:
-            vt = Path(self.screenshot_dir) / "_vidtmp"
-            vt.mkdir(parents=True, exist_ok=True)
-            (vt / "clip.webm").write_bytes(b"FAKEWEBM")
-        raise RuntimeError("browser crashed mid-recording")
+
+def test_a_precondition_only_clip_is_never_surfaced_as_evidence(tmp_path):
+    # Even if a backend wrongly produced a clip on a failed precondition, the engine must never keep it.
+    backend = _FakeReproBackend(actual_status=0, precondition_ok=False, make_video=True)
+    eng = _repro_engine(tmp_path, backend)
+    pdir = Path(eng.store.prospect_dir("01-x"))
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    assert kept == "" and not (pdir / "reproduction.webm").exists()   # never a precondition-only clip
 
 
-def test_observe_exception_still_cleans_the_temp_video(tmp_path):
-    # If the recording-capable observe creates _vidtmp and then raises, the temp clip is still cleaned.
-    cfg = _cfg(video_mode="qualified_auto", output_dir=str(tmp_path))
-    store = RunStore(str(tmp_path), "run-raise")
-    eng = ScoutEngine(cfg, store, backend=_RaisingRecordingBackend())
-    prospects = {"01-x": {"status": "PENDING", "url": "https://ex.com"}}
-    with pytest.raises(RuntimeError):
-        eng._process_prospect("01-x", "https://ex.com", prospects)
-    assert not (Path(store.prospect_dir("01-x")) / "_vidtmp").exists()  # cleaned despite the exception
+def test_static_backend_without_reproduce_capability_keeps_no_video(tmp_path):
+    class _Static:
+        name = "static"
+
+        def observe(self, url, t, b, *, record_video=False, deep_qa=False):
+            return PageObservation(url=url, ok=True)
+
+    cfg = ScoutRunConfig(campaign_name="r", seeds=["https://ex.com"], browser_mode="playwright",
+                         video_mode="qualified_auto", output_dir=str(tmp_path))
+    eng = ScoutEngine(cfg, RunStore(str(tmp_path), "run-s"), backend=_Static())
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    assert kept == ""                                      # no reproduce_interaction -> honest no-video
