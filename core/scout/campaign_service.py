@@ -366,7 +366,12 @@ class CampaignService:
             rows = [r for r in rows if str(r.get("last_analysis_at") or "") <= until]
         return rows
 
-    def target_detail(self, domain: str) -> Dict[str, Any]:
+    def target_detail(self, domain: str, run: str = "") -> Dict[str, Any]:
+        """Resolve one target's operator detail. When ``run`` is given the EXACT run store is pinned
+        (never a newer run, never the first prospect) so a run's Details link opens that run's own
+        evidence; otherwise the brain/replay/registry chain resolves the most relevant run. Surfaces
+        prospect_status / analysis_complete / manual_action so a MANUAL_ACTION_REQUIRED target renders
+        an honest incomplete-analysis state instead of a false '0 defects' healthy conclusion."""
         reg = AnalyzedSiteRegistry(self.output_dir)
         entry = reg.get(domain)
         brain = self._brain_for_domain(domain)
@@ -375,10 +380,14 @@ class CampaignService:
         media: List[str] = []                 # rel paths under the run, servable via /scout/artifact
         network: Dict[str, Any] = {}          # already-captured Chrome/Playwright network evidence
         reproduction: Optional[Dict[str, Any]] = None   # this domain's reproduction record, if any
+        manual_action: Optional[Dict[str, Any]] = None  # persisted fail-closed record, if any
         prospect_id = ""                      # the exact prospect this card is bound to
+        prospect_status = ""                  # DONE | MANUAL_ACTION_REQUIRED | FAILED | ...
+        analysis_complete: Optional[bool] = None
         evidence_status = "not_scanned"       # ok | prospect_not_found | error | not_scanned
-        scout_run = (brain or {}).get("scout_run", "")
-        if not scout_run:
+        # An explicit run pins that exact store; otherwise resolve via brain/replay/registry.
+        scout_run = str(run).strip() or (brain or {}).get("scout_run", "")
+        if not scout_run and not run:
             # Fall back to the most recent headed-replay run for this domain, so a replay's fresh
             # screenshots/evidence show up on the card even without a campaign brain decision.
             try:
@@ -390,7 +399,7 @@ class CampaignService:
                     scout_run = cands[0].name
             except Exception:
                 scout_run = scout_run
-        if not scout_run and entry is not None:
+        if not scout_run and not run and entry is not None:
             # A manual / imported run registers its run_id as the domain's campaign — resolve the
             # findings/evidence from that run store so an imported target opens a working detail card
             # (the discovery path uses the brain; this covers the manual Scout path).
@@ -418,15 +427,27 @@ class CampaignService:
                 prospect_id = _resolve_prospect(state.get("prospects", {}), want)
                 if prospect_id:
                     evidence_status = "ok"
-                    fdata = st.load_prospect_artifact(prospect_id, "findings.json") or {}
-                    findings = list(fdata.get("verified", []))
+                    pstate = (state.get("prospects", {}) or {}).get(prospect_id, {}) or {}
+                    prospect_status = pstate.get("status", "")
+                    # An EXPLICIT terminal non-DONE status means the analysis did not complete; an
+                    # empty/unknown status (legacy seed data) keeps the prior "load findings" behaviour.
+                    incomplete = prospect_status in ("MANUAL_ACTION_REQUIRED", "FAILED")
+                    analysis_complete = (prospect_status == "DONE") if prospect_status else None
+                    if incomplete:
+                        analysis_complete = False
+                    manual_action = st.load_prospect_artifact(prospect_id, "manual_action.json") or None
                     obs = st.load_prospect_artifact(prospect_id, "observation.json") or {}
                     contacts = extract_public_emails(obs, domain=domain)
                     network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),
                                "console_errors": obs.get("console_errors", [])[:10],
                                "failed_resources": obs.get("failed_resources", [])[:10],
                                "blocked_requests": obs.get("blocked_requests", [])[:10]}
-                    reproduction = st.load_prospect_artifact(prospect_id, "reproduction.json") or None
+                    # Confirmed findings exist only for a completed analysis. A manual/failed target
+                    # has 0 confirmed findings — never surface a healthy conclusion for it.
+                    if not incomplete:
+                        fdata = st.load_prospect_artifact(prospect_id, "findings.json") or {}
+                        findings = list(fdata.get("verified", []))
+                        reproduction = st.load_prospect_artifact(prospect_id, "reproduction.json") or None
                     try:
                         pdir = st.prospect_dir(prospect_id)
                         media = [f"prospects/{prospect_id}/{fp.name}" for fp in sorted(pdir.iterdir())
@@ -456,7 +477,9 @@ class CampaignService:
               "title": f.get("title"), "business_impact": f.get("business_impact")}
              for f in findings], access_available=False)
         return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
-                "scout_run": scout_run, "prospect_id": prospect_id,
+                "scout_run": scout_run, "run": scout_run, "prospect_id": prospect_id,
+                "prospect_status": prospect_status, "analysis_complete": analysis_complete,
+                "manual_action": manual_action,
                 "evidence_status": evidence_status, "media": media, "network": network,
                 "reproduction": reproduction,
                 "findings": [_project_target_finding(f) for f in findings],
