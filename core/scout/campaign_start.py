@@ -6,8 +6,11 @@ carefully guarded one for the local operator, keeping every existing safety cont
 - **Loopback + origin + CSRF** are enforced by the HTTP layer (``dashboard.py``); this launcher
   is the policy core and is transport-agnostic (unit-testable without a socket).
 - **Bounded, read-only only.** A campaign is a ``ScoutRunConfig`` (1..10 public seeds, bounded
-  pages/bytes/timeout, ``concurrency == 1``, read-only check families). The browser mode is forced
-  to ``static`` - the web endpoint never launches a real browser.
+  pages/bytes/timeout, ``concurrency == 1``, read-only check families). The operator picks the scan
+  mode: ``static`` (default, HTTP/HTML only) or ``playwright`` (Deep Capture — real screenshots,
+  axe-core, perf timing, browser console/network evidence, qualified reproduction). Only those two
+  exact values are accepted; Deep Capture runs a real Chromium preflight and refuses honestly when
+  unavailable — it never silently downgrades to static.
 - **Unsafe targets rejected.** Every seed passes ``url_safety.check_url`` (public http(s) only; no
   credentials, loopback, private/link-local/reserved IPs, odd ports, or DNS-rebinding). The
   local-fixture allowlist is a SERVER-side setting, never taken from the request (no SSRF bypass).
@@ -31,11 +34,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from core.scout.config import MAX_SEEDS, ScoutConfigError, ScoutRunConfig, fresh_run_id
+from core.scout.config import BROWSER_MODES, MAX_SEEDS, ScoutConfigError, ScoutRunConfig, fresh_run_id
 from core.scout.url_safety import Resolver, UrlPolicy, dedupe_eligible
 
 _REGISTRY_DIRNAME = "_campaigns"
 _MAX_SEED_STRLEN = 2048
+
+
+def _default_browser_probe() -> bool:
+    """Real Chromium readiness for Deep Capture (import lazily so ``static`` never touches Playwright)."""
+    from core.scout.preflight import READY, probe_browser
+    return probe_browser().status == READY
 
 
 def _now_iso() -> str:
@@ -73,12 +82,16 @@ class CampaignLauncher:
                  allowed_local_hosts=frozenset(), resolve_dns: bool = True,
                  resolver: Optional[Resolver] = None,
                  starter: Optional[Callable[[ScoutRunConfig], str]] = None,
+                 browser_probe: Optional[Callable[[], bool]] = None,
                  clock: Callable[[], str] = _now_iso) -> None:
         self._service = service
         self._allowed = frozenset(allowed_local_hosts)
         self._resolve_dns = resolve_dns
         self._resolver = resolver
         self._starter = starter or service.start
+        # Deep Capture readiness probe (injectable for deterministic tests); only ever called for a
+        # ``playwright`` run, so a ``static`` run never imports/launches a browser.
+        self._browser_probe = browser_probe or _default_browser_probe
         self._clock = clock
         base = Path(registry_dir) if registry_dir else Path(service.output_dir) / "scout" / _REGISTRY_DIRNAME
         self._registry = base
@@ -150,6 +163,14 @@ class CampaignLauncher:
                 cfg = self._build_config(request, [e.normalized for e in eligible])
             except ScoutConfigError as exc:
                 return _reject(422, f"invalid campaign limits: {exc}")
+
+            # Deep Capture (Playwright) preflight: confirm a real Chromium is available BEFORE
+            # starting. If not, refuse honestly with an actionable message — never silently downgrade
+            # to static (which would hide the missing screenshots / axe / perf evidence).
+            if cfg.browser_mode == "playwright" and not self._browser_probe():
+                return _reject(503, "Deep Capture needs a working Chromium (Playwright) on this host. "
+                                    "Install it (python -m playwright install chromium) or choose "
+                                    "Static — refusing rather than silently downgrading to static.")
             cfg.run_id = fresh_run_id(cfg.campaign_name)
 
             record = {"idempotency_key": key, "run_id": cfg.run_id, "status": "STARTING",
@@ -181,13 +202,20 @@ class CampaignLauncher:
 
     def _build_config(self, request: Dict[str, Any], seeds: List[str]) -> ScoutRunConfig:
         """Build a bounded config from untrusted input. Only an allowlist of fields is honored;
-        ``browser_mode`` is forced to ``static`` (the web endpoint never launches a browser) and
-        ``allowed_local_hosts`` comes from the SERVER, never the request."""
+        ``allowed_local_hosts`` comes from the SERVER, never the request.
+
+        ``browser_mode`` is operator-selectable but strictly validated: only the exact strings
+        ``static`` (default) or ``playwright`` are accepted — never an arbitrary backend name,
+        command, path or browser argument. ``concurrency`` stays 1 and every other bound is unchanged
+        for both modes."""
         campaign = request.get("campaign")
         name = _safe_name(campaign) if isinstance(campaign, str) else "adhoc"
         families = request.get("check_families")
+        mode = request.get("browser_mode", "static")
+        if not isinstance(mode, str) or mode not in BROWSER_MODES:
+            raise ScoutConfigError("browser_mode must be exactly 'static' or 'playwright'")
         kwargs: Dict[str, Any] = {
-            "campaign_name": name, "seeds": seeds, "browser_mode": "static",
+            "campaign_name": name, "seeds": seeds, "browser_mode": mode,
             "output_dir": str(self._service.output_dir), "concurrency": 1,
             "allowed_local_hosts": self._allowed, "resolve_dns": self._resolve_dns,
         }
