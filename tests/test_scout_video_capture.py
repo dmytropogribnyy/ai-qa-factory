@@ -63,6 +63,23 @@ def test_build_config_threads_video_mode():
     assert cfg.video_mode == "qualified_auto"
 
 
+def test_video_mode_round_trips_through_persisted_run_config():
+    raw = _cfg(video_mode="qualified_auto").to_dict()
+    assert raw["video_mode"] == "qualified_auto"
+    assert ScoutRunConfig.from_dict(raw).video_mode == "qualified_auto"
+
+
+def test_historical_run_config_without_video_mode_defaults_to_manual():
+    raw = _cfg(video_mode="off").to_dict()
+    raw.pop("video_mode")
+    assert ScoutRunConfig.from_dict(raw).video_mode == "manual"
+
+
+def test_resume_signature_changes_when_video_policy_changes():
+    assert _cfg(video_mode="manual").material_signature() != _cfg(
+        video_mode="qualified_auto").material_signature()
+
+
 # -- TRUE reproduction: same-context interaction replay + honest not_reproduced --------------------
 
 
