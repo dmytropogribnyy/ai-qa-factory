@@ -3060,7 +3060,7 @@ def _coverage_card_html(coverage: Optional[dict]) -> str:
         return ('<div class="empty muted">Coverage data is not available for this target — this run '
                 'predates within-site coverage tracking, or stopped (e.g. manual action / failure) '
                 'before any page finished. This is not the same as zero coverage.</div>')
-    profile = _COVERAGE_PROFILE_LABEL.get(coverage.get("coverage"), _esc(coverage.get("coverage") or "—"))
+    profile = _COVERAGE_PROFILE_LABEL.get(coverage.get("coverage"), str(coverage.get("coverage") or "—"))
     ceiling = coverage.get("page_ceiling")
     tested = coverage.get("meaningful_pages_tested")
     noise = coverage.get("pages_skipped_noise")
@@ -3080,7 +3080,7 @@ def _coverage_card_html(coverage: Optional[dict]) -> str:
         fstop = str(coverage.get("flow_stop_reason") or "")
         fstop_label = _FLOW_STOP_LABEL.get(fstop, fstop or "—")
         flow_note = ('Single-step flow coverage — multi-step flows are not implemented yet.'
-                     if supported == 1 else f'Supports up to {_esc(supported)} flow step(s).')
+                     if supported == 1 else f'Supports up to {supported} flow step(s).')
         html += (f'<p><b>Flows detected:</b> {_esc(flows_detected)} · '
                 f'<b>Flow entries checked:</b> {_esc(coverage.get("flow_entries_checked", "—"))} · '
                 f'<b>Flow steps used:</b> {_esc(used if used is not None else "—")}</p>'

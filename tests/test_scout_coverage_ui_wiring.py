@@ -263,6 +263,33 @@ def test_missing_coverage_json_is_reported_as_unavailable_not_zero(tmp_path):
     assert "0" not in html   # never a fabricated zero rendered in its place
 
 
+# -- 11b. A present-but-non-dict coverage.json (corrupted/valid-JSON-but-wrong-shape) is treated as ---
+# -- unavailable, not exposed as coverage, and never crashes the read model / Target page -------------
+
+
+def test_non_dict_coverage_json_is_treated_as_unavailable_not_crashed(tmp_path):
+    out = str(tmp_path)
+    from core.scout.discovery.analyzed_registry import ANALYZED, AnalyzedSiteRegistry
+    for run_id, domain, prospect_id, bad_artifact in (
+        ("corrupt-run-list", "corrupt-list.example", "01-corrupt", ["adaptive", 12]),
+        ("corrupt-run-str", "corrupt-str.example", "01-corrupt", "adaptive"),
+    ):
+        store = RunStore(out, run_id)
+        state = {"status": "COMPLETED", "prospects": {prospect_id: {"status": "DONE", "url": f"https://{domain}/"}}}
+        store.save_state(state)
+        store.save_prospect_artifact(prospect_id, "observation.json", {"status": 200})
+        store.save_prospect_artifact(prospect_id, "findings.json", {"verified": [], "rejected": []})
+        # A non-dict but validly-serialized JSON value (list / plain string) — not the expected shape.
+        store.save_prospect_artifact(prospect_id, "coverage.json", bad_artifact)
+        ScoutService(out)._register_analyzed_run(store, state)
+        AnalyzedSiteRegistry(out).record_analysis(domain, status=ANALYZED, campaign_id=run_id)
+        cs = CampaignService(out)
+        det = cs.target_detail(domain)   # must not raise
+        assert det.get("coverage") is None
+        html = _coverage_card_html(det.get("coverage"))   # must not raise
+        assert "not available" in html.lower()
+
+
 # -- 12. UI never claims multi-step flow support or invents a 10/15-step ceiling ---------------------
 
 

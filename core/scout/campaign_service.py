@@ -498,8 +498,11 @@ class CampaignService:
                             manual_action = {"reason": legacy_reason}
                     # Within-site coverage (coverage.json) — exact-run/exact-prospect confined. A
                     # historical/legacy run (or one stopped before any page finished, e.g. manual
-                    # action) never wrote one; that stays None — never a fabricated zero.
-                    coverage = st.load_prospect_artifact(prospect_id, "coverage.json") or None
+                    # action) never wrote one; that stays None — never a fabricated zero. A
+                    # present-but-corrupted artifact (valid JSON that isn't a dict, e.g. a list or
+                    # string) is also treated as unavailable rather than crashing the read model.
+                    _raw_coverage = st.load_prospect_artifact(prospect_id, "coverage.json")
+                    coverage = _raw_coverage if isinstance(_raw_coverage, dict) else None
                     obs = st.load_prospect_artifact(prospect_id, "observation.json") or {}
                     contacts = extract_public_emails(obs, domain=domain)
                     network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),
