@@ -121,6 +121,7 @@ class ScoutRunConfig:
             "check_families": list(self.check_families),
             "browser_mode": self.browser_mode,
             "coverage": self.coverage,
+            "video_mode": self.video_mode,
             "allowed_local_hosts": sorted(self.allowed_local_hosts),
             "resolve_dns": self.resolve_dns,
         }
@@ -138,6 +139,7 @@ class ScoutRunConfig:
             "check_families": list(self.check_families),
             "browser_mode": self.browser_mode,
             "coverage": self.coverage,
+            "video_mode": self.video_mode,
             "output_dir": self.output_dir,
             "resume": self.resume,
             "run_id": self.run_id,
@@ -150,7 +152,7 @@ class ScoutRunConfig:
         known = {
             "campaign_name", "seeds", "max_sites", "max_pages_per_site", "request_timeout_s",
             "max_response_bytes", "concurrency", "check_families", "browser_mode", "coverage",
-            "output_dir", "resume", "run_id", "resolve_dns",
+            "video_mode", "output_dir", "resume", "run_id", "resolve_dns",
         }
         kwargs = {k: v for k, v in data.items() if k in known}
         if "allowed_local_hosts" in data:
