@@ -6,12 +6,14 @@ import json
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 from core.scout.backends import PageObservation
 from core.scout.campaign_service import CampaignService
 from core.scout.config import ScoutRunConfig
 from core.scout.dashboard import start_dashboard
 from core.scout.engine import ScoutEngine
-from core.scout.observer_api import ObserverAPI
+from core.scout.observer_api import ObserverAPI, ObserverError
 from core.scout.service import ScoutService
 from core.scout.store import RunStore
 
@@ -167,3 +169,34 @@ def test_evidence_finalization_failure_is_visible_but_bounded(tmp_path, monkeypa
     events = (store.root / "events.jsonl").read_text(encoding="utf-8")
     assert '"event": "evidence_finalization_failed"' in events
     assert "must-not-persist" not in events and "secret.example" not in events
+
+
+def test_observer_rejects_symlinked_or_out_of_evidence_paths(tmp_path, monkeypatch):
+    store, pid = _run(tmp_path)
+    campaign = RunStore(str(tmp_path), "campaign-evidence-confinement")
+    campaign.save_state({
+        "status": "COMPLETED",
+        "candidates": [{"promoted_scout_run": store.root.name}],
+    })
+    pdir = store.prospect_dir(pid)
+    pretend_link = pdir / "pretend-link.json"
+    pretend_link.write_text('{"secret": true}', encoding="utf-8")
+
+    original_is_symlink = Path.is_symlink
+
+    def _is_symlink(path):
+        return path == pretend_link or original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", _is_symlink)
+    observer = ObserverAPI(str(tmp_path))
+    manifest = observer.get_evidence_manifest("campaign-evidence-confinement")
+    assert all(not e["ref"].endswith("/pretend-link.json") for e in manifest["evidence"])
+
+    with pytest.raises(ObserverError, match="symlink"):
+        observer.get_evidence_item(
+            f"scout/{store.root.name}/prospects/{pid}/pretend-link.json"
+        )
+    outside = tmp_path / "operator-private.json"
+    outside.write_text('{"private": true}', encoding="utf-8")
+    with pytest.raises(ObserverError, match="evidence root"):
+        observer.get_evidence_item("operator-private.json")

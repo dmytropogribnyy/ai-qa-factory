@@ -96,13 +96,21 @@ class ObserverAPI:
 
     # -- path confinement ------------------------------------------------------------------------
     def _confine(self, rel_or_abs: str) -> Path:
-        """Resolve a path and refuse anything escaping the evidence root."""
-        p = (self._evidence_root / rel_or_abs).resolve() if not Path(rel_or_abs).is_absolute() \
-            else Path(rel_or_abs).resolve()
+        """Resolve a non-symlink path and refuse anything escaping the evidence root."""
+        raw = (self._evidence_root / rel_or_abs) if not Path(rel_or_abs).is_absolute() \
+            else Path(rel_or_abs)
+        p = raw.resolve()
         try:
             p.relative_to(self._evidence_root)
         except ValueError:
             raise ObserverError("path escapes the evidence root") from None
+        current = raw
+        while current != self._evidence_root:
+            if current.is_symlink():
+                raise ObserverError("symlinks are not allowed in evidence paths")
+            if current.parent == current:
+                raise ObserverError("path escapes the evidence root")
+            current = current.parent
         return p
 
     # -- overview / readiness --------------------------------------------------------------------
@@ -277,10 +285,9 @@ class ObserverAPI:
         items = []
         allowed = {".json", ".png", ".webm"}
         for run_id in self._promoted_runs(campaign_id):
-            run_dir = (self._evidence_root / run_id).resolve()
             try:
-                run_dir.relative_to(self._evidence_root)
-            except ValueError:
+                run_dir = self._confine(run_id)
+            except ObserverError:
                 continue
             if not run_dir.exists():
                 continue
@@ -293,23 +300,25 @@ class ObserverAPI:
                 if not f.is_file() or f.suffix.lower() not in allowed:
                     continue
                 try:
-                    rel = f.resolve().relative_to(self._root)
-                except ValueError:
+                    resolved = self._confine(str(f))
+                    resolved.relative_to(run_dir)
+                    rel = resolved.relative_to(self._root)
+                except (ObserverError, ValueError):
                     continue
-                baseline = self._prospect_manifest_entry(f)
+                baseline = self._prospect_manifest_entry(resolved)
                 if baseline is not None:
                     sha256 = baseline["sha256"]
                     hash_source = "evidence_manifest"
                 else:
                     digest = hashlib.sha256()
-                    with f.open("rb") as fh:
+                    with resolved.open("rb") as fh:
                         for chunk in iter(lambda: fh.read(64 * 1024), b""):
                             digest.update(chunk)
                     sha256 = digest.hexdigest()
                     hash_source = "computed"
                 items.append({
                     "ref": str(rel).replace("\\", "/"),
-                    "bytes": f.stat().st_size,
+                    "bytes": resolved.stat().st_size,
                     "sha256": sha256,
                     "hash_source": hash_source,
                     "kind": {
@@ -345,12 +354,11 @@ class ObserverAPI:
 
     def get_evidence_item(self, ref: str) -> Dict[str, Any]:
         """Return bounded metadata + integrity hash for one confined evidence artifact (never raw
-        arbitrary bytes; refuses any path escaping the output root)."""
-        p = (self._root / ref).resolve()
+        arbitrary bytes; refuses symlinks and any path escaping the Scout evidence root)."""
         try:
-            p.relative_to(self._root)
-        except ValueError:
-            raise ObserverError("path escapes the output root") from None
+            p = self._confine(str(self._root / ref))
+        except ObserverError:
+            raise ObserverError("path escapes the evidence root or uses a symlink") from None
         if not p.is_file():
             return {"api_version": OBSERVER_API_VERSION, "error": "not_found", "ref": ref}
         data = p.read_bytes()[:200_000]
