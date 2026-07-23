@@ -34,9 +34,13 @@ _SEV_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3}
 
 
 def _finding_reproduced(finding: ScoutFinding, rep: dict) -> bool:
-    """Did the reproduction run genuinely re-exhibit the finding? A broken primary flow entry is
-    reproduced only when the followed action is ACTUALLY broken (HTTP >= 400 or an unreachable/zero
-    status) — a clip where the action loaded fine is never kept as reproduction evidence."""
+    """Did the reproduction run genuinely re-exhibit the finding? The start-page PRECONDITION must have
+    been established (else the interaction never happened and a precondition-only clip is meaningless),
+    AND for a broken primary flow entry the followed action must be ACTUALLY broken (HTTP >= 400 or an
+    unreachable/zero status). A clip where the precondition failed or the action loaded fine is never
+    kept as reproduction evidence."""
+    if not rep.get("precondition_ok"):
+        return False
     if finding.signature == "flow_entry_broken":
         st = rep.get("actual_status")
         return st is not None and (st == 0 or st >= 400)
@@ -244,7 +248,9 @@ class ScoutEngine:
             record = {
                 "finding_id": finding.finding_id, "signature": finding.signature,
                 "start_url": start_url, "action_url": action_url,
-                "action_log": rep.get("action_log", []), "final_url": rep.get("final_url", ""),
+                "action_log": rep.get("action_log", []),
+                "precondition_ok": bool(rep.get("precondition_ok")),
+                "final_url": rep.get("final_url", ""),
                 "actual_status": rep.get("actual_status"), "expected": finding.expected,
                 "actual": finding.actual, "cleanup_ok": bool(rep.get("cleanup_ok")),
                 "reproduced": reproduced,

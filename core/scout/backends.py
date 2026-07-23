@@ -497,8 +497,8 @@ class PlaywrightBackend:
         page-load-only clip. Never submits a form, logs in, or triggers a side effect. Returns the
         action log, final URL, actual status, cleanup flag, and video_ref (relative to record_dir)."""
         result: Dict[str, Any] = {"start_url": start_url, "action_url": action_url, "action_log": [],
-                                  "final_url": "", "actual_status": None, "cleanup_ok": False,
-                                  "video_ref": ""}
+                                  "precondition_ok": False, "final_url": "", "actual_status": None,
+                                  "cleanup_ok": False, "video_ref": ""}
         if not self._url_allowed(start_url) or not self._url_allowed(action_url):
             result["action_log"].append("blocked: a URL is not eligible")
             return result
@@ -532,26 +532,37 @@ class PlaywrightBackend:
             try:
                 page = context.new_page()
                 page.route("**/*", _on_route)
-                page.goto(start_url, wait_until="load", timeout=timeout_s * 1000)
-                result["action_log"].append(f"goto {start_url}")
-                resp = page.goto(action_url, wait_until="load", timeout=timeout_s * 1000)  # interaction
-                result["action_log"].append(f"follow flow entry -> {action_url}")
-                result["final_url"] = page.url
-                result["actual_status"] = resp.status if resp else 0
-                video = page.video
-                result["cleanup_ok"] = True    # navigation-only, no state mutation -> clean
-            except Exception as exc:
-                # A failed navigation to a broken action is EXPECTED — it reproduces the broken finding.
-                result["action_log"].append(f"navigation error: {type(exc).__name__}")
-                result["actual_status"] = 0
-                result["cleanup_ok"] = True     # nothing was mutated
+                # PRECONDITION: establish the start page. If THIS fails, no interaction happened — it is
+                # NOT a reproduction and its (precondition-only) clip must never be surfaced.
                 try:
-                    video = page.video
-                except Exception:
-                    video = None
+                    page.goto(start_url, wait_until="load", timeout=timeout_s * 1000)
+                    result["precondition_ok"] = True
+                    result["action_log"].append(f"goto {start_url}")
+                except Exception as exc:
+                    result["action_log"].append(f"precondition failed: {type(exc).__name__}")
+                if result["precondition_ok"]:
+                    # INTERACTION: follow the flow entry. A broken action (404 / unreachable) reproduces
+                    # the finding; an action that loads fine does not.
+                    try:
+                        resp = page.goto(action_url, wait_until="load", timeout=timeout_s * 1000)
+                        result["actual_status"] = resp.status if resp else 0
+                    except Exception as exc:
+                        result["action_log"].append(f"action navigation error: {type(exc).__name__}")
+                        result["actual_status"] = 0            # unreachable action = broken
+                    result["action_log"].append(f"follow flow entry -> {action_url}")
+                    result["final_url"] = page.url
+                    video = page.video                        # captured ONLY on the interaction path
+                    # Cleanup is by construction: this method performs ONLY read-only navigations (it
+                    # never clicks/fills/submits/mutates), so completing the read-only path leaves no
+                    # side effect. Reported ONLY here (never blanket-asserted on an unexpected error).
+                    result["cleanup_ok"] = True
+            except Exception as exc:  # noqa: BLE001 - an unexpected browser error -> keep no clip
+                result["action_log"].append(f"reproduction error: {type(exc).__name__}")
+                video = None
             finally:
                 self._safe_close(context, browser)   # closing the context flushes the .webm
-            if video is not None:
+            # NEVER surface a precondition-only clip: a video_ref is set only when the interaction ran.
+            if video is not None and result["precondition_ok"]:
                 try:
                     result["video_ref"] = os.path.join("_reprotmp", os.path.basename(video.path()))
                 except Exception:

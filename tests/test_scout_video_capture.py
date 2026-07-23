@@ -72,8 +72,9 @@ class _FakeReproBackend:
     name = "playwright"
     screenshot_dir = None
 
-    def __init__(self, actual_status, cleanup_ok=True, make_video=True):
+    def __init__(self, actual_status, cleanup_ok=True, make_video=True, precondition_ok=True):
         self._status, self._cleanup, self._make_video = actual_status, cleanup_ok, make_video
+        self._precondition_ok = precondition_ok
         self.calls = []
 
     def observe(self, url, timeout_s, max_bytes, *, record_video=False, deep_qa=False):
@@ -88,8 +89,8 @@ class _FakeReproBackend:
             (vt / "clip.webm").write_bytes(b"FAKEWEBM")
             vref = "_reprotmp/clip.webm"
         return {"start_url": start_url, "action_url": action_url, "action_log": ["goto", "follow"],
-                "final_url": action_url, "actual_status": self._status, "cleanup_ok": self._cleanup,
-                "video_ref": vref}
+                "precondition_ok": self._precondition_ok, "final_url": action_url,
+                "actual_status": self._status, "cleanup_ok": self._cleanup, "video_ref": vref}
 
 
 def _repro_engine(tmp_path, backend, video_mode="qualified_auto"):
@@ -153,6 +154,27 @@ def test_reproduction_without_verified_cleanup_keeps_no_video(tmp_path):
     pdir = Path(eng.store.prospect_dir("01-x"))
     kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
     assert kept == "" and not (pdir / "reproduction.webm").exists()   # unclean session -> no evidence
+
+
+def test_precondition_failure_is_not_reproduced_and_keeps_no_video(tmp_path):
+    # The start page (precondition) never loaded -> even a "broken" (0) action is NOT a reproduction.
+    backend = _FakeReproBackend(actual_status=0, precondition_ok=False, make_video=False)
+    eng = _repro_engine(tmp_path, backend)
+    pdir = Path(eng.store.prospect_dir("01-x"))
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    assert kept == "" and not (pdir / "reproduction.webm").exists()
+    rec = json.loads((pdir / "reproduction.json").read_text(encoding="utf-8"))
+    assert rec["precondition_ok"] is False and rec["reproduced"] is False
+    assert rec["reproduction_status"] == "not_reproduced"
+
+
+def test_a_precondition_only_clip_is_never_surfaced_as_evidence(tmp_path):
+    # Even if a backend wrongly produced a clip on a failed precondition, the engine must never keep it.
+    backend = _FakeReproBackend(actual_status=0, precondition_ok=False, make_video=True)
+    eng = _repro_engine(tmp_path, backend)
+    pdir = Path(eng.store.prospect_dir("01-x"))
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    assert kept == "" and not (pdir / "reproduction.webm").exists()   # never a precondition-only clip
 
 
 def test_static_backend_without_reproduce_capability_keeps_no_video(tmp_path):
