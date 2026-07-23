@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List
 
 from core.scout import SCOUT_VERSION
+from core.scout.coverage import COVERAGE_MODES, OPERATOR_COVERAGE, derive_page_ceiling
 from core.scout.evidence_policy import VIDEO_MANUAL, VIDEO_MODES
 from core.scout.url_safety import UrlPolicy
 
@@ -45,6 +46,10 @@ class ScoutRunConfig:
     concurrency: int = 1
     check_families: List[str] = field(default_factory=lambda: sorted(CHECK_FAMILIES))
     browser_mode: str = "static"
+    # Within-site coverage profile (depth per single site), independent of the campaign-budget axis.
+    # "explicit" (default) preserves the serialized max_pages_per_site for back-compat; an operator
+    # profile ("adaptive"/"deep") DERIVES the page ceiling and overrides a legacy max_pages_per_site.
+    coverage: str = "explicit"
     # Reproduction-video policy. Default "manual" = behaviour unchanged (never auto-records);
     # "qualified_auto" opts into a short clip for a reproduced visual/interaction defect.
     video_mode: str = VIDEO_MANUAL
@@ -60,6 +65,12 @@ class ScoutRunConfig:
             raise ScoutConfigError("seeds must be a list of URL strings")
         if not (MIN_SEEDS <= len(self.seeds) <= MAX_SEEDS):
             raise ScoutConfigError(f"seeds must contain {MIN_SEEDS}..{MAX_SEEDS} URLs, got {len(self.seeds)}")
+        if self.coverage not in COVERAGE_MODES:
+            raise ScoutConfigError(f"unknown coverage: {self.coverage!r}")
+        # A selected coverage profile derives the per-site page ceiling and overrides any legacy
+        # max_pages_per_site; "explicit" preserves the serialized value (historical/back-compat).
+        if self.coverage in OPERATOR_COVERAGE:
+            self.max_pages_per_site = derive_page_ceiling(self.coverage, self.max_pages_per_site)
         for name, value, lo, hi in (
             ("max_sites", self.max_sites, 1, MAX_SEEDS),
             ("max_pages_per_site", self.max_pages_per_site, 1, 50),
@@ -109,6 +120,7 @@ class ScoutRunConfig:
             "concurrency": self.concurrency,
             "check_families": list(self.check_families),
             "browser_mode": self.browser_mode,
+            "coverage": self.coverage,
             "allowed_local_hosts": sorted(self.allowed_local_hosts),
             "resolve_dns": self.resolve_dns,
         }
@@ -125,6 +137,7 @@ class ScoutRunConfig:
             "concurrency": self.concurrency,
             "check_families": list(self.check_families),
             "browser_mode": self.browser_mode,
+            "coverage": self.coverage,
             "output_dir": self.output_dir,
             "resume": self.resume,
             "run_id": self.run_id,
@@ -136,7 +149,7 @@ class ScoutRunConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "ScoutRunConfig":
         known = {
             "campaign_name", "seeds", "max_sites", "max_pages_per_site", "request_timeout_s",
-            "max_response_bytes", "concurrency", "check_families", "browser_mode",
+            "max_response_bytes", "concurrency", "check_families", "browser_mode", "coverage",
             "output_dir", "resume", "run_id", "resolve_dns",
         }
         kwargs = {k: v for k, v in data.items() if k in known}

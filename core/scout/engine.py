@@ -15,13 +15,14 @@ from __future__ import annotations
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
 from core.scout.backends import PageObservation, make_backend
 from core.scout.checks import CheckContext, run_checks
 from core.scout.config import ScoutRunConfig
 from core.scout.control import RunControl
+from core.scout.coverage import make_planner
 from core.scout.evidence_policy import EvidenceSettings, VIDEO_QUALIFIED_AUTO
 from core.scout.findings import ScoutFinding
 from core.scout.sanitize import Sanitizer
@@ -175,7 +176,13 @@ class ScoutEngine:
                 self._event("prospect_unreachable", prospect=pid, reason=prospects[pid]["reason"])
                 return
 
-            link_status = self._probe_links(obs) if "links" in cfg.check_families else {}
+            planner = make_planner(cfg.coverage, cfg.max_pages_per_site)
+            planner.seed(obs)                     # the landing page is page #1 (always meaningful)
+            if "links" in cfg.check_families:
+                link_status = self._probe_links(obs, planner)
+            else:
+                link_status = {}
+                planner.stop("links_check_disabled")
             flow_result = self._explore_flow(obs) if "business_flow" in cfg.check_families else None
             ctx = CheckContext(run_id=self.store.root.name, prospect_ref=pid,
                                backend=obs.backend, link_status=link_status, flow_result=flow_result,
@@ -210,12 +217,19 @@ class ScoutEngine:
             self.store.save_prospect_artifact(pid, "scorecard.json", scorecard.to_dict())
             video_ref = self._reproduce_prospect_findings(pid, url, verified, flow_result)
 
+            coverage_record = dict(planner.summary())
+            coverage_record.update(self._flow_coverage(flow_result))
+            self.store.save_prospect_artifact(pid, "coverage.json", coverage_record)
+
             defects = [f for f in verified if f.severity != "info"]
             prospects[pid].update({
                 "status": P_DONE, "priority": scorecard.priority,
                 "verified_findings": len(verified), "verified_defects": len(defects),
                 "rejected_findings": len(rejected), "evidence_ref": evidence_ref,
                 "video_ref": video_ref,
+                "coverage": coverage_record["coverage"],
+                "meaningful_pages_tested": coverage_record["meaningful_pages_tested"],
+                "page_stop_reason": coverage_record["page_stop_reason"],
             })
             self._event("prospect_done", prospect=pid, verified=len(verified),
                         defects=len(defects), rejected=len(rejected), priority=scorecard.priority)
@@ -287,24 +301,46 @@ class ScoutEngine:
         return None
 
     # ------------------------------------------------------------------
-    def _probe_links(self, obs: PageObservation) -> Dict[str, int]:
-        """Fetch a bounded set of same-host links once (read-only) and record status."""
+    def _probe_links(self, obs: PageObservation, planner=None) -> Dict[str, int]:
+        """Fetch a bounded set of same-host links once (read-only) and record status.
+
+        When a ``CoveragePlanner`` is supplied (the first, measured pass) it governs the crawl: it
+        skips obvious noise before fetch, suppresses structural near-duplicates, and stops early when
+        no new meaningful coverage appears. With no planner (a verification re-probe) the legacy raw
+        ``max_pages_per_site`` cap applies, so that path is behaviourally unchanged."""
         cfg = self.config
         host = urlsplit(obs.final_url or obs.url).hostname
         seen: Dict[str, int] = {}
         count = 0
+        exhausted = True
         for link in obs.links:
-            if count >= cfg.max_pages_per_site:
-                break
             if urlsplit(link).hostname != host:
                 continue
             if link in seen:
                 continue
             if self.control.should_stop():
+                if planner is not None:
+                    planner.stop("stopped_by_control")
+                exhausted = False
+                break
+            if planner is not None:
+                if planner.should_stop():
+                    exhausted = False
+                    break
+                if planner.pre_fetch_skip(link):
+                    continue                       # obvious noise: not fetched, not counted
+            elif count >= cfg.max_pages_per_site:
+                exhausted = False
                 break
             probe = self.backend.observe(link, cfg.request_timeout_s, min(cfg.max_response_bytes, 200_000))
             seen[link] = probe.status if not probe.fetch_error else 0
             count += 1
+            if planner is not None:
+                planner.record(link, probe)
+        if planner is not None:
+            planner.should_stop()                  # capture a ceiling/no-coverage stop from the last page
+            if exhausted:
+                planner.finalize_links_exhausted()
         return seen
 
     def _explore_flow(self, obs: PageObservation) -> Optional[Dict]:
@@ -325,6 +361,21 @@ class ScoutEngine:
                     "stopped_before_side_effect": True}
         return {"entry_url": entry, "entry_broken": False, "steps": 1,
                 "reached_form": bool(nxt.forms), "stopped_before_side_effect": True}
+
+    @staticmethod
+    def _flow_coverage(flow_result) -> Dict[str, Any]:
+        """Honest flow-coverage metadata. The engine follows ONE bounded flow step today, so we report
+        exactly that (flow_steps_supported == 1) and never advertise a multi-step ceiling. Real
+        multi-step exploration is a separate, safety-reviewed change."""
+        fr = flow_result if isinstance(flow_result, dict) else None
+        detected = 1 if (fr and fr.get("entry_url")) else 0
+        return {
+            "flows_detected": detected,
+            "flow_entries_checked": detected,          # the single detected entry, observed once
+            "flow_steps_supported": 1,                 # engine supports one bounded read-only step
+            "flow_steps_used": int(fr.get("steps", 0)) if fr else 0,
+            "flow_stop_reason": "single_step_supported" if detected else "no_flow_entry_detected",
+        }
 
     # ------------------------------------------------------------------
     def _guard_run_preconditions(self) -> None:
