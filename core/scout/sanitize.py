@@ -52,8 +52,12 @@ class Sanitizer:
                 if ":" in host and not host.startswith("["):
                     host = f"[{host}]"
                 netloc = host
-                if parts.port:
-                    netloc = f"{host}:{parts.port}"
+                try:
+                    port = parts.port
+                except ValueError:
+                    port = None
+                if port:
+                    netloc = f"{host}:{port}"
                 path = self.redact(parts.path)
                 return urlunsplit((parts.scheme.lower(), netloc, path, "", ""))
             if parts.scheme.lower() == "mailto":
@@ -61,6 +65,8 @@ class Sanitizer:
                 return f"mailto:{self.redact(parts.path)}"
         except (TypeError, ValueError):
             pass
+        if text.lower().startswith(("http://", "https://", "mailto:")):
+            return "[REDACTED_URL]"
         return self.redact(text)
 
     def _sanitize_value(self, value: Any, *, depth: int = 0) -> Any:
@@ -116,10 +122,10 @@ class Sanitizer:
             {"level": h.get("level"), "text": self.redact(str(h.get("text", "")))}
             for h in data.get("headings", [])[:100] if isinstance(h, dict)
         ]
-        data["headers"] = {
-            self.redact(str(k))[:80]: self.redact(str(v))
-            for k, v in list((data.get("headers") or {}).items())[:50]
-        }
+        # Checks consume response headers in memory before this persistence boundary. Do not keep
+        # arbitrary header names/values (cookies, auth, vendor metadata) in operator evidence.
+        data["headers"] = {}
+        data["raw_headers_stored"] = False
         data["structured_data"] = self._sanitize_value(data.get("structured_data", []))
         data["console_errors"] = [
             self.redact(str(v)) for v in data.get("console_errors", [])[:200]

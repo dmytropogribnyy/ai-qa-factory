@@ -14,6 +14,7 @@ from core.scout.config import ScoutRunConfig
 from core.scout.dashboard import start_dashboard
 from core.scout.engine import ScoutEngine
 from core.scout.observer_api import ObserverAPI, ObserverError
+from core.scout.sanitize import Sanitizer
 from core.scout.service import ScoutService
 from core.scout.store import RunStore
 
@@ -82,7 +83,11 @@ def test_evidence_bundle_keeps_two_frames_redacts_and_cleans(tmp_path):
     observation = json.loads(observation_text)
     assert observation["url"] == "https://ex.com/path"
     assert observation["links"] == ["mailto:[REDACTED_EMAIL]"]
+    assert observation["headers"] == {} and observation["raw_headers_stored"] is False
     assert observation["redaction_applied"] is True
+    assert Sanitizer().safe_url(
+        "https://user:password@example.com:not-a-port/path?token=must-not-persist"
+    ) == "https://example.com/path"
 
     trace = json.loads((pdir / "browser_trace.json").read_text(encoding="utf-8"))
     assert trace["redaction_applied"] is True
