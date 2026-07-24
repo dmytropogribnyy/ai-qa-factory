@@ -27,6 +27,11 @@ The workbench accepts a brief, client task, or job post; classifies the context;
 
 ## What it supports
 
+For the evidence-based distinction between executable runtime, conditional integrations,
+generator/planning output, and unavailable features, run `python main.py capabilities` or read
+[`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md). The lists below describe product scope;
+they do not imply that every item executes autonomously.
+
 **Inputs (current and planned):**
 - Text briefs and job posts
 - Task URLs (Jira, Linear, Notion tickets)
@@ -213,6 +218,7 @@ handoff, not inline here, so this instruction never drifts as the suite grows.
 | [`docs/APPROVAL_MODEL.md`](docs/APPROVAL_MODEL.md) | Risk levels, approval gates, what runs automatically |
 | [`docs/SAFETY_RULES.md`](docs/SAFETY_RULES.md) | Hard rules — what never runs automatically |
 | [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) | Orchestrator, LangGraph, Playwright, Allure, LangSmith decisions |
+| [`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md) | Current executable, conditional, planning-only, and unavailable capabilities |
 | [`docs/SCHEMA_FOUNDATION.md`](docs/SCHEMA_FOUNDATION.md) | `core/schemas/` layer — 50+ domain models |
 | [`docs/PROJECT_TYPES.md`](docs/PROJECT_TYPES.md) | Supported project types with risks and test focus |
 | [`docs/DOCUMENTATION_GOVERNANCE.md`](docs/DOCUMENTATION_GOVERNANCE.md) | How to keep docs accurate as the project evolves |
@@ -227,6 +233,10 @@ handoff, not inline here, so this instruction never drifts as the suite grows.
 ---
 
 ## Changelog highlights
+
+This section is chronological release history. Statements inside an older release describe that
+release and may be superseded by a newer entry above; use the current capability matrix for the
+running product.
 
 <!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
 ### v2.0.2 — Prospect QA Radar v2.0.2 (operator-path hotfix: Gmail wired into the real CLI, current)

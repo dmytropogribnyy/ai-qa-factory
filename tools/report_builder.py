@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.state import QAFactoryState
+from core.version import APP_VERSION
 
 
 class ReportBuilder:
@@ -47,7 +48,7 @@ This is an AI-assisted draft pack. Do not send any client-facing text before man
 
     def build_summary(self, state: QAFactoryState) -> str:
         lines = [
-            "# AI QA Factory v5.0.8 Model Routing Profiles — Summary",
+            f"# AI QA Factory v{APP_VERSION} — Summary",
             "",
             f"**Project ID:** `{state.project_id}`",
             f"**Mode:** {state.mode}",

@@ -18,12 +18,16 @@ real external sites, and **you** run it from your Windows desktop.
 - **Production presets** (Balanced default, Conservative, Opportunity, Scheduled Daily) + the
   named US-DE and Safe Live Acceptance presets; strategy + outcome + diversity.
 - **A/B/C prioritization + country confidence** (Verified/Probable/Unverified).
-- **Per-vertical bounded QA + fail-closed public-action policy** (never crosses submit/reserve/
-  order/pay/signup; cleanup-verified reversible cart). `core/scout/verticals.py`,
-  `public_action_policy.py`.
+- **Per-vertical planning + fail-closed public-action policy**. The current automatic Scout path
+  performs read-only navigation/observation. Reversible-interaction policy and deterministic
+  fixtures exist, but are not wired into automatic live execution. It never crosses submit/reserve/
+  order/pay/signup. `core/scout/verticals.py`, `public_action_policy.py`.
 - **Persisted 11-state run-control** (pause/resume/Stop&Save/restart-recovery/no-overlap).
-- **Evidence escalation + video qualification** (never fabricate) + **load/stress refusal**
-  (single-user only unless authorized). `core/scout/evidence_policy.py`, `load_test_policy.py`.
+- **Bounded evidence + qualified reproduction video**: separate landing/verification screenshots,
+  redacted observation and browser trace, integrity manifest, and short WebM only when the same safe
+  interaction is genuinely reproduced and cleanup succeeds. Failed/precondition-only attempts keep
+  no video. `core/scout/engine.py`, `core/scout/backends.py`, `core/scout/evidence_policy.py`.
+  Load/stress remains refused (single-user only unless separately authorized).
 - **Mode-3 test-account approval gate** + **structured bug-reproduction context**.
 - **Dashboard**: campaign form + preflight + progress + history + per-target decision trail +
   Pause/Resume/Stop/Export. **Scheduling** modes on the existing Task Scheduler wrapper.
@@ -89,17 +93,17 @@ state, brain decision trail) and shows the path. Copy that file (and referenced 
   allocation + planner, Scout Brain (understanding/replan/scoring), evidence/load policy, preflight,
   campaign service lifecycle, Dashboard routes (render + CSRF), scheduling argv, Mode-3 gate + repro
   context. **4956 passed / 5 skipped.**
-- **Browser-fixture verified:** the reversible-cart primitive + vertical flow invariants (fake
-  pages); real Playwright launch is probed by preflight.
-- **CI verified:** the 4-job hosted CI on the pushed PR #2 head (see the PR checks).
+- **Browser-fixture verified (not the live Scout path):** the reversible-cart primitive + vertical
+  flow invariants on fake pages. The automatic Scout runtime stays read-only; real Playwright launch
+  is probed by preflight.
+- **CI verified:** current pull requests run the repository CI matrix, including deterministic
+  Windows tests and a real Chromium/axe/Playwright acceptance job.
 - **Still requires your one live desktop acceptance:** the Dashboard-driven live run above against
   real US/DE sites (real Tavily + real browser + real network), with pause/resume demonstrated and
   the evidence bundle exported. Not run in this environment; not fabricated.
 
 ## Honest deferrals (not implemented as live runtime)
 
-- Actual **short-video recording** runtime (the policy, qualification, and structured repro context
-  are implemented; MP4/WebM capture is operator/live-side).
 - Live **Mode-3 account creation** execution (the approval gate + constraints are implemented).
 - Deep per-flow adaptive replanning is wired as decisions/policy; the engine executes bounded
   static+promoted QA today — replanning escalation is surfaced, not yet a live multi-pass loop.
