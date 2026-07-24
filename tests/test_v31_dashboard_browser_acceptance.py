@@ -264,6 +264,8 @@ def test_activity_survives_restart_and_filters_diagnostics_in_real_chromium(tmp_
             assert desktop.get_by_text("Target promoted to Scout", exact=True).is_visible()
             serious = _serious(axe.run(desktop).get("violations", []))
             assert not serious, [v["id"] for v in serious]
+            desktop.evaluate("()=>window.scrollTo(0,0)")
+            assert desktop.evaluate("()=>window.scrollY") == 0
             desktop.screenshot(
                 path=screenshot_dir / "09-scout-activity-production-desktop.png",
                 full_page=True,
@@ -296,6 +298,8 @@ def test_activity_survives_restart_and_filters_diagnostics_in_real_chromium(tmp_
                 "()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
             serious = _serious(axe.run(mobile).get("violations", []))
             assert not serious, [v["id"] for v in serious]
+            mobile.evaluate("()=>window.scrollTo(0,0)")
+            assert mobile.evaluate("()=>window.scrollY") == 0
             mobile.screenshot(
                 path=screenshot_dir / "11-scout-activity-production-mobile.png",
                 full_page=True,
