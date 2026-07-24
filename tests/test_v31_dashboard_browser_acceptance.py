@@ -491,9 +491,11 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             desktop.screenshot(
                 path=screenshot_dir / "06-scout-history-desktop.png", full_page=True)
             desktop.locator(".pick").first.check()
-            desktop.get_by_role("button", name="Archive selected").click()
-            desktop.wait_for_load_state("load")
-            assert "No analyzed sites yet" in desktop.content()
+            with desktop.expect_response("**/api/scout/operator") as response_info:
+                desktop.get_by_role("button", name="Archive selected").click()
+            response = response_info.value
+            assert response.ok and response.json().get("ok") is True
+            desktop.get_by_text("No analyzed sites yet.", exact=True).wait_for()
             desktop.get_by_role("link", name="Archived").click()
             assert desktop.get_by_role("link", name="alpha.example").is_visible()
             desktop.goto(url + "/scout/campaigns", wait_until="load")
