@@ -190,16 +190,21 @@ def test_observer_rejects_symlinked_or_out_of_evidence_paths(tmp_path, monkeypat
     pdir = store.prospect_dir(pid)
     pretend_link = pdir / "pretend-link.json"
     pretend_link.write_text('{"secret": true}', encoding="utf-8")
+    pretend_manifest_link = pdir / "evidence_manifest.json"
 
     original_is_symlink = Path.is_symlink
 
     def _is_symlink(path):
-        return path == pretend_link or original_is_symlink(path)
+        return path in (pretend_link, pretend_manifest_link) or original_is_symlink(path)
 
     monkeypatch.setattr(Path, "is_symlink", _is_symlink)
     observer = ObserverAPI(str(tmp_path))
     manifest = observer.get_evidence_manifest("campaign-evidence-confinement")
     assert all(not e["ref"].endswith("/pretend-link.json") for e in manifest["evidence"])
+    assert any(
+        e["ref"].endswith("/landing.png") and e["hash_source"] == "computed"
+        for e in manifest["evidence"]
+    )
 
     with pytest.raises(ObserverError, match="symlink"):
         observer.get_evidence_item(

@@ -345,7 +345,8 @@ class ObserverAPI:
     def _prospect_manifest_entry(path: Path) -> Optional[Dict[str, Any]]:
         """Return a validated baseline hash for an immediate prospect artifact, when available."""
         manifest_path = path.parent / "evidence_manifest.json"
-        if path.name == manifest_path.name or not manifest_path.is_file():
+        if (path.name == manifest_path.name or manifest_path.is_symlink()
+                or not manifest_path.is_file()):
             return None
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
