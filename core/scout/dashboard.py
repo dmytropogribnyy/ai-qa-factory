@@ -2995,11 +2995,14 @@ function startCampaign(){{
                 f'<th>Message</th><th>Result</th></tr></thead><tbody>{session_rows}</tbody></table>'
                 if session_rows else
                 '<div class="empty muted">No manual browser sessions yet.</div>')
+            target_word = "target" if len(blocked) == 1 else "targets"
+            blocked_verb = "was" if len(blocked) == 1 else "were"
             body = (
                 '<h1>Needs attention</h1><div class="row">'
                 '<a class="chip" href="/scout/history">History</a>'
                 '<button class="chip" onclick="location.reload()">Refresh</button></div>'
-                f'<div class="card status-hero attention"><p><b>{len(blocked)} target(s)</b> were '
+                f'<div class="card status-hero attention"><p><b>{len(blocked)} {target_word}</b> '
+                f'{blocked_verb} '
                 'blocked before a full analysis. Open a target to complete its human check, defer '
                 'it, or skip it. No CAPTCHA is bypassed automatically.</p></div>'
                 f'<div class="card"><h2>Blocked targets</h2>{table}</div>'
@@ -3732,19 +3735,19 @@ def _problems_table_html(findings: list) -> str:
         kind_label = "Informational" if is_info else "Defect"
         rows.append(
             "<tr>"
-            f'<td>{_badge(_collapse_ws(f.get("severity")) or _NEUTRAL, _sev_badge_kind(f.get("severity") or ""))}</td>'
-            f'<td class="muted">{_esc(kind_label)}</td>'
-            f'<td class="muted">{_esc(_confidence_label(f))}</td>'
-            f'<td class="muted">{_esc(_collapse_ws(f.get("category")) or _NEUTRAL)}</td>'
-            f'<td>{_esc(_collapse_ws(f.get("title")) or _NEUTRAL)}</td>'
-            f'<td class="muted">{_esc(_collapse_ws(f.get("business_impact")) or "")}</td>'
-            f'<td class="muted"{title_attr}>{_esc(hint)}</td>'
-            f'<td class="muted">{_esc(evid or _NEUTRAL)}</td>'
+            f'<td data-label="Severity">{_badge(_collapse_ws(f.get("severity")) or _NEUTRAL, _sev_badge_kind(f.get("severity") or ""))}</td>'
+            f'<td data-label="Kind" class="muted">{_esc(kind_label)}</td>'
+            f'<td data-label="Confidence" class="muted">{_esc(_confidence_label(f))}</td>'
+            f'<td data-label="Type" class="muted">{_esc(_collapse_ws(f.get("category")) or _NEUTRAL)}</td>'
+            f'<td data-label="Issue">{_esc(_collapse_ws(f.get("title")) or _NEUTRAL)}</td>'
+            f'<td data-label="Business impact" class="muted">{_esc(_collapse_ws(f.get("business_impact")) or "")}</td>'
+            f'<td data-label="Repro hint" class="muted"{title_attr}>{_esc(hint)}</td>'
+            f'<td data-label="Evidence" class="muted">{_esc(evid or _NEUTRAL)}</td>'
             "</tr>")
-    return (f'<table><caption>Problem items ({len(findings)})</caption>'
-            '<tr><th>Severity</th><th>Kind</th><th>Confidence</th><th>Type</th><th>Issue</th>'
-            '<th>Business impact</th><th>Repro hint</th><th>Evidence</th></tr>'
-            + "".join(rows) + "</table>")
+    return (f'<table class="responsive-table"><caption>Problem items ({len(findings)})</caption>'
+            '<thead><tr><th>Severity</th><th>Kind</th><th>Confidence</th><th>Type</th><th>Issue</th>'
+            '<th>Business impact</th><th>Repro hint</th><th>Evidence</th></tr></thead><tbody>'
+            + "".join(rows) + "</tbody></table>")
 
 
 def _client_work_brief(domain: str, findings: list) -> str:
@@ -3974,6 +3977,7 @@ button.chip,a.chip{min-height:30px;cursor:pointer}
   input,select,textarea{font-size:16px}   /* >=16px avoids iOS focus zoom */
   h1{font-size:20px}
   .responsive-table,.responsive-table tbody,.responsive-table tr,.responsive-table td{display:block;width:100%}
+  .responsive-table caption{display:block;width:100%}
   .responsive-table thead{display:none}
   .responsive-table tr{border-bottom:1px solid var(--border);padding:8px}
   .responsive-table td{border:0;height:auto;padding:5px 4px;overflow-wrap:anywhere}
