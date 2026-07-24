@@ -3,8 +3,10 @@
   Manage the "AI QA Factory Observer Tunnel" Windows autostart (Task Scheduler). Idempotent.
 
 .DESCRIPTION
-  Registers a per-user, non-admin, hidden scheduled task that runs tools\start_observer_tunnel.ps1
+  Registers a per-user, non-admin, hidden scheduled task that runs tunnel-client.exe directly
   at logon (delayed 20s), restarts on failure, and never carries the secret in its arguments.
+  Running the service executable as the task action keeps its lifetime independent from a
+  PowerShell launcher/console session.
 
 .PARAMETER Action
   install | start | status | stop | restart | uninstall   (default: status)
@@ -19,8 +21,11 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $TaskName = "AI QA Factory Observer Tunnel"
-$Launcher = "C:\aiqa\tools\start_observer_tunnel.ps1"
-$TaskArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Launcher`""
+$Root = "C:\aiqa"
+$TunnelClient = Join-Path $Root "tools\tunnel-client.exe"
+$LogDir = Join-Path $env:LOCALAPPDATA "AIQA-Observer-Tunnel"
+$ClientLog = Join-Path $LogDir "tunnel-client.service.jsonl"
+$TaskArgs = "run --profile ai-qa-factory --log.file `"$ClientLog`""
 
 function Test-Health {
   try {
@@ -30,8 +35,9 @@ function Test-Health {
 }
 
 function Install-Task {
-  if (-not (Test-Path $Launcher)) { throw "launcher not found: $Launcher" }
-  $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $TaskArgs -WorkingDirectory "C:\aiqa"
+  if (-not (Test-Path $TunnelClient)) { throw "tunnel-client not found: $TunnelClient" }
+  New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+  $action = New-ScheduledTaskAction -Execute $TunnelClient -Argument $TaskArgs -WorkingDirectory $Root
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
   $trigger.Delay = "PT20S"
   $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -Hidden `
@@ -41,7 +47,7 @@ function Install-Task {
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
   Write-Host "[autostart] registered task '$TaskName' (at logon +20s, hidden, non-admin, single instance)." -ForegroundColor Green
-  Write-Host "[autostart] task command carries NO secret (only the launcher path)."
+  Write-Host "[autostart] task command carries NO secret (profile name + durable log path only)."
 }
 
 switch ($Action) {

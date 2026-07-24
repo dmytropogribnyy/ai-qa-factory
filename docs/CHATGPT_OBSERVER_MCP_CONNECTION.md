@@ -108,10 +108,13 @@ powershell -ExecutionPolicy Bypass -File tools\observer_tunnel_autostart.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File tools\observer_tunnel_autostart.ps1 -Action uninstall
 ```
 - Task **"AI QA Factory Observer Tunnel"**: at logon +20s, hidden, non-admin (Limited), single
-  instance, restart-on-failure, working dir `C:\aiqa`. Task args carry only the launcher path.
-- `tools\start_observer_tunnel.ps1` is the launcher: it skips if `:8080/healthz` is already healthy
-  (no duplicate process), sets `AIQA_OUTPUT_ROOT=C:\aiqa\outputs`, and runs `tunnel-client run
-  --profile ai-qa-factory`. Logs: `%LOCALAPPDATA%\AIQA-Observer-Tunnel\` (outside the repo, no key).
+  instance, restart-on-failure, working dir `C:\aiqa`.
+- The task action runs `tools\tunnel-client.exe run --profile ai-qa-factory` directly, with
+  `--log.file` pointing at
+  `%LOCALAPPDATA%\AIQA-Observer-Tunnel\tunnel-client.service.jsonl`. Keeping the long-lived executable
+  as the task action prevents its lifetime from being coupled to a PowerShell console/launcher.
+  Task arguments contain no key. `tools\start_observer_tunnel.ps1` remains available for manual
+  diagnostics only.
 - Rollback: `-Action uninstall` removes the task (env var + tunnel profile left intact).
 
 ## K. Secrets
