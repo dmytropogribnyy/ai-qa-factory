@@ -2945,7 +2945,7 @@ function startCampaign(){{
 # textarea/inputs/checkbox, and a .btn primary) so nothing is a default-white control in Dark mode.
 # Layout (max-width, field widths) and every safety statement are preserved (no redesign).
 _START_PANEL_HTML = """<h2>Start a bounded read-only campaign</h2>
-<div class="card" style="max-width:640px">
+<div class="card formstack" style="max-width:640px">
 <p>Runs the existing bounded, read-only Scout engine over 1&ndash;10 <strong>public https</strong>
 seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. Non-public / private
 / loopback targets are rejected.</p>
