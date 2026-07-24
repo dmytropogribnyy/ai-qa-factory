@@ -1746,8 +1746,8 @@ function startCampaign(){{
                 "<th>Product</th><th>Priority</th><th>Rec. action</th><th>Score</th><th>Disposition</th>"
                 "</tr>'+trs+'</table>'+'<p><label>Campaign name: "
                 "<input id=impcampaign value=curated></label> &nbsp;<label>Coverage: <select "
-                "id=impcoverage><option value=adaptive selected>Adaptive (recommended) \u2014 up to "
-                "12 pages/site</option><option value=deep>Deep \u2014 up to 20 pages/site</option>"
+                "id=impcoverage><option value=adaptive selected>Adaptive \u2014 max 12 pages</option>"
+                "<option value=deep>Deep \u2014 max 20 pages</option>"
                 "</select></label>"
                 " &nbsp;<label>Scan mode: <select id=impscanmode>"
                 "<option value=playwright selected>Deep Capture (Playwright)</option>"
@@ -2953,8 +2953,8 @@ seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. N
 <textarea id="seeds" rows="4" placeholder="https://example.com/"></textarea></label></p>
 <p><label>Campaign name: <input id="campaign" value="adhoc"></label>
 &nbsp;<label>Coverage: <select id="coverage">
-<option value="adaptive" selected>Adaptive (recommended) &mdash; up to 12 pages/site</option>
-<option value="deep">Deep &mdash; up to 20 pages/site</option></select></label></p>
+<option value="adaptive" selected>Adaptive &mdash; max 12 pages</option>
+<option value="deep">Deep &mdash; max 20 pages</option></select></label></p>
 <p><label>Scan mode: <select id="scanmode">
 <option value="playwright" selected>Deep Capture (Playwright)</option>
 <option value="static">Static (faster)</option></select></label></p>

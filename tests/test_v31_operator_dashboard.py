@@ -82,6 +82,7 @@ def test_all_primary_pages_render_with_csp(tmp_path):
         status, body, headers = _get(url + "/scout")
         assert status == 200 and "Prospect QA Scout" in body
         assert '<div class="card formstack" style="max-width:640px">' in body
+        assert "Adaptive &mdash; max 12 pages" in body
         assert "default-src 'self'" in headers.get("Content-Security-Policy", "")
     finally:
         server.shutdown()
