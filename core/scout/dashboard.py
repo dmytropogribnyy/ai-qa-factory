@@ -3290,27 +3290,60 @@ function startCampaign(){{
                     events.append({"time": hd.get("at", ""), "actor": hd.get("actor", ""),
                                    "action": f'{hd.get("from_state")} -> {hd.get("to_state")}',
                                    "object": pid, "result": hd.get("reason", "")})
-            scout_run_id = ""
-            # A Scout campaign is real, persisted activity even when it never became a "work"
-            # project — merge in the CURRENTLY attached run's own events (same store every other
-            # Scout page reads) so a completed scan is never falsely reported as "no activity".
-            if not project:
+            # Scout activity is append-only persisted campaign history. Enumerate it from the same
+            # ProjectIndex/canonical _runcontrol source as the rest of the Dashboard so a process
+            # restart cannot make completed campaigns disappear from Activity. The currently
+            # attached run is retained as a backwards-compatible fallback for older direct Scout
+            # runs that pre-date run-control; campaign ids are de-duplicated before reading.
+            scout_run_ids = []
+            try:
+                from core.orchestration.project_index import ProjectIndex
+                scout_run_ids = [
+                    p.project_id
+                    for p in ProjectIndex(service.output_dir).list_projects(
+                        include_diagnostics=include_diagnostics)
+                    if p.type == "scout_campaign" and (not project or p.project_id == project)
+                ]
+            except Exception:
+                pass
+            try:
+                attached_id = str(service.status().get("run_id") or "")
+                if attached_id and (not project or project == attached_id):
+                    from core.scout.canonical_runs import is_diagnostic_run
+                    if include_diagnostics or not is_diagnostic_run(attached_id):
+                        scout_run_ids.append(attached_id)
+            except Exception:
+                pass
+
+            scout_run_ids = list(dict.fromkeys(scout_run_ids))
+            scout_events = 0
+            scout_runs_without_history = 0
+            for run_id in scout_run_ids:
                 try:
-                    scout_run_id = str(service.status().get("run_id") or "")
-                    store = service.store
-                    if store is not None:
-                        for ev in store.read_events()[-100:]:
-                            events.append({
-                                "time": str(ev.get("at", "")), "actor": "scout-engine",
-                                "action": str(ev.get("event", "scout_event")),
-                                "object": scout_run_id or str(ev.get("prospect", "")),
-                                "result": ", ".join(
-                                    f"{k}={v}" for k, v in ev.items() if k not in ("at", "event"))})
+                    run_events = RunStore(service.output_dir, run_id).read_events()
                 except Exception:
-                    pass
+                    run_events = []
+                if not run_events:
+                    scout_runs_without_history += 1
+                    continue
+                for event_index, ev in enumerate(run_events[-100:],
+                                                 start=max(0, len(run_events) - 100)):
+                    events.append({
+                        "time": str(ev.get("at", "")),
+                        "actor": "scout-engine",
+                        "action": str(ev.get("event", "scout_event")),
+                        "object": run_id,
+                        "result": ", ".join(
+                            f"{k}={v}" for k, v in ev.items() if k not in ("at", "event")),
+                        "campaign_id": run_id,
+                        "event_id": f"{run_id}#{event_index}",
+                    })
+                    scout_events += 1
             events.sort(key=lambda e: e["time"], reverse=True)
             return {"schema": "dashboard-read-model/v1", "events": events[:200],
-                    "scout_run_partial": bool(scout_run_id) and not events}
+                    "scout_run_partial": bool(scout_run_ids) and not scout_events,
+                    "scout_campaigns_considered": len(scout_run_ids),
+                    "scout_campaigns_without_history": scout_runs_without_history}
 
         def _activity_page(self, q) -> str:
             diag = self._want_diagnostics(q)
@@ -3345,8 +3378,8 @@ function startCampaign(){{
             toggle = (
                 '<a class="chip" href="/activity">&#10003; Production only</a>' if diag else
                 '<a class="chip" href="/activity?diagnostics=1">Show diagnostics</a>')
-            banner = ('<div class="banner warn">Showing diagnostic activity (smoke/acceptance/demo). '
-                      'Not production.</div>' if diag else '')
+            banner = ('<div class="banner warn">Diagnostic activity (smoke/acceptance/demo) is '
+                      'included below and should not be treated as production.</div>' if diag else '')
             return _page("AI QA Factory — Activity", "/activity",
                          f'<h1>Activity</h1>{banner}<div class="row">{toggle}</div>'
                          f'<div class="scrollx">{table}</div>')
@@ -3841,6 +3874,11 @@ def _analysis_status_label(status: str) -> str:
 def _activity_label(action: str) -> str:
     key = str(action or "").strip()
     return {
+        "campaign_started": "Campaign started",
+        "campaign_finished": "Campaign finished",
+        "promoted_to_scout": "Target promoted to Scout",
+        "actionable_target_reached": "Actionable target goal reached",
+        "budget_stop": "Campaign budget reached",
         "run_started": "Scout run started",
         "prospect_started": "Target analysis started",
         "prospect_done": "Target analysis completed",
