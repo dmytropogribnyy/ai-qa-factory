@@ -613,15 +613,34 @@ class CampaignService:
         base = Path(self.output_dir) / "scout" / "_campaigns"
         if not base.exists():
             return None
-        for bp in base.glob("*/BRAIN_DECISIONS.json"):
+        best: Optional[tuple] = None
+        for bp in sorted(base.glob("*/BRAIN_DECISIONS.json")):
             try:
                 data = json.loads(bp.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            for d in data.get("decisions", []):
-                if d.get("domain") == domain:
-                    return d
-        return None
+            if not isinstance(data, dict) or not isinstance(data.get("decisions"), list):
+                continue
+            raw_at = str(data.get("at") or "").strip()
+            try:
+                parsed_at = datetime.fromisoformat(raw_at.replace("Z", "+00:00"))
+                if parsed_at.tzinfo is None:
+                    parsed_at = parsed_at.replace(tzinfo=timezone.utc)
+                timestamp = parsed_at.timestamp()
+                has_timestamp = True
+            except (OSError, OverflowError, TypeError, ValueError):
+                timestamp = float("-inf")
+                has_timestamp = False
+            for index, decision in enumerate(data["decisions"]):
+                if not isinstance(decision, dict) or decision.get("domain") != domain:
+                    continue
+                # Persisted campaign completion time is authoritative. Legacy records without a
+                # valid `at` remain deterministic via campaign id + decision position, rather than
+                # depending on filesystem/glob order (which differs across machines and restores).
+                key = (has_timestamp, timestamp, bp.parent.name, index)
+                if best is None or key > best[0]:
+                    best = (key, decision)
+        return best[1] if best is not None else None
 
     # -- evidence export -------------------------------------------------------------------------
     def export_bundle(self, campaign_id: str) -> str:
