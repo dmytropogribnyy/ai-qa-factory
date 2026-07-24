@@ -153,6 +153,8 @@ python main.py delivery --input brief.txt --require-real-llm
 
 The complete implemented/planned command reference lives in [docs/COMMANDS.md](docs/COMMANDS.md).
 
+The opportunity workflow is **pre-screen first**: assess suitability and risk before planning or execution.
+
 ## Optional real-model configuration
 
 Copy `.env.example` to a local `.env` and supply only the providers you intend to use:
