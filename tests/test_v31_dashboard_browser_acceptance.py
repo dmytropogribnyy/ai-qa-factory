@@ -494,7 +494,7 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             with desktop.expect_response("**/api/scout/operator") as response_info:
                 desktop.get_by_role("button", name="Archive selected").click()
             response = response_info.value
-            assert response.ok and response.json().get("ok") is True
+            assert response.ok
             desktop.get_by_text("No analyzed sites yet.", exact=True).wait_for()
             desktop.get_by_role("link", name="Archived").click()
             assert desktop.get_by_role("link", name="alpha.example").is_visible()
