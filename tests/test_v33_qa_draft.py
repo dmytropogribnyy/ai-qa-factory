@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from core.scout.outreach.qa_draft import (
     build_review_draft,
+    extract_public_contact_records,
     extract_public_emails,
     problem_bullets,
 )
@@ -11,15 +12,30 @@ from core.scout.outreach.qa_draft import (
 def test_extract_public_emails_prefers_same_domain_and_generic():
     obs = {"title": "Acme", "links": ["mailto:sales@acme.com", "mailto:john.doe@acme.com",
                                       "https://acme.com/x"],
-           "meta_description": "reach us at info@acme.com or noise@other.com"}
+           "meta_description": ("reach us at info@acme.com or noise@other.com "
+                                "or deceptive@notacme.com")}
     emails = extract_public_emails(obs, domain="acme.com")
     assert "info@acme.com" in emails and "sales@acme.com" in emails
     assert "noise@other.com" not in emails            # other domain dropped when same-domain exists
+    assert "deceptive@notacme.com" not in emails
     assert emails[0].split("@")[0] in ("info", "sales")  # generic mailbox first
 
 
 def test_extract_public_emails_empty_when_none():
     assert extract_public_emails({"title": "no contacts here"}, domain="x.com") == []
+
+
+def test_public_contact_records_include_reviewable_source_without_query_data():
+    records = extract_public_contact_records({
+        "final_url": "https://shop.example.com/contact?token=private#team",
+        "links": ["mailto:hello@shop.example.com?subject=QA"],
+    }, domain="shop.example.com")
+    assert records == [{
+        "email": "hello@shop.example.com",
+        "source": "Public mailto link",
+        "source_url": "https://shop.example.com/contact",
+        "public": True,
+    }]
 
 
 def test_problem_bullets_highest_severity_first_and_bounded():
@@ -55,7 +71,7 @@ class _Router:
         return self._resp
 
 
-_FINDINGS = [{"severity": "high", "title": "Broken checkout button",
+_FINDINGS = [{"severity": "high", "category": "functional", "title": "Broken checkout button",
               "business_impact": "blocks purchases", "evidence_refs": ["e1"]}]
 
 
@@ -88,7 +104,7 @@ def test_llm_polish_absent_router_is_deterministic():
 
 
 def test_build_review_draft_is_copy_only_and_never_sends():
-    findings = [{"severity": "high", "title": "Broken checkout button",
+    findings = [{"severity": "high", "category": "functional", "title": "Broken checkout button",
                  "business_impact": "blocks purchases", "evidence_refs": ["e1"]}]
     d = build_review_draft(domain="shop.example.com", business_name="Shop",
                            understanding={"archetype": "ecommerce"}, findings=findings,
@@ -101,5 +117,15 @@ def test_build_review_draft_is_copy_only_and_never_sends():
     # the primary call-to-action is an explicit, low-pressure PAID QA audit offer
     assert "paid QA audit" in d["body"] and d["offer"]
     assert "checkout" in d["offer"]                     # tailored to the ecommerce archetype
+    assert "implement fixes for 1 of these issue" in d["body"]
+    assert "repo/staging access" in d["body"]
+    assert d["fixability"]["offerable"] == 1
     # no secrets/keys leak into a draft body
     assert "tvly-" not in d["body"] and "sk-" not in d["body"]
+
+
+def test_no_finding_draft_is_honestly_unavailable():
+    draft = build_review_draft(domain="clean.example", findings=[])
+    assert draft["available"] is False and draft["sent"] is False
+    assert "No outreach draft is available" in draft["body"]
+    assert "noticed a few issues" not in draft["body"]

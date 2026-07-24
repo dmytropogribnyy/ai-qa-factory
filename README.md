@@ -157,6 +157,21 @@ python tools/run_db_smoke.py --project-id <id> \
     --table users --approve-db-smoke
 ```
 
+### Scout operator console
+
+Start the unified local operator Dashboard with `python main.py dashboard`; use **Scout → Needs
+attention** for CAPTCHA/Cloudflare handoff, **History** for active/archived exact-run results, and a
+target card for outcome-first findings, evidence, and coverage. Raw IDs, JSON, hashes, and low-level
+browser diagnostics are collapsed under **Advanced diagnostics**. The exposed browser trace is a
+redacted structured event record, not a native Playwright `trace.zip`; Inspector remains a live
+developer tool. A completed exact target can be downloaded as one bounded client-ready ZIP with an
+offline HTML summary, findings, coverage, screenshots, optional reproduced-interaction video,
+sanitized console/network/accessibility evidence, and integrity hashes; incomplete targets cannot
+be mislabeled as client-ready. Confirmed actionable results can also surface source-attributed
+public contact emails and a copy-only factual draft that offers fixes only after agreed scope and
+repo/staging access. See [`docs/RUNBOOK_SCOUT.md`](docs/RUNBOOK_SCOUT.md) for safe
+continuation, archive, skip, evidence download/cleanup, and completed-run deletion.
+
 Full command reference with planned future commands: [`docs/COMMANDS.md`](docs/COMMANDS.md)
 
 ---

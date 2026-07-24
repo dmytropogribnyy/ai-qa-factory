@@ -21,6 +21,8 @@ from core.scout.campaign_service import CampaignService
 from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry, ENG_PROSPECT
 from core.scout.service import ScoutService
 from core.scout.dashboard import start_dashboard
+from core.scout.findings import ScoutFinding
+from core.scout.store import RunStore
 
 
 # --------------------------------------------------------------------------------------------------
@@ -202,6 +204,21 @@ def _dash(tmp_path):
     return start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
 
 
+def _seed_actionable_target(tmp_path, domain="acme.com", run_id="actionable-run"):
+    store = RunStore(str(tmp_path), run_id)
+    store.save_state({"status": "COMPLETED", "prospects": {
+        "01-acme": {"status": "DONE", "url": f"https://{domain}/",
+                    "verified_findings": 1, "verified_defects": 1}}})
+    store.save_prospect_artifact("01-acme", "findings.json", {"verified": [
+        ScoutFinding(signature="broken_checkout", category="functional", severity="high",
+                     title="Checkout link returns an error", business_impact="Blocks conversion")
+        .to_dict()], "rejected": []})
+    store.save_prospect_artifact("01-acme", "observation.json",
+                                 {"status": 200, "final_url": f"https://{domain}/"})
+    AnalyzedSiteRegistry(str(tmp_path)).record_analysis(
+        domain, evidence_ref=f"scout/{domain}/qa", campaign_id=run_id)
+
+
 def _get_json(url):
     try:
         with urllib.request.urlopen(url, timeout=5) as r:
@@ -251,7 +268,7 @@ def test_engagement_won_over_http_requires_confirm(tmp_path):
 
 
 def test_polish_draft_endpoint_returns_draft(tmp_path):
-    AnalyzedSiteRegistry(str(tmp_path)).record_analysis("acme.com", evidence_ref="scout/acme.com/qa")
+    _seed_actionable_target(tmp_path)
     server, url = _dash(tmp_path)
     token = server.scout_csrf_token
     try:
@@ -280,7 +297,7 @@ def test_polish_draft_endpoint_refused_without_csrf(tmp_path):
 def test_start_client_work_links_work_without_marking_won(tmp_path):
     """Endpoint-level proof: Start client work LINKS a work item, leaves the sales stage unchanged,
     and its response never claims the prospect is Won."""
-    AnalyzedSiteRegistry(str(tmp_path)).record_analysis("acme.com", evidence_ref="scout/acme.com/qa")
+    _seed_actionable_target(tmp_path)
     server, url = _dash(tmp_path)
     token = server.scout_csrf_token
     try:
@@ -298,3 +315,18 @@ def test_start_client_work_links_work_without_marking_won(tmp_path):
         assert e.engagement_status == ENG_PROSPECT            # sales stage unchanged (NOT won)
     finally:
         server.shutdown()
+
+
+def test_draft_and_client_work_are_refused_without_confirmed_findings(tmp_path):
+    AnalyzedSiteRegistry(str(tmp_path)).record_analysis("clean.com", evidence_ref="scout/clean/qa")
+    server, url = _dash(tmp_path)
+    token = server.scout_csrf_token
+    try:
+        status_draft, draft = _post_json(
+            url + "/api/scout/polish-draft?domain=clean.com", token)
+        status_work, work = _post_json(
+            url + "/api/scout/start-client-work?domain=clean.com", token)
+    finally:
+        server.shutdown()
+    assert status_draft == 409 and draft["ok"] is False
+    assert status_work == 409 and work["ok"] is False

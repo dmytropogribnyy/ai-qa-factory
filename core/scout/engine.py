@@ -130,6 +130,19 @@ class ScoutEngine:
             self.control.wait_while_paused()
             if self.control.should_stop():
                 break
+            # A Dashboard bulk "Skip queued" request is persisted separately from state.json so it
+            # cannot race with the engine's own state writes.  It is checked immediately before a
+            # new target starts; the currently-running page is never interrupted mid-operation.
+            try:
+                operator_actions = self.store.load_artifact("operator_actions.json") or {}
+            except StoreError:
+                operator_actions = {}
+            if pid in set(operator_actions.get("skip_prospects") or []):
+                prospects[pid]["status"] = P_SKIPPED
+                prospects[pid]["reason"] = "skipped_by_operator"
+                self.store.save_state(state)
+                self._event("prospect_skipped_by_operator", prospect=pid)
+                continue
             if cfg.resume and prospects[pid].get("status") == P_DONE:
                 self._event("prospect_skipped_done", prospect=pid)
                 continue

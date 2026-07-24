@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Any, Dict, List
+from urllib.parse import urlsplit, urlunsplit
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _GENERIC = ("info", "contact", "hello", "support", "sales", "office", "admin", "team")
@@ -32,12 +33,48 @@ def extract_public_emails(observation: Dict[str, Any], *, domain: str = "") -> L
     emails = sorted(e for e in found if _EMAIL_RE.fullmatch(e))
     if domain:
         d = domain.lower().lstrip("www.")
-        same = [e for e in emails if e.lower().split("@")[-1].endswith(d)]
+        same = []
+        for email in emails:
+            host = email.lower().split("@")[-1]
+            if host == d or host.endswith("." + d):
+                same.append(email)
         if same:
             emails = same
     # generic mailboxes first (better for cold outreach than a personal address)
     emails.sort(key=lambda e: (0 if any(g in e.lower().split("@")[0] for g in _GENERIC) else 1, e))
     return emails[:5]
+
+
+def extract_public_contact_records(
+    observation: Dict[str, Any], *, domain: str = ""
+) -> List[Dict[str, Any]]:
+    """Return public email contacts with a reviewable source, never inferred/private addresses."""
+    obs = observation or {}
+    emails = extract_public_emails(obs, domain=domain)
+    mailto_emails = {
+        str(item).split("?", 1)[0][len("mailto:"):].strip().lower()
+        for item in obs.get("links", [])
+        if str(item).lower().startswith("mailto:")
+    }
+    raw_url = str(obs.get("final_url") or obs.get("url") or "")
+    try:
+        parsed = urlsplit(raw_url)
+        source_url = urlunsplit((
+            parsed.scheme if parsed.scheme in ("http", "https") else "",
+            parsed.hostname or "",
+            parsed.path or "/",
+            "",
+            "",
+        ))
+    except ValueError:
+        source_url = ""
+    return [{
+        "email": email,
+        "source": ("Public mailto link"
+                   if email.lower() in mailto_emails else "Public page text"),
+        "source_url": source_url,
+        "public": True,
+    } for email in emails]
 
 
 def problem_bullets(findings: List[Dict[str, Any]], *, limit: int = 8) -> List[str]:
@@ -63,7 +100,8 @@ def _looks_unsafe(text: str) -> bool:
 
 
 def _llm_polish_body(router: Any, *, domain: str, name: str, archetype: str,
-                     bullets: List[str], deterministic_body: str) -> tuple[str, str]:
+                     bullets: List[str], deterministic_body: str,
+                     required_offer: str) -> tuple[str, str]:
     """Optionally rewrite the draft prose with a cheap model. Returns (body, generated_by).
 
     The model may ONLY reword using the exact `bullets` supplied - it must not invent findings.
@@ -98,6 +136,8 @@ def _llm_polish_body(router: Any, *, domain: str, name: str, archetype: str,
     model = getattr(resp, "model", "") or ""
     if getattr(resp, "used_fallback", False) or model == "mock" or _looks_unsafe(text):
         return deterministic_body, "deterministic"
+    if required_offer and required_offer.lower() not in text.lower():
+        text = text.rstrip() + "\n\n" + required_offer
     return text, model
 
 
@@ -121,6 +161,24 @@ def _offer_line(archetype: str = "") -> str:
             "reproducible evidence, severity, and a prioritized fix list.")
 
 
+def _fix_offer(findings: List[Dict[str, Any]]) -> tuple[str, Dict[str, Any]]:
+    from core.scout.outreach.fixability import classify_fixability
+    fixability = classify_fixability(findings, access_available=False)
+    count = int(fixability.get("offerable") or 0)
+    if count:
+        noun = "issue" if count == 1 else "issues"
+        line = (
+            f"I can also implement fixes for {count} of these {noun} after we agree the scope "
+            "and you provide repo/staging access; I would confirm any out-of-scope item separately."
+        )
+    else:
+        line = (
+            "I can share the evidence and prioritized recommendations, but I would not promise "
+            "implementation before reviewing the scope and required access."
+        )
+    return line, fixability
+
+
 def build_review_draft(*, domain: str, business_name: str = "",
                        understanding: Dict[str, Any] = None,
                        findings: List[Dict[str, Any]] = None,
@@ -133,22 +191,46 @@ def build_review_draft(*, domain: str, business_name: str = "",
     name = (business_name or domain).strip()
     bullets = problem_bullets(findings or [])
     archetype = (understanding or {}).get("archetype")
-    subject = f"Quick QA review of {name} - {len(bullets)} public issue(s) I found"
-    intro = (f"I ran a bounded, read-only QA check of your public website ({domain}) and noticed a "
-             f"few issues that may affect conversion, accessibility, or user trust:")
+    if not bullets:
+        return {
+            "schema": "qa-review-draft/v1", "domain": domain, "business_name": name,
+            "archetype": archetype,
+            "subject": f"QA review of {name} — no confirmed actionable issue",
+            "problem_bullets": [],
+            "body": (
+                "No outreach draft is available because this bounded pass did not confirm an "
+                "actionable issue. This is not a conclusion that the site is defect-free."
+            ),
+            "offer": "", "fix_offer": "", "fixability": _fix_offer([])[1],
+            "generated_by": "deterministic", "contact": contact, "sent": False,
+            "available": False,
+            "disclaimer": (
+                "DRAFT unavailable - the system never sends outreach without a confirmed issue."
+            ),
+        }
+    issue_word = "issue" if len(bullets) == 1 else "issues"
+    subject = f"Quick QA review of {name} — {len(bullets)} confirmed {issue_word}"
+    intro = (
+        f"I ran a bounded, read-only QA check of your public website ({domain}) and confirmed "
+        f"the following {issue_word} that may affect conversion, accessibility, or user trust:"
+    )
     offer = _offer_line(archetype)
+    fix_offer, fixability = _fix_offer(findings or [])
+    required_offer = offer + " " + fix_offer
     closing = ("These are from public pages only - no logins, form submissions, or orders. " +
-               offer + " No obligation - happy to share the evidence either way.")
+               required_offer + " No obligation - happy to share the evidence either way.")
     deterministic_body = "\n".join(["Hi,", "", intro, ""] + [f"- {b}" for b in bullets] +
                                    ["", closing])
     body, generated_by = _llm_polish_body(router, domain=domain, name=name, archetype=archetype,
-                                          bullets=bullets, deterministic_body=deterministic_body)
+                                          bullets=bullets, deterministic_body=deterministic_body,
+                                          required_offer=required_offer)
     return {
         "schema": "qa-review-draft/v1", "domain": domain, "business_name": name,
         "archetype": archetype,
         "subject": subject, "problem_bullets": bullets, "body": body, "offer": offer,
+        "fix_offer": fix_offer, "fixability": fixability,
         "generated_by": generated_by,
-        "contact": contact, "sent": False,
+        "contact": contact, "sent": False, "available": True,
         "disclaimer": ("DRAFT only - the system does not send this. Copy and send it yourself after "
                        "review. Public info only; nothing was submitted to the site."),
     }

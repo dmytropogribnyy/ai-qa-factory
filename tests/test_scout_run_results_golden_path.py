@@ -186,8 +186,17 @@ def test_run_page_details_link_is_human_readable_not_raw_json(tmp_path):
     # Every prospect row's primary Details link points to the human-readable exact-run Target.
     assert f"/scout/target?run={_RUN}&domain=alpha.example" in html
     assert f"/scout/target?run={_RUN}&domain=beta.example" in html
-    # A raw-JSON diagnostic remains available as a SEPARATE secondary action, EXACT-run scoped.
-    assert f"/api/prospect?run={_RUN}&id=01-alpha" in html and "View raw JSON" in html
+    # Raw JSON is intentionally not in the daily operator table. It remains available inside the
+    # exact-run target's collapsed Advanced diagnostics section.
+    assert "View raw JSON" not in html
+    server2, url2 = _serve(str(tmp_path / "advanced"))
+    try:
+        _s2, target_html, _ = _get(
+            f"{url2}/scout/target?run={_RUN}&domain=alpha.example")
+    finally:
+        server2.shutdown()
+    assert f"/api/prospect?run={_RUN}&id=01-alpha" in target_html
+    assert "Advanced diagnostics" in target_html
 
 
 def test_api_prospect_remains_json(tmp_path):
@@ -344,5 +353,4 @@ def test_whitespace_only_run_is_normalized_to_registry_resolution(tmp_path):
     assert det["prospect_id"] == "01-alpha"
     assert det["run"] == _RUN                                  # resolved via registry, not an empty pin
     assert any("missing meta description" in f["title"] for f in det["findings"])
-
 

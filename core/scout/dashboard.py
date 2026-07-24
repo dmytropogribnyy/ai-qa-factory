@@ -108,7 +108,7 @@ def cached_access_snapshot(refresh: bool = False) -> dict:
 
 
 def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token: str,
-                  operator_home: bool = False):
+                  operator_home: bool = False, challenge_manager=None):
     class _Handler(BaseHTTPRequestHandler):
         server_version = f"ScoutDashboard/{SCOUT_VERSION}"
 
@@ -215,7 +215,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/scout":
                 return self._html(200, self._scout_home_page())
             if path == "/scout/campaigns":
-                return self._html(200, self._scout_campaigns_page())
+                return self._html(200, self._scout_campaigns_page(q))
             if path == "/activity":
                 return self._html(200, self._activity_page(q))
             if path == "/api/activity":
@@ -250,10 +250,13 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/scout/history":
                 return self._json(200, {"rows": self._campaign_service().history(
                     filters={"text": (q.get("text") or [""])[0],
-                             "status": (q.get("status") or [""])[0]})})
+                             "status": (q.get("status") or [""])[0],
+                             "archived": (q.get("archived") or [""])[0]})})
             if path == "/api/scout/target":
                 return self._json(200, self._campaign_service().target_detail(
                     (q.get("domain") or [""])[0], run=(q.get("run") or [""])[0]))
+            if path == "/api/scout/attention":
+                return self._json(200, challenge_manager.snapshot())
             if path == "/scout/new":
                 return self._html(200, self._scout_new_page())
             if path == "/scout/progress":
@@ -265,6 +268,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     (q.get("domain") or [""])[0], run=(q.get("run") or [""])[0]))
             if path == "/scout/run":
                 return self._html(200, self._scout_run_results_page((q.get("id") or [""])[0]))
+            if path == "/scout/attention":
+                return self._html(200, self._scout_attention_page())
             if path == "/docs":
                 return self._html(200, self._docs_page())
             if path == "/api/results":
@@ -277,6 +282,9 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/scout/artifact":
                 return self._scout_artifact((q.get("run") or [""])[0], (q.get("rel") or [""])[0])
+            if path == "/scout/client-evidence":
+                return self._scout_client_evidence(
+                    (q.get("domain") or [""])[0], (q.get("run") or [""])[0])
             if path == "/work-evidence":
                 return self._work_evidence((q.get("project") or [""])[0], (q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
@@ -346,6 +354,12 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._scout_rescan(parsed)
             if parsed.path == "/api/scout/replay":
                 return self._scout_replay(parsed)
+            if parsed.path == "/api/scout/challenge/start":
+                return self._scout_challenge_start(parsed)
+            if parsed.path == "/api/scout/challenge/action":
+                return self._scout_challenge_action(parsed)
+            if parsed.path == "/api/scout/operator":
+                return self._scout_operator_action(parsed)
             if parsed.path == "/api/scout/engagement":
                 return self._scout_engagement(parsed)
             if parsed.path == "/api/scout/polish-draft":
@@ -848,6 +862,34 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if self.command != "HEAD":
                 self.wfile.write(data)
 
+        def _scout_client_evidence(self, domain: str, run_id: str):
+            """Generate and download one exact-target, bounded, client-ready evidence ZIP."""
+            if not domain or not run_id:
+                return self._json(400, {"error": "exact domain and run are required"})
+            try:
+                bundle = self._campaign_service().export_client_evidence(
+                    domain, run=run_id)
+                target = Path(bundle["path"]).resolve()
+                if (not target.is_file() or target.is_symlink()
+                        or target.suffix.lower() != ".zip"
+                        or target.stat().st_size > _MAX_ARTIFACT_BYTES):
+                    raise StoreError("client evidence package is unavailable")
+                data = target.read_bytes()
+            except StoreError as exc:
+                return self._json(409, {"error": str(exc)})
+            except OSError:
+                return self._json(500, {"error": "client evidence package could not be read"})
+            filename = str(bundle.get("filename") or "qa-evidence.zip")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(data)
+
         def _scout_rescan(self, parsed):
             """One-button human-in-the-loop resume for a target Scout could not analyze unattended
             (e.g. blocked by a CAPTCHA). Marks it eligible again; the next campaign re-analyzes it.
@@ -901,6 +943,87 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 "message": ("Headed replay started — a browser window will open. Watch it, then "
                             "reload this page for the fresh screenshots and evidence.")})
 
+        def _scout_challenge_start(self, parsed):
+            """Start an explicit, visible, waiting human-in-the-loop browser session."""
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            q = parse_qs(parsed.query)
+            domain = ((q.get("domain") or [""])[0]
+                      or str((body or {}).get("domain") or "")).strip()
+            source_run = ((q.get("run") or [""])[0]
+                          or str((body or {}).get("run") or "")).strip()
+            try:
+                item = challenge_manager.start(domain, source_run=source_run)
+            except Exception as exc:
+                return self._json(400, {"ok": False,
+                                        "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+            return self._json(202, {"ok": True, "session": item})
+
+        def _scout_challenge_action(self, parsed):
+            """Continue, defer, or skip a waiting manual browser session."""
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            q = parse_qs(parsed.query)
+            sid = ((q.get("id") or [""])[0] or str((body or {}).get("id") or "")).strip()
+            action = ((q.get("action") or [""])[0]
+                      or str((body or {}).get("action") or "")).strip()
+            try:
+                item = challenge_manager.signal(sid, action)
+            except (KeyError, ValueError) as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
+            return self._json(200, {"ok": True, "session": item})
+
+        def _scout_operator_action(self, parsed):
+            """Archive/restore/skip/cleanup actions from History and exact Run results."""
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            body = body or {}
+            action = str(body.get("action") or "").strip()
+            domains = body.get("domains") if isinstance(body.get("domains"), list) else []
+            prospect_ids = (body.get("prospect_ids")
+                            if isinstance(body.get("prospect_ids"), list) else [])
+            run_id = str(body.get("run_id") or "").strip()
+            confirm = bool(body.get("confirm"))
+            from core.scout.operator_state import OperatorStateStore
+            ops = OperatorStateStore(service.output_dir)
+            try:
+                if action == "archive_targets":
+                    result = ops.archive_targets(domains)
+                elif action == "restore_targets":
+                    result = ops.restore_targets(domains)
+                elif action == "forget_targets":
+                    if not confirm:
+                        raise StoreError("forget requires explicit confirmation")
+                    forgotten = [d for d in domains if AnalyzedSiteRegistry(
+                        service.output_dir).forget(d, confirm=True)]
+                    ops.restore_targets(forgotten)
+                    result = {"ok": True, "forgotten": forgotten,
+                              "message": "History removed; exact-run evidence was preserved."}
+                elif action == "skip_queued":
+                    result = ops.request_skip(run_id, prospect_ids)
+                elif action == "delete_evidence":
+                    result = ops.delete_heavy_evidence(
+                        run_id, prospect_ids, confirm=confirm)
+                elif action == "archive_run":
+                    result = ops.archive_run(run_id)
+                elif action == "restore_run":
+                    result = ops.restore_run(run_id)
+                elif action == "delete_run":
+                    result = ops.delete_run(
+                        run_id, confirm=confirm, active_run_id=service.run_id,
+                        active=service.is_running())
+                else:
+                    return self._json(400, {"ok": False, "error": "unknown operator action"})
+            except (OSError, StoreError, ValueError) as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
+            return self._json(200, result)
+
         def _scout_engagement(self, parsed):
             """Advance a prospect's sales-funnel status (contacted/replied/won/delivered/lost).
             CSRF-guarded. The registry validates the status and refuses an unknown target."""
@@ -937,6 +1060,12 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if not domain:
                 return self._json(400, {"ok": False, "error": "no domain"})
             try:
+                current = self._campaign_service().target_detail(domain)
+                actionable = [f for f in (current.get("findings") or [])
+                              if str(f.get("severity") or "").lower() != "info"]
+                if not actionable:
+                    return self._json(409, {"ok": False,
+                        "error": "AI polish is unavailable until a confirmed actionable finding exists"})
                 draft = self._campaign_service().polish_draft(domain)
             except Exception as exc:
                 return self._json(400, {"ok": False,
@@ -962,6 +1091,12 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             from core.scout.discovery.domain_intel import canonical_domain
             dom = canonical_domain(domain) or domain
             det = self._campaign_service().target_detail(domain)
+            actionable = [f for f in (det.get("findings") or [])
+                          if str(f.get("severity") or "").lower() != "info"]
+            if det.get("analysis_complete") is not True or not actionable:
+                return self._json(409, {"ok": False,
+                    "error": ("Client work requires a completed analysis with at least one "
+                              "confirmed actionable finding")})
             brief = _client_work_brief(dom, det.get("findings") or [])
             pid = f"scout-{dom.replace('.', '-')}-{int(_time.time())}"[:64].rstrip("-.")
             try:
@@ -1675,14 +1810,17 @@ function startCampaign(){{
                 controls = (f'<em class="muted">Controls unavailable — this run is '
                             f'<strong>{_esc(mode)}</strong> (read-only).</em>')
             run_id = status.get("run_id", "")
+            from core.scout.discovery.domain_intel import canonical_domain
             prows = "".join(
-                f'<tr><td>{_esc(pid)}</td><td class="muted">{_esc(p.get("url", ""))}</td>'
-                f'<td>{_badge(p.get("status", ""))}</td><td>{_esc(p.get("priority", ""))}</td>'
-                f'<td>{_esc(p.get("verified_defects", 0))}</td>'
-                f'<td>{_scout_details_cell(run_id, pid, p)}</td></tr>'
+                f'<tr><td data-label="Target">{_esc(canonical_domain(p.get("url","")) or p.get("url",""))}</td>'
+                f'<td data-label="Status">{_badge(_prospect_status_label(p.get("status", "")))}</td>'
+                f'<td data-label="Priority">{_esc(p.get("priority", "") or "—")}</td>'
+                f'<td data-label="Actionable">{_esc(p.get("verified_defects", 0))}</td>'
+                f'<td data-label="Open">{_scout_details_primary(run_id, p)}</td></tr>'
                 for pid, p in sorted(prospects.items()))
-            table = (f'<table><caption>Prospects in this run</caption><tr><th>ID</th><th>URL</th>'
-                     f'<th>Status</th><th>Priority</th><th>Defects</th><th>Details</th></tr>{prows}</table>'
+            table = (f'<table class="responsive-table"><caption>Targets in this run</caption>'
+                     f'<thead><tr><th>Target</th><th>Status</th><th>Priority</th>'
+                     f'<th>Actionable</th><th>Open</th></tr></thead><tbody>{prows}</tbody></table>'
                      if prows else '<div class="card empty muted">No prospects in this run.</div>')
             start_panel = "" if running else _START_PANEL_HTML
             results_link = (f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Run results</a>'
@@ -1691,13 +1829,17 @@ function startCampaign(){{
                     f'read-only scan of URLs you paste. For automatic prospect discovery use '
                     f'<a href="/scout/new">Discover Prospects</a>. Nothing is sent without your action.</p>'
                     f'<div class="row"><a class="chip" href="/scout/new">Discover Prospects (adaptive)</a>'
-                    f'<a class="chip" href="/scout/history">History</a></div>'
-                    f'<div class="card"><p>Run <code>{_esc(run_id)}</code> · mode '
-                    f'{_badge(mode)} · status {_badge(st.get("status", "n/a"))}</p>'
+                    f'<a class="chip" href="/scout/history">History</a>'
+                    f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
+                    f'<div class="card"><p>Scan mode {_badge(mode)} · status '
+                    f'{_badge(_prospect_status_label(st.get("status", "n/a")))}</p>'
                     f'<div class="row">{controls}</div></div>'
                     f'<div class="row"><a class="chip" href="/scout/campaigns">Campaigns</a>'
                     f'{results_link}</div>'
-                    f'<div class="scrollx">{table}</div>{start_panel}')
+                    f'<div class="scrollx">{table}</div>'
+                    + (f'<details class="card advanced"><summary>Run diagnostics</summary>'
+                       f'<p><b>Run ID:</b> <code>{_esc(run_id)}</code></p></details>' if run_id else '')
+                    + start_panel)
             script = (
                 "const CSRF=" + json.dumps(csrf_token) + ";\n"
                 "function ctl(a){fetch('/api/control?action='+a,{method:'POST',"
@@ -1775,12 +1917,20 @@ function startCampaign(){{
                 "alert('start failed: '+e);});}\n")
             return _page("AI QA Factory — Scout", "/scout", body, script)
 
-        def _scout_campaigns_page(self) -> str:
+        def _scout_campaigns_page(self, q=None) -> str:
             ov = self._read_model().overview()
             # Reuse the unified project index for scout campaigns (no second store).
             from core.orchestration.project_index import ProjectIndex
-            camps = [p for p in ProjectIndex(service.output_dir).list_projects()
-                     if p.type == "scout_campaign"]
+            from core.scout.operator_state import OperatorStateStore
+            all_camps = [p for p in ProjectIndex(service.output_dir).list_projects()
+                         if p.type == "scout_campaign"]
+            archived_ids = set(
+                OperatorStateStore(service.output_dir).snapshot()["archived_runs"])
+            show_archived = ((q or {}).get("archived") or [""])[0] in ("1", "true", "only")
+            camps = [p for p in all_camps
+                     if (p.project_id in archived_ids) is show_archived]
+            archived_count = sum(1 for p in all_camps if p.project_id in archived_ids)
+            current_count = len(all_camps) - archived_count
             rows = "".join(
                 f'<tr><td><a href="/scout/progress?id={_esc(c.project_id)}">{_esc(c.title)}</a></td>'
                 f'<td>{_badge(c.lifecycle_state)}</td>'
@@ -1788,16 +1938,27 @@ function startCampaign(){{
                 f'<td class="muted">{_esc(c.operator_next_action)}</td>'
                 f'<td><a class="chip" href="/scout/progress?id={_esc(c.project_id)}">Open</a></td></tr>'
                 for c in camps)
-            table = (f'<table><caption>Scout campaigns</caption><tr><th>Campaign</th><th>Status</th>'
+            table = (f'<table class="responsive-table"><caption>'
+                     f'{"Archived" if show_archived else "Current"} Scout campaigns</caption>'
+                     f'<tr><th>Campaign</th><th>Status</th>'
                      f'<th>Progress</th><th>Evidence</th><th>Next action</th><th>Open</th></tr>{rows}</table>'
-                     if rows else '<div class="card empty muted">No campaigns yet. '
-                     '<a href="/scout">Open Scout to start one</a>.</div>')
+                     if rows else (
+                         '<div class="card empty muted">No archived campaigns.</div>'
+                         if show_archived else
+                         '<div class="card empty muted">No current campaigns. '
+                         '<a href="/scout">Open Scout to start one</a>.</div>'))
             body = (f'<h1>Scout campaigns</h1><div class="row">'
                     f'<a class="chip" href="/scout/new">New adaptive campaign</a>'
                     f'<a class="chip" href="/scout/history">History</a>'
                     f'<a class="chip" href="/scout">Manual URL Scan</a>'
                     f'<a class="chip" href="/results">Results</a>'
                     f'<span class="chip">Active {len(ov.active_campaigns)}</span></div>'
+                    f'<div class="tabs" role="tablist" aria-label="Campaign views">'
+                    f'<a role="tab" aria-selected="{"true" if not show_archived else "false"}" '
+                    f'href="/scout/campaigns">Current ({current_count})</a>'
+                    f'<a role="tab" aria-selected="{"true" if show_archived else "false"}" '
+                    f'href="/scout/campaigns?archived=1">Archived '
+                    f'({archived_count})</a></div>'
                     f'<div class="scrollx">{table}</div>'
                     f'<p class="muted">Campaign start + Pause/Resume/Stop Safely/Cancel controls are '
                     f'on <a href="/scout">Manual URL Scan</a> (bounded, read-only; nothing is sent).</p>')
@@ -1879,36 +2040,40 @@ function startCampaign(){{
             body = (
                 '<h1>New Scout campaign</h1>'
                 '<div class="row"><a class="chip" href="/scout/history">History</a>'
+                '<a class="chip" href="/scout/attention">Needs attention</a>'
                 '<a class="chip" href="/scout">Manual URL Scan</a></div>'
-                '<div class="card formstack"><label>Preset<br><select id="preset">' + opts + '</select></label>'
-                '<label> Session (budget)<br><select id="session"><option value="">preset default</option>'
+                '<div class="card formstack"><h2>Campaign basics</h2>'
+                '<label>Campaign type<br><select id="preset">' + opts + '</select></label>'
+                '<label>Run size and time budget<br><select id="session">'
+                '<option value="">Use campaign default</option>'
                 + sess + '</select></label>'
-                '<label> Strategy<br><select id="strategy"><option value="">preset default</option>'
-                + strat + '</select></label>'
-                '<label> Countries (comma, blank = no restriction)<br>'
+                '<label>Countries (comma-separated; blank = no restriction)<br>'
                 '<input id="countries" placeholder="us, de"></label>'
-                '<label> Languages (comma)<br><input id="languages" placeholder="en, de"></label>'
-                '<label> Industries (multi-select; blank = preset)<br>'
+                '<label>Industries (optional; blank = campaign default)<br>'
                 '<select id="industries" multiple size="6">' + ind_opts + '</select></label>'
-                '<label> Site types (multi-select; blank = preset)<br>'
-                '<select id="sitetypes" multiple size="6">' + site_opts + '</select></label>'
-                '<label> Keywords / commercial signals (comma)<br>'
+                '<label>Keywords / commercial signals (comma-separated)<br>'
                 '<input id="keywords" placeholder="pricing, free trial, book demo"></label>'
-                '<label> Exclude keywords (comma)<br><input id="excludekw"></label>'
-                '<label> Min commercial score 0-100 (blank = preset)<br>'
-                '<input id="minscore" type="number" min="0" max="100" placeholder="preset default"></label>'
-                '<details><summary class="muted">Advanced limits</summary>'
-                '<label> Max discovered domains<br><input id="maxdisc" type="number" min="1"></label>'
-                '<label> Max pages per site<br><input id="maxpages" type="number" min="1"></label>'
-                '</details>'
                 '<label><input type="checkbox" id="deepcapture"> Deep capture (Playwright): real '
                 'screenshots + network evidence (console errors, failed resources, timing). Slower; '
                 'needs Chromium installed. Off = fast static analysis.</label>'
+                '<details class="advanced"><summary>Advanced options and readiness</summary>'
+                '<label>Strategy<br><select id="strategy"><option value="">Use campaign default</option>'
+                + strat + '</select></label>'
+                '<label>Languages (comma-separated)<br><input id="languages" placeholder="en, de"></label>'
+                '<label>Site types (optional)<br><select id="sitetypes" multiple size="6">'
+                + site_opts + '</select></label>'
+                '<label>Exclude keywords (comma-separated)<br><input id="excludekw"></label>'
+                '<label>Minimum commercial score 0–100<br>'
+                '<input id="minscore" type="number" min="0" max="100" '
+                'placeholder="Use campaign default"></label>'
+                '<label>Maximum discovered domains<br><input id="maxdisc" type="number" min="1"></label>'
+                '<label>Maximum pages per site<br><input id="maxpages" type="number" min="1"></label>'
+                '<div class="row"><button id="pf" class="chip">Run readiness preflight</button></div>'
+                '<pre id="pfout" class="scrollx muted">Readiness details appear here.</pre>'
+                '</details>'
                 '<p class="muted">Presets are editable templates. Every run is finite (hard '
                 'ceilings) and never sends anything. Live discovery needs your explicit approval '
                 'and a configured Tavily key.</p>'
-                '<div class="row"><button id="pf" class="chip">Run readiness preflight</button></div>'
-                '<pre id="pfout" class="scrollx muted"></pre>'
                 '<label><input type="checkbox" id="approve"> I approve one bounded LIVE discovery '
                 'run (real external sites, no submissions/purchases/messages)</label>'
                 '<div class="row"><button id="run" class="chip primary">Run campaign</button></div>'
@@ -1960,8 +2125,12 @@ function startCampaign(){{
                     '<div class="card"><div id="p" class="muted">loading…</div>'
                     '<div class="row"><button id="bp" class="chip" onclick="ctl(\'pause\')">Pause</button>'
                     '<button id="br" class="chip" onclick="ctl(\'resume\')">Resume</button>'
-                    '<button id="bs" class="chip danger" onclick="ctl(\'stop\')">Stop &amp; Save</button>'
-                    '<button class="chip" onclick="exp()">Export evidence</button></div>'
+                    '<button id="bs" class="chip danger" onclick="ctl(\'stop\')">Stop &amp; Save</button></div>'
+                    '<details class="advanced"><summary>Advanced run diagnostics</summary>'
+                    '<button class="chip" onclick="exp()">Export internal campaign record</button>'
+                    '<p class="muted">For Observer/reviewer diagnostics; this is not the '
+                    'client-ready attachment. Download a client ZIP from a completed target card.</p>'
+                    '</details>'
                     '<div id="msg" class="muted"></div></div>')
             script = (
                 "const CSRF=" + json.dumps(csrf_token) + ";const CID=" + json.dumps(cid) + ";\n"
@@ -1969,7 +2138,8 @@ function startCampaign(){{
                 "{method:'POST',headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(load);}\n"
                 "function exp(){fetch('/api/scout/export?id='+encodeURIComponent(CID),{method:'POST',"
                 "headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
-                "document.getElementById('msg').textContent=j.ok?('bundle: '+j.bundle):('export failed: '+j.error);});}\n"
+                "document.getElementById('msg').textContent=j.ok?('internal record: '+j.bundle):"
+                "('export failed: '+j.error);});}\n"
                 "function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
                 "function load(){fetch('/api/scout/progress?id='+encodeURIComponent(CID)).then(r=>r.json())"
                 ".then(function(j){var c=j.counters||{};var d=(j.decisions||[]);"
@@ -1978,7 +2148,9 @@ function startCampaign(){{
                 "['bp','br','bs'].forEach(function(id){var b=document.getElementById(id);if(b)b.disabled=term;});"
                 # Each analyzed domain links to its target detail (findings/evidence); same tab.
                 "var rows=d.map(function(x){var enc=encodeURIComponent(x.domain||'');"
-                "return '<tr><td><a href=\"/scout/target?domain='+enc+'\">'+esc(x.domain)+'</a></td><td>'+esc(x.priority)+"
+                "var run=encodeURIComponent(x.scout_run||'');var href='/scout/target?domain='+enc+"
+                "(run?'&run='+run:'');"
+                "return '<tr><td><a href=\"'+href+'\">'+esc(x.domain)+'</a></td><td>'+esc(x.priority)+"
                 "'</td><td>'+esc((x.allocation||{}).depth)+'</td><td>'+esc((x.brain||{}).business_model||'')+"
                 "'</td></tr>';}).join('');"
                 "document.getElementById('p').innerHTML='<div class=row><span class=chip>State: '+esc(j.run_state)+"
@@ -1996,6 +2168,7 @@ function startCampaign(){{
             qtext = (q.get("text") or [""])[0]
             frm = (q.get("from") or [""])[0].strip()      # explicit YYYY-MM-DD lower bound
             to = (q.get("to") or [""])[0].strip()          # explicit YYYY-MM-DD upper bound
+            show_archived = (q.get("archived") or [""])[0].strip().lower() in ("1", "true", "yes")
             try:
                 days = int((q.get("days") or ["0"])[0])    # any custom N days back
             except ValueError:
@@ -2006,40 +2179,58 @@ function startCampaign(){{
                 until = (to + "T23:59:59+00:00") if to else ""
             elif days > 0:
                 since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-            rows = self._campaign_service().history(
-                filters={"text": qtext, "since": since, "until": until})
+            rows = self._campaign_service().history(filters={
+                "text": qtext, "since": since, "until": until,
+                "archived": "only" if show_archived else "",
+            })
             active_days = days if (days > 0 and not (frm or to)) else 0
-            # Honest count: when a filter hides rows, say "N shown of T total" so a filtered view is
-            # never mistaken for the whole history (the confusion that motivated this).
             filtered = bool(qtext or since or until)
-            total = len(self._campaign_service().history()) if filtered else len(rows)
+            total = len(self._campaign_service().history(filters={
+                "archived": "only" if show_archived else ""}))
             count_label = (f"{len(rows)} shown of {total} total"
                            if filtered and len(rows) != total else f"{total} total")
             range_chips = "".join(
                 f'<a class="chip{" active" if active_days == val else ""}" '
-                f'href="/scout/history?days={val}{("&text=" + _esc(qtext)) if qtext else ""}">{lbl}</a>'
+                f'href="/scout/history?days={val}'
+                f'{"&archived=1" if show_archived else ""}'
+                f'{("&text=" + _esc(qtext)) if qtext else ""}">{lbl}</a>'
                 for val, lbl in ((1, "Today"), (7, "7 days"), (30, "30 days"), (0, "All")))
             trs = "".join(
-                f'<tr><td><a href="/scout/target?domain={_esc(r.get("domain",""))}">{_esc(r.get("domain",""))}</a></td>'
-                f'<td>{_badge(r.get("analysis_status",""))}</td>'
-                f'<td>{_badge(r.get("engagement_status","prospect"))}</td>'
-                f'<td class="muted">{_esc(", ".join(r.get("campaign_ids",[])[:2]))}</td>'
-                f'<td class="muted">{_fmt_ts(r.get("last_analysis_at",""))}</td>'
-                f'<td class="muted">{_esc(r.get("reason","")) or "&mdash;"}</td></tr>'
+                f'<tr><td class="select-cell"><input type="checkbox" class="pick" '
+                f'value="{_esc(r.get("domain",""))}" aria-label="Select {_esc(r.get("domain",""))}"></td>'
+                f'<td data-label="Target"><a href="/scout/target?domain={_esc(r.get("domain",""))}">'
+                f'{_esc(r.get("domain",""))}</a></td>'
+                f'<td data-label="Analysis">{_badge(_analysis_status_label(r.get("analysis_status","")))}</td>'
+                f'<td data-label="Prospect stage">{_badge(r.get("engagement_status","prospect").title())}</td>'
+                f'<td data-label="Analyzed" class="muted">{_fmt_ts(r.get("last_analysis_at",""))}</td>'
+                f'<td data-label="Note" class="muted">'
+                f'{_esc(_manual_reason_label(r.get("reason",""))) if r.get("reason") else "&mdash;"}</td></tr>'
                 for r in rows)
-            # Empty state stays honest too: a filter that hides every row must not read as an empty
-            # history — say "0 shown of T total" whenever the unfiltered history actually has entries.
             empty_msg = (f'0 shown of {total} total &mdash; no sites match this filter.'
-                         if filtered and total > 0 else 'No analyzed sites yet.')
-            table = (f'<table><caption>Analyzed-site history &mdash; {count_label}</caption>'
-                     f'<tr><th>Domain</th>'
-                     f'<th>Status</th><th>Funnel</th><th>Campaigns</th><th>Analyzed</th>'
-                     f'<th>Notes</th></tr>{trs}</table>'
+                         if filtered and total > 0 else
+                         ('No archived targets.' if show_archived else 'No analyzed sites yet.'))
+            table = (f'<table class="responsive-table"><caption>'
+                     f'{"Archived" if show_archived else "Active"} targets &mdash; {count_label}</caption>'
+                     f'<thead><tr><th><input type="checkbox" id="pickall" aria-label="Select all"></th>'
+                     f'<th>Target</th><th>Analysis</th><th>Prospect stage</th><th>Analyzed</th>'
+                     f'<th>Note</th></tr></thead><tbody>{trs}</tbody></table>'
                      if rows else f'<div class="card empty muted">{empty_msg}</div>')
+            active_tab = ('<a class="chip" href="/scout/history">Active</a>'
+                          if show_archived else '<span class="chip active">Active</span>')
+            archived_tab = ('<span class="chip active">Archived</span>' if show_archived else
+                            '<a class="chip" href="/scout/history?archived=1">Archived</a>')
+            bulk_buttons = (
+                '<button class="chip" onclick="bulk(\'restore_targets\')">Restore selected</button>'
+                '<button class="chip danger" onclick="forgetSelected()">Forget selected…</button>'
+                if show_archived else
+                '<button class="chip" onclick="bulk(\'archive_targets\')">Archive selected</button>')
             body = (f'<h1>Scout history</h1><div class="row">'
-                    f'<a class="chip" href="/scout/new">New campaign</a></div>'
+                    f'<a class="chip" href="/scout/new">New campaign</a>'
+                    f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
+                    f'<div class="row">{active_tab}{archived_tab}</div>'
                     f'<div class="row" style="margin-bottom:6px">{range_chips}</div>'
                     f'<form method="get" class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
+                    f'<input type="hidden" name="archived" value="{"1" if show_archived else ""}">'
                     f'<label class="muted">Last <input name="days" type="number" min="1" max="3650" '
                     f'style="width:64px" value="{active_days or ""}"> days</label>'
                     f'<span class="muted">or</span>'
@@ -2049,9 +2240,31 @@ function startCampaign(){{
                     f'<button class="chip">Filter</button>'
                     f'<a class="chip" href="/scout/history">Reset</a></form>'
                     f'<div class="scrollx">{table}</div>'
-                    f'<p class="muted">Processed targets are skipped by future campaigns; rescan is '
-                    f'explicit. B/C and clean results are retained, never auto-deleted.</p>')
-            return _page("AI QA Factory — Scout history", "/scout", body)
+                    f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
+                    f'selected</b><div class="row">{bulk_buttons}'
+                    f'<button class="chip" onclick="clearSelection()">Clear</button>'
+                    f'<span id="bulkmsg" class="muted" aria-live="polite"></span></div></div>'
+                    f'<p class="muted">Archive is reversible and is the normal cleanup action. '
+                    f'Forget removes dedup/history only after confirmation; exact-run evidence stays '
+                    f'preserved until separately deleted.</p>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";"
+                "function picks(){return Array.from(document.querySelectorAll('.pick:checked')).map(x=>x.value);}"
+                "function refreshBulk(){var n=picks().length;document.getElementById('selected').textContent=n;"
+                "document.getElementById('bulkbar').hidden=!n;}"
+                "document.querySelectorAll('.pick').forEach(x=>x.onchange=refreshBulk);"
+                "var pa=document.getElementById('pickall');if(pa)pa.onchange=function(){"
+                "document.querySelectorAll('.pick').forEach(x=>x.checked=pa.checked);refreshBulk();};"
+                "function clearSelection(){document.querySelectorAll('.pick').forEach(x=>x.checked=false);"
+                "if(pa)pa.checked=false;refreshBulk();}"
+                "function bulk(action,confirmFlag){var d=picks();if(!d.length)return;"
+                "fetch('/api/scout/operator',{method:'POST',headers:{'X-Scout-CSRF':CSRF,"
+                "'Content-Type':'application/json'},body:JSON.stringify({action:action,domains:d,"
+                "confirm:!!confirmFlag})}).then(r=>r.json()).then(j=>{if(j.ok)location.reload();"
+                "else document.getElementById('bulkmsg').textContent=j.error||'Action failed';});}"
+                "function forgetSelected(){if(confirm('Forget selected targets from dedup/history? "
+                "Exact-run evidence will remain.'))bulk('forget_targets',true);}")
+            return _page("AI QA Factory — Scout history", "/scout", body, script)
 
         def _scout_target_page(self, domain: str, run: str = "") -> str:
             det = self._campaign_service().target_detail(domain, run=run)
@@ -2062,14 +2275,22 @@ function startCampaign(){{
             nav = ((f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Back to run</a>'
                     if run_id else '')
                    + '<a class="chip" href="/scout/history">Back to history</a>')
-            # A run-pinned target whose domain is not in that run: honest, never another target's data.
-            if run and det.get("evidence_status") == "prospect_not_found":
+            # A target whose domain is not in the resolved exact run: honest, never another
+            # target's data.  This applies to both run-pinned links and History links, because a
+            # drifted History record can still resolve a shared multi-target run.
+            if det.get("evidence_status") == "prospect_not_found":
                 return _page("AI QA Factory — Target", "/scout",
                              f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
-                             f'<div class="card"><div class="banner warn">No prospect for '
-                             f'{_esc(domain)} exists in run <code>{_esc(run_id)}</code>. This target\'s '
-                             f'own evidence is unavailable — Scout never shows another target\'s '
-                             f'evidence in its place.</div></div>')
+                             f'<div class="card status-hero attention">'
+                             f'<div class="banner warn">Evidence for this domain could not be bound '
+                             f'to its own analyzed page in the resolved run. No findings, screenshots, '
+                             f'network capture, or reproduction are shown here — Scout never shows '
+                             f'another target\'s evidence in their place.</div>'
+                             f'<p class="muted">Re-run a bounded scan for {_esc(domain)} to rebuild '
+                             f'its own evidence.</p></div>'
+                             f'<details class="card advanced"><summary>Advanced diagnostics</summary>'
+                             f'<p><b>Resolved run:</b> <code>{_esc(run_id or "unavailable")}</code> · '
+                             f'<b>Evidence status:</b> <code>prospect_not_found</code></p></details>')
             # A run-pinned incomplete target (manual action / failed): honest incomplete-analysis view,
             # never a healthy "0 defects" conclusion.
             if run and prospect_status and prospect_status != "DONE":
@@ -2078,6 +2299,11 @@ function startCampaign(){{
                 return _page("AI QA Factory — Target", "/scout",
                              f'<h1>Target</h1><div class="card empty muted">No record for '
                              f'{_esc(domain)}.</div>')
+            # The daily operator surface is compact and outcome-first.  A hidden, environment-only
+            # legacy renderer remains available for migration diagnostics; it is never linked from
+            # the UI and is off by default.
+            if os.getenv("AIQA_SCOUT_LEGACY_TARGET_UI", "").lower() not in ("1", "true", "yes"):
+                return self._scout_complete_target_html(domain, det, nav)
             b = brain or {}
             bs = (b.get("brain") or {})
             scores = bs.get("scores", {})
@@ -2425,6 +2651,215 @@ function startCampaign(){{
 
             return _page("AI QA Factory — Target detail", "/scout", body)
 
+        def _scout_complete_target_html(self, domain: str, det: dict, nav: str) -> str:
+            """Outcome-first target card; internal IDs/JSON live only under Advanced diagnostics."""
+            entry = det.get("entry") or {}
+            brain = det.get("brain") or {}
+            run_id = det.get("run") or det.get("scout_run") or ""
+            findings = det.get("findings") or []
+            media = det.get("media") or []
+            network = det.get("network") or {}
+            evidence_files = det.get("evidence_files") or []
+            coverage = det.get("coverage")
+            contacts = det.get("contacts") or []
+            contact_records = det.get("contact_records") or []
+            draft = det.get("draft") or {}
+            fixability = det.get("fixability") or {}
+            actionable = [f for f in findings
+                          if str(f.get("severity") or "").strip().lower() != "info"]
+            informational = len(findings) - len(actionable)
+            pages = ((coverage or {}).get("meaningful_pages_tested")
+                     if isinstance(coverage, dict) else None)
+
+            def _art_url(rel: str) -> str:
+                return f'/scout/artifact?run={_esc(run_id)}&rel={_esc(rel)}'
+
+            def _ext(path: str) -> str:
+                return path.lower().rsplit(".", 1)[-1] if "." in path else ""
+
+            imgs = [m for m in media if _ext(m) in ("png", "jpg", "jpeg", "webp", "gif")]
+            vids = [m for m in media if _ext(m) in ("webm", "mp4")]
+            trace = next((e for e in evidence_files if e.get("name") == "browser_trace.json"), None)
+            obs_file = next((e for e in evidence_files if e.get("name") == "observation.json"), None)
+            evidence_count = len(media) + len(evidence_files)
+            media_html = "".join(
+                f'<a href="{_art_url(m)}" target="_blank" rel="noopener">'
+                f'<img src="{_art_url(m)}" alt="Captured page for {_esc(domain)}"></a>'
+                for m in imgs)
+            media_html += "".join(
+                f'<video src="{_art_url(m)}" controls preload="metadata" '
+                f'style="max-width:360px"></video>' for m in vids)
+            if not media_html:
+                media_html = ('<p class="muted">No visual evidence was captured for this run. '
+                              'Use Deep capture for screenshots; video is kept only for a qualifying '
+                              'reproduced interaction.</p>')
+
+            trace_html = (
+                f'<a href="{_art_url(trace["rel"])}" target="_blank" rel="noopener">Open event trace</a>'
+                if trace else
+                '<span class="muted">Not recorded for this scan mode or no browser sequence ran.</span>')
+            axe_status = str(network.get("axe_status") or "")
+            if axe_status == "ok":
+                axe_text = f'Ran · {len(network.get("axe_violations") or [])} violation group(s)'
+            elif axe_status == "unavailable":
+                axe_text = "Attempted, but axe-core evidence was unavailable"
+            else:
+                axe_text = "Not attempted in this scan mode"
+            network_available = bool(network.get("status") or network.get("console_errors")
+                                     or network.get("failed_resources") or network.get("timing_ms"))
+
+            status_note = ("Completed with confirmed actionable findings."
+                           if actionable else
+                           "Completed. No actionable defect was confirmed in this bounded scan.")
+            body = (
+                f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
+                f'<div class="card status-hero"><div class="row">'
+                f'{_badge("Analysis complete", "ok")}<span class="muted">{_esc(status_note)}</span>'
+                f'</div><div class="summary-grid" style="margin-top:12px">'
+                f'<div class="summary-item"><span class="muted">Actionable findings</span>'
+                f'<strong>{len(actionable)}</strong></div>'
+                f'<div class="summary-item"><span class="muted">Informational notes</span>'
+                f'<strong>{informational}</strong></div>'
+                f'<div class="summary-item"><span class="muted">Pages checked</span>'
+                f'<strong>{_esc(pages if pages is not None else "—")}</strong></div>'
+                f'<div class="summary-item"><span class="muted">Evidence files</span>'
+                f'<strong>{evidence_count}</strong></div></div>'
+                f'<div class="row" style="margin-top:16px">'
+                f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run_id)}'
+                f'&amp;domain={_esc(domain)}">Download client-ready evidence (.zip)</a>'
+                f'<span class="muted">One target · client-safe · up to 20 MiB</span></div>'
+                f'<p class="muted">The ZIP includes an offline HTML summary, findings, coverage, '
+                f'screenshots, optional reproduced-interaction video, sanitized console/network '
+                f'evidence, and integrity hashes. Review it before attaching it to email.</p></div>'
+                f'<div class="card"><h2>Findings</h2><div class="scrollx">'
+                f'{_problems_table_html(findings)}</div></div>'
+                f'<div class="card"><h2>Evidence</h2><div class="media-grid">{media_html}</div>'
+                f'<div class="evidence-grid" style="margin-top:12px">'
+                f'<div class="evidence-item"><h3>Screenshots</h3>'
+                f'<span>{len(imgs)} captured</span></div>'
+                f'<div class="evidence-item"><h3>Reproduction video</h3>'
+                f'<span>{len(vids)} captured</span></div>'
+                f'<div class="evidence-item"><h3>Browser trace</h3>{trace_html}</div>'
+                f'<div class="evidence-item"><h3>Network / console</h3>'
+                f'<span>{"Captured" if network_available else "Not available"}</span></div>'
+                f'<div class="evidence-item"><h3>Accessibility (axe)</h3>'
+                f'<span>{_esc(axe_text)}</span></div></div>'
+                f'<p class="muted">This trace is a redacted structured event record, not a native '
+                f'Playwright <code>trace.zip</code>. Playwright Inspector is a live developer tool '
+                f'and is intentionally not exposed in the operator UI.</p></div>'
+                f'<div class="card"><h2>Coverage</h2>{_coverage_card_html(coverage)}</div>')
+
+            if actionable:
+                contact_rows = "".join(
+                    f'<div><strong>{_esc(row.get("email") or "")}</strong>'
+                    f'<br><span class="muted">{_esc(row.get("source") or "Public page")}'
+                    + (f' · <a href="{_esc(row.get("source_url") or "")}" target="_blank" '
+                       f'rel="noopener">source page</a>'
+                       if row.get("source_url") else '')
+                    + '</span></div>'
+                    for row in contact_records if row.get("email"))
+                if not contact_rows and contacts:
+                    contact_rows = "".join(
+                        f'<div><strong>{_esc(email)}</strong><br>'
+                        f'<span class="muted">Public page contact</span></div>'
+                        for email in contacts)
+                if not contact_rows:
+                    contact_rows = '<span class="muted">No public contact found.</span>'
+                eng = entry.get("engagement_status", "prospect")
+                work_id = entry.get("work_id", "")
+                body += (
+                    '<div class="card"><h2>Next actions</h2>'
+                    '<div class="evidence-grid">'
+                    f'<div class="evidence-item"><h3>Public contact</h3>{contact_rows}</div>'
+                    f'<div class="evidence-item"><h3>What we can offer</h3>'
+                    f'<p>{_esc(fixability.get("summary") or "Review scope before promising a fix.")}</p>'
+                    '<p class="muted">Implementation is offered only after scope agreement and '
+                    'repo/staging access. Nothing is promised automatically.</p></div></div>'
+                    f'<p><b>Prospect stage:</b> {_badge(eng)}</p>'
+                    '<div class="row"><button class="btn primary" type="button" '
+                    'onclick="startCW()">Prepare client work</button>'
+                    '<button class="chip" type="button" onclick="setEng(\'contacted\')">Contacted</button>'
+                    '<button class="chip" type="button" onclick="setEng(\'replied\')">Replied</button>'
+                    '<button class="chip" type="button" onclick="setEng(\'lost\')">Lost</button>'
+                    + (f'<a class="chip" href="/work/{_esc(work_id)}">Open linked work</a>'
+                       if work_id else '')
+                    + '<span id="actionmsg" class="muted" aria-live="polite"></span></div>'
+                    '<details><summary>Copy-only outreach draft</summary>'
+                    f'<p><b>Subject:</b> {_esc(draft.get("subject",""))}</p>'
+                    f'<textarea id="draftbody" readonly rows="9">{_esc(draft.get("body",""))}</textarea>'
+                    '<button class="chip" type="button" onclick="copyDraft()">Copy draft</button>'
+                    '</details><p class="muted">Nothing is sent automatically. Client work is a '
+                    'proposal/preparation step and does not mark the prospect Won.</p></div>')
+            else:
+                body += ('<div class="card"><h2>Next actions</h2><p class="muted">Outreach draft and '
+                         'client-work actions are disabled because this run has no confirmed '
+                         'actionable finding. Run a deeper bounded check if more coverage is needed.'
+                         '</p></div>')
+
+            source_kind = det.get("source_kind") or ""
+            source_note = {
+                "curated": ("Curated list import; adaptive AI understanding was not computed. "
+                            "That is expected, not missing data."),
+                "manual": "Manual URL scan; adaptive AI understanding was not computed.",
+                "discovery": "Adaptive Scout discovery.",
+            }.get(source_kind, ("AI understanding is not applicable for this source; the source "
+                                "type was not persisted for this historical run."))
+            video_note = {
+                "manual": ("Video capture was manual/opt-in; no clip is expected unless the "
+                           "operator records a qualifying reproduction. Expected, not a defect."),
+                "off": ("Video capture was disabled for this run. This is an intentional policy, "
+                        "not a failed capture."),
+                "qualified_auto": ("Video was retained only if an eligible interaction finding "
+                                   "reproduced cleanly."),
+            }.get(det.get("video_mode") or "", "Video policy was not persisted for this run.")
+            bsum = brain.get("brain") or {}
+            plan = brain.get("plan") or {}
+            axe_items = "".join(
+                f'<li><code>{_esc(v.get("id") or "unknown-rule")}</code> · '
+                f'{_esc(v.get("help") or "")}</li>'
+                for v in (network.get("axe_violations") or []))
+            structured = "".join(
+                f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
+                f'{_esc(e["label"])}</a></li>' for e in evidence_files)
+            body += (
+                '<details class="card advanced"><summary>Advanced diagnostics</summary>'
+                f'<p class="muted">{_esc(source_note)}</p>'
+                f'<p><b>Run:</b> <code>{_esc(run_id)}</code> · <b>Prospect:</b> '
+                f'<code>{_esc(det.get("prospect_id") or "—")}</code></p>'
+                f'<p><b>Archetype:</b> {_esc(bsum.get("archetype") or "—")} · '
+                f'<b>Business model:</b> {_esc(bsum.get("business_model") or "—")}</p>'
+                f'<p><b>Policy ceiling:</b> {_esc(plan.get("allowed_interaction_mode") or "—")} · '
+                f'<b>Checks selected:</b> {_esc(", ".join(plan.get("checks_selected") or []) or "—")}</p>'
+                f'<p class="muted">Current automatic Scout execution uses read-only navigation; '
+                f'a policy ceiling is not evidence that an interaction ran.</p>'
+                f'<p class="muted">{_esc(video_note)}</p>'
+                f'<p><b>HTTP:</b> {_esc(network.get("status") or "—")} · '
+                f'<b>Console errors:</b> {_esc(len(network.get("console_errors") or []))} · '
+                f'<b>Failed resources:</b> {_esc(len(network.get("failed_resources") or []))}</p>'
+                f'<ul>{axe_items}</ul>'
+                f'<ul>{structured or "<li class=muted>No structured files available.</li>"}</ul>'
+                + (f'<p><a href="{_art_url(obs_file["rel"])}">Open page observation</a></p>'
+                   if obs_file else '')
+                + (f'<p><a href="/api/prospect?run={_esc(run_id)}&id='
+                   f'{_esc(det.get("prospect_id") or "")}">View exact-run raw JSON</a></p>'
+                   if run_id and det.get("prospect_id") else '')
+                + '</details>')
+
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";const DOM=" + json.dumps(domain) + ";"
+                "function post(u,b){return fetch(u,{method:'POST',headers:{'X-Scout-CSRF':CSRF,"
+                "\"Content-Type\":\"application/json\"},body:JSON.stringify(b||{})}).then(r=>r.json());}"
+                "function msg(t){var m=document.getElementById('actionmsg');if(m)m.textContent=t;}"
+                "function startCW(){msg('preparing…');post('/api/scout/start-client-work?domain='+"
+                "encodeURIComponent(DOM),{}).then(j=>{msg(j.message||j.error||'done');"
+                "if(j.ok)setTimeout(()=>location.reload(),900);});}"
+                "function setEng(s){post('/api/scout/engagement?domain='+encodeURIComponent(DOM)+"
+                "'&status='+encodeURIComponent(s),{}).then(j=>{if(j.ok)location.reload();"
+                "else msg(j.error||'could not update');});}"
+                "function copyDraft(){var t=document.getElementById('draftbody');if(!t)return;"
+                "t.focus();t.select();try{document.execCommand('copy');msg('Draft copied.');}catch(e){}}")
+            return _page("AI QA Factory — Target result", "/scout", body, script)
+
         def _scout_incomplete_target_html(self, domain: str, det: dict, nav: str) -> str:
             """Honest incomplete-analysis Target view for a MANUAL_ACTION_REQUIRED / FAILED prospect.
 
@@ -2433,55 +2868,138 @@ function startCampaign(){{
             and the landing loaded, any partial evidence, and the safe recommended operator action."""
             ma = det.get("manual_action") or {}
             run_id = det.get("run") or det.get("scout_run") or ""
-            status = det.get("prospect_status") or "INCOMPLETE"
             network = det.get("network") or {}
             media = det.get("media") or []
             evidence_files = det.get("evidence_files") or []
+            raw_reason = str(ma.get("reason") or "")
+            human_reason = {
+                "captcha_detected": "The site requested a human verification check.",
+                "access_prohibited": "The site blocked automated access.",
+            }.get(raw_reason, "The browser could not complete this target automatically.")
 
             def _art_url(rel: str) -> str:
                 return f'/scout/artifact?run={_esc(run_id)}&rel={_esc(rel)}'
 
-            def _yn(v):
-                return "yes" if v is True else ("no" if v is False else "—")
-
-            if ma:
-                reason_html = (
-                    f'<p><b>Reason:</b> <code>{_esc(str(ma.get("reason","—")))}</code></p>'
-                    f'<p><b>Stage:</b> {_esc(str(ma.get("stage","—")))} · '
-                    f'<b>Stop boundary:</b> {_esc(str(ma.get("stop_boundary","—")))}</p>'
-                    f'<p><b>Chromium started:</b> {_yn(ma.get("chromium_started"))} · '
-                    f'<b>Landing page loaded:</b> {_yn(ma.get("landing_loaded"))} · '
-                    f'<b>Landing status:</b> {_esc(str(ma.get("landing_status","—")))}</p>'
-                    f'<p><b>Recommended action:</b> {_esc(str(ma.get("recommended_action","—")))}</p>')
-            else:
-                reason_html = ('<p class="muted">No machine-readable reason was persisted for this '
-                               'incomplete analysis (older run). It is shown as unavailable rather '
-                               'than guessed.</p>')
-            partial = []
-            if media:
-                partial.append(f'{len(media)} evidence file(s) captured before stopping')
-            if network.get("status"):
-                partial.append(f'landing HTTP {_esc(str(network.get("status")))}')
-            partial_html = ('<p><b>Partial evidence:</b> ' + _esc("; ".join(partial)) + '</p>'
-                            if partial else '<p class="muted">No partial evidence was collected.</p>')
-            if evidence_files:
-                ev_items = "".join(
-                    f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
-                    f'{_esc(e["label"])}</a></li>' for e in evidence_files)
-                partial_html += f'<p><b>Structured evidence files:</b></p><ul>{ev_items}</ul>'
+            imgs = [m for m in media if m.lower().endswith(
+                (".png", ".jpg", ".jpeg", ".webp", ".gif"))]
+            img_html = "".join(
+                f'<a href="{_art_url(m)}" target="_blank" rel="noopener">'
+                f'<img src="{_art_url(m)}" alt="Partial page capture for {_esc(domain)}"></a>'
+                for m in imgs)
+            if not img_html:
+                img_html = '<p class="muted">No screenshot was captured before the stop.</p>'
+            evidence_links = "".join(
+                f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
+                f'{_esc(e["label"])}</a></li>' for e in evidence_files)
             body = (
-                f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
-                f'<div class="card"><div class="banner warn">'
-                f'<b>Status:</b> {_badge(status)} — analysis incomplete. '
-                f'<b>0 confirmed findings — analysis incomplete.</b> '
-                f'This target was not fully checked, so no healthy or unhealthy conclusion can be '
-                f'drawn.</div></div>'
-                f'<div class="card"><h2>Why the analysis stopped</h2>{reason_html}</div>'
-                f'<div class="card"><h2>What was collected</h2>{partial_html}'
-                f'<p class="muted">Run <code>{_esc(run_id)}</code> · domain '
-                f'<code>{_esc(domain)}</code>. Raw diagnostic: '
-                f'<a href="/scout/run?id={_esc(run_id)}">back to run results</a>.</p></div>')
-            return _page("AI QA Factory — Target (incomplete)", "/scout", body)
+                f'<h1>{_esc(domain)}</h1><div class="row">{nav}'
+                f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
+                '<div class="card status-hero attention">'
+                f'<div class="row">{_badge("Needs your help", "attention")}'
+                f'<span>{_esc(human_reason)}</span></div>'
+                '<p><b>0 confirmed findings — analysis incomplete.</b> No conclusion about the site and no outreach '
+                'draft were created.</p>'
+                '<div class="row"><button class="btn primary" id="opencheck" '
+                'onclick="openCheck()">Open manual check</button>'
+                '<button class="chip" id="continuecheck" onclick="challengeAction(\'continue\')" '
+                'disabled>Continue check</button>'
+                '<button class="chip" id="defercheck" onclick="challengeAction(\'defer\')" '
+                'disabled>Defer</button>'
+                '<button class="chip danger" id="skipcheck" onclick="challengeAction(\'skip\')" '
+                'disabled>Skip target</button></div>'
+                '<p id="challengemsg" class="muted" aria-live="polite">Open a visible Chromium '
+                'window, complete the human check there, then choose Continue. The same browser '
+                'session stays open for up to 15 minutes.</p></div>'
+                '<div class="card"><h2>Partial evidence</h2>'
+                f'<div class="media-grid">{img_html}</div>'
+                f'<p><b>Landing response:</b> HTTP {_esc(network.get("status") or "unavailable")} · '
+                f'<b>Files captured:</b> {len(media) + len(evidence_files)}</p>'
+                '<p class="muted">Partial evidence confirms only why the scan stopped; it is not a '
+                'full QA result.</p></div>'
+                '<details class="card advanced"><summary>Advanced diagnostics</summary>'
+                f'<p><b>Internal status:</b> <code>{_esc(det.get("prospect_status") or "INCOMPLETE")}</code></p>'
+                f'<p><b>Reason:</b> <code>{_esc(raw_reason or "unavailable")}</code> · '
+                f'<b>Stage:</b> <code>{_esc(ma.get("stage") or "unavailable")}</code> · '
+                f'<b>Stop boundary:</b> <code>{_esc(ma.get("stop_boundary") or "unavailable")}</code></p>'
+                f'<p><b>Recorded recommendation:</b> '
+                f'{_esc(ma.get("recommended_action") or "Unavailable for this historical run")} · '
+                f'<b>Partial evidence:</b> landing HTTP {_esc(network.get("status") or "unavailable")}</p>'
+                f'<p><b>Run:</b> <code>{_esc(run_id)}</code> · <b>Prospect:</b> '
+                f'<code>{_esc(det.get("prospect_id") or "—")}</code></p>'
+                f'<ul>{evidence_links or "<li class=muted>No structured files available.</li>"}</ul>'
+                '<p class="muted">Playwright Inspector is a developer debugging window, not a saved '
+                'evidence artifact. A trace is shown only when the scan actually recorded one.</p>'
+                '</details>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";const DOM=" + json.dumps(domain)
+                + ";const RUN=" + json.dumps(run_id) + ";let SID='';let POLL=null;"
+                "function post(u,b){return fetch(u,{method:'POST',headers:{'X-Scout-CSRF':CSRF,"
+                "\"Content-Type\":\"application/json\"},body:JSON.stringify(b||{})}).then(r=>r.json());}"
+                "function show(s){var m=document.getElementById('challengemsg');if(m)m.textContent=s;}"
+                "function buttons(on){['continuecheck','defercheck','skipcheck'].forEach(function(id){"
+                "var b=document.getElementById(id);if(b)b.disabled=!on;});}"
+                "function openCheck(){var b=document.getElementById('opencheck');if(b)b.disabled=true;"
+                "show('Opening visible Chromium…');post('/api/scout/challenge/start',"
+                "{domain:DOM,run:RUN}).then(function(j){if(!j.ok){show(j.error||'Could not open');"
+                "if(b)b.disabled=false;return;}SID=j.session.id;buttons(true);render(j.session);"
+                "POLL=setInterval(poll,1200);});}"
+                "function challengeAction(a){if(!SID)return;buttons(false);"
+                "post('/api/scout/challenge/action',{id:SID,action:a}).then(function(j){"
+                "if(j.session)render(j.session);});}"
+                "function poll(){if(!SID)return;fetch('/api/scout/attention').then(r=>r.json()).then(j=>{"
+                "var s=(j.sessions||[]).find(x=>x.id===SID);if(s)render(s);});}"
+                "function render(s){show(s.message||s.state);var waiting=s.state==='waiting';"
+                "buttons(waiting);if(['completed','deferred','skipped','failed','timed_out'].includes(s.state)){"
+                "clearInterval(POLL);if(s.state==='completed')setTimeout(function(){location.href="
+                "'/scout/target?run='+encodeURIComponent(s.result_run)+'&domain='+encodeURIComponent(DOM);"
+                "},900);}}")
+            return _page("AI QA Factory — Needs attention", "/scout", body, script)
+
+        def _scout_attention_page(self) -> str:
+            data = challenge_manager.snapshot()
+            blocked = data.get("blocked_targets") or []
+            sessions = data.get("sessions") or []
+            rows = "".join(
+                '<tr>'
+                f'<td data-label="Target"><a href="/scout/target?run={_esc(r.get("run_id",""))}'
+                f'&domain={_esc(r.get("domain",""))}">{_esc(r.get("domain") or "unknown")}</a></td>'
+                f'<td data-label="Reason">{_esc(_manual_reason_label(r.get("reason","")))}</td>'
+                f'<td data-label="When" class="muted">{_fmt_ts(r.get("updated_at",""))}</td>'
+                f'<td data-label="Action"><a class="chip" href="/scout/target?run='
+                f'{_esc(r.get("run_id",""))}&domain={_esc(r.get("domain",""))}">Resolve</a></td>'
+                '</tr>' for r in blocked)
+            table = (
+                '<table class="responsive-table"><thead><tr><th>Target</th><th>Reason</th>'
+                f'<th>Detected</th><th>Action</th></tr></thead><tbody>{rows}</tbody></table>'
+                if rows else
+                '<div class="empty muted">No blocked targets need manual attention.</div>')
+            session_rows = "".join(
+                '<tr>'
+                f'<td data-label="Target">{_esc(s.get("domain",""))}</td>'
+                f'<td data-label="State">{_badge(_challenge_state_label(s.get("state","")))}</td>'
+                f'<td data-label="Message" class="muted">{_esc(s.get("message",""))}</td>'
+                f'<td data-label="Result">'
+                + (f'<a href="/scout/target?run={_esc(s.get("result_run",""))}&domain='
+                   f'{_esc(s.get("domain",""))}">Open result</a>'
+                   if s.get("state") == "completed" else "—")
+                + '</td></tr>' for s in sessions[:20])
+            sessions_html = (
+                '<table class="responsive-table"><thead><tr><th>Target</th><th>State</th>'
+                f'<th>Message</th><th>Result</th></tr></thead><tbody>{session_rows}</tbody></table>'
+                if session_rows else
+                '<div class="empty muted">No manual browser sessions yet.</div>')
+            body = (
+                '<h1>Needs attention</h1><div class="row">'
+                '<a class="chip" href="/scout/history">History</a>'
+                '<button class="chip" onclick="location.reload()">Refresh</button></div>'
+                f'<div class="card status-hero attention"><p><b>{len(blocked)} target(s)</b> were '
+                'blocked before a full analysis. Open a target to complete its human check, defer '
+                'it, or skip it. No CAPTCHA is bypassed automatically.</p></div>'
+                f'<div class="card"><h2>Blocked targets</h2>{table}</div>'
+                f'<details class="card advanced"><summary>Manual-check session history</summary>'
+                f'{sessions_html}</details>')
+            return _page("AI QA Factory — Needs attention", "/scout", body,
+                         "setTimeout(function(){location.reload();},15000);")
 
         def _scout_run_results_page(self, run_id: str) -> str:
             """Run-scoped result list for ONE exact run: DONE and MANUAL_ACTION_REQUIRED targets, with
@@ -2503,6 +3021,8 @@ function startCampaign(){{
                              f'<h1>Run results</h1><div class="card empty muted">No results for run '
                              f'<code>{_esc(run_id)}</code>.</div>')
             from core.scout.discovery.domain_intel import canonical_domain
+            from core.scout.operator_state import OperatorStateStore
+            archived = OperatorStateStore(service.output_dir).run_archived(run_id)
             rows = []
             for pid, p in sorted(prospects.items()):
                 dom = canonical_domain(p.get("url", "") or p.get("final_url", "")) or ""
@@ -2510,7 +3030,15 @@ function startCampaign(){{
                 total = int(p.get("verified_findings", 0) or 0)
                 actionable = int(p.get("verified_defects", 0) or 0)
                 info = max(total - actionable, 0)
-                complete = "complete" if status == "DONE" else "incomplete"
+                status_label = {
+                    "DONE": "Completed",
+                    "MANUAL_ACTION_REQUIRED": "Needs your help",
+                    "FAILED": "Could not complete",
+                    "PENDING": "Queued",
+                    "SKIPPED": "Skipped",
+                }.get(status, str(status or "Unknown").replace("_", " ").title())
+                complete = "Complete" if status == "DONE" else (
+                    "Not analyzed" if status in ("PENDING", "SKIPPED") else "Incomplete")
                 details = (f'<a href="/scout/target?run={_esc(run_id)}&domain={_esc(dom)}">Details</a>'
                            if dom else '<span class="muted">—</span>')
                 # Coverage (PR-B): a compact readout from the ALREADY-persisted compact state row.
@@ -2528,21 +3056,87 @@ function startCampaign(){{
                 else:
                     cov_cell = '<span class="muted">—</span>'
                 rows.append(
-                    f'<tr><td>{_esc(pid)}</td><td>{_esc(dom)}</td><td>{_badge(status)}</td>'
-                    f'<td>{actionable}</td><td>{info}</td><td>{_esc(complete)}</td>'
-                    f'<td>{cov_cell}</td>'
-                    f'<td>{details} · <a href="/api/prospect?run={_esc(run_id)}&id={_esc(pid)}">raw JSON</a></td></tr>')
-            table = (f'<table><caption>Targets in run {_esc(run_id)}</caption><tr><th>ID</th>'
-                     f'<th>Domain</th><th>Status</th><th>Actionable defects</th>'
-                     f'<th>Informational</th><th>Analysis</th><th>Coverage</th><th>Details</th></tr>{"".join(rows)}</table>')
-            body = (f'<h1>Run results</h1><div class="row">'
-                    f'<a class="chip" href="/scout">Manual URL Scan</a>'
-                    f'<a class="chip" href="/scout/history">History</a></div>'
-                    f'<div class="card"><p>Run <code>{_esc(run_id)}</code> · '
-                    f'{len(prospects)} target(s)</p><div class="scrollx">{table}</div>'
-                    f'<p class="muted">Actionable defects + informational observations = total findings. '
-                    f'Details opens the human-readable target; raw JSON is a diagnostic.</p></div>')
-            return _page("AI QA Factory — Run results", "/scout", body)
+                    f'<tr><td class="select-cell"><input type="checkbox" class="pick" '
+                    f'value="{_esc(pid)}" data-domain="{_esc(dom)}" '
+                    f'aria-label="Select {_esc(dom or pid)}"></td>'
+                    f'<td data-label="Target">{_esc(dom)}</td>'
+                    f'<td data-label="Status">{_badge(status_label, "attention" if status == "MANUAL_ACTION_REQUIRED" else "")}</td>'
+                    f'<td data-label="Actionable">{actionable}</td>'
+                    f'<td data-label="Informational">{info}</td>'
+                    f'<td data-label="Analysis">{_esc(complete)}</td>'
+                    f'<td data-label="Coverage">{cov_cell}</td>'
+                    f'<td data-label="Open">{details}</td></tr>')
+            table = (f'<table class="responsive-table"><caption>Targets in this run</caption>'
+                     f'<thead><tr><th><input type="checkbox" id="pickall" aria-label="Select all"></th>'
+                     f'<th>Target</th><th>Status</th><th>Actionable</th>'
+                     f'<th>Informational</th><th>Analysis</th><th>Coverage</th><th>Open</th></tr>'
+                     f'</thead><tbody>{"".join(rows)}</tbody></table>')
+            run_actions = (
+                '<button class="chip" onclick="runAction(\'restore_run\')">Restore run</button>'
+                if archived else
+                '<button class="chip" onclick="runAction(\'archive_run\')">Archive run</button>')
+            raw_links = "".join(
+                f'<li><code>{_esc(p.get("status") or "UNKNOWN")}</code> · '
+                f'<a href="/api/prospect?run={_esc(run_id)}&id={_esc(pid)}">'
+                f'{_esc(pid)} raw JSON</a></li>' for pid, p in sorted(prospects.items()))
+            body = ('<h1>Run results</h1><div class="row">'
+                    '<a class="chip" href="/scout">Manual URL Scan</a>'
+                    '<a class="chip" href="/scout/history">History</a>'
+                    '<a class="chip" href="/scout/attention">Needs attention</a></div>'
+                    + ('<div class="banner warn">This run is archived and hidden from normal '
+                       'operator lists.</div>' if archived else '')
+                    + f'<div class="card"><div class="summary-grid">'
+                    f'<div class="summary-item"><span class="muted">Targets</span>'
+                    f'<strong>{len(prospects)}</strong></div>'
+                    f'<div class="summary-item"><span class="muted">Completed</span>'
+                    f'<strong>{sum(1 for p in prospects.values() if p.get("status") == "DONE")}</strong></div>'
+                    f'<div class="summary-item"><span class="muted">Need attention</span>'
+                    f'<strong>{sum(1 for p in prospects.values() if p.get("status") == "MANUAL_ACTION_REQUIRED")}</strong></div>'
+                    f'</div><div class="scrollx" style="margin-top:12px">{table}</div></div>'
+                    f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
+                    f'selected</b><div class="row">'
+                    f'<button class="chip" onclick="selectedAction(\'skip_queued\')">Skip queued</button>'
+                    f'<button class="chip" onclick="selectedAction(\'archive_targets\')">'
+                    f'Archive from history</button>'
+                    f'<button class="chip danger" onclick="deleteEvidence()">Delete heavy evidence…</button>'
+                    f'<button class="chip" onclick="clearSelection()">Clear</button>'
+                    f'<span id="bulkmsg" class="muted" aria-live="polite"></span></div></div>'
+                    f'<details class="card advanced"><summary>Run administration</summary>'
+                    f'<p><b>Run ID:</b> <code>{_esc(run_id)}</code> · '
+                    f'<b>Internal state:</b> <code>{_esc(state.get("status") or "unknown")}</code></p>'
+                    f'<details><summary>Exact-run diagnostics</summary><ul>{raw_links}</ul></details>'
+                    f'<div class="row">{run_actions}'
+                    f'<button class="chip danger" onclick="deleteRun()">Delete entire run…</button></div>'
+                    f'<p class="muted">Archive is reversible. Deleting heavy evidence keeps findings '
+                    f'and summary history. Deleting the run is permanent, is refused while active, '
+                    f'and requires typing the exact run ID.</p></details>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";const RUN=" + json.dumps(run_id) + ";"
+                "function picks(){return Array.from(document.querySelectorAll('.pick:checked'));}"
+                "function refreshBulk(){var n=picks().length;document.getElementById('selected').textContent=n;"
+                "document.getElementById('bulkbar').hidden=!n;}"
+                "document.querySelectorAll('.pick').forEach(x=>x.onchange=refreshBulk);"
+                "var pa=document.getElementById('pickall');if(pa)pa.onchange=function(){"
+                "document.querySelectorAll('.pick').forEach(x=>x.checked=pa.checked);refreshBulk();};"
+                "function clearSelection(){document.querySelectorAll('.pick').forEach(x=>x.checked=false);"
+                "if(pa)pa.checked=false;refreshBulk();}"
+                "function post(b){return fetch('/api/scout/operator',{method:'POST',headers:{"
+                "'X-Scout-CSRF':CSRF,'Content-Type':'application/json'},body:JSON.stringify(b)})"
+                ".then(r=>r.json());}"
+                "function selectedAction(action,confirmFlag){var ps=picks();if(!ps.length)return;"
+                "post({action:action,run_id:RUN,prospect_ids:ps.map(x=>x.value),"
+                "domains:ps.map(x=>x.dataset.domain).filter(Boolean),confirm:!!confirmFlag})"
+                ".then(j=>{if(j.ok)location.reload();else document.getElementById('bulkmsg').textContent="
+                "j.error||'Action failed';});}"
+                "function deleteEvidence(){if(confirm('Delete screenshots, videos and browser traces "
+                "for selected targets? Findings and summary history will remain.'))"
+                "selectedAction('delete_evidence',true);}"
+                "function runAction(a){post({action:a,run_id:RUN}).then(j=>{if(j.ok)location.reload();"
+                "else alert(j.error||'Action failed');});}"
+                "function deleteRun(){var typed=prompt('Permanent deletion. Type the exact run ID: '+RUN);"
+                "if(typed!==RUN)return;post({action:'delete_run',run_id:RUN,confirm:true}).then(j=>{"
+                "if(j.ok)location.href='/scout/history';else alert(j.error||'Delete failed');});}")
+            return _page("AI QA Factory — Run results", "/scout", body, script)
 
         # --- Scout data pages, unified into the shared layout (reuse existing data) -----------
         def _results_page(self, q) -> str:
@@ -2711,21 +3305,33 @@ function startCampaign(){{
         def _activity_page(self, q) -> str:
             diag = self._want_diagnostics(q)
             data = self._activity_json((q.get("project") or [""])[0], diag)
-            rows = "".join(
-                f'<tr><td class="muted">{_esc(e["time"])}</td><td>{_esc(e["actor"])}</td>'
-                f'<td>{_esc(e["action"])}</td><td>{_esc(e["object"])}</td>'
-                f'<td class="muted">{_esc(e["result"])}</td></tr>' for e in data["events"])
+            if diag:
+                rows = "".join(
+                    f'<tr><td data-label="Time" class="muted">{_fmt_ts(e["time"])}</td>'
+                    f'<td data-label="Actor">{_esc(e["actor"])}</td>'
+                    f'<td data-label="Action">{_esc(e["action"])}</td>'
+                    f'<td data-label="Object">{_esc(e["object"])}</td>'
+                    f'<td data-label="Result" class="muted">{_esc(e["result"])}</td></tr>'
+                    for e in data["events"])
+            else:
+                rows = "".join(
+                    f'<tr><td data-label="When" class="muted">{_fmt_ts(e["time"])}</td>'
+                    f'<td data-label="Activity">{_esc(_activity_label(e["action"]))}</td>'
+                    f'<td data-label="Target" class="muted">{_esc(e["object"])}</td></tr>'
+                    for e in data["events"])
             if rows:
-                table = (f'<table><caption>Recent state transitions</caption><tr><th>Time</th>'
-                        f'<th>Actor</th><th>Action</th><th>Project</th><th>Result</th></tr>{rows}'
-                        f'</table>')
+                heads = ('<th>Time</th><th>Actor</th><th>Action</th><th>Object</th><th>Result</th>'
+                         if diag else '<th>When</th><th>Activity</th><th>Target</th>')
+                table = (f'<table class="responsive-table"><caption>Recent activity</caption>'
+                         f'<thead><tr>{heads}</tr></thead><tbody>{rows}</tbody></table>')
             elif data.get("scout_run_partial"):
                 # A Scout run is attached but has no persisted events (e.g. an older run pre-dating
                 # event logging) — say that plainly rather than pretend nothing has happened.
                 table = ('<div class="card empty muted">A Scout run is attached, but detailed '
                         'historical activity is unavailable for it.</div>')
             else:
-                table = '<div class="card empty muted">No activity yet.</div>'
+                table = ('<div class="card empty muted">No operator activity yet. Campaign and '
+                         'work events will appear here after the first run.</div>')
             toggle = (
                 '<a class="chip" href="/activity">&#10003; Production only</a>' if diag else
                 '<a class="chip" href="/activity?diagnostics=1">Show diagnostics</a>')
@@ -2758,9 +3364,6 @@ function startCampaign(){{
                 'No secrets or absolute paths are shown.</p></div>')
             body = (
                 '<h1>Settings</h1>'
-                f'<div class="card"><h2>Workspace</h2>'
-                f'<p>Output workspace: <code>{_esc(str(service.output_dir))}</code></p></div>'
-                + build_card +
                 '<div class="card"><h2>Display density</h2>'
                 '<div class="row"><button class="btn" onclick="setDensity(\'comfortable\')">Comfortable</button>'
                 '<button class="btn" onclick="setDensity(\'compact\')">Compact</button></div>'
@@ -2769,7 +3372,11 @@ function startCampaign(){{
                 '<p class="muted">1–10 public https seeds · static browser · concurrency 1 · read-only.</p></div>'
                 f'<div class="card"><h2>Gmail</h2><p>Setup status: {_badge(gmail_state)} '
                 '<span class="muted">(no secret is shown; live send is a separate opt-in CLI path)</span></p></div>'
-                f'{self._access_section()}')
+                '<details class="card advanced"><summary>System diagnostics</summary>'
+                f'<p><b>Output workspace:</b> <code>{_esc(str(service.output_dir))}</code></p>'
+                + build_card +
+                f'{self._access_section()}'
+                '</details>')
             script = ("function setDensity(d){document.documentElement.setAttribute('data-density',d);"
                       "try{localStorage.setItem('qa_density',d);}catch(e){}}"
                       "try{var d=localStorage.getItem('qa_density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}")
@@ -3172,12 +3779,80 @@ def _scout_details_cell(run_id: str, pid: str, prospect: dict) -> str:
     return f'{primary} · <a href="{raw}">View raw JSON</a>'
 
 
+def _scout_details_primary(run_id: str, prospect: dict) -> str:
+    from core.scout.discovery.domain_intel import canonical_domain
+    dom = canonical_domain(prospect.get("url", "") or prospect.get("final_url", "")) or ""
+    if not run_id or not dom:
+        return '<span class="muted">—</span>'
+    return f'<a href="/scout/target?run={_esc(run_id)}&domain={_esc(dom)}">Details</a>'
+
+
+def _prospect_status_label(status: str) -> str:
+    return {
+        "DONE": "Completed",
+        "MANUAL_ACTION_REQUIRED": "Needs your help",
+        "FAILED": "Could not complete",
+        "PENDING": "Queued",
+        "RUNNING": "In progress",
+        "SKIPPED": "Skipped",
+        "COMPLETED": "Completed",
+        "CANCELLED": "Stopped",
+        "KILLED": "Cancelled",
+    }.get(str(status or "").strip().upper(), str(status or "Unknown").replace("_", " ").title())
+
+
 def _looks_blocked(status: str, reason: str) -> bool:
     """True when a target looks blocked by an access challenge (CAPTCHA / bot wall / 403 / login),
     so the card shows the honest banner + human-in-the-loop rescan button."""
     s = (str(status) + " " + str(reason)).lower()
     return any(k in s for k in ("challenge", "captcha", "blocked", "bot", "403", "forbidden",
                                 "rate limit", "access denied", "login wall", "not authorized"))
+
+
+def _manual_reason_label(reason: str) -> str:
+    return {
+        "captcha_detected": "Human verification requested",
+        "access_prohibited": "Automated access blocked",
+        "403": "Access blocked (HTTP 403)",
+    }.get(str(reason or "").strip().lower(), str(reason or "Reason unavailable").replace("_", " "))
+
+
+def _analysis_status_label(status: str) -> str:
+    return {
+        "analyzed": "Analyzed",
+        "analyzing": "In progress",
+        "discovered": "Ready to analyze",
+        "failed": "Could not complete",
+        "skipped": "Skipped",
+        "rejected": "Not eligible",
+    }.get(str(status or "").strip().lower(), str(status or "Unknown").replace("_", " ").title())
+
+
+def _activity_label(action: str) -> str:
+    key = str(action or "").strip()
+    return {
+        "run_started": "Scout run started",
+        "prospect_started": "Target analysis started",
+        "prospect_done": "Target analysis completed",
+        "manual_action_required": "Target needs manual help",
+        "prospect_skipped_by_operator": "Queued target skipped",
+        "run_finished": "Scout run finished",
+    }.get(key, key.replace("_", " ").replace("->", "→").strip().title())
+
+
+def _challenge_state_label(state: str) -> str:
+    return {
+        "opening": "Opening browser",
+        "waiting": "Waiting for you",
+        "continuing": "Checking again",
+        "defer_requested": "Deferring",
+        "skip_requested": "Skipping",
+        "completed": "Completed",
+        "deferred": "Deferred",
+        "skipped": "Skipped",
+        "failed": "Failed",
+        "timed_out": "Timed out",
+    }.get(str(state or "").strip().lower(), str(state or "Unknown").replace("_", " ").title())
 
 
 # --- v3.1 design system (local CSS tokens; no external assets) ---------------------------------
@@ -3264,6 +3939,19 @@ details>summary{cursor:pointer;color:var(--muted)}
 .only-mobile{display:none}
 .cards{list-style:none;margin:0;padding:0} .cards li{margin-bottom:var(--gap)}
 .cards .card h3{font-size:15px;margin:0 0 .3rem} .cards .meta{font-size:12px}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--gap)}
+.summary-item{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px}
+.summary-item strong{display:block;font-size:20px;line-height:1.2;margin-top:3px}
+.evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:var(--gap)}
+.evidence-item{border:1px solid var(--border);border-radius:6px;padding:10px;min-width:0}
+.evidence-item h3{font-size:14px;margin:0 0 4px}
+.advanced{border-style:dashed}.advanced>summary{font-weight:600;color:var(--text)}
+.bulkbar{position:sticky;bottom:10px;z-index:4;border-color:var(--accent);box-shadow:0 8px 24px #0008}
+.status-hero{border-left:4px solid var(--ok)}.status-hero.attention{border-left-color:var(--attention)}
+.status-hero.blocked{border-left-color:var(--error)}
+.media-grid{display:flex;gap:8px;flex-wrap:wrap}.media-grid img{display:block;max-width:280px;
+ max-height:200px;border:1px solid var(--border);border-radius:6px}
+.responsive-table td[data-label]::before{display:none}
 @media (max-width:640px){ .only-desktop{display:none} .only-mobile{display:block} }
 /* Campaign form: stack each field (label above a full-width control); checkboxes stay inline. */
 .formstack label{display:block;margin:0 0 14px;color:var(--text);font-weight:600;font-size:13px}
@@ -3278,6 +3966,16 @@ button.chip,a.chip{min-height:30px;cursor:pointer}
   button.chip,a.chip{min-height:44px;padding:8px 16px;font-size:13px}
   input,select,textarea{font-size:16px}   /* >=16px avoids iOS focus zoom */
   h1{font-size:20px}
+  .responsive-table,.responsive-table tbody,.responsive-table tr,.responsive-table td{display:block;width:100%}
+  .responsive-table thead{display:none}
+  .responsive-table tr{border-bottom:1px solid var(--border);padding:8px}
+  .responsive-table td{border:0;height:auto;padding:5px 4px;overflow-wrap:anywhere}
+  .responsive-table td[data-label]::before{display:block;content:attr(data-label);
+    color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase}
+  .responsive-table td.select-cell{display:flex;gap:8px;align-items:center}
+  .responsive-table td.select-cell::before{display:none}
+  .media-grid img,.media-grid video{max-width:100%!important;height:auto}
+  .bulkbar{bottom:4px}
 }
 """
 
@@ -3570,10 +4268,14 @@ def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 
     freeze_running_identity()
     launcher = launcher or CampaignLauncher(service)
     token = secrets.token_urlsafe(32) if csrf_token is None else csrf_token
+    from core.scout.challenge_session import ChallengeSessionManager
+    challenge_manager = ChallengeSessionManager(service.output_dir)
     server = ThreadingHTTPServer((host, port),
-                                 _make_handler(service, launcher, token, operator_home))
+                                 _make_handler(service, launcher, token, operator_home,
+                                               challenge_manager))
     server.scout_csrf_token = token          # type: ignore[attr-defined]
     server.scout_launcher = launcher         # type: ignore[attr-defined]
+    server.scout_challenge_manager = challenge_manager  # type: ignore[attr-defined]
     bound_host, bound_port = server.server_address[0], server.server_address[1]
     out_dir = getattr(service, "output_dir", "outputs")
     # Publish the CSRF token to a local, per-port file so the loopback CLI control command can

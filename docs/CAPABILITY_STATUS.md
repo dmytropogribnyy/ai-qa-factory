@@ -9,7 +9,7 @@ explicitly / provide a key) · **Experimental** (code kept, off by default, kill
 |---|---|---|---|
 | Scout discovery → analysis → Dashboard (findings, severity, confidence, repro, evidence, screenshots, history, dedup) | **Production** | on | `main`; run per `docs/RUNBOOK_SCOUT.md` |
 | Bounded, read-only public analysis + honest budget/status | **Production** | on | `main` |
-| Per-run report (Markdown + JSON) + Dashboard HTML views | **Production** | on | `outputs/scout/<run>/report/` (e.g. `DISCOVERY_SUMMARY.md`, `VERIFIED_FINDINGS.md`, `*.json`) + `/scout` views + `/api/scout/export` bundle |
+| Per-run report (Markdown + JSON) + Dashboard HTML views | **Production** | on | `outputs/scout/<run>/report/` (e.g. `DISCOVERY_SUMMARY.md`, `VERIFIED_FINDINGS.md`, `*.json`) + `/scout` views + internal `/api/scout/export` review record + exact-target client ZIP |
 | Tavily live discovery | **Optional** | on (key configured) | `python tools/tavily_setup.py`; without a key, use `scout run --seeds` |
 | Deep capture (Playwright screenshots/evidence) | **Optional** | selectable | `browser_mode=playwright` (else static) |
 | Direct Claude↔GPT review driver + durable supervisor + Dashboard `/collab` | **Production** | on | `main` (Issue #14/#16) — Claude engineers, GPT reviews |

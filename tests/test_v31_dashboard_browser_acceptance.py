@@ -7,6 +7,11 @@ CI's browser-acceptance job (which enforces zero skips).
 """
 from __future__ import annotations
 
+import struct
+import zipfile
+import zlib
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("playwright", reason="playwright not installed")
@@ -24,7 +29,10 @@ from core.orchestration.providers import FixedClock, SequentialIds  # noqa: E402
 from core.orchestration.work_execution import WorkExecutionService  # noqa: E402
 from core.schemas.work_execution import ValidationOutcome  # noqa: E402
 from core.scout.dashboard import start_dashboard  # noqa: E402
+from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry  # noqa: E402
+from core.scout.findings import ScoutFinding  # noqa: E402
 from core.scout.service import ScoutService  # noqa: E402
+from core.scout.store import RunStore  # noqa: E402
 
 _BRIEF = "Reproduce and fix a defect in a small Python module and add a regression test."
 
@@ -47,7 +55,8 @@ pytestmark = [
 
 _PRIMARY_PAGES = ["/", "/work", "/work/alpha", "/tools", "/activity", "/settings", "/docs",
                   "/scout", "/scout/campaigns", "/results", "/projects", "/company?id=unknown",
-                  "/results?q=x&sev=high"]
+                  "/results?q=x&sev=high", "/scout/new", "/scout/history",
+                  "/scout/attention"]
 
 
 def _passing(_c):
@@ -74,6 +83,81 @@ def _seed(tmp_path):
 
 def _serious(violations):
     return [v for v in violations if v.get("impact") in ("serious", "critical")]
+
+
+def _seed_scout_operator(tmp_path):
+    run_id = "operator-browser-run"
+    store = RunStore(str(tmp_path), run_id)
+    store.write_config({"campaign_name": "curated", "browser_mode": "playwright",
+                        "video_mode": "manual"})
+    store.save_state({"status": "COMPLETED", "finished_at": "2026-07-24T08:00:00+00:00",
+                      "prospects": {
+        "01-alpha": {"status": "DONE", "url": "https://alpha.example/",
+                     "verified_findings": 1, "verified_defects": 1,
+                     "coverage": "adaptive", "meaningful_pages_tested": 2,
+                     "page_stop_reason": "links_exhausted"},
+        "02-beta": {"status": "MANUAL_ACTION_REQUIRED", "url": "https://beta.example/",
+                    "reason": "captcha_detected", "analysis_complete": False},
+    }})
+    finding = ScoutFinding(
+        signature="broken_checkout", category="functional", severity="high",
+        confidence="high", title="Checkout link returns an error",
+        business_impact="Blocks conversion",
+        reproduction_steps=["Open checkout", "Select Continue"]).to_dict()
+    store.save_prospect_artifact("01-alpha", "findings.json",
+                                 {"verified": [finding], "rejected": []})
+    store.save_prospect_artifact("01-alpha", "coverage.json", {
+        "coverage": "adaptive", "page_ceiling": 12, "meaningful_pages_tested": 2,
+        "pages_skipped_noise": 1, "pages_skipped_near_duplicate": 0,
+        "page_stop_reason": "links_exhausted"})
+    store.save_prospect_artifact("01-alpha", "observation.json", {
+        "status": 200, "final_url": "https://alpha.example/", "axe_status": "ok",
+        "axe_violations": [], "timing_ms": {"load": 400},
+        "links": ["mailto:hello@alpha.example"]})
+    store.save_prospect_artifact("01-alpha", "browser_trace.json", {
+        "schema_version": 1, "redaction_applied": True, "raw_dom_stored": False,
+        "raw_headers_stored": False, "passes": [{
+            "pass": "landing", "url": "https://alpha.example/",
+            "final_url": "https://alpha.example/", "status": 200, "ok": True,
+            "screenshot_ref": "landing.png", "timing_ms": {"load": 400},
+            "console_errors": [], "failed_resources": [], "blocked_requests": [],
+        }],
+    })
+    (store.prospect_dir("01-alpha") / "landing.png").write_bytes(_fixture_png())
+    store.save_prospect_artifact("02-beta", "observation.json", {
+        "status": 403, "final_url": "https://beta.example/", "captcha_marker": True})
+    store.save_prospect_artifact("02-beta", "manual_action.json", {
+        "reason": "captcha_detected", "stage": "post_landing_precheck",
+        "stop_boundary": "stopped_before_interaction",
+        "recommended_action": "Complete the human check, then continue."})
+    AnalyzedSiteRegistry(str(tmp_path)).record_analysis(
+        "alpha.example", campaign_id=run_id, evidence_ref=f"scout/{run_id}")
+    control = tmp_path / "scout" / "_runcontrol"
+    control.mkdir(parents=True, exist_ok=True)
+    (control / f"{run_id}.json").write_text(
+        '{"campaign_id":"operator-browser-run"}', encoding="utf-8")
+    return run_id
+
+
+def _fixture_png(width=320, height=180):
+    """Small valid screenshot-like PNG fixture without an image-library dependency."""
+    rows = []
+    for y in range(height):
+        color = (34, 91 + (y % 35), 180) if y < 120 else (238, 244, 255)
+        rows.append(b"\x00" + bytes(color) * width)
+
+    def chunk(kind, payload):
+        return (
+            struct.pack(">I", len(payload)) + kind + payload
+            + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
+        + chunk(b"IEND", b"")
+    )
 
 
 def test_pro_dark_default_toggle_persist_and_axe_both_themes(tmp_path):
@@ -321,6 +405,100 @@ def test_narrow_viewport_has_no_horizontal_overflow(tmp_path):
             overflow = page.evaluate(
                 "() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2")
             assert overflow is False    # the page body does not scroll horizontally
+            browser.close()
+    finally:
+        server.shutdown()
+
+
+def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(tmp_path):
+    run_id = _seed_scout_operator(tmp_path)
+    service = ScoutService(str(tmp_path))
+    service.attach(run_id)
+    server, url = start_dashboard(service, operator_home=True)
+    axe = Axe()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            desktop = browser.new_page(viewport={"width": 1280, "height": 900})
+            screenshot_dir = Path("reports/screenshots")
+            screenshot_dir.mkdir(parents=True, exist_ok=True)
+            for path in (
+                f"/scout/run?id={run_id}",
+                f"/scout/target?run={run_id}&domain=alpha.example",
+                f"/scout/target?run={run_id}&domain=beta.example",
+                "/scout/history",
+                "/scout/attention",
+            ):
+                desktop.goto(url + path, wait_until="load")
+                serious = _serious(axe.run(desktop).get("violations", []))
+                assert not serious, (path, [v["id"] for v in serious])
+
+            desktop.goto(url + f"/scout/run?id={run_id}", wait_until="load")
+            desktop.screenshot(
+                path=screenshot_dir / "01-scout-run-results-desktop.png", full_page=True)
+            desktop.goto(
+                url + f"/scout/target?run={run_id}&domain=alpha.example", wait_until="load")
+            assert desktop.get_by_role(
+                "link", name="Download client-ready evidence (.zip)").is_visible()
+            assert desktop.get_by_text("hello@alpha.example", exact=True).is_visible()
+            assert desktop.get_by_text("Public mailto link", exact=False).is_visible()
+            assert desktop.get_by_text("fixable by us after", exact=False).is_visible()
+            with desktop.expect_download() as download_info:
+                desktop.get_by_role(
+                    "link", name="Download client-ready evidence (.zip)").click()
+            download = download_info.value
+            assert download.suggested_filename == "alpha.example-qa-evidence.zip"
+            with zipfile.ZipFile(download.path()) as archive:
+                assert {
+                    "QA_Evidence_Summary.html",
+                    "MANIFEST.json",
+                    "evidence/screenshots/screenshot-01.png",
+                } <= set(archive.namelist())
+            desktop.screenshot(
+                path=screenshot_dir / "02-scout-target-complete-desktop.png", full_page=True)
+            desktop.goto(
+                url + f"/scout/target?run={run_id}&domain=beta.example", wait_until="load")
+            assert desktop.get_by_role("button", name="Open manual check").is_visible()
+            assert desktop.get_by_text("analysis incomplete", exact=False).is_visible()
+            assert desktop.get_by_text("Advanced diagnostics").is_visible()
+            assert desktop.locator("details.advanced").get_attribute("open") is None
+            desktop.screenshot(
+                path=screenshot_dir / "03-scout-target-needs-attention-desktop.png",
+                full_page=True)
+            desktop.goto(url + "/scout/attention", wait_until="load")
+            desktop.screenshot(
+                path=screenshot_dir / "04-scout-attention-queue-desktop.png", full_page=True)
+
+            mobile = browser.new_page(viewport={"width": 390, "height": 844})
+            mobile.goto(url + f"/scout/run?id={run_id}", wait_until="load")
+            assert mobile.evaluate(
+                "()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
+            assert mobile.get_by_text("Needs your help", exact=True).is_visible()
+            assert mobile.get_by_role("link", name="Details").first.is_visible()
+            mobile.screenshot(
+                path=screenshot_dir / "05-scout-run-results-mobile.png", full_page=True)
+            mobile.goto(
+                url + f"/scout/target?run={run_id}&domain=alpha.example", wait_until="load")
+            assert mobile.get_by_role(
+                "link", name="Download client-ready evidence (.zip)").is_visible()
+            assert mobile.evaluate(
+                "()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
+            mobile.screenshot(
+                path=screenshot_dir / "07-scout-target-complete-mobile.png", full_page=True)
+
+            # Real guarded UI mutation: active History -> select -> Archive -> archived tab.
+            desktop.goto(url + "/scout/history", wait_until="load")
+            desktop.screenshot(
+                path=screenshot_dir / "06-scout-history-desktop.png", full_page=True)
+            desktop.locator(".pick").first.check()
+            desktop.get_by_role("button", name="Archive selected").click()
+            desktop.wait_for_load_state("load")
+            assert "No analyzed sites yet" in desktop.content()
+            desktop.get_by_role("link", name="Archived").click()
+            assert desktop.get_by_role("link", name="alpha.example").is_visible()
+            desktop.goto(url + "/scout/campaigns", wait_until="load")
+            desktop.screenshot(
+                path=screenshot_dir / "08-scout-campaigns-desktop.png", full_page=True)
             browser.close()
     finally:
         server.shutdown()

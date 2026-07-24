@@ -239,7 +239,7 @@ def test_completed_run_does_not_render_no_activity_yet(tmp_path):
         server.shutdown()
     assert status == 200
     assert "no activity yet" not in html.lower()
-    assert "prospect_done" in html
+    assert "target analysis completed" in html.lower()
 
 
 # -- 9: absent detailed history is described honestly, not as "no activity" ----------------------
