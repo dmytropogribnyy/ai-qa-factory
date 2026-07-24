@@ -35,11 +35,18 @@ violations must be preserved.
 | Route | Page | Notes |
 |---|---|---|
 | `/` | Stable Overview inbox (operator-home) | attention, active work, campaigns |
-| `/work` · `/work/<id>` | Work list (saved-view filters) · Project detail | tabs: Summary/Plan/Results/Delivery |
+| `/work` · `/work/<id>` | Work queue · Project detail | four primary views, stage selector, brief analysis; tabs: Summary/Plan/Results/Delivery |
 | `/scout` · `/scout/campaigns` · `/results` · `/company` | Scout module | state-aware controls; QA history and commercial follow-up stay distinct |
 | `/activity` · `/collab` · `/settings` · `/docs` | More | activity · collaboration · settings/retention · operator help |
 | `/tools` | Advanced readiness | linked from Settings, not primary navigation |
 | `/work-evidence` | safe evidence preview/download | confined; active content never inline |
+
+Work keeps `Active`, `Needs attention`, `Completed`, and `All` as the only persistent top-level
+views. Individual lifecycle stages belong in one labeled `Status` selector; diagnostics belong under
+`Advanced view options`. The Work and Overview empty states link to an inline, planning-only
+`Analyze a client brief` form. Use field-level validation and live regions rather than browser
+alerts. Ordinary pages use the `AI QA Factory · Operator Dashboard` footer; Scout routes keep the
+Scout module/version identity.
 
 ### JSON read-model endpoints (UI consumes these; do not parse raw files)
 `/api/overview`, `/api/work`, `/api/work/<id>`, `/api/activity`, `/api/tools`, `/api/csrf`.

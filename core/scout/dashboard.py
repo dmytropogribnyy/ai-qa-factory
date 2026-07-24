@@ -1601,8 +1601,11 @@ function startCampaign(){{
                         f'<th>Health</th><th>Next action</th></tr>{work}</table>'
                         if work else
                         '<div class="card empty compact"><strong>No active client work</strong>'
-                        '<div class="muted">Give Claude Code a client brief when you are ready to '
-                        'start.</div><p><a class="btn" href="/docs">How to start client work</a></p>'
+                        '<div class="muted">Paste a client brief to create a reviewable work plan.'
+                        '</div><p class="row empty-actions">'
+                        '<a class="btn primary" href="/work?create=1#client-brief">'
+                        'Analyze a client brief</a>'
+                        '<a class="btn" href="/docs">How client work operates</a></p>'
                         '</div>')
             def _crow(c):
                 return (f'<tr><td>{_esc(c["title"])}</td><td>{_badge(c["status"])}</td>'
@@ -1622,9 +1625,16 @@ function startCampaign(){{
                  if hidden else ''))
             diag_banner = ('<div class="banner warn">Showing diagnostic data (smoke/acceptance/'
                            'replay/demo). These are not production work.</div>' if diag else '')
+            hidden_description = (
+                'Diagnostic records are visible in this view; production counts remain separate.'
+                if diag else
+                ('1 test, replay, or diagnostic record is hidden from production counts.'
+                 if hidden == 1 else
+                 f'{hidden} test, replay, or diagnostic records are hidden from production counts.'))
             diag_options = (
                 f'<details class="advanced compact-details"><summary>Advanced view options</summary>'
-                f'<div class="row" style="margin-top:10px">{diag_toggle}</div></details>'
+                f'<p class="muted">{hidden_description}</p>'
+                f'<div class="row">{diag_toggle}</div></details>'
                 if diag_toggle else '')
             body = (f'<h1>Overview</h1>{diag_banner}'
                     f'<div class="summary-grid overview-summary">'
@@ -1650,25 +1660,60 @@ function startCampaign(){{
                           "+'|'+c.progress})]}"))
             return _page("AI QA Factory — Overview", "/", body, script)
 
-        _WORK_VIEWS = (("active", "Active"), ("needs_attention", "Needs Attention"),
-                       ("ready_to_execute", "Ready to Execute"), ("in_progress", "In Progress"),
-                       ("blocked", "Blocked"), ("ready_for_review", "Ready for Review"),
-                       ("ready_for_delivery", "Ready for Delivery"),
-                       ("delivery_prepared", "Delivery Prepared"), ("completed", "Completed"),
-                       ("all", "All"))
+        _WORK_PRIMARY_VIEWS = (("active", "Active"), ("needs_attention", "Needs attention"),
+                               ("completed", "Completed"), ("all", "All"))
+        _WORK_STATUS_VIEWS = (("ready_to_execute", "Ready to execute"),
+                              ("in_progress", "In progress"), ("blocked", "Blocked"),
+                              ("ready_for_review", "Ready for review"),
+                              ("ready_for_delivery", "Ready for delivery"),
+                              ("delivery_prepared", "Delivery prepared"))
 
         def _work_list_page(self, q) -> str:
             view = (q.get("view") or ["active"])[0]
+            allowed_views = {v for v, _ in self._WORK_PRIMARY_VIEWS + self._WORK_STATUS_VIEWS}
+            if view not in allowed_views:
+                view = "active"
             diag = self._want_diagnostics(q)
             data = self._read_model().project_list(view=view, include_diagnostics=diag)
             _dsuffix = "&diagnostics=1" if diag else ""
             views = "".join(
-                f'<a class="chip" href="/work?view={v}{_dsuffix}" '
-                f'{"style=font-weight:600" if v == view else ""}>{_esc(lbl)}</a>'
-                for v, lbl in self._WORK_VIEWS)
-            views += (
-                f'<a class="chip" href="/work?view={view}">&#10003; Production only</a>' if diag else
-                f'<a class="chip" href="/work?view={view}&diagnostics=1">Show diagnostics</a>')
+                f'<a class="chip" href="/work?view={v}{_dsuffix}"'
+                f'{" aria-current=\"page\"" if v == view else ""}>{_esc(lbl)}</a>'
+                for v, lbl in self._WORK_PRIMARY_VIEWS)
+            status_options = ['<option value="" disabled'
+                              + (' selected' if view not in dict(self._WORK_STATUS_VIEWS) else '')
+                              + '>Choose a stage</option>']
+            status_options.extend(
+                f'<option value="{v}"{" selected" if v == view else ""}>{_esc(lbl)}</option>'
+                for v, lbl in self._WORK_STATUS_VIEWS)
+            diag_hidden = (
+                '<input type="hidden" name="diagnostics" value="1">' if diag else '')
+            status_filter = (
+                '<form class="work-status-filter" action="/work" method="get">'
+                '<label for="work_status">Status</label>'
+                f'<select id="work_status" name="view" onchange="document.getElementById('
+                f'\'work_status_apply\').disabled=!this.value">{"".join(status_options)}</select>'
+                f'{diag_hidden}<button id="work_status_apply" class="btn" type="submit"'
+                f'{" disabled" if view not in dict(self._WORK_STATUS_VIEWS) else ""}>Apply</button>'
+                '</form>')
+            hidden = self._read_model().overview(
+                include_diagnostics=False).counts.get("diagnostics_hidden", 0)
+            diag_toggle = (
+                f'<a class="chip" href="/work?view={view}">&#10003; Production only — hide '
+                'diagnostics</a>' if diag else
+                f'<a class="chip" href="/work?view={view}&diagnostics=1">Show diagnostics'
+                f'{f" ({hidden})" if hidden else ""}</a>')
+            diag_description = (
+                f'{hidden} test, replay, or diagnostic record'
+                f'{" is" if hidden == 1 else "s are"} hidden from production views.'
+                if not diag else
+                'Diagnostic work is visible in this view and remains excluded from production '
+                'counts on Overview.')
+            diag_options = (
+                '<details class="advanced compact-details work-view-options">'
+                '<summary>Advanced view options</summary>'
+                f'<p class="muted">{diag_description}</p><div class="row">{diag_toggle}</div>'
+                '</details>')
             def _row(p):
                 return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></td>'
                         f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
@@ -1691,33 +1736,104 @@ function startCampaign(){{
                          + "".join(_card(p) for p in data["projects"]) + "</ul>")
                 table = desktop + cards
             else:
-                table = ('<div class="card empty">No projects in this view. '
-                         '<a href="/work?view=active">Clear filter</a></div>')
+                empty_states = {
+                    "active": (
+                        "No active client work",
+                        "Analyze a brief to create a feasibility assessment and reviewable plan.",
+                        '<a class="btn primary" href="/work?create=1#client-brief">'
+                        'Analyze a client brief</a>',
+                    ),
+                    "needs_attention": (
+                        "Nothing needs your attention",
+                        "Blocked, approval-ready, and review-ready work will appear here.",
+                        '<a class="btn" href="/work?view=active">View active work</a>',
+                    ),
+                    "completed": (
+                        "No completed client work",
+                        "Finished and manually delivered projects will remain available here.",
+                        '<a class="btn" href="/work?view=active">View active work</a>',
+                    ),
+                    "all": (
+                        "No client work yet",
+                        "Paste a client brief to create the first reviewable work plan.",
+                        '<a class="btn primary" href="/work?create=1#client-brief">'
+                        'Analyze a client brief</a>',
+                    ),
+                }
+                title, description, action = empty_states.get(
+                    view,
+                    ("No work at this stage",
+                     "Projects will appear here when they reach the selected lifecycle stage.",
+                     '<a class="btn" href="/work?view=active">View active work</a>'))
+                table = (f'<div class="card empty compact"><strong>{title}</strong>'
+                         f'<div class="muted">{description}</div>'
+                         f'<p class="row empty-actions">{action}</p></div>')
+            open_intake = " open" if (q.get("create") or [""])[0] in ("1", "true", "yes") else ""
             create = (
-                '<details class="card"><summary>Create work from a pasted client brief</summary>'
-                '<p class="muted">Analysis only — nothing is executed. This reuses analyze-job.</p>'
-                '<p><label>Project name (optional)<br><input id="cw_pid" placeholder="my-project"></label></p>'
-                '<p><label>Source platform (optional)<br><input id="cw_src" placeholder="upwork / direct"></label></p>'
-                '<p><label>Client brief<br><textarea id="cw_brief" rows="5" style="width:100%"></textarea></label></p>'
-                '<p><button class="btn primary" onclick="createWork(this)">Analyze brief</button></p>'
-                '<p class="muted">No Upwork API — paste the brief and (optionally) a source reference.</p>'
+                f'<details id="client-brief" class="card work-intake"{open_intake}>'
+                '<summary>Analyze a client brief</summary>'
+                '<p class="muted work-intake-intro">Create a reviewable feasibility assessment and '
+                'work plan. Nothing will execute until you approve the plan.</p>'
+                '<div class="work-intake-grid">'
+                '<label for="cw_pid">Project name <span class="label-note">(optional)</span></label>'
+                '<input id="cw_pid" maxlength="64" pattern="[A-Za-z0-9._-]+" '
+                'aria-describedby="cw_pid_help" placeholder="checkout-regression">'
+                '<small id="cw_pid_help" class="field-help">Letters, numbers, dots, underscores, and '
+                'hyphens. Leave blank to generate a safe name.</small>'
+                '<label for="cw_src">Source platform <span class="label-note">(optional)</span></label>'
+                '<select id="cw_src"><option value="manual">Not specified</option>'
+                '<option value="upwork">Upwork</option><option value="direct">Direct client</option>'
+                '<option value="other">Other</option></select>'
+                '<label for="cw_brief">Client brief</label>'
+                '<textarea id="cw_brief" rows="7" required aria-describedby="cw_brief_help cw_error" '
+                'placeholder="Paste the client request, scope, deliverables, deadline, budget, and '
+                'available access."></textarea>'
+                '<small id="cw_brief_help" class="field-help">Include enough detail to assess fit, '
+                'risks, missing access, validation, and expected deliverables.</small></div>'
+                '<div id="cw_error" class="form-error" role="alert" aria-live="assertive" '
+                'tabindex="-1" hidden></div>'
+                '<div class="row work-intake-actions"><button class="btn primary" type="button" '
+                'onclick="createWork(this)">Analyze and create plan</button>'
+                '<span id="cw_status" class="muted" role="status" aria-live="polite"></span></div>'
                 '</details>')
             script = (self._work_actions_script() +
-                      "function createWork(btn){var b=document.getElementById('cw_brief').value.trim();"
-                      "if(!b){alert('paste a client brief');return;}"
-                      "if(btn){if(btn.dataset.busy)return;btn.dataset.busy='1';btn.disabled=true;}"
+                      "function clearWorkError(){var e=document.getElementById('cw_error');"
+                      "var b=document.getElementById('cw_brief'),p=document.getElementById('cw_pid');"
+                      "if(e){e.hidden=true;e.textContent='';}if(b)b.removeAttribute('aria-invalid');"
+                      "if(p)p.removeAttribute('aria-invalid');}\n"
+                      "function showWorkError(message,field){var e=document.getElementById('cw_error');"
+                      "var s=document.getElementById('cw_status');if(s)s.textContent='';"
+                      "if(e){e.textContent=message;e.hidden=false;}if(field){"
+                      "field.setAttribute('aria-invalid','true');field.focus();}else if(e)e.focus();}\n"
+                      "function setWorkBusy(btn,busy){if(!btn)return;if(busy){"
+                      "btn.dataset.busy='1';btn.disabled=true;}else{btn.disabled=false;"
+                      "delete btn.dataset.busy;}}\n"
+                      "function createWork(btn){var brief=document.getElementById('cw_brief');"
+                      "var pid=document.getElementById('cw_pid');var b=brief.value.trim();"
+                      "clearWorkError();if(!b){showWorkError('Paste a client brief to continue.',brief);"
+                      "return;}var p=pid.value.trim();if(p&&!/^[A-Za-z0-9._-]{1,64}$/.test(p)){"
+                      "showWorkError('Use only letters, numbers, dots, underscores, or hyphens in "
+                      "the project name.',pid);return;}if(btn&&btn.dataset.busy)return;"
+                      "setWorkBusy(btn,true);var status=document.getElementById('cw_status');"
+                      "if(status)status.textContent='Analyzing the brief and creating a plan…';"
                       "fetch('/api/work/analyze',{method:'POST',headers:{'Content-Type':'application/json',"
                       "'X-Scout-CSRF':CSRF},body:JSON.stringify({text:b,"
-                      "project_id:document.getElementById('cw_pid').value.trim(),"
-                      "source_platform:document.getElementById('cw_src').value.trim()})})"
+                      "project_id:p,source_platform:document.getElementById('cw_src').value})})"
                       ".then(r=>r.json()).then(function(j){if(j.ok){location.href='/work/'+j.project_id;}"
-                      "else{alert(j.error||'refused');if(btn){btn.disabled=false;delete btn.dataset.busy;}}})"
-                      ".catch(function(e){alert(''+e);if(btn){btn.disabled=false;delete btn.dataset.busy;}});}")
+                      "else{setWorkBusy(btn,false);showWorkError(j.error||"
+                      "'Could not analyze this brief. Review the fields and try again.');}})"
+                      ".catch(function(){setWorkBusy(btn,false);showWorkError("
+                      "'The analysis could not start. Check that the Dashboard is running and try "
+                      "again.');});}"
+                      "var cwb=document.getElementById('cw_brief');if(cwb)cwb.addEventListener("
+                      "'input',clearWorkError);var cwp=document.getElementById('cw_pid');"
+                      "if(cwp)cwp.addEventListener('input',clearWorkError);")
             body = (f'<h1>Work</h1><p class="muted">Active client work is shown by default. '
-                    f'Completed items remain available in the Completed view.</p><div class="row">{views}'
-                    f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                    f'Completed items remain available in the Completed view.</p>'
+                    f'<div class="work-filter-bar"><nav class="work-primary-views" '
+                    f'aria-label="Work views">{views}</nav>{status_filter}</div>'
                     f'{self._poll_html()}'
-                    f'{table}{create}')
+                    f'{table}{diag_options}{create}')
             # Poll the current view; the banner never auto-reloads, so the Create-work form is safe.
             # The signature notices same-status changes (progress/updated/blockers/evidence/next).
             script = (script + self._poll_script(
@@ -4225,6 +4341,7 @@ button.chip.danger:hover{background:var(--error);color:var(--primary-ink)}
 .empty{padding:2rem;text-align:center;color:var(--muted)}
 .empty.compact{padding:18px 20px}.empty.compact strong{display:block;color:var(--text);
  margin-bottom:3px}.empty.compact p{margin:12px 0 0}
+.empty-actions{justify-content:center}
 input,select,textarea{padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--input);color:var(--text);font-family:inherit;max-width:100%}
 textarea{width:100%;resize:vertical}
 input[type=checkbox]{accent-color:var(--accent);width:auto;vertical-align:middle}
@@ -4253,6 +4370,31 @@ details>summary{cursor:pointer;color:var(--muted)}
 .overview-summary{margin-bottom:8px}.overview-summary .summary-item{color:var(--text)}
 .overview-summary .summary-item:hover{border-color:var(--muted);text-decoration:none}
 .compact-details{margin-top:20px;padding:10px 12px}
+.work-filter-bar{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--gap);
+ flex-wrap:wrap;margin-bottom:8px}
+.work-primary-views{display:flex;gap:7px;flex-wrap:wrap}
+.work-primary-views .chip[aria-current="page"]{border-color:var(--accent);color:var(--text);
+ box-shadow:inset 0 -2px 0 var(--accent);font-weight:600}
+.work-status-filter{display:flex;align-items:flex-end;gap:7px;flex-wrap:wrap}
+.work-status-filter label{display:block;color:var(--muted);font-size:12px;font-weight:600}
+.work-status-filter select{display:block;min-width:170px;margin-top:3px}
+.work-status-filter .btn{padding:6px 12px}
+.work-view-options{margin:4px 0 var(--gap)}
+.work-view-options p{margin-bottom:10px}
+.work-intake{margin-top:var(--gap)}
+.work-intake>summary{font-weight:600;color:var(--text)}
+.work-intake[open]>summary{margin-bottom:8px}
+.work-intake-intro{max-width:720px;margin:0 0 16px}
+.work-intake-grid{display:grid;grid-template-columns:minmax(140px,190px) minmax(0,1fr);
+ gap:7px 14px;max-width:820px;align-items:start}
+.work-intake-grid label{font-size:13px;font-weight:600;padding-top:7px}
+.work-intake-grid input,.work-intake-grid select{width:100%;max-width:440px}
+.work-intake-grid textarea{max-width:100%}
+.work-intake-grid .field-help{grid-column:2;margin:-2px 0 7px;max-width:620px}
+.work-intake-actions{margin-top:14px}
+.form-error{max-width:820px;margin-top:12px;padding:10px 12px;border:1px solid var(--error);
+ border-radius:6px;background:var(--surface-2);color:var(--error);font-size:13px}
+[aria-invalid="true"]{border-color:var(--error)!important}
 .evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:var(--gap)}
 .evidence-item{border:1px solid var(--border);border-radius:6px;padding:10px;min-width:0}
 .evidence-item h3{font-size:14px;margin:0 0 4px}
@@ -4339,6 +4481,14 @@ button.chip,a.chip{min-height:30px;cursor:pointer}
   .bulkbar{bottom:4px}
   .option-grid{grid-template-columns:1fr}
   .limit-grid{grid-template-columns:1fr}
+  .work-filter-bar{align-items:stretch}
+  .work-primary-views{width:100%}
+  .work-primary-views .chip{flex:1 1 calc(50% - 7px);justify-content:center}
+  .work-status-filter{width:100%}.work-status-filter label{flex:1 1 100%}
+  .work-status-filter select{min-width:0;width:100%}
+  .work-intake-grid{grid-template-columns:1fr;gap:5px}
+  .work-intake-grid label{padding-top:5px}
+  .work-intake-grid .field-help{grid-column:1;margin:-1px 0 7px}
 }
 """
 
@@ -4466,7 +4616,7 @@ _PAGE_UI_JS = (
     "d.showModal();if(expected)i.focus();});}")
 
 
-def _build_footer_html() -> str:
+def _build_footer_html(active: str = "/") -> str:
     """Compact build-identity footer (version + running SHA, plus a stale-build warning). Never
     raises to the page; cached so it costs no git subprocess per render."""
     try:
@@ -4476,9 +4626,12 @@ def _build_footer_html() -> str:
         return ""
     warn = (f'<span style="color:var(--attention);font-weight:600">&#9888; '
             f'{_esc(ident.get("warning",""))}</span> &middot; ' if ident.get("stale") else "")
+    scout_surface = active.startswith("/scout") or active in ("/results", "/company")
+    identity = (str(ident.get("product_version") or "AI QA Factory")
+                if scout_surface else "AI QA Factory &middot; Operator Dashboard")
     return ('<footer style="max-width:var(--maxw);margin:0 auto;padding:10px var(--pad);'
             'color:var(--muted);font-size:12px;border-top:1px solid var(--border)">'
-            f'{warn}{_esc(ident.get("product_version",""))}</footer>')
+            f'{warn}{identity if not scout_surface else _esc(identity)}</footer>')
 
 
 def _page(title: str, active: str, body: str, script: str = "") -> str:
@@ -4491,7 +4644,7 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
             f"<title>{_esc(title)}</title><script>{_THEME_HEAD_JS}</script>"
             f"<style>{_TOKENS_CSS}</style></head><body>"
             f"{_nav_html(active)}<main>{body}</main>{_PAGE_UI_HTML}"
-            f"{_build_footer_html()}{scr}</body></html>")
+            f"{_build_footer_html(active)}{scr}</body></html>")
 
 
 def _badge(text: str, kind: str = "") -> str:

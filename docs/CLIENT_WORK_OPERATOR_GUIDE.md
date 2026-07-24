@@ -42,6 +42,11 @@ python main.py analyze-job --text "<job brief>" --source-platform upwork
 python main.py analyze-job --input path\to\brief.txt
 ```
 
+The Dashboard provides the same planning-only entry point under **Work → Analyze a client brief**.
+Choose the source platform, paste the complete brief, and select **Analyze and create plan**. Inline
+validation keeps incomplete or invalid submissions in the form. Successful analysis opens the
+persisted project; implementation still waits for explicit plan approval.
+
 You get a **feasibility verdict** and, in `outputs\<project-id>\40_ark_work\`:
 
 - `FEASIBILITY_REPORT.json` / `FEASIBILITY_SUMMARY.md` - verdict, intent, requirements, deliverables,

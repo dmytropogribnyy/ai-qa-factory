@@ -36,7 +36,7 @@ validation, blockers, approvals, delivery) — never chat, terminal, or editor c
 | `/scout`, `/scout/campaigns` | Scout launch, current/archived campaigns and state-aware controls |
 | `/scout/history`, `/scout/target`, `/scout/run` | QA history, target evidence and exact-run retention |
 | `/results`, `/company` | Companies & outreach (commercial follow-up, separate from QA History) |
-| `/work`, `/work/<id>` | Active work by default; Completed/All views; project Summary/Plan/Results/Delivery |
+| `/work`, `/work/<id>` | Active/Needs attention/Completed/All views, stage filter, brief analysis; project Summary/Plan/Results/Delivery |
 | `/activity` | Recent lifecycle transitions (from state history) |
 | `/collab` | Active collaboration by default; completed cycles in a separate view |
 | `/settings` | Appearance, Scout defaults, integrations, Data & retention; advanced diagnostics |
@@ -62,6 +62,13 @@ Settings explains the three cleanup classes before the operator acts:
 Completed Work and Collaboration are removed from the default active queue but remain available in
 their dedicated completed views. Raw Activity remains append-only.
 
+On **Work**, the four primary views stay visible while individual lifecycle stages live in the
+**Status** selector. Diagnostic projects are available only under **Advanced view options**. The
+empty Active/All states link directly to **Analyze a client brief**; that form creates a persisted,
+reviewable feasibility assessment and work plan, but never begins execution. The source platform is
+an optional bounded choice (`Upwork`, `Direct client`, or `Other`), not an integration or import.
+Validation and server errors appear beside the form and move focus to the field that needs attention.
+
 **Interactions.** Overview, Work list, and project detail do bounded same-origin polling: a *Live /
 Last updated* indicator plus an "Updates available — Refresh" banner when persisted state changes.
 Polling never auto-reloads, so it never interrupts the intake form or a reviewer prompt; manual
@@ -80,7 +87,12 @@ fallbacks with visible copy feedback.
   handoffs**, done in VS Code via the CLI. There is no arbitrary-command or argv endpoint.
 - **Nothing is sent.** `mark-delivered` records your assertion that you sent the prepared package
   manually; the Dashboard never sends email, submits a form, scans a third party, or bypasses a login.
-- **Upwork intake is manual**: paste the brief (+ optional source reference). There is no Upwork API.
+- **Upwork intake is manual**: select Upwork as the source and paste the brief. There is no Upwork
+  API, source-reference field, or background import.
+
+The shared footer identifies ordinary pages as **AI QA Factory · Operator Dashboard**. Scout routes
+retain the Scout product/version identity so operators can distinguish the module without making
+Work or Overview look like Scout-only screens.
 
 ## Lifecycle & delivery
 

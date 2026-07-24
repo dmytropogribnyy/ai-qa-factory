@@ -74,6 +74,64 @@ def test_work_defaults_to_active_and_keeps_completed_in_its_own_view(tmp_path):
     assert '<div class="muted">active-technical-id</div>' not in default_html
 
 
+def test_work_uses_compact_primary_views_and_accessible_stage_filter(tmp_path):
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        active = _get(url + "/work")
+        blocked = _get(url + "/work?view=blocked")
+    finally:
+        server.shutdown()
+    for label in ("Active", "Needs attention", "Completed", "All"):
+        assert f">{label}</a>" in active
+    assert "Ready to Execute</a>" not in active
+    assert 'aria-current="page">Active</a>' in active
+    assert '<label for="work_status">Status</label>' in active
+    assert 'option value="blocked" selected' in blocked
+    assert 'aria-current="page"' not in blocked.split('class="work-primary-views"', 1)[1].split(
+        "</nav>", 1)[0]
+    assert ">Refresh</button>" not in active
+    assert active.count("Refresh now") == 1
+
+
+def test_work_empty_states_match_the_selected_view(tmp_path):
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        active = _get(url + "/work")
+        attention = _get(url + "/work?view=needs_attention")
+        completed = _get(url + "/work?view=completed")
+        all_work = _get(url + "/work?view=all")
+    finally:
+        server.shutdown()
+    assert "No active client work" in active
+    assert 'href="/work?create=1#client-brief">Analyze a client brief</a>' in active
+    assert "Nothing needs your attention" in attention
+    assert "No completed client work" in completed
+    assert "No client work yet" in all_work
+    assert "Clear filter" not in active + attention + completed + all_work
+
+
+def test_work_intake_copy_fields_and_inline_feedback_are_honest(tmp_path):
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        html = _get(url + "/work?create=1")
+    finally:
+        server.shutdown()
+    assert '<details id="client-brief" class="card work-intake" open>' in html
+    assert "<summary>Analyze a client brief</summary>" in html
+    assert "Create a reviewable feasibility assessment and work plan." in html
+    assert "Nothing will execute until you approve the plan." in html
+    assert "Analyze and create plan" in html
+    assert '<select id="cw_src">' in html
+    for source in ("Upwork", "Direct client", "Other"):
+        assert f">{source}</option>" in html
+    assert "source reference" not in html
+    assert "reuses analyze-job" not in html
+    assert 'id="cw_error" class="form-error" role="alert" aria-live="assertive"' in html
+    assert 'id="cw_status" class="muted" role="status" aria-live="polite"' in html
+    assert "alert('paste a client brief')" not in html
+    assert "showWorkError('Paste a client brief to continue.',brief)" in html
+
+
 def test_navigation_and_help_are_operator_facing(tmp_path):
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
     try:
@@ -222,9 +280,13 @@ def test_footer_keeps_build_sha_out_of_ordinary_pages(tmp_path):
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
     try:
         html = _get(url + "/")
+        work = _get(url + "/work")
+        scout = _get(url + "/scout/new")
     finally:
         server.shutdown()
-    assert "AI QA Factory" in html
+    assert "AI QA Factory &middot; Operator Dashboard" in html
+    assert "AI QA Factory &middot; Operator Dashboard" in work
+    assert "ARK Prospect QA Scout" in scout
     assert "AI QA Factory AI QA Factory" not in html
     assert "&middot; build" not in html
 
@@ -239,6 +301,9 @@ def test_overview_uses_operator_language_and_progressive_disclosure(tmp_path):
     assert "Projects 0" not in html
     assert "Nothing needs your attention" in html
     assert "No active client work" in html
+    assert "Paste a client brief to create a reviewable work plan." in html
+    assert 'href="/work?create=1#client-brief">Analyze a client brief</a>' in html
+    assert "Give Claude Code a client brief" not in html
     assert "Scout is ready" in html
     assert "Start a Scout campaign" in html
     assert "Refresh now" in html
@@ -254,6 +319,7 @@ def test_overview_hides_diagnostics_under_advanced_options(tmp_path):
         server.shutdown()
     assert "<summary>Advanced view options</summary>" in html
     assert "Show diagnostics (1)" in html
+    assert "1 test, replay, or diagnostic record is hidden from production counts." in html
     assert html.index("<summary>Advanced view options</summary>") < html.index("Show diagnostics (1)")
 
 
