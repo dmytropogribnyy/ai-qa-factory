@@ -52,10 +52,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# Known per-prospect raw diagnostic artifacts the engine may persist, with human-readable labels.
+# Known per-prospect structured evidence artifacts the engine may persist, with readable labels.
 # target_detail() only exposes an entry when the file genuinely exists on disk (never a dead link).
-_RAW_EVIDENCE_ARTIFACTS: tuple = (
-    ("observation.json", "Page observation (raw)"),
+_STRUCTURED_EVIDENCE_ARTIFACTS: tuple = (
+    ("observation.json", "Page observation (redacted)"),
+    ("evidence.json", "Sanitized fact sheet"),
+    ("browser_trace.json", "Browser trace (redacted)"),
+    ("evidence_manifest.json", "Evidence manifest + integrity hashes"),
     ("findings.json", "Findings (raw)"),
     ("scorecard.json", "Scorecard (raw)"),
     ("coverage.json", "Coverage (raw)"),
@@ -525,11 +528,12 @@ class CampaignService:
                         pdir = st.prospect_dir(prospect_id)
                         media = [f"prospects/{prospect_id}/{fp.name}" for fp in sorted(pdir.iterdir())
                                  if fp.is_file() and fp.suffix.lower() in _MEDIA_EXT]
-                        # Raw diagnostic evidence files: only listed when they genuinely exist on
-                        # disk, so the operator UI never links to an artifact that isn't there.
+                        # Structured diagnostic evidence files: only listed when they genuinely
+                        # exist on disk, so the operator UI never links to an artifact that isn't
+                        # there.
                         # Labels are human-readable; the rel path is exact-run/exact-prospect
                         # confined and servable via the SAME safe /scout/artifact route as media.
-                        for _name, _label in _RAW_EVIDENCE_ARTIFACTS:
+                        for _name, _label in _STRUCTURED_EVIDENCE_ARTIFACTS:
                             if (pdir / _name).is_file():
                                 evidence_files.append({
                                     "name": _name, "label": _label,

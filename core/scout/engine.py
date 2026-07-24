@@ -12,6 +12,7 @@ interrupts the active loop. Nothing is ever submitted, logged into, or sent.
 """
 from __future__ import annotations
 
+import hashlib
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,7 +122,8 @@ class ScoutEngine:
         prospects = state.setdefault("prospects", {})
         for idx, elig in enumerate(eligible, start=1):
             pid = _prospect_id(idx, elig.normalized)
-            prospects.setdefault(pid, {"url": elig.normalized, "status": P_PENDING})
+            prospects.setdefault(
+                pid, {"url": self.sanitizer.safe_url(elig.normalized), "status": P_PENDING})
 
         for idx, elig in enumerate(eligible, start=1):
             pid = _prospect_id(idx, elig.normalized)
@@ -152,15 +154,19 @@ class ScoutEngine:
     # ------------------------------------------------------------------
     def _process_prospect(self, pid: str, url: str, prospects: Dict) -> None:
         cfg = self.config
-        self._event("prospect_started", prospect=pid, url=url)
-        # Deep capture: point the browser backend at THIS prospect's dir so page.png (and any
-        # future media) lands under the run, servable via /scout/artifact. Static backend has no
-        # screenshot_dir attribute, so this is a no-op for it.
+        self._event("prospect_started", prospect=pid, url=self.sanitizer.safe_url(url))
+        # Deep capture: point the browser backend at THIS prospect's dir so the landing and
+        # verification screenshots land under the run, servable via /scout/artifact. Static
+        # backend has no screenshot_dir attribute, so this is a no-op for it.
         if hasattr(self.backend, "screenshot_dir"):
             try:
                 self.backend.screenshot_dir = str(self.store.prospect_dir(pid))
+                if hasattr(self.backend, "screenshot_filename"):
+                    self.backend.screenshot_filename = "landing.png"
             except Exception:
                 pass
+        obs: Optional[PageObservation] = None
+        obs2: Optional[PageObservation] = None
         try:
             # The recording-capable observe is INSIDE the guarded block: if it creates _vidtmp and
             # then raises (e.g. a browser launch/context failure), the finally still cleans it up.
@@ -169,12 +175,18 @@ class ScoutEngine:
             # reproduction video is captured later, in the SAME context that performs the interaction.
             obs = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes,
                                        record_video=False, deep_qa=deep_qa)
-            self.store.save_prospect_artifact(pid, "observation.json", obs.to_dict())
+            self.store.save_prospect_artifact(
+                pid, "observation.json", self.sanitizer.sanitize_observation(obs))
+            # Probe/flow observations are supporting checks, not evidence frames. Disable screenshots
+            # until the independent verification pass so they cannot overwrite the landing frame.
+            if hasattr(self.backend, "screenshot_dir"):
+                self.backend.screenshot_dir = None
 
             # CAPTCHA / access prohibition -> manual action, no interaction, continue others.
             if obs.captcha_marker or obs.access_blocked_marker:
                 reason = "captcha_detected" if obs.captcha_marker else "access_prohibited"
                 record = self._manual_action_record(reason, obs)
+                record["final_url"] = self.sanitizer.safe_url(record.get("final_url", ""))
                 self.store.save_prospect_artifact(pid, "manual_action.json", record)
                 prospects[pid].update({"status": P_MANUAL, "reason": reason,
                                        "stage": record["stage"], "analysis_complete": False})
@@ -205,8 +217,14 @@ class ScoutEngine:
             self.control.wait_while_paused()
             if self.control.should_stop():
                 return
+            if hasattr(self.backend, "screenshot_dir"):
+                self.backend.screenshot_dir = str(self.store.prospect_dir(pid))
+                if hasattr(self.backend, "screenshot_filename"):
+                    self.backend.screenshot_filename = "verification.png"
             obs2 = self.backend.observe(url, cfg.request_timeout_s, cfg.max_response_bytes,
                                         deep_qa=deep_qa)
+            if hasattr(self.backend, "screenshot_dir"):
+                self.backend.screenshot_dir = None
             link_status2 = self._probe_links(obs2) if "links" in cfg.check_families else {}
             flow2 = self._explore_flow(obs2) if "business_flow" in cfg.check_families else None
             ctx2 = CheckContext(run_id=self.store.root.name, prospect_ref=pid, backend=obs2.backend,
@@ -248,6 +266,86 @@ class ScoutEngine:
             # Guarantee no temp recording is ever left behind — on an early manual/unreachable/stop
             # return, an exception, or normal completion (a kept clip was already moved out of _vidtmp).
             _rmtree(Path(self.store.prospect_dir(pid)) / "_vidtmp")
+            _rmtree(Path(self.store.prospect_dir(pid)) / "_reprotmp")
+            # Manual/unreachable paths still get an honest one-pass trace; completed paths get both.
+            try:
+                if obs is not None:
+                    self._save_browser_trace(pid, obs, obs2)
+                self._write_evidence_manifest(pid)
+            except Exception:  # evidence finalization must never mask the prospect's real outcome
+                # Keep the failure visible to the operator without persisting exception text, which
+                # may contain a target URL, local path, or other unredacted diagnostic detail.
+                try:
+                    self._event("evidence_finalization_failed", prospect=pid)
+                except Exception:
+                    pass  # a broken event sink still must not replace the prospect's real outcome
+
+    def _save_browser_trace(self, pid: str, first: PageObservation,
+                            second: Optional[PageObservation]) -> str:
+        """Write a bounded, redacted browser timeline (never raw DOM/body/cookies/full HAR)."""
+        passes = []
+        for name, observation in (("landing", first), ("verification", second)):
+            if observation is None:
+                continue
+            safe = self.sanitizer.sanitize_observation(observation)
+            passes.append({
+                "pass": name,
+                "url": safe.get("url", ""),
+                "final_url": safe.get("final_url", ""),
+                "status": safe.get("status", 0),
+                "ok": safe.get("ok", False),
+                "screenshot_ref": safe.get("screenshot_ref", ""),
+                "timing_ms": safe.get("timing_ms", {}),
+                "console_errors": safe.get("console_errors", []),
+                "failed_resources": safe.get("failed_resources", []),
+                "blocked_requests": safe.get("blocked_requests", []),
+            })
+        return self.store.save_prospect_artifact(pid, "browser_trace.json", {
+            "schema_version": 1,
+            "backend": first.backend,
+            "redaction_applied": True,
+            "raw_dom_stored": False,
+            "raw_headers_stored": False,
+            "capture_policy": {
+                "screenshots": "landing_and_independent_verification",
+                "video": self._evidence.video_mode,
+                "video_requires_sequential_reproduction": True,
+            },
+            "passes": passes,
+        })
+
+    def _write_evidence_manifest(self, pid: str) -> str:
+        """Inventory durable evidence after temp cleanup, with confined refs and integrity hashes."""
+        pdir = Path(self.store.prospect_dir(pid))
+        entries = []
+        allowed_suffixes = {".json", ".png", ".webm"}
+        paths = sorted(pdir.iterdir()) if pdir.exists() else []
+        for path in paths:
+            if (not path.is_file() or path.name == "evidence_manifest.json"
+                    or path.suffix.lower() not in allowed_suffixes):
+                continue
+            digest = hashlib.sha256()
+            with path.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(64 * 1024), b""):
+                    digest.update(chunk)
+            entries.append({
+                "ref": path.name,
+                "kind": {
+                    ".json": "structured",
+                    ".png": "screenshot",
+                    ".webm": "reproduction_video",
+                }[path.suffix.lower()],
+                "bytes": path.stat().st_size,
+                "sha256": digest.hexdigest(),
+            })
+        return self.store.save_prospect_artifact(pid, "evidence_manifest.json", {
+            "schema_version": 1,
+            "redaction_applied_to_structured_evidence": True,
+            "temporary_recordings_present": any(
+                (pdir / name).exists() for name in ("_vidtmp", "_reprotmp")),
+            "video_policy": self._evidence.video_mode,
+            "entries": entries,
+        })
 
     def _reproduce_prospect_findings(self, pid: str, start_url: str,
                                      verified: List[ScoutFinding], flow_result) -> str:
@@ -272,10 +370,13 @@ class ScoutEngine:
             reproduced = _finding_reproduced(finding, rep)
             record = {
                 "finding_id": finding.finding_id, "signature": finding.signature,
-                "start_url": start_url, "action_url": action_url,
-                "action_log": rep.get("action_log", []),
+                "start_url": self.sanitizer.safe_url(start_url),
+                "action_url": self.sanitizer.safe_url(action_url),
+                "action_log": [
+                    self.sanitizer.redact(str(v)) for v in rep.get("action_log", [])[:20]
+                ],
                 "precondition_ok": bool(rep.get("precondition_ok")),
-                "final_url": rep.get("final_url", ""),
+                "final_url": self.sanitizer.safe_url(rep.get("final_url", "")),
                 "actual_status": rep.get("actual_status"), "expected": finding.expected,
                 "actual": finding.actual, "cleanup_ok": bool(rep.get("cleanup_ok")),
                 "reproduced": reproduced,

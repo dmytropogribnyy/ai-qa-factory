@@ -2318,9 +2318,9 @@ function startCampaign(){{
                             'from Chromium.</div>')
             body += f'<div class="card"><h2>Network evidence (Chrome/Playwright)</h2>{net_html}</div>'
 
-            # Raw evidence files — a safe, exact-run/exact-prospect-confined "open" action for the
-            # underlying JSON evidence (observation/findings/scorecard/coverage/reproduction/manual
-            # action), reusing the SAME /scout/artifact route as screenshots. Only files that
+            # Structured evidence files — a safe, exact-run/exact-prospect-confined "open" action
+            # for redacted observations/traces plus findings/scorecard/coverage/reproduction/manual
+            # records, reusing the SAME /scout/artifact route as screenshots. Only files that
             # genuinely exist are linked (never a dead link).
             if evidence_files:
                 ev_rows = "".join(
@@ -2328,8 +2328,8 @@ function startCampaign(){{
                     f'{_esc(e["label"])}</a></li>' for e in evidence_files)
                 ev_html = f'<ul>{ev_rows}</ul>'
             else:
-                ev_html = '<p class="muted">No raw evidence files are available for this target.</p>'
-            body += (f'<div class="card"><h2>Raw evidence files (diagnostic)</h2>{ev_html}'
+                ev_html = '<p class="muted">No structured evidence files are available.</p>'
+            body += (f'<div class="card"><h2>Structured evidence files (diagnostic)</h2>{ev_html}'
                      f'<p class="muted">Opens the underlying captured JSON directly (read-only, '
                      f'served as source text/JSON — never executed).</p></div>')
 
@@ -2464,7 +2464,7 @@ function startCampaign(){{
                 ev_items = "".join(
                     f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
                     f'{_esc(e["label"])}</a></li>' for e in evidence_files)
-                partial_html += f'<p><b>Raw evidence files:</b></p><ul>{ev_items}</ul>'
+                partial_html += f'<p><b>Structured evidence files:</b></p><ul>{ev_items}</ul>'
             body = (
                 f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
                 f'<div class="card"><div class="banner warn">'
