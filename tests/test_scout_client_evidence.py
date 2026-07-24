@@ -184,6 +184,8 @@ def test_dashboard_download_is_an_attachment_and_target_page_links_it(tmp_path):
         server.server_close()
     assert "Download client-ready evidence (.zip)" in page
     assert "One target · client-oriented · review required · up to 20 MiB" in page
+    assert '<label for="draftbody"><b>Draft body</b></label>' in page
+    assert 'aria-label="Outreach draft body"' in page
     assert content_type == "application/zip"
     assert 'attachment; filename="alpha.example-qa-evidence.zip"' == disposition
     assert cache == "no-store"
