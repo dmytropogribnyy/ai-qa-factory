@@ -7,12 +7,14 @@ returned field — only presence/metadata (see tavily_secret.masked_metadata).
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.scout.discovery.tavily_secret import key_present, masked_metadata
 
@@ -62,10 +64,39 @@ def probe_tavily(env: Optional[Dict[str, str]] = None) -> PreflightCheck:
     return PreflightCheck("tavily_key", "Tavily key + provider readiness", CONFIGURED, detail, True)
 
 
-def probe_browser(launch: bool = True) -> PreflightCheck:
-    """Import Playwright AND actually launch+close Chromium headless (installed != ready)."""
+def _sync_playwright_factory() -> Callable:
+    """Return Playwright's sync context factory.
+
+    Kept behind a tiny seam so the readiness probe can be tested without making Chromium an
+    unconditional dependency of the deterministic suite.
+    """
+    from playwright.sync_api import sync_playwright  # type: ignore
+    return sync_playwright
+
+
+def _launch_browser(factory: Callable) -> None:
+    with factory() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        browser.close()
+
+
+def _inside_asyncio_loop() -> bool:
     try:
-        from playwright.sync_api import sync_playwright  # type: ignore
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
+def probe_browser(launch: bool = True) -> PreflightCheck:
+    """Import Playwright AND actually launch+close Chromium headless (installed != ready).
+
+    Observer MCP handlers can execute this synchronous probe on an asyncio event-loop thread.
+    Playwright deliberately refuses its Sync API there, so hand only the bounded launch/close work
+    to a worker thread in that case. Ordinary CLI/Dashboard calls keep the direct path.
+    """
+    try:
+        factory = _sync_playwright_factory()
     except Exception as exc:
         return PreflightCheck("browser", "Browser install + real launch", NOT_READY,
                               f"playwright not importable: {str(exc)[:100]}", True)
@@ -73,9 +104,11 @@ def probe_browser(launch: bool = True) -> PreflightCheck:
         return PreflightCheck("browser", "Browser install + real launch", CONFIGURED,
                               "playwright importable; launch not probed", True)
     try:
-        with sync_playwright() as p:
-            b = p.chromium.launch(headless=True)
-            b.close()
+        if _inside_asyncio_loop():
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="aiqa-browser-probe") as pool:
+                pool.submit(_launch_browser, factory).result()
+        else:
+            _launch_browser(factory)
         return PreflightCheck("browser", "Browser install + real launch", READY,
                               "Chromium launched + closed headless", True)
     except Exception as exc:
