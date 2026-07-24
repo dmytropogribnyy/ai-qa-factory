@@ -279,6 +279,11 @@ def test_activity_survives_restart_and_filters_diagnostics_in_real_chromium(tmp_
             ).is_visible()
             serious = _serious(axe.run(desktop).get("violations", []))
             assert not serious, [v["id"] for v in serious]
+            # Clicking the toggle can preserve the previous document's scroll position. Reset it
+            # before capturing so CI evidence contains the complete header/navigation, not a
+            # misleading cropped state.
+            desktop.evaluate("()=>window.scrollTo(0,0)")
+            assert desktop.evaluate("()=>window.scrollY") == 0
             desktop.screenshot(
                 path=screenshot_dir / "10-scout-activity-diagnostics-desktop.png",
                 full_page=True,
