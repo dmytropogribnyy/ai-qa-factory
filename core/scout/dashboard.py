@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 71173)
-Total output lines: 4378
-
 """Localhost Scout dashboard (Phase 8.3; v3.0.0 M4b guarded start).
 
 A dependency-light stdlib HTTP dashboard bound to 127.0.0.1 only. It reads the run store and
@@ -1657,7 +1654,1158 @@ function startCampaign(){{
                 '<p class="muted">No Upwork API — paste the brief and (optionally) a source reference.</p>'
                 '</details>')
             script = (self._work_actions_script() +
-                      "function createWork(btn){var b=docu…21173 tokens truncated…ed list import; adaptive AI understanding was not computed. "
+                      "function createWork(btn){var b=document.getElementById('cw_brief').value.trim();"
+                      "if(!b){alert('paste a client brief');return;}"
+                      "if(btn){if(btn.dataset.busy)return;btn.dataset.busy='1';btn.disabled=true;}"
+                      "fetch('/api/work/analyze',{method:'POST',headers:{'Content-Type':'application/json',"
+                      "'X-Scout-CSRF':CSRF},body:JSON.stringify({text:b,"
+                      "project_id:document.getElementById('cw_pid').value.trim(),"
+                      "source_platform:document.getElementById('cw_src').value.trim()})})"
+                      ".then(r=>r.json()).then(function(j){if(j.ok){location.href='/work/'+j.project_id;}"
+                      "else{alert(j.error||'refused');if(btn){btn.disabled=false;delete btn.dataset.busy;}}})"
+                      ".catch(function(e){alert(''+e);if(btn){btn.disabled=false;delete btn.dataset.busy;}});}")
+            body = (f'<h1>Work</h1><div class="row">{views}'
+                    f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                    f'{self._poll_html()}'
+                    f'{table}{create}')
+            # Poll the current view; the banner never auto-reloads, so the Create-work form is safe.
+            # The signature notices same-status changes (progress/updated/blockers/evidence/next).
+            script = (script + self._poll_script(
+                "/api/work?view=" + view,
+                "function(j){return (j.projects||[]).map(function(p){return p.project_id+'|'+p.status"
+                "+'|'+p.progress+'|'+p.updated+'|'+p.blockers+'|'+p.evidence_count+'|'+p.next_action})}"))
+            return _page("AI QA Factory — Work", "/work", body, script)
+
+        def _work_detail_json(self, pid):
+            from core.dashboard.actions import ProjectDetailBuilder
+            d = ProjectDetailBuilder(service.output_dir).detail(pid)
+            return d or {"error": "not found", "project_id": pid}
+
+        _DETAIL_TABS = (("summary", "Summary"), ("plan", "Plan"), ("results", "Results"),
+                        ("delivery", "Delivery"))
+
+        def _work_detail_page(self, pid, q=None) -> str:
+            from core.dashboard.actions import ProjectDetailBuilder
+            b = ProjectDetailBuilder(service.output_dir)
+            d = b.detail(pid)
+            if d is None:
+                return _page("Project not found", "/work",
+                             '<h1>Project not found</h1><p><a href="/work">&larr; Work</a></p>')
+            q = q or {}
+            sel = (q.get("tab") or ["summary"])[0]
+            if sel not in [t[0] for t in self._DETAIL_TABS]:
+                sel = "summary"
+            h = d["header"]
+            safe_pid = "".join(c for c in pid if c.isalnum() or c in "._-")
+            actbtns = []
+            for a in d["allowed_actions"]:
+                cls = "btn primary" if a.get("primary") else "btn"
+                if a["kind"] == "http_mutation":
+                    act = a["endpoint"].split("/")[-1]
+                    fixed = "Object.assign({project_id:'" + safe_pid + "'}," + json.dumps(
+                        a.get("body") or {}) + ")"
+                    if a.get("fields"):
+                        fields_js = "[" + ",".join("'" + f + "'" for f in a["fields"]) + "]"
+                        extra = "Object.assign(" + fixed + ",promptFields(" + fields_js + "))"
+                    else:
+                        extra = fixed
+                    conf = ("if(!confirm('" + _esc(a["label"]) + "?'))return;" if a.get("confirm") else "")
+                    onclick = conf + "wact(this,'" + act + "'," + extra + ")"
+                    actbtns.append(f'<button class="{cls}" onclick="{onclick}">{_esc(a["label"])}</button>')
+                elif a["id"] == "open_vscode":
+                    actbtns.append(f'<a class="{cls}" href="{_esc(_vscode_file_uri(d["workspace_path"]))}">'
+                                   f'{_esc(a["label"])}</a>')
+                elif a["id"] == "copy_work_order":
+                    actbtns.append('<button class="btn" onclick="copyText(\'workorder\')">'
+                                   'Copy Work Order</button>')
+                elif a["id"] == "copy_workspace":
+                    actbtns.append('<button class="btn" onclick="copyText(\'wspath\')">'
+                                   'Copy Workspace Path</button>')
+                elif a["id"] == "refresh":
+                    actbtns.append('<button class="btn" onclick="location.reload()">Refresh</button>')
+            header = (f'<p><a href="/work">&larr; Work</a></p><h1>{_esc(h["title"])}</h1>'
+                      f'<div class="row">{_badge(h["stage"])} {_badge(h["health"], h["health"])} '
+                      f'<span class="muted">{_esc(h["source"])} · {h["progress"]}%</span></div>'
+                      f'{self._poll_html()}'
+                      f'<div class="row" style="margin:.6rem 0">{"".join(actbtns)}'
+                      f'<span id="copystatus" class="muted" aria-live="polite"></span></div>')
+            summary = d["summary"]
+            blockers = "".join(f"<li>{_esc(x)}</li>" for x in summary["blockers"]) or "<li class=muted>none</li>"
+            panel = {
+                "summary": (
+                    '<div class="card">'
+                    f'<p><strong>Next:</strong> {_esc(summary["next_action"])}</p>'
+                    f'<p><strong>Validation:</strong> {summary["tests_passed"]}/{summary["tests_run"]} · '
+                    f'evidence {summary["evidence_count"]}</p>'
+                    f'<p><strong>Blockers:</strong></p><ul>{blockers}</ul></div>'),
+                "plan": (
+                    '<div class="card">'
+                    f'<p><strong>Intent:</strong> {_esc(d["plan"]["client_intent"])}</p>'
+                    f'<p><strong>Verdict:</strong> {_badge(d["plan"]["verdict"] or "n/a")}</p>'
+                    f'<details><summary>Requirements &amp; questions</summary>'
+                    f'<ul>{"".join(f"<li>{_esc(r)}</li>" for r in d["plan"]["requirements"]) or "<li class=muted>none</li>"}</ul>'
+                    f'</details></div>'),
+                "results": (
+                    '<div class="card">'
+                    f'<p>Validation: {_badge("PASS" if d["results"]["validation_passed"] else "pending", "ok" if d["results"]["validation_passed"] else "")}</p>'
+                    f'<p class="muted">Artifacts: {_esc(", ".join(str(a) for a in d["results"]["artifacts"]) or "none")}</p>'
+                    f'<details open><summary>Evidence ({len(d["results"]["evidence"])})</summary>'
+                    f'<ul>{"".join(self._evidence_li(e) for e in d["results"]["evidence"]) or "<li class=muted>none</li>"}</ul>'
+                    f'</details></div>'),
+                "delivery": (
+                    '<div class="card">'
+                    f'<p>State: {_badge(d["delivery"]["status"], "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
+                    f'<p class="muted">Reviewed by {_esc(d["delivery"]["reviewed_by"] or "—")} · '
+                    f'digest {_esc((d["delivery"]["manifest_digest"] or "—")[:23])}</p>'
+                    f'<details><summary>Included files ({len(d["delivery"]["included_files"])})</summary>'
+                    f'<ul>{"".join(f"<li>{_esc(x)}</li>" for x in d["delivery"]["included_files"]) or "<li class=muted>not prepared</li>"}</ul>'
+                    f'</details>'
+                    '<p class="muted">mark-delivered records your manual send; the Dashboard sends nothing.</p></div>'),
+            }
+            tablist = ('<div class="tabs" role="tablist" aria-label="Project sections">' + "".join(
+                f'<button role="tab" id="tab-{tid}" aria-controls="panel-{tid}" '
+                f'aria-selected="{"true" if tid == sel else "false"}" '
+                f'tabindex="{"0" if tid == sel else "-1"}" onclick="selTab(\'{tid}\')">{label}</button>'
+                for tid, label in self._DETAIL_TABS) + '</div>')
+            panels = "".join(
+                f'<div role="tabpanel" id="panel-{tid}" aria-labelledby="tab-{tid}" '
+                f'{"" if tid == sel else "hidden"}>{panel[tid]}</div>' for tid, _l in self._DETAIL_TABS)
+            hidden = (f'<div style="display:none"><pre id="wspath">{_esc(d["workspace_path"])}</pre>'
+                      f'<pre id="workorder">{_esc(b.work_order(pid) or "")}</pre></div>')
+            script = (
+                self._work_actions_script() +
+                "function promptFields(names){var o={};for(var i=0;i<names.length;i++){"
+                "var v=prompt(names[i]);if(v===null)throw 'cancelled';o[names[i]]=v;}return o;}\n"
+                "function selTab(id){document.querySelectorAll('[role=tab]').forEach(function(t){"
+                "var on=t.id==='tab-'+id;t.setAttribute('aria-selected',on?'true':'false');"
+                "t.tabIndex=on?0:-1;});document.querySelectorAll('[role=tabpanel]').forEach(function(p){"
+                "p.hidden=p.id!=='panel-'+id;});var u=new URL(location);u.searchParams.set('tab',id);"
+                "history.replaceState(null,'',u);}\n"
+                "var tl=document.querySelector('[role=tablist]');if(tl){tl.addEventListener('keydown',"
+                "function(e){var ts=[].slice.call(document.querySelectorAll('[role=tab]'));"
+                "var i=ts.findIndex(function(t){return t.getAttribute('aria-selected')==='true';});"
+                "if(e.key==='ArrowRight'||e.key==='ArrowLeft'){var n=(i+(e.key==='ArrowRight'?1:"
+                "ts.length-1))%ts.length;var id=ts[n].id.replace('tab-','');selTab(id);ts[n].focus();"
+                "e.preventDefault();}});}\n" +
+                self._poll_script(
+                    "/api/work/" + safe_pid,
+                    "function(j){var h=j.header||{},s=j.summary||{},d=j.delivery||{},r=j.results||{};"
+                    "return [h.status,h.progress,h.updated_at,h.activity_count,s.next_action,"
+                    "(s.blockers||[]).length,s.tests_passed,s.tests_run,s.evidence_count,"
+                    "r.validation_passed,d.status,d.manifest_digest]}"))
+            return _page(f"AI QA Factory — {pid}", "/work", header + tablist + panels + hidden, script)
+
+        def _scout_home_page(self) -> str:
+            # The operator Scout home in the shared layout, reusing the SAME ScoutService status and
+            # the SAME guarded /api/control + /api/campaign/start endpoints (no second service/state).
+            status = service.status()
+            st = status.get("state", {})
+            mode = status.get("mode", "IDLE")
+            controllable = bool(status.get("controllable"))
+            running = bool(status.get("running"))
+            prospects = st.get("prospects", {})
+            if controllable:
+                controls = ('<button class="btn" onclick="ctl(\'pause\')">Pause</button>'
+                            '<button class="btn" onclick="ctl(\'resume\')">Resume</button>'
+                            '<button class="btn" onclick="ctl(\'cancel\')">Stop Safely</button>'
+                            '<button class="btn danger" onclick="ctl(\'kill\')">Cancel (kill)</button>')
+            else:
+                controls = (f'<em class="muted">Controls unavailable — this run is '
+                            f'<strong>{_esc(mode)}</strong> (read-only).</em>')
+            run_id = status.get("run_id", "")
+            from core.scout.discovery.domain_intel import canonical_domain
+            prows = "".join(
+                f'<tr><td data-label="Target">{_esc(canonical_domain(p.get("url","")) or p.get("url",""))}</td>'
+                f'<td data-label="Status">{_badge(_prospect_status_label(p.get("status", "")))}</td>'
+                f'<td data-label="Priority">{_esc(p.get("priority", "") or "—")}</td>'
+                f'<td data-label="Actionable">{_esc(p.get("verified_defects", 0))}</td>'
+                f'<td data-label="Open">{_scout_details_primary(run_id, p)}</td></tr>'
+                for pid, p in sorted(prospects.items()))
+            table = (f'<table class="responsive-table"><caption>Targets in this run</caption>'
+                     f'<thead><tr><th>Target</th><th>Status</th><th>Priority</th>'
+                     f'<th>Actionable</th><th>Open</th></tr></thead><tbody>{prows}</tbody></table>'
+                     if prows else '<div class="card empty muted">No prospects in this run.</div>')
+            start_panel = "" if running else _START_PANEL_HTML
+            results_link = (f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Run results</a>'
+                            if run_id else '')
+            body = (f'<h1>Manual URL Scan</h1><p class="muted">{_esc(SCOUT_PRODUCT_NAME)} — bounded, '
+                    f'read-only scan of URLs you paste. For automatic prospect discovery use '
+                    f'<a href="/scout/new">Discover Prospects</a>. Nothing is sent without your action.</p>'
+                    f'<div class="row"><a class="chip" href="/scout/new">Discover Prospects (adaptive)</a>'
+                    f'<a class="chip" href="/scout/history">History</a>'
+                    f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
+                    f'<div class="card"><p>Scan mode {_badge(mode)} · status '
+                    f'{_badge(_prospect_status_label(st.get("status", "n/a")))}</p>'
+                    f'<div class="row">{controls}</div></div>'
+                    f'<div class="row"><a class="chip" href="/scout/campaigns">Campaigns</a>'
+                    f'{results_link}</div>'
+                    f'<div class="scrollx">{table}</div>'
+                    + (f'<details class="card advanced"><summary>Run diagnostics</summary>'
+                       f'<p><b>Run ID:</b> <code>{_esc(run_id)}</code></p></details>' if run_id else '')
+                    + start_panel)
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";\n"
+                "function ctl(a){fetch('/api/control?action='+a,{method:'POST',"
+                "headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
+                "if(!j.ok)alert('control refused: '+(j.message||j.error));location.reload();});}\n"
+                "function startCampaign(){var seeds=(document.getElementById('seeds').value||'')"
+                ".split(/[\\n,]+/).map(function(s){return s.trim();}).filter(Boolean);"
+                "if(!seeds.length){alert('enter at least one public https URL');return;}"
+                "if(!document.getElementById('confirm').checked){alert('please confirm the bounded "
+                "read-only scan');return;}var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():"
+                "String(Date.now())+Math.random();"
+                "var mode=(document.getElementById('scanmode')||{}).value||'static';"
+                "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
+                "campaign:document.getElementById('campaign').value||'adhoc',browser_mode:mode,"
+                "coverage:(document.getElementById('coverage')||{}).value||'adaptive'})})"
+                ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
+                "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
+                "alert('start failed: '+e);});}\n"
+                "function esc(s){return String(s).replace(/[&<>\"]/g,function(c){"
+                "return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c];});}\n"
+                "function importList(){var f=document.getElementById('impfile').files[0];"
+                "if(!f){alert('choose a .xlsx or .csv file');return;}var rd=new FileReader();"
+                "rd.onload=function(){var b64=String(rd.result).split(',').pop();"
+                "fetch('/api/scout/import',{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify({filename:f.name,content_b64:b64})})"
+                ".then(r=>r.json()).then(function(j){if(!j.ok){document.getElementById('imppreview')"
+                ".innerHTML='<p class=muted>Import refused: '+esc(j.error||'')+'</p>';return;}"
+                "renderImport(j.result);}).catch(function(e){alert('import failed: '+e);});};"
+                "rd.readAsDataURL(f);}\n"
+                "function mget(r,k){var m=r.metadata||{};for(var kk in m){"
+                "if(kk.toLowerCase()===k)return m[kk];}return '';}\n"
+                "function renderImport(res){var c=res.counters;var head='<p class=muted>'+c.preselected"
+                "+' preselected \\u00b7 '+c.valid_unique+' new \\u00b7 '+c.already_analyzed+' already \\u00b7 '"
+                "+c.rejected+' rejected \\u00b7 '+c.dup_in_file+' dup \\u00b7 '+c.invalid+' invalid ('"
+                "+c.total+' rows; column '+esc(res.column)+')</p>';var trs=res.rows.map(function(r){"
+                "var pre=(r.preselect)?'checked':'';"
+                "var dis=(r.valid&&r.disposition!=='duplicate')?'':'disabled';"
+                "var score=mget(r,'weighted score')||mget(r,'qa potential');"
+                "return '<tr><td><input type=checkbox class=impsel '+pre+' '+dis+' data-seed=\"'"
+                "+esc(r.seed_url)+'\"></td><td>'+esc(r.canonical_domain||r.original)+'</td><td>'"
+                "+esc(mget(r,'product'))+'</td><td>'+esc(mget(r,'priority'))+'</td><td>'"
+                "+esc(r.recommended_action||'')+'</td><td>'+esc(score)+'</td><td>'"
+                "+esc(r.disposition)+'</td></tr>';}).join('');"
+                "document.getElementById('imppreview').innerHTML=head+'<table><tr><th></th><th>Domain</th>"
+                "<th>Product</th><th>Priority</th><th>Rec. action</th><th>Score</th><th>Disposition</th>"
+                "</tr>'+trs+'</table>'+'<p><label>Campaign name: "
+                "<input id=impcampaign value=curated></label> &nbsp;<label>Coverage: <select "
+                "id=impcoverage><option value=adaptive selected>Adaptive \u2014 max 12 pages</option>"
+                "<option value=deep>Deep \u2014 max 20 pages</option>"
+                "</select></label>"
+                " &nbsp;<label>Scan mode: <select id=impscanmode>"
+                "<option value=playwright selected>Deep Capture (Playwright)</option>"
+                "<option value=static>Static (faster)</option></select></label></p>"
+                "<p class=muted>Static = faster HTTP/HTML checks. Deep Capture = real browser: "
+                "screenshots, axe accessibility, perf timing and console/network evidence (needs "
+                "Chromium). Coverage bounds how many same-site pages are explored (never a quota); "
+                "both profiles can stop early once further pages add no new coverage.</p>"
+                "<p><label><input type=checkbox id=impconfirm> I confirm this is an authorized, "
+                "bounded, read-only scan.</label></p>"
+                "<p><button class=\"btn primary\" onclick=\"launchImport()\">Scan selected</button></p>';}\n"
+                "function launchImport(){var seeds=[].slice.call(document.querySelectorAll("
+                "'.impsel:checked')).map(function(x){return x.getAttribute('data-seed');});"
+                "if(!seeds.length){alert('select at least one domain');return;}"
+                "if(!document.getElementById('impconfirm').checked){"
+                "alert('please confirm the bounded read-only scan');return;}"
+                "var key=(crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();"
+                "var mode=(document.getElementById('impscanmode')||{}).value||'static';"
+                "fetch('/api/campaign/start',{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify({confirm:true,idempotency_key:key,seeds:seeds,"
+                "campaign:document.getElementById('impcampaign').value||'curated',browser_mode:mode,"
+                "coverage:(document.getElementById('impcoverage')||{}).value||'adaptive'})})"
+                ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
+                "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
+                "alert('start failed: '+e);});}\n")
+            return _page("AI QA Factory — Scout", "/scout", body, script)
+
+        def _scout_campaigns_page(self, q=None) -> str:
+            ov = self._read_model().overview()
+            # Reuse the unified project index for scout campaigns (no second store).
+            from core.orchestration.project_index import ProjectIndex
+            from core.scout.operator_state import OperatorStateStore
+            all_camps = [p for p in ProjectIndex(service.output_dir).list_projects()
+                         if p.type == "scout_campaign"]
+            archived_ids = set(
+                OperatorStateStore(service.output_dir).snapshot()["archived_runs"])
+            show_archived = ((q or {}).get("archived") or [""])[0] in ("1", "true", "only")
+            camps = [p for p in all_camps
+                     if (p.project_id in archived_ids) is show_archived]
+            archived_count = sum(1 for p in all_camps if p.project_id in archived_ids)
+            current_count = len(all_camps) - archived_count
+            rows = "".join(
+                f'<tr><td><a href="/scout/progress?id={_esc(c.project_id)}">{_esc(c.title)}</a></td>'
+                f'<td>{_badge(c.lifecycle_state)}</td>'
+                f'<td>{c.progress}%</td><td>{c.evidence_count}</td>'
+                f'<td class="muted">{_esc(c.operator_next_action)}</td>'
+                f'<td><a class="chip" href="/scout/progress?id={_esc(c.project_id)}">Open</a></td></tr>'
+                for c in camps)
+            table = (f'<table class="responsive-table"><caption>'
+                     f'{"Archived" if show_archived else "Current"} Scout campaigns</caption>'
+                     f'<tr><th>Campaign</th><th>Status</th>'
+                     f'<th>Progress</th><th>Evidence</th><th>Next action</th><th>Open</th></tr>{rows}</table>'
+                     if rows else (
+                         '<div class="card empty muted">No archived campaigns.</div>'
+                         if show_archived else
+                         '<div class="card empty muted">No current campaigns. '
+                         '<a href="/scout">Open Scout to start one</a>.</div>'))
+            body = (f'<h1>Scout campaigns</h1><div class="row">'
+                    f'<a class="chip" href="/scout/new">New adaptive campaign</a>'
+                    f'<a class="chip" href="/scout/history">History</a>'
+                    f'<a class="chip" href="/scout">Manual URL Scan</a>'
+                    f'<a class="chip" href="/results">Results</a>'
+                    f'<span class="chip">Active {len(ov.active_campaigns)}</span></div>'
+                    f'<div class="tabs" role="tablist" aria-label="Campaign views">'
+                    f'<a role="tab" aria-selected="{"true" if not show_archived else "false"}" '
+                    f'href="/scout/campaigns">Current ({current_count})</a>'
+                    f'<a role="tab" aria-selected="{"true" if show_archived else "false"}" '
+                    f'href="/scout/campaigns?archived=1">Archived '
+                    f'({archived_count})</a></div>'
+                    f'<div class="scrollx">{table}</div>'
+                    f'<p class="muted">Campaign start + Pause/Resume/Stop Safely/Cancel controls are '
+                    f'on <a href="/scout">Manual URL Scan</a> (bounded, read-only; nothing is sent).</p>')
+            return _page("AI QA Factory — Scout campaigns", "/scout", body)
+
+        # --- v3.3 adaptive Scout operator workflow -------------------------------------------
+        def _campaign_service(self):
+            from core.scout.campaign_service import CampaignService
+            return CampaignService(service.output_dir)
+
+        def _scout_preflight(self):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            body = body or {}
+            preset = str(body.get("campaign_preset") or "balanced-production")
+            try:
+                out = self._campaign_service().preflight(
+                    campaign_preset=preset,
+                    probe_browser_launch=bool(body.get("probe_browser", True)),
+                    do_network=bool(body.get("probe_network", True)))
+            except Exception as exc:
+                return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return self._json(200, {"ok": True, **out})
+
+        def _scout_launch(self):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            body = body or {}
+            overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else None
+            try:
+                res = self._campaign_service().launch(
+                    campaign_preset=str(body.get("campaign_preset") or "balanced-production"),
+                    session_preset=body.get("session_preset") or None, overrides=overrides,
+                    approve_live_discovery=bool(body.get("approve_live_discovery")),
+                    background=True)
+            except Exception as exc:
+                return self._json(400, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+            return self._json(200, {"ok": True, **res})
+
+        def _scout_control(self, parsed):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            qs = parse_qs(parsed.query)
+            return self._json(200, self._campaign_service().control(
+                (qs.get("id") or [""])[0], (qs.get("action") or [""])[0]))
+
+        def _scout_export(self, parsed):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            cid = (parse_qs(parsed.query).get("id") or [""])[0]
+            try:
+                return self._json(200, {"ok": True, "bundle": self._campaign_service().export_bundle(cid)})
+            except Exception as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
+
+        def _scout_new_page(self) -> str:
+            cat = self._campaign_service().catalog()
+            opts = "".join(
+                f'<option value="{_esc(p["key"])}"{" selected" if p["key"]==cat["default_campaign_preset"] else ""}>'
+                f'{_esc(p["label"])}{" (smoke)" if p.get("is_smoke") else ""}</option>'
+                for p in cat["campaign_presets"])
+            sess = "".join(f'<option value="{_esc(s["key"])}">{_esc(s["label"])} '
+                           f'({s["max_discovered"]} discovered / {s["max_qa_analyzed"]} QA / '
+                           f'{s["max_duration_min"]}m)</option>' for s in cat["session_presets"])
+            strat = "".join(f'<option value="{_esc(s)}">{_esc(s)}</option>'
+                            for s in cat["strategies"])
+            ind_opts = "".join(f'<option value="{_esc(i)}">{_esc(i)}</option>'
+                               for i in cat["industries"])
+            site_opts = "".join(f'<option value="{_esc(s)}">{_esc(s.replace("_", " "))}</option>'
+                                for s in cat["site_types"])
+            body = (
+                '<h1>New Scout campaign</h1>'
+                '<div class="row"><a class="chip" href="/scout/history">History</a>'
+                '<a class="chip" href="/scout/attention">Needs attention</a>'
+                '<a class="chip" href="/scout">Manual URL Scan</a></div>'
+                '<div class="card formstack"><h2>Campaign basics</h2>'
+                '<label>Campaign type<br><select id="preset">' + opts + '</select></label>'
+                '<label>Run size and time budget<br><select id="session">'
+                '<option value="">Use campaign default</option>'
+                + sess + '</select></label>'
+                '<label>Countries (comma-separated; blank = no restriction)<br>'
+                '<input id="countries" placeholder="us, de"></label>'
+                '<label>Industries (optional; blank = campaign default)<br>'
+                '<select id="industries" multiple size="6">' + ind_opts + '</select></label>'
+                '<label>Keywords / commercial signals (comma-separated)<br>'
+                '<input id="keywords" placeholder="pricing, free trial, book demo"></label>'
+                '<label><input type="checkbox" id="deepcapture"> Deep capture (Playwright): real '
+                'screenshots + network evidence (console errors, failed resources, timing). Slower; '
+                'needs Chromium installed. Off = fast static analysis.</label>'
+                '<details class="advanced"><summary>Advanced options and readiness</summary>'
+                '<label>Strategy<br><select id="strategy"><option value="">Use campaign default</option>'
+                + strat + '</select></label>'
+                '<label>Languages (comma-separated)<br><input id="languages" placeholder="en, de"></label>'
+                '<label>Site types (optional)<br><select id="sitetypes" multiple size="6">'
+                + site_opts + '</select></label>'
+                '<label>Exclude keywords (comma-separated)<br><input id="excludekw"></label>'
+                '<label>Minimum commercial score 0–100<br>'
+                '<input id="minscore" type="number" min="0" max="100" '
+                'placeholder="Use campaign default"></label>'
+                '<label>Maximum discovered domains<br><input id="maxdisc" type="number" min="1"></label>'
+                '<label>Maximum pages per site<br><input id="maxpages" type="number" min="1"></label>'
+                '<div class="row"><button id="pf" class="chip">Run readiness preflight</button></div>'
+                '<pre id="pfout" class="scrollx muted">Readiness details appear here.</pre>'
+                '</details>'
+                '<p class="muted">Presets are editable templates. Every run is finite (hard '
+                'ceilings) and never sends anything. Live discovery needs your explicit approval '
+                'and a configured Tavily key.</p>'
+                '<label><input type="checkbox" id="approve"> I approve one bounded LIVE discovery '
+                'run (real external sites, no submissions/purchases/messages)</label>'
+                '<div class="row"><button id="run" class="chip primary">Run campaign</button></div>'
+                '<div id="msg" class="muted"></div></div>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";\n"
+                "function J(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json',"
+                "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json());}\n"
+                "function v(id){var e=document.getElementById(id);return e?e.value.trim():'';}\n"
+                "function csv(s){return s.split(',').map(x=>x.trim()).filter(Boolean);}\n"
+                "function multi(id){var e=document.getElementById(id);"
+                "return e?Array.from(e.selectedOptions).map(o=>o.value):[];}\n"
+                "function ov(){var o={};"
+                "var c=v('countries');if(c)o.countries=csv(c);"
+                "var lg=v('languages');if(lg)o.languages=csv(lg);"
+                "var st=document.getElementById('strategy').value;if(st)o.strategy=st;"
+                "var ind=multi('industries');if(ind.length)o.industries=ind;"
+                "var sty=multi('sitetypes');if(sty.length)o.site_types=sty;"
+                "var kw=v('keywords');if(kw)o.keywords=csv(kw);"
+                "var ex=v('excludekw');if(ex)o.exclude_keywords=csv(ex);"
+                "var ms=v('minscore');if(ms)o.min_commercial_threshold=parseInt(ms,10);"
+                "var md=v('maxdisc');if(md)o.max_candidates=parseInt(md,10);"
+                "var mp=v('maxpages');if(mp)o.max_pages_per_site=parseInt(mp,10);"
+                "var dc=document.getElementById('deepcapture');"
+                "if(dc&&dc.checked)o.browser_mode='playwright';"
+                "return o;}\n"
+                "document.getElementById('pf').onclick=function(){"
+                "document.getElementById('pfout').textContent='running real probes (browser launch"
+                " + network)…';"
+                "J('/api/scout/preflight',{campaign_preset:document.getElementById('preset').value})"
+                ".then(function(j){document.getElementById('pfout').textContent="
+                "JSON.stringify(j.preflight||j,null,2);}).catch(e=>{"
+                "document.getElementById('pfout').textContent='preflight failed: '+e;});};\n"
+                "document.getElementById('run').onclick=function(){"
+                "if(!document.getElementById('approve').checked){alert('approve the bounded live run"
+                " first');return;}var msg=document.getElementById('msg');msg.textContent='launching…';"
+                "J('/api/scout/launch',{campaign_preset:document.getElementById('preset').value,"
+                "session_preset:document.getElementById('session').value||null,"
+                "approve_live_discovery:true,overrides:ov()}).then(function(j){"
+                "if(j.ok){location.href='/scout/progress?id='+encodeURIComponent(j.campaign_id);}"
+                "else{msg.textContent='launch refused: '+(j.error||'unknown');}})"
+                ".catch(e=>{msg.textContent='launch failed: '+e;});};\n")
+            return _page("AI QA Factory — New Scout campaign", "/scout", body, script)
+
+        def _scout_progress_page(self, cid: str) -> str:
+            body = ('<h1>Campaign progress</h1><div class="row">'
+                    '<a class="chip" href="/scout/new">New campaign</a>'
+                    '<a class="chip" href="/scout/history">History</a></div>'
+                    '<div class="card"><div id="p" class="muted">loading…</div>'
+                    '<div class="row"><button id="bp" class="chip" onclick="ctl(\'pause\')">Pause</button>'
+                    '<button id="br" class="chip" onclick="ctl(\'resume\')">Resume</button>'
+                    '<button id="bs" class="chip danger" onclick="ctl(\'stop\')">Stop &amp; Save</button></div>'
+                    '<details class="advanced"><summary>Advanced run diagnostics</summary>'
+                    '<button class="chip" onclick="exp()">Export internal campaign record</button>'
+                    '<p class="muted">For Observer/reviewer diagnostics; this is not the '
+                    'client-ready attachment. Download a client ZIP from a completed target card.</p>'
+                    '</details>'
+                    '<div id="msg" class="muted"></div></div>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";const CID=" + json.dumps(cid) + ";\n"
+                "function ctl(a){fetch('/api/scout/control?id='+encodeURIComponent(CID)+'&action='+a,"
+                "{method:'POST',headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(load);}\n"
+                "function exp(){fetch('/api/scout/export?id='+encodeURIComponent(CID),{method:'POST',"
+                "headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
+                "document.getElementById('msg').textContent=j.ok?('internal record: '+j.bundle):"
+                "('export failed: '+j.error);});}\n"
+                "function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
+                "function load(){fetch('/api/scout/progress?id='+encodeURIComponent(CID)).then(r=>r.json())"
+                ".then(function(j){var c=j.counters||{};var d=(j.decisions||[]);"
+                # After a terminal state, Pause/Resume/Stop no longer apply -> disable them (honest UI).
+                "var term=['completed','stopped_with_checkpoint','failed','cancelled'].indexOf(String(j.run_state))>=0;"
+                "['bp','br','bs'].forEach(function(id){var b=document.getElementById(id);if(b)b.disabled=term;});"
+                # Each analyzed domain links to its target detail (findings/evidence); same tab.
+                "var rows=d.map(function(x){var enc=encodeURIComponent(x.domain||'');"
+                "var run=encodeURIComponent(x.scout_run||'');var href='/scout/target?domain='+enc+"
+                "(run?'&run='+run:'');"
+                "return '<tr><td><a href=\"'+href+'\">'+esc(x.domain)+'</a></td><td>'+esc(x.priority)+"
+                "'</td><td>'+esc((x.allocation||{}).depth)+'</td><td>'+esc((x.brain||{}).business_model||'')+"
+                "'</td></tr>';}).join('');"
+                "document.getElementById('p').innerHTML='<div class=row><span class=chip>State: '+esc(j.run_state)+"
+                "'</span><span class=chip>Stop: '+esc(j.stop_reason||'—')+'</span></div>'+"
+                "'<table><tr><th>Discovered</th><th>Eligible</th><th>QA analyzed</th><th>Actionable</th>'+"
+                "'<th>Already</th><th>Rejected</th><th>Failed</th></tr><tr><td>'+[c.discovered,c.eligible,"
+                "c.qa_analyzed,c.actionable,c.already_analyzed,c.rejected,c.failed].map(v=>esc(v==null?0:v)).join('</td><td>')+"
+                "'</td></tr></table>'+(rows?('<table><caption>Adaptive decisions</caption><tr><th>Domain</th>'+"
+                "'<th>Priority</th><th>Depth</th><th>Business model</th></tr>'+rows+'</table>'):'');});}\n"
+                "load();setInterval(load,3000);\n")
+            return _page("AI QA Factory — Campaign progress", "/scout", body, script)
+
+        def _scout_history_page(self, q) -> str:
+            from datetime import datetime, timedelta, timezone
+            qtext = (q.get("text") or [""])[0]
+            frm = (q.get("from") or [""])[0].strip()      # explicit YYYY-MM-DD lower bound
+            to = (q.get("to") or [""])[0].strip()          # explicit YYYY-MM-DD upper bound
+            show_archived = (q.get("archived") or [""])[0].strip().lower() in ("1", "true", "yes")
+            try:
+                days = int((q.get("days") or ["0"])[0])    # any custom N days back
+            except ValueError:
+                days = 0
+            since, until = "", ""
+            if frm or to:
+                since = frm
+                until = (to + "T23:59:59+00:00") if to else ""
+            elif days > 0:
+                since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            rows = self._campaign_service().history(filters={
+                "text": qtext, "since": since, "until": until,
+                "archived": "only" if show_archived else "",
+            })
+            active_days = days if (days > 0 and not (frm or to)) else 0
+            filtered = bool(qtext or since or until)
+            total = len(self._campaign_service().history(filters={
+                "archived": "only" if show_archived else ""}))
+            count_label = (f"{len(rows)} shown of {total} total"
+                           if filtered and len(rows) != total else f"{total} total")
+            range_chips = "".join(
+                f'<a class="chip{" active" if active_days == val else ""}" '
+                f'href="/scout/history?days={val}'
+                f'{"&archived=1" if show_archived else ""}'
+                f'{("&text=" + _esc(qtext)) if qtext else ""}">{lbl}</a>'
+                for val, lbl in ((1, "Today"), (7, "7 days"), (30, "30 days"), (0, "All")))
+            trs = "".join(
+                f'<tr><td class="select-cell"><input type="checkbox" class="pick" '
+                f'value="{_esc(r.get("domain",""))}" aria-label="Select {_esc(r.get("domain",""))}"></td>'
+                f'<td data-label="Target"><a href="/scout/target?domain={_esc(r.get("domain",""))}">'
+                f'{_esc(r.get("domain",""))}</a></td>'
+                f'<td data-label="Analysis">{_badge(_analysis_status_label(r.get("analysis_status","")))}</td>'
+                f'<td data-label="Prospect stage">{_badge(r.get("engagement_status","prospect").title())}</td>'
+                f'<td data-label="Analyzed" class="muted">{_fmt_ts(r.get("last_analysis_at",""))}</td>'
+                f'<td data-label="Note" class="muted">'
+                f'{_esc(_manual_reason_label(r.get("reason",""))) if r.get("reason") else "&mdash;"}</td></tr>'
+                for r in rows)
+            empty_msg = (f'0 shown of {total} total &mdash; no sites match this filter.'
+                         if filtered and total > 0 else
+                         ('No archived targets.' if show_archived else 'No analyzed sites yet.'))
+            table = (f'<table class="responsive-table"><caption>'
+                     f'{"Archived" if show_archived else "Active"} targets &mdash; {count_label}</caption>'
+                     f'<thead><tr><th><input type="checkbox" id="pickall" aria-label="Select all"></th>'
+                     f'<th>Target</th><th>Analysis</th><th>Prospect stage</th><th>Analyzed</th>'
+                     f'<th>Note</th></tr></thead><tbody>{trs}</tbody></table>'
+                     if rows else f'<div class="card empty muted">{empty_msg}</div>')
+            active_tab = ('<a class="chip" href="/scout/history">Active</a>'
+                          if show_archived else '<span class="chip active">Active</span>')
+            archived_tab = ('<span class="chip active">Archived</span>' if show_archived else
+                            '<a class="chip" href="/scout/history?archived=1">Archived</a>')
+            bulk_buttons = (
+                '<button class="chip" onclick="bulk(\'restore_targets\')">Restore selected</button>'
+                '<button class="chip danger" onclick="forgetSelected()">Forget selected…</button>'
+                if show_archived else
+                '<button class="chip" onclick="bulk(\'archive_targets\')">Archive selected</button>')
+            body = (f'<h1>Scout history</h1><div class="row">'
+                    f'<a class="chip" href="/scout/new">New campaign</a>'
+                    f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
+                    f'<div class="row">{active_tab}{archived_tab}</div>'
+                    f'<div class="row" style="margin-bottom:6px">{range_chips}</div>'
+                    f'<form method="get" class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
+                    f'<input type="hidden" name="archived" value="{"1" if show_archived else ""}">'
+                    f'<label class="muted">Last <input name="days" type="number" min="1" max="3650" '
+                    f'style="width:64px" value="{active_days or ""}"> days</label>'
+                    f'<span class="muted">or</span>'
+                    f'<label class="muted">from <input name="from" type="date" value="{_esc(frm)}"></label>'
+                    f'<label class="muted">to <input name="to" type="date" value="{_esc(to)}"></label>'
+                    f'<input name="text" placeholder="filter domain/text" value="{_esc(qtext)}">'
+                    f'<button class="chip">Filter</button>'
+                    f'<a class="chip" href="/scout/history">Reset</a></form>'
+                    f'<div class="scrollx">{table}</div>'
+                    f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
+                    f'selected</b><div class="row">{bulk_buttons}'
+                    f'<button class="chip" onclick="clearSelection()">Clear</button>'
+                    f'<span id="bulkmsg" class="muted" aria-live="polite"></span></div></div>'
+                    f'<p class="muted">Archive is reversible and is the normal cleanup action. '
+                    f'Forget removes dedup/history only after confirmation; exact-run evidence stays '
+                    f'preserved until separately deleted.</p>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";"
+                "function picks(){return Array.from(document.querySelectorAll('.pick:checked')).map(x=>x.value);}"
+                "function refreshBulk(){var n=picks().length;document.getElementById('selected').textContent=n;"
+                "document.getElementById('bulkbar').hidden=!n;}"
+                "document.querySelectorAll('.pick').forEach(x=>x.onchange=refreshBulk);"
+                "var pa=document.getElementById('pickall');if(pa)pa.onchange=function(){"
+                "document.querySelectorAll('.pick').forEach(x=>x.checked=pa.checked);refreshBulk();};"
+                "function clearSelection(){document.querySelectorAll('.pick').forEach(x=>x.checked=false);"
+                "if(pa)pa.checked=false;refreshBulk();}"
+                "function bulk(action,confirmFlag){var d=picks();if(!d.length)return;"
+                "fetch('/api/scout/operator',{method:'POST',headers:{'X-Scout-CSRF':CSRF,"
+                "'Content-Type':'application/json'},body:JSON.stringify({action:action,domains:d,"
+                "confirm:!!confirmFlag})}).then(r=>r.json()).then(j=>{if(j.ok)location.reload();"
+                "else document.getElementById('bulkmsg').textContent=j.error||'Action failed';});}"
+                "function forgetSelected(){if(confirm('Forget selected targets from dedup/history? "
+                "Exact-run evidence will remain.'))bulk('forget_targets',true);}")
+            return _page("AI QA Factory — Scout history", "/scout", body, script)
+
+        def _scout_target_page(self, domain: str, run: str = "") -> str:
+            det = self._campaign_service().target_detail(domain, run=run)
+            entry, brain = det.get("entry"), det.get("brain")
+            prospect_id = det.get("prospect_id") or ""
+            prospect_status = det.get("prospect_status") or ""
+            run_id = det.get("run") or det.get("scout_run") or ""
+            nav = ((f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Back to run</a>'
+                    if run_id else '')
+                   + '<a class="chip" href="/scout/history">Back to history</a>')
+            # A target whose domain is not in the resolved exact run: honest, never another
+            # target's data.  This applies to both run-pinned links and History links, because a
+            # drifted History record can still resolve a shared multi-target run.
+            if det.get("evidence_status") == "prospect_not_found":
+                return _page("AI QA Factory — Target", "/scout",
+                             f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
+                             f'<div class="card status-hero attention">'
+                             f'<div class="banner warn">Evidence for this domain could not be bound '
+                             f'to its own analyzed page in the resolved run. No findings, screenshots, '
+                             f'network capture, or reproduction are shown here — Scout never shows '
+                             f'another target\'s evidence in their place.</div>'
+                             f'<p class="muted">Re-run a bounded scan for {_esc(domain)} to rebuild '
+                             f'its own evidence.</p></div>'
+                             f'<details class="card advanced"><summary>Advanced diagnostics</summary>'
+                             f'<p><b>Resolved run:</b> <code>{_esc(run_id or "unavailable")}</code> · '
+                             f'<b>Evidence status:</b> <code>prospect_not_found</code></p></details>')
+            # A run-pinned incomplete target (manual action / failed): honest incomplete-analysis view,
+            # never a healthy "0 defects" conclusion.
+            if run and prospect_status and prospect_status != "DONE":
+                return self._scout_incomplete_target_html(domain, det, nav)
+            if not entry and not brain and not prospect_id:
+                return _page("AI QA Factory — Target", "/scout",
+                             f'<h1>Target</h1><div class="card empty muted">No record for '
+                             f'{_esc(domain)}.</div>')
+            # The daily operator surface is compact and outcome-first.  A hidden, environment-only
+            # legacy renderer remains available for migration diagnostics; it is never linked from
+            # the UI and is off by default.
+            if os.getenv("AIQA_SCOUT_LEGACY_TARGET_UI", "").lower() not in ("1", "true", "yes"):
+                return self._scout_complete_target_html(domain, det, nav)
+            b = brain or {}
+            bs = (b.get("brain") or {})
+            scores = bs.get("scores", {})
+            plan = (b.get("plan") or {})
+            findings = det.get("findings") or []
+            contacts = det.get("contacts") or []
+            draft = det.get("draft") or {}
+            media = det.get("media") or []
+            network = det.get("network") or {}
+            fixability = det.get("fixability") or {}
+            scout_run = det.get("scout_run") or ""
+            source_kind = det.get("source_kind") or ""
+            video_mode = det.get("video_mode") or ""
+            evidence_files = det.get("evidence_files") or []
+            status = (entry or {}).get("analysis_status", "")
+            reason = (entry or {}).get("reason", "")
+            # Truthful "what is this" card: an AI understanding card is only produced by adaptive
+            # discovery (the Scout Brain). A curated/manual import never runs that step BY DESIGN, so
+            # showing bare "—" dashes there looks like broken/missing data. Say plainly which is true.
+            _SOURCE_LABEL = {
+                "curated": "This target came from a curated list import. Automatic AI understanding "
+                           "(archetype / business model / journeys) is not computed for curated "
+                           "imports — that is expected, not missing data.",
+                "manual": "This target came from a manual URL scan. Automatic AI understanding "
+                         "(archetype / business model / journeys) is not computed for manual scans "
+                         "— that is expected, not missing data.",
+            }
+            if bs:
+                understanding_html = (
+                    f'<p><b>Archetype:</b> {_esc(bs.get("archetype","—"))} · '
+                    f'<b>Business model:</b> {_esc(bs.get("business_model","—"))} · '
+                    f'<b>Understanding confidence:</b> {_esc(bs.get("understanding_confidence","—"))}%</p>'
+                    f'<p><b>Critical journeys:</b> {_esc(", ".join(bs.get("primary_journeys",[])))}</p>')
+            elif source_kind in _SOURCE_LABEL:
+                understanding_html = f'<p class="muted">{_esc(_SOURCE_LABEL[source_kind])}</p>'
+            else:
+                understanding_html = ('<p class="muted">No AI understanding was computed for this '
+                                      'target (not applicable for this source).</p>')
+            body = (
+                f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
+                f'<div class="card"><h2>What Scout thinks this is</h2>'
+                + understanding_html +
+                f'<p><b>Priority:</b> {_badge(b.get("priority","—"))} · '
+                f'<b>Scores</b> commercial {scores.get("commercial","—")} / QA {scores.get("qa_value","—")} / '
+                f'evidence {scores.get("evidence_confidence","—")} / safety {scores.get("safety_confidence","—")} / '
+                f'combined {scores.get("combined_opportunity","—")}</p></div>'
+                f'<div class="card"><h2>Why Scout tested this / what it skipped</h2>'
+                f'<p><b>Depth:</b> {_esc((b.get("allocation") or {}).get("depth","—"))} · '
+                f'<b>Policy ceiling:</b> {_esc(plan.get("allowed_interaction_mode","—"))}</p>'
+                f'<p><b>Checks selected:</b> {_esc(", ".join(plan.get("checks_selected",[])))}</p>'
+                f'<p><b>Checks skipped:</b> {_esc(", ".join(plan.get("checks_skipped",[])))}</p>'
+                f'<p><b>Stop boundary:</b> {_esc(", ".join(plan.get("stop_boundaries",[])) or "—")}</p>'
+                f'<p class="muted">Current automatic Scout execution uses read-only navigation. '
+                f'The policy ceiling describes what a separately authorized flow could permit; it '
+                f'is not evidence that an interaction ran.</p>'
+                f'<p class="muted"><b>Decisions:</b> {_esc(" · ".join(plan.get("decisions",[])))}</p></div>'
+                f'<div class="card"><h2>Persisted record</h2>'
+                f'<p><b>Status:</b> {_badge((entry or {}).get("analysis_status","—"))} · '
+                f'<b>Evidence ref:</b> <code>{_esc((entry or {}).get("evidence_ref","—"))}</code></p>'
+                + ('<div class="banner warn">This target was not analyzed unattended'
+                   + (f' — {_esc(reason)}' if reason else '')
+                   + '. Scout never solves CAPTCHAs. Solve it yourself in your browser, then use '
+                     'the button below and re-run a campaign including this target.</div>'
+                   if _looks_blocked(status, reason) else '')
+                + ('<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">'
+                   '<button class="chip" type="button" onclick="rescan()">I handled it — rescan '
+                   'this target</button>'
+                   '<button class="chip" type="button" onclick="replay()">Watch headed replay'
+                   '</button><span id="rescanmsg" class="muted"></span></div>' if entry else '')
+                + '<p class="muted">A rescan starts a fresh bounded pass. When qualified-auto video '
+                'is configured, Scout keeps a short clip only if Playwright reproduces an eligible '
+                'broken flow-entry navigation cleanly; otherwise no video is created.</p></div>')
+
+            # Within-site coverage (PR-B): how many meaningful pages Scout explored on THIS target,
+            # under which profile, and why it stopped. Independent of how many domains a campaign
+            # analyzes (that is the separate campaign-budget axis).
+            body += (f'<div class="card"><h2>Coverage</h2>{_coverage_card_html(det.get("coverage"))}'
+                     f'</div>')
+
+            # Honest evidence-binding state: a shared multi-target run may register a domain whose own
+            # analyzed prospect is not in the store. We refuse to borrow another target's evidence, so
+            # the card shows nothing here — say so plainly rather than look like a clean empty result.
+            if det.get("evidence_status") == "prospect_not_found":
+                body += ('<div class="banner warn">Evidence for this domain could not be bound to its '
+                         'own analyzed page in the run, so no findings, screenshots, network capture '
+                         'or reproduction are shown here — deliberately, rather than surface evidence '
+                         'from a different target. Re-run a scan for this domain to rebuild its own '
+                         'evidence.</div>')
+
+            # Sales funnel (engagement pipeline). Won/Delivered come from client-work; the
+            # outreach-side transitions are set here. The system never emails anyone.
+            if entry:
+                eng = (entry or {}).get("engagement_status", "prospect")
+                wid = (entry or {}).get("work_id", "")
+                funnel_btns = "".join(
+                    f'<button class="chip" type="button" onclick="setEng(\'{s}\')">{lbl}</button>'
+                    for s, lbl in (("contacted", "Contacted"), ("replied", "Replied"),
+                                   ("won", "Won"), ("delivered", "Delivered"), ("lost", "Lost")))
+                body += ('<div class="card"><h2>Sales funnel</h2>'
+                         f'<p><b>Stage:</b> {_badge(eng)}'
+                         + (f' · <b>Work:</b> <code>{_esc(wid)}</code>' if wid else '')
+                         + '</p><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
+                         + funnel_btns + '<span id="engmsg" class="muted"></span></div>'
+                         '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;'
+                         'margin-top:10px"><button class="btn primary" type="button" '
+                         'onclick="startCW()">Start client work</button>'
+                         + (f'<a class="chip" href="/work/{_esc(wid)}">open work &#8599;</a>'
+                            if wid else '')
+                         + '<span id="cwmsg" class="muted"></span></div>'
+                         '<p class="muted">Start client work builds a job brief from these findings, '
+                         'runs the read-only analyze-job (feasibility + proposal), and links it as a '
+                         'proposal. It does NOT change the sales stage. Won / Delivered are '
+                         'commitments — set them only after a real, confirmed client agreement '
+                         '(they ask for confirmation); Contacted / Replied you set freely here. '
+                         'Nothing is emailed by the system.</p></div>')
+
+            # Public contacts (read-only; the system never emails anyone).
+            contacts_html = ("".join(f'<span class="chip">{_esc(e)}</span> ' for e in contacts)
+                             or '<span class="muted">None found on public pages.</span>')
+            body += (f'<div class="card"><h2>Public contact(s)</h2><p>{contacts_html}</p>'
+                     f'<p class="muted">Extracted read-only from public pages. Use them to reach out '
+                     f'yourself; the system never sends anything.</p></div>')
+
+            # Problem items: ordered by qa_value_score desc, each with a confidence label + a
+            # one-line repro hint. Every dynamic cell is HTML-escaped and newline-collapsed; an
+            # absent field shows a neutral placeholder (never invented). See _problems_table_html.
+            prob_table = _problems_table_html(findings)
+            body += (f'<div class="card"><h2>Problems found</h2><div class="scrollx">{prob_table}</div>'
+                     f'</div>')
+
+            # Fixability (stage 3 — paid fix scoping). Conservative: nothing is "ready" for a cold
+            # prospect (no access yet); this is what we could offer to fix ourselves.
+            fx_items = fixability.get("items") or []
+            _FX_LABEL = {"fix_ready": "fix ready", "fix_after_access": "fix after access",
+                         "out_of_scope": "out of scope"}
+            if fx_items:
+                fx_rows = "".join(
+                    f'<tr><td>{_badge(_FX_LABEL.get(i.get("fix_tier"), i.get("fix_tier","")))}</td>'
+                    f'<td class="muted">{_esc(i.get("category") or "—")}</td>'
+                    f'<td>{_esc(i.get("title") or "—")}</td>'
+                    f'<td class="muted">{_esc(i.get("fix_reason") or "")}</td></tr>' for i in fx_items)
+                fx_html = (f'<p class="muted">{_esc(fixability.get("summary",""))}</p>'
+                           f'<div class="scrollx"><table><caption>Fixability ({len(fx_items)})'
+                           f'</caption><tr><th>Tier</th><th>Type</th><th>Issue</th><th>Why</th></tr>'
+                           f'{fx_rows}</table></div>')
+            else:
+                fx_html = ('<div class="empty muted">No findings to scope yet. After a bounded QA '
+                           'analysis, this shows what we could fix ourselves (paid, stage 3).</div>')
+            body += ('<div class="card"><h2>Fixability — what we could fix (stage 3, paid)</h2>'
+                     + fx_html +
+                     '<p class="muted">Conservative + honest: nothing is "ready" for a cold prospect '
+                     '(no repo/staging access yet). We never promise a fix outside proven '
+                     'capability.</p></div>')
+
+            # Captured evidence media: screenshots inline, video playable, other files downloadable.
+            def _art_url(rel: str) -> str:
+                return f'/scout/artifact?run={_esc(scout_run)}&rel={_esc(rel)}'
+
+            def _ext(m: str) -> str:
+                return m.lower().rsplit(".", 1)[-1] if "." in m else ""
+            imgs = [m for m in media if _ext(m) in ("png", "jpg", "jpeg", "webp", "gif")]
+            vids = [m for m in media if _ext(m) in ("webm", "mp4")]
+            others = [m for m in media if m not in imgs and m not in vids]
+            media_html = "".join(
+                f'<a href="{_art_url(m)}" target="_blank" rel="noopener"><img src="{_art_url(m)}" '
+                f'alt="screenshot" style="max-width:280px;max-height:200px;margin:4px;'
+                f'border:1px solid var(--border,#ccc)"></a>' for m in imgs)
+            media_html += "".join(
+                f'<video src="{_art_url(m)}" controls preload="metadata" '
+                f'style="max-width:360px;margin:4px"></video>' for m in vids)
+            media_html += "".join(
+                f'<div><a href="{_art_url(m)}" download>{_esc(m.split("/")[-1])}</a></div>'
+                for m in others)
+            if not media:
+                media_html = ('<div class="empty muted">No screenshots/media captured yet. Launch a '
+                              'campaign with <b>Deep capture (Playwright)</b> to record screenshots '
+                              'and stronger evidence.</div>')
+            body += f'<div class="card"><h2>Screenshots &amp; evidence files</h2>{media_html}</div>'
+
+            # Video is an intentional capture POLICY (video_mode), not a pass/fail check. A captured
+            # video is still shown inline above, in the "Screenshots & evidence files" card, exactly
+            # like any other captured artifact. This card only appears when NO video exists, and its
+            # job is to say why: a manual/disabled policy with no clip is normal, expected behaviour
+            # — never presented as a missing/failed capture.
+            _VIDEO_POLICY_NOTE = {
+                "off": "Video capture is disabled for this run (video_mode=off). This is an "
+                      "intentional policy, not a failed capture.",
+                "manual": "Video capture is manual/opt-in for this run and none was recorded for "
+                         "this target. This is expected, not a defect.",
+                "qualified_auto": "No qualifying interaction finding triggered an automatic "
+                                  "reproduction video for this target.",
+            }
+            if not vids:
+                note = _VIDEO_POLICY_NOTE.get(video_mode,
+                    "No reproduction video was captured for this target.")
+                body += f'<div class="card"><h2>Reproduction video</h2><p class="muted">{_esc(note)}</p></div>'
+
+            # Accessibility (axe-core) evidence: distinguish "ran, N violations" from "browser
+            # evidence unavailable" from "not attempted" (static/non-deep-capture scan) — never
+            # conflate a capture-mode limitation with a real defect-free result.
+            axe_status = network.get("axe_status", "")
+            axe_violations = network.get("axe_violations") or []
+            if axe_status == "ok":
+                if axe_violations:
+                    a_rows = "".join(
+                        f'<tr><td>{_esc(str(v.get("id","—")))}</td>'
+                        f'<td class="muted">{_esc(str(v.get("impact","—")))}</td>'
+                        f'<td>{_esc(_collapse_ws(str(v.get("help",""))) or "—")}</td>'
+                        f'<td class="muted">{_esc(str(len(v.get("nodes") or [])))}</td></tr>'
+                        for v in axe_violations)
+                    axe_html = (f'<div class="scrollx"><table><caption>axe-core violations '
+                               f'({len(axe_violations)})</caption><tr><th>Rule</th><th>Impact</th>'
+                               f'<th>Description</th><th>Nodes</th></tr>{a_rows}</table></div>')
+                else:
+                    axe_html = ('<p class="muted">axe-core ran on this page and found 0 '
+                               'violations.</p>')
+            elif axe_status == "unavailable":
+                axe_html = ('<p class="muted">Deep-capture ran but axe-core evidence was unavailable '
+                           'for this page (browser/script limitation) — not a defect-free result.</p>')
+            else:
+                axe_html = ('<div class="empty muted">Accessibility (axe-core) was not attempted for '
+                           'this scan mode. Use <b>Deep Capture (Playwright)</b> to run axe-core.</div>')
+            body += f'<div class="card"><h2>Accessibility evidence (axe-core)</h2>{axe_html}</div>'
+
+            # Network evidence already captured by Chromium/Playwright (from observation.json).
+            if network:
+                ce = network.get("console_errors") or []
+                fr = network.get("failed_resources") or []
+                br = network.get("blocked_requests") or []
+                timing = network.get("timing_ms") or {}
+                net_html = (
+                    f'<p><b>HTTP status:</b> {_esc(str(network.get("status") or "—"))} · '
+                    f'<b>Load:</b> {_esc(str(timing.get("load", "—")))} ms</p>'
+                    f'<p><b>Console errors ({len(ce)}):</b> {_esc(", ".join(map(str, ce)) or "none")}</p>'
+                    f'<p><b>Failed resources ({len(fr)}):</b> '
+                    f'{_esc(", ".join(map(str, fr)) or "none")}</p>'
+                    f'<p><b>Blocked requests ({len(br)}):</b> '
+                    f'{_esc(", ".join(map(str, br)) or "none")}</p>')
+            else:
+                net_html = ('<div class="empty muted">No network capture yet. Deep capture '
+                            '(Playwright) records console errors, failed resources and load timing '
+                            'from Chromium.</div>')
+            body += f'<div class="card"><h2>Network evidence (Chrome/Playwright)</h2>{net_html}</div>'
+
+            # Structured evidence files — a safe, exact-run/exact-prospect-confined "open" action
+            # for redacted observations/traces plus findings/scorecard/coverage/reproduction/manual
+            # records, reusing the SAME /scout/artifact route as screenshots. Only files that
+            # genuinely exist are linked (never a dead link).
+            if evidence_files:
+                ev_rows = "".join(
+                    f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
+                    f'{_esc(e["label"])}</a></li>' for e in evidence_files)
+                ev_html = f'<ul>{ev_rows}</ul>'
+            else:
+                ev_html = '<p class="muted">No structured evidence files are available.</p>'
+            body += (f'<div class="card"><h2>Structured evidence files (diagnostic)</h2>{ev_html}'
+                     f'<p class="muted">Opens the underlying captured JSON directly (read-only, '
+                     f'served as source text/JSON — never executed).</p></div>')
+
+            # Copy-only outreach draft (never sent). Haiku polishes prose when LLM is live.
+            to_addr = _esc(draft.get("contact", "") or (contacts[0] if contacts else ""))
+            to_html = to_addr or '<span class="muted">add a recipient manually</span>'
+            body += (
+                '<div class="card"><h2>Outreach draft — copy only</h2>'
+                '<div class="banner warn">The system never sends this. Copy &amp; send it yourself '
+                'after review — public information only, nothing was submitted to the site.</div>'
+                f'<p><b>Subject:</b> {_esc(draft.get("subject",""))}</p>'
+                f'<p><b>To:</b> {to_html}</p>'
+                '<label for="draftbody"><b>Draft body</b></label>'
+                f'<textarea id="draftbody" readonly rows="11" style="width:100%;box-sizing:border-box">'
+                f'{_esc(draft.get("body",""))}</textarea>'
+                '<div class="row" style="margin-top:8px;align-items:center;gap:10px">'
+                '<button class="chip" type="button" onclick="copyDraft()">Copy draft</button>'
+                '<button class="chip" id="polishbtn" type="button" onclick="polishDraft()">'
+                'Polish with AI</button>'
+                f'<span class="muted">Generated by: <span id="draftgen">'
+                f'{_esc(draft.get("generated_by","deterministic"))}</span></span>'
+                '<span id="polishmsg" class="muted"></span></div>'
+                '<p class="muted">This page loads $0 — the draft above is deterministic. "Polish with '
+                'AI" is an explicit, opt-in action that makes a PAID model call only when a live LLM '
+                'is configured (it asks for confirmation first). Per-campaign/daily/monthly budget '
+                'controls and a no-repeat cache are pending (Slice 3), so each confirmed click may '
+                'repeat the call; it never runs automatically on open or refresh.</p></div>'
+                '<script>function copyDraft(){var t=document.getElementById("draftbody");'
+                't.focus();t.select();try{document.execCommand("copy");}catch(e){}}</script>')
+
+            # Human-in-the-loop rescan (CSRF-guarded POST). Never solves a challenge automatically.
+            body += ('<script>var CSRF=' + json.dumps(csrf_token) + ';var DOM=' + json.dumps(domain)
+                     + ';function rescan(){var m=document.getElementById("rescanmsg");'
+                     'if(m){m.textContent="working…";}'
+                     'fetch("/api/scout/rescan?domain="+encodeURIComponent(DOM),{method:"POST",'
+                     'headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},body:"{}"})'
+                     '.then(function(r){return r.json();}).then(function(j){'
+                     'if(m){m.textContent=j.message||(j.ok?"marked for re-analysis":"failed");}})'
+                     '.catch(function(){if(m){m.textContent="request error";}});}'
+                     'function replay(){var m=document.getElementById("rescanmsg");'
+                     'if(m){m.textContent="opening a browser window…";}'
+                     'fetch("/api/scout/replay?domain="+encodeURIComponent(DOM),{method:"POST",'
+                     'headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},body:"{}"})'
+                     '.then(function(r){return r.json();}).then(function(j){'
+                     'if(m){m.textContent=j.message||(j.ok?"replay started":"replay failed");}})'
+                     '.catch(function(){if(m){m.textContent="replay request error";}});}'
+                     'function setEng(s){var m=document.getElementById("engmsg");'
+                     # Won/Delivered are commitments: require an explicit operator confirmation
+                     # (they map to confirm=1; the server refuses them otherwise).
+                     'var need=(s==="won"||s==="delivered");'
+                     'if(need&&!window.confirm("Mark this prospect \\""+s+"\\"? Do this only after a '
+                     'real, confirmed client agreement/delivery.")){return;}'
+                     'if(m){m.textContent="saving…";}'
+                     'fetch("/api/scout/engagement?domain="+encodeURIComponent(DOM)+"&status="+'
+                     'encodeURIComponent(s)+(need?"&confirm=1":""),{method:"POST",'
+                     'headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},body:"{}"})'
+                     '.then(function(r){return r.json();}).then(function(j){'
+                     'if(j.ok){location.reload();}else if(m){m.textContent='
+                     '(j.needs_confirmation?"confirmation required":"failed");}})'
+                     '.catch(function(){if(m){m.textContent="request error";}});}'
+                     'function startCW(){var m=document.getElementById("cwmsg");'
+                     'if(m){m.textContent="running analyze-job…";}'
+                     'fetch("/api/scout/start-client-work?domain="+encodeURIComponent(DOM),'
+                     '{method:"POST",headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},'
+                     'body:"{}"}).then(function(r){return r.json();}).then(function(j){'
+                     'if(j.ok){if(m){m.textContent=j.message||"started";}'
+                     'setTimeout(function(){location.reload();},1400);}'
+                     'else if(m){m.textContent="failed: "+(j.error||"unknown");}})'
+                     '.catch(function(){if(m){m.textContent="request error";}});}'
+                     'var POLISHING=false;'
+                     'function polishDraft(){var m=document.getElementById("polishmsg");'
+                     'var b=document.getElementById("polishbtn");'
+                     # In-flight/double-click guard: refuse a second call while one is pending.
+                     'if(POLISHING){return;}'
+                     # Explicit paid-call confirmation (budget controls are not in place until Slice 3).
+                     'if(!window.confirm("Polish with AI may make a PAID model call when a live LLM '
+                     'is configured. Budget limits and no-repeat caching arrive in Slice 3, so each '
+                     'confirmed click may repeat the call. Continue?")){return;}'
+                     'POLISHING=true;if(b){b.disabled=true;}if(m){m.textContent="polishing…";}'
+                     'fetch("/api/scout/polish-draft?domain="+encodeURIComponent(DOM),'
+                     '{method:"POST",headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},'
+                     'body:"{}"}).then(function(r){return r.json();}).then(function(j){'
+                     'if(j.ok&&j.draft){var t=document.getElementById("draftbody");'
+                     'if(t){t.value=j.draft.body||t.value;}'
+                     'var g=document.getElementById("draftgen");'
+                     'if(g){g.textContent=j.draft.generated_by||"deterministic";}'
+                     'if(m){m.textContent="";}}else if(m){m.textContent="failed: "+(j.error||"unknown");}})'
+                     '.catch(function(){if(m){m.textContent="request error";}})'
+                     '.then(function(){POLISHING=false;if(b){b.disabled=false;}});}</script>')
+
+            return _page("AI QA Factory — Target detail", "/scout", body)
+
+        def _scout_complete_target_html(self, domain: str, det: dict, nav: str) -> str:
+            """Outcome-first target card; internal IDs/JSON live only under Advanced diagnostics."""
+            entry = det.get("entry") or {}
+            brain = det.get("brain") or {}
+            run_id = det.get("run") or det.get("scout_run") or ""
+            findings = det.get("findings") or []
+            media = det.get("media") or []
+            network = det.get("network") or {}
+            evidence_files = det.get("evidence_files") or []
+            coverage = det.get("coverage")
+            contacts = det.get("contacts") or []
+            contact_records = det.get("contact_records") or []
+            draft = det.get("draft") or {}
+            fixability = det.get("fixability") or {}
+            actionable = [f for f in findings
+                          if str(f.get("severity") or "").strip().lower() != "info"]
+            informational = len(findings) - len(actionable)
+            pages = ((coverage or {}).get("meaningful_pages_tested")
+                     if isinstance(coverage, dict) else None)
+
+            def _art_url(rel: str) -> str:
+                return f'/scout/artifact?run={_esc(run_id)}&rel={_esc(rel)}'
+
+            def _ext(path: str) -> str:
+                return path.lower().rsplit(".", 1)[-1] if "." in path else ""
+
+            imgs = [m for m in media if _ext(m) in ("png", "jpg", "jpeg", "webp", "gif")]
+            vids = [m for m in media if _ext(m) in ("webm", "mp4")]
+            trace = next((e for e in evidence_files if e.get("name") == "browser_trace.json"), None)
+            obs_file = next((e for e in evidence_files if e.get("name") == "observation.json"), None)
+            evidence_count = len(media) + len(evidence_files)
+            media_html = "".join(
+                f'<a href="{_art_url(m)}" target="_blank" rel="noopener">'
+                f'<img src="{_art_url(m)}" alt="Captured page for {_esc(domain)}"></a>'
+                for m in imgs)
+            media_html += "".join(
+                f'<video src="{_art_url(m)}" controls preload="metadata" '
+                f'style="max-width:360px"></video>' for m in vids)
+            if not media_html:
+                media_html = ('<p class="muted">No visual evidence was captured for this run. '
+                              'Use Deep capture for screenshots; video is kept only for a qualifying '
+                              'reproduced interaction.</p>')
+
+            trace_html = (
+                f'<a href="{_art_url(trace["rel"])}" target="_blank" rel="noopener">Open event trace</a>'
+                if trace else
+                '<span class="muted">Not recorded for this scan mode or no browser sequence ran.</span>')
+            axe_status = str(network.get("axe_status") or "")
+            if axe_status == "ok":
+                axe_text = f'Ran · {len(network.get("axe_violations") or [])} violation group(s)'
+            elif axe_status == "unavailable":
+                axe_text = "Attempted, but axe-core evidence was unavailable"
+            else:
+                axe_text = "Not attempted in this scan mode"
+            network_available = bool(network.get("status") or network.get("console_errors")
+                                     or network.get("failed_resources") or network.get("timing_ms"))
+
+            status_note = ("Completed with confirmed actionable findings."
+                           if actionable else
+                           "Completed. No actionable defect was confirmed in this bounded scan.")
+            body = (
+                f'<h1>{_esc(domain)}</h1><div class="row">{nav}</div>'
+                f'<div class="card status-hero"><div class="row">'
+                f'{_badge("Analysis complete", "ok")}<span class="muted">{_esc(status_note)}</span>'
+                f'</div><div class="summary-grid" style="margin-top:12px">'
+                f'<div class="summary-item"><span class="muted">Actionable findings</span>'
+                f'<strong>{len(actionable)}</strong></div>'
+                f'<div class="summary-item"><span class="muted">Informational notes</span>'
+                f'<strong>{informational}</strong></div>'
+                f'<div class="summary-item"><span class="muted">Pages checked</span>'
+                f'<strong>{_esc(pages if pages is not None else "—")}</strong></div>'
+                f'<div class="summary-item"><span class="muted">Evidence files</span>'
+                f'<strong>{evidence_count}</strong></div></div>'
+                f'<div class="row" style="margin-top:16px">'
+                f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run_id)}'
+                f'&amp;domain={_esc(domain)}">Download client-ready evidence (.zip)</a>'
+                f'<span class="muted">One target · client-oriented · review required · '
+                f'up to 20 MiB</span></div>'
+                f'<p class="muted">The ZIP includes an offline HTML summary, findings, coverage, '
+                f'screenshots, optional reproduced-interaction video, sanitized console/network '
+                f'evidence, and integrity hashes. Review it before attaching it to email.</p></div>'
+                f'<div class="card"><h2>Findings</h2><div class="scrollx">'
+                f'{_problems_table_html(findings)}</div></div>'
+                f'<div class="card"><h2>Evidence</h2><div class="media-grid">{media_html}</div>'
+                f'<div class="evidence-grid" style="margin-top:12px">'
+                f'<div class="evidence-item"><h3>Screenshots</h3>'
+                f'<span>{len(imgs)} captured</span></div>'
+                f'<div class="evidence-item"><h3>Reproduction video</h3>'
+                f'<span>{len(vids)} captured</span></div>'
+                f'<div class="evidence-item"><h3>Browser trace</h3>{trace_html}</div>'
+                f'<div class="evidence-item"><h3>Network / console</h3>'
+                f'<span>{"Captured" if network_available else "Not available"}</span></div>'
+                f'<div class="evidence-item"><h3>Accessibility (axe)</h3>'
+                f'<span>{_esc(axe_text)}</span></div></div>'
+                f'<p class="muted">This trace is a redacted structured event record, not a native '
+                f'Playwright <code>trace.zip</code>. Playwright Inspector is a live developer tool '
+                f'and is intentionally not exposed in the operator UI.</p></div>'
+                f'<div class="card"><h2>Coverage</h2>{_coverage_card_html(coverage)}</div>')
+
+            if actionable:
+                contact_rows = "".join(
+                    f'<div><strong>{_esc(row.get("email") or "")}</strong>'
+                    f'<br><span class="muted">{_esc(row.get("source") or "Public page")}'
+                    + (f' · <a href="{_esc(row.get("source_url") or "")}" target="_blank" '
+                       f'rel="noopener">source page</a>'
+                       if row.get("source_url") else '')
+                    + '</span></div>'
+                    for row in contact_records if row.get("email"))
+                if not contact_rows and contacts:
+                    contact_rows = "".join(
+                        f'<div><strong>{_esc(email)}</strong><br>'
+                        f'<span class="muted">Public page contact</span></div>'
+                        for email in contacts)
+                if not contact_rows:
+                    contact_rows = '<span class="muted">No public contact found.</span>'
+                eng = entry.get("engagement_status", "prospect")
+                work_id = entry.get("work_id", "")
+                body += (
+                    '<div class="card"><h2>Next actions</h2>'
+                    '<div class="evidence-grid">'
+                    f'<div class="evidence-item"><h3>Public contact</h3>{contact_rows}</div>'
+                    f'<div class="evidence-item"><h3>What we can offer</h3>'
+                    f'<p>{_esc(fixability.get("summary") or "Review scope before promising a fix.")}</p>'
+                    '<p class="muted">Implementation is offered only after scope agreement and '
+                    'repo/staging access. Nothing is promised automatically.</p></div></div>'
+                    f'<p><b>Prospect stage:</b> {_badge(eng)}</p>'
+                    '<div class="row"><button class="btn primary" type="button" '
+                    'onclick="startCW()">Prepare client work</button>'
+                    '<button class="chip" type="button" onclick="setEng(\'contacted\')">Contacted</button>'
+                    '<button class="chip" type="button" onclick="setEng(\'replied\')">Replied</button>'
+                    '<button class="chip" type="button" onclick="setEng(\'lost\')">Lost</button>'
+                    + (f'<a class="chip" href="/work/{_esc(work_id)}">Open linked work</a>'
+                       if work_id else '')
+                    + '<span id="actionmsg" class="muted" aria-live="polite"></span></div>'
+                    '<details><summary>Copy-only outreach draft</summary>'
+                    f'<p><b>Subject:</b> {_esc(draft.get("subject",""))}</p>'
+                    '<label for="draftbody"><b>Draft body</b></label>'
+                    f'<textarea id="draftbody" aria-label="Outreach draft body" readonly rows="9">'
+                    f'{_esc(draft.get("body",""))}</textarea>'
+                    '<button class="chip" type="button" onclick="copyDraft()">Copy draft</button>'
+                    '</details><p class="muted">Nothing is sent automatically. Client work is a '
+                    'proposal/preparation step and does not mark the prospect Won.</p></div>')
+            else:
+                body += ('<div class="card"><h2>Next actions</h2><p class="muted">Outreach draft and '
+                         'client-work actions are disabled because this run has no confirmed '
+                         'actionable finding. Run a deeper bounded check if more coverage is needed.'
+                         '</p></div>')
+
+            source_kind = det.get("source_kind") or ""
+            source_note = {
+                "curated": ("Curated list import; adaptive AI understanding was not computed. "
                             "That is expected, not missing data."),
                 "manual": "Manual URL scan; adaptive AI understanding was not computed.",
                 "discovery": "Adaptive Scout discovery.",
