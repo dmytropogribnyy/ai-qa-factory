@@ -420,7 +420,7 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             desktop = browser.new_page(viewport={"width": 1280, "height": 900})
-            screenshot_dir = Path("reports/screenshots")
+            screenshot_dir = Path("reports/screenshots/operator")
             screenshot_dir.mkdir(parents=True, exist_ok=True)
             for path in (
                 f"/scout/run?id={run_id}",
@@ -501,6 +501,12 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             desktop.goto(url + "/scout/campaigns", wait_until="load")
             desktop.screenshot(
                 path=screenshot_dir / "08-scout-campaigns-desktop.png", full_page=True)
+            (screenshot_dir / "README.md").write_text(
+                "# Scout operator screenshots — synthetic acceptance data\n\n"
+                "Captured on the candidate SHA by the real Chromium acceptance flow. "
+                "The pages use only `alpha.example` / `beta.example` synthetic fixtures.\n",
+                encoding="utf-8",
+            )
             browser.close()
     finally:
         server.shutdown()

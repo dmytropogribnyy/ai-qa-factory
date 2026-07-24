@@ -79,12 +79,13 @@ def _try_radar(tmp_path):
 
 
 def test_capture_dashboard_screenshots(tmp_path):
-    # Start from a clean directory so stale PNGs from an earlier local run can never inflate the
-    # captured/reported count. The hosted CI artifact reflects exactly what this run produces.
-    import shutil
-    if _OUT.exists():
-        shutil.rmtree(_OUT)
+    # Clear only this legacy suite's top-level files. Other acceptance tests keep their exact-head
+    # screenshots in named subdirectories (for example ``operator/``), which must survive this
+    # later-running capture test and be uploaded in the same CI artifact.
     _OUT.mkdir(parents=True, exist_ok=True)
+    for stale in _OUT.glob("*.png"):
+        stale.unlink()
+    (_OUT / "README.md").unlink(missing_ok=True)
     _seed(tmp_path)
     summary = _try_radar(tmp_path)
     service = ScoutService(str(tmp_path))
