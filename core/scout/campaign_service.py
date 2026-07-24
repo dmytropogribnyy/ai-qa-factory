@@ -43,7 +43,7 @@ from core.scout.scout_brain import (
     safety_confidence,
     understand_target,
 )
-from core.scout.store import RunStore
+from core.scout.store import RunStore, StoreError
 from core.scout.target_planner import plan_target
 from core.scout.verticals import profile_for_industry
 
@@ -55,22 +55,23 @@ def _now() -> str:
 # Known per-prospect structured evidence artifacts the engine may persist, with readable labels.
 # target_detail() only exposes an entry when the file genuinely exists on disk (never a dead link).
 _STRUCTURED_EVIDENCE_ARTIFACTS: tuple = (
-    ("observation.json", "Page observation (redacted)"),
+    ("observation.json", "Page observation"),
     ("evidence.json", "Sanitized fact sheet"),
-    ("browser_trace.json", "Browser trace (redacted)"),
+    ("browser_trace.json", "Browser event trace (structured JSON)"),
     ("evidence_manifest.json", "Evidence manifest + integrity hashes"),
-    ("findings.json", "Findings (raw)"),
-    ("scorecard.json", "Scorecard (raw)"),
-    ("coverage.json", "Coverage (raw)"),
-    ("reproduction.json", "Reproduction (raw)"),
-    ("manual_action.json", "Manual-action record (raw)"),
+    ("findings.json", "Finding records"),
+    ("scorecard.json", "Priority scorecard"),
+    ("coverage.json", "Coverage record"),
+    ("reproduction.json", "Reproduction record"),
+    ("manual_action.json", "Stop-reason record"),
 )
 
 # campaign_name values that are positive evidence of a manual/operator-initiated scan (single-URL
 # CLI scan, the built-in demo, or a headed replay launched from the Dashboard). Any OTHER value —
 # including an unknown/legacy/custom campaign_name — must NOT be guessed as "manual"; source_kind
 # stays "" (genuinely unknown) so the UI never mislabels an unrecognised run type.
-KNOWN_MANUAL_CAMPAIGN_NAMES = frozenset({"adhoc", "scout-demo", "headed-replay"})
+KNOWN_MANUAL_CAMPAIGN_NAMES = frozenset(
+    {"adhoc", "scout-demo", "headed-replay", "manual-challenge"})
 
 
 def _project_target_finding(f: Dict[str, Any]) -> Dict[str, Any]:
@@ -373,6 +374,15 @@ class CampaignService:
         reg = AnalyzedSiteRegistry(self.output_dir)
         rows = [e.to_dict() for e in reg.all()]
         f = filters or {}
+        from core.scout.operator_state import OperatorStateStore
+        archived = set(OperatorStateStore(self.output_dir).snapshot()["archived_targets"])
+        for row in rows:
+            row["archived"] = row.get("domain") in archived
+        archived_filter = (f.get("archived") or "").strip().lower()
+        if archived_filter in ("1", "true", "yes", "only"):
+            rows = [r for r in rows if r.get("archived")]
+        elif archived_filter not in ("all",):
+            rows = [r for r in rows if not r.get("archived")]
         text = (f.get("text") or "").lower()
         status = f.get("status") or ""
         since = (f.get("since") or "").strip()   # ISO lower bound (inclusive)
@@ -398,6 +408,7 @@ class CampaignService:
         brain = self._brain_for_domain(domain)
         findings: List[Dict[str, Any]] = []
         contacts: List[str] = []
+        contact_records: List[Dict[str, Any]] = []
         media: List[str] = []                 # rel paths under the run, servable via /scout/artifact
         network: Dict[str, Any] = {}          # already-captured Chrome/Playwright network evidence
         reproduction: Optional[Dict[str, Any]] = None   # this domain's reproduction record, if any
@@ -448,7 +459,7 @@ class CampaignService:
         _MEDIA_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4", ".har")
         if scout_run:
             from core.scout.discovery.domain_intel import canonical_domain
-            from core.scout.outreach.qa_draft import extract_public_emails
+            from core.scout.outreach.qa_draft import extract_public_contact_records
             from core.scout.store import RunStore, StoreError
             try:
                 st = RunStore(self.output_dir, scout_run)
@@ -507,7 +518,8 @@ class CampaignService:
                     _raw_coverage = st.load_prospect_artifact(prospect_id, "coverage.json")
                     coverage = _raw_coverage if isinstance(_raw_coverage, dict) else None
                     obs = st.load_prospect_artifact(prospect_id, "observation.json") or {}
-                    contacts = extract_public_emails(obs, domain=domain)
+                    contact_records = extract_public_contact_records(obs, domain=domain)
+                    contacts = [row["email"] for row in contact_records]
                     network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),
                                "console_errors": obs.get("console_errors", [])[:10],
                                "failed_resources": obs.get("failed_resources", [])[:10],
@@ -570,7 +582,8 @@ class CampaignService:
                 "evidence_status": evidence_status, "media": media, "network": network,
                 "reproduction": reproduction,
                 "findings": [_project_target_finding(f) for f in findings],
-                "contacts": contacts, "draft": draft, "fixability": fixability}
+                "contacts": contacts, "contact_records": contact_records,
+                "draft": draft, "fixability": fixability}
 
     def polish_draft(self, domain: str) -> Dict[str, Any]:
         """Explicit, operator-triggered AI polish of the outreach draft. This is the ONLY draft path
@@ -643,6 +656,30 @@ class CampaignService:
         return best[1] if best is not None else None
 
     # -- evidence export -------------------------------------------------------------------------
+    def export_client_evidence(self, domain: str, *, run: str) -> dict:
+        """Build one bounded client-ready ZIP for an exact completed target."""
+        from core.scout.client_evidence import build_client_evidence_bundle
+
+        detail = self.target_detail(domain, run=run)
+        prospect_id = str(detail.get("prospect_id") or "")
+        exact_run = str(detail.get("run") or detail.get("scout_run") or "")
+        if not prospect_id or not exact_run or exact_run != str(run or "").strip():
+            raise StoreError("target could not be bound to the requested exact run")
+        bundle = build_client_evidence_bundle(
+            self.output_dir,
+            run_id=exact_run,
+            prospect_id=prospect_id,
+            domain=domain,
+            detail=detail,
+        )
+        return {
+            "path": str(bundle.path),
+            "filename": bundle.filename,
+            "bytes": bundle.bytes,
+            "included": bundle.included,
+            "omitted": bundle.omitted,
+        }
+
     def export_bundle(self, campaign_id: str) -> str:
         rc = CampaignRunControl(campaign_id, self.output_dir)
         manifest = {

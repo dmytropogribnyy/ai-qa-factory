@@ -227,6 +227,24 @@ class AnalyzedSiteRegistry:
         self._save()
         return True
 
+    def forget(self, url_or_domain: str, *, confirm: bool = False) -> bool:
+        """Explicitly remove one target from dedup/history while leaving run evidence untouched.
+
+        This is intentionally separate from archive (the normal reversible UI action) and from run
+        deletion.  It makes the domain discoverable again, so it requires an explicit confirmation.
+        Existing exact-run evidence remains available until a separately confirmed run/evidence
+        cleanup removes it.
+        """
+        if not confirm:
+            return False
+        domain = canonical_domain(url_or_domain)
+        if not domain or domain not in self._entries:
+            return False
+        self.release(domain)
+        self._entries.pop(domain, None)
+        self._save()
+        return True
+
     def set_engagement(self, url_or_domain: str, status: str, *, work_id: str = "",
                        confirm: bool = False) -> bool:
         """Advance the sales-funnel status of a known target (prospect->contacted->replied->won->

@@ -12,6 +12,7 @@ import json
 import urllib.request
 
 from core.scout.discovery.config import DiscoveryCampaignConfig
+from core.scout.discovery.candidate import CandidateRecord, PROMO_NOT_PROMOTED, PROMO_PROMOTED
 from core.scout.discovery.engine import DiscoveryEngine
 from core.scout.discovery.fixtures import (
     HostMappedStaticBackend,
@@ -164,6 +165,38 @@ def test_budget_stops_matrix_overflow(tmp_path):
         assert "matrix size" in str(exc)
     plan = build_matrix(cfg, ["a", "b"], sample=4)
     assert plan.sampled and len(plan.cells) == 4
+
+
+def test_actionable_stop_emits_one_timeline_event_for_all_remaining_candidates(tmp_path):
+    cfg = DiscoveryCampaignConfig(
+        campaign_name="event-dedup",
+        campaign_id="campaign-event-dedup",
+        provider_allowlist=["p_directory"],
+        max_promoted=3,
+        actionable_target=1,
+        output_dir=str(tmp_path),
+    )
+    store = RunStore(str(tmp_path), cfg.campaign_id)
+    engine = DiscoveryEngine(
+        cfg,
+        build_demo_registry(),
+        store,
+        clock=lambda: "2026-07-24T10:00:00+00:00",
+    )
+    engine._budget["actionable"] = 1
+    records = [
+        CandidateRecord(candidate_id=f"candidate-{index}", promotion_decision=PROMO_PROMOTED)
+        for index in range(3)
+    ]
+
+    engine._promote_into_scout(records)
+
+    events = [event for event in store.read_events()
+              if event.get("event") == "actionable_target_reached"]
+    assert len(events) == 1
+    assert events[0]["target"] == 1
+    assert all(record.promotion_decision == PROMO_NOT_PROMOTED for record in records)
+    assert all("actionable_target_reached" in record.reason_codes for record in records)
 
 
 def test_dashboard_serves_campaign_views(tmp_path):

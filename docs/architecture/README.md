@@ -16,4 +16,4 @@ domains and work contours.
 
 | Document | Domain | Architecture status | Implementation status | Integration | Current runtime |
 |---|---|---|---|---|---|
-| [PROSPECT_QA_RADAR_SPEC.md](PROSPECT_QA_RADAR_SPEC.md) | Prospect QA Radar / Super Scout | Approved | Future-facing / not implemented | Phase 8.2+ | None |
+| [PROSPECT_QA_RADAR_SPEC.md](PROSPECT_QA_RADAR_SPEC.md) | Prospect QA Radar / Super Scout | Approved target architecture | Bounded local runtime implemented; optional cloud/autonomous capabilities remain future-facing | Phase 8.2 contracts + 8.3/8.4 + Final I/II | [SCOUT_RUNTIME_V1.md](SCOUT_RUNTIME_V1.md) |

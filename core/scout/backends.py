@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol
 from urllib.parse import urljoin
 
 from core.scout.url_safety import UrlPolicy, check_url
@@ -351,12 +351,19 @@ class PlaywrightBackend:
     name = "playwright"
 
     def __init__(self, policy: Optional[UrlPolicy] = None, screenshot_dir: Optional[str] = None,
-                 _playwright_factory=None, headful: Optional[bool] = None) -> None:
+                 _playwright_factory=None, headful: Optional[bool] = None,
+                 manual_gate: Optional[Callable[[Any, PageObservation], str]] = None) -> None:
         self.policy = policy or UrlPolicy()
         self.screenshot_dir = screenshot_dir
         self.screenshot_filename = "page.png"
         self._playwright_factory = _playwright_factory
         self.headful = headful          # None -> follow SCOUT_HEADFUL env; True/False -> force
+        # Optional human-in-the-loop checkpoint.  It is used only by the explicit Dashboard
+        # "Open manual check" action; unattended Scout never waits for or bypasses a challenge.
+        self.manual_gate = manual_gate
+        # Browser storage state is kept in memory only and reused across this backend's observations.
+        # It is never written into evidence, logs, or tracked files.
+        self._session_state: Optional[Dict[str, Any]] = None
 
     def _url_allowed(self, url: str) -> bool:
         return check_url(url, policy=self.policy).eligible
@@ -396,11 +403,35 @@ class PlaywrightBackend:
                 vidtmp = os.path.join(self.screenshot_dir, "_vidtmp")
                 os.makedirs(vidtmp, exist_ok=True)
                 ctx_kwargs["record_video_dir"] = vidtmp
+            if self._session_state:
+                ctx_kwargs["storage_state"] = self._session_state
             context = browser.new_context(**ctx_kwargs)
             video = None
             try:
                 page = context.new_page()
                 self._observe_with_page(page, url, timeout_s, max_bytes, obs)
+                # A manual session keeps this exact visible browser/context open while the operator
+                # handles Cloudflare/CAPTCHA.  "Continue" rechecks in the same context; unresolved
+                # challenges return to the waiting state.  Defer/skip stops without interaction.
+                manual_rounds = 0
+                while self.manual_gate and self._needs_manual_action(obs) and manual_rounds < 20:
+                    action = str(self.manual_gate(page, obs) or "").strip().lower()
+                    if action != "continue":
+                        obs.fetch_error = ("manual check deferred" if action == "defer"
+                                           else "manual check skipped")
+                        break
+                    manual_rounds += 1
+                    refreshed = PageObservation(url=page.url or url, backend=self.name)
+                    self._observe_with_page(page, page.url or url, timeout_s, max_bytes, refreshed,
+                                            install_handlers=False)
+                    obs = refreshed
+                if not self._needs_manual_action(obs):
+                    try:
+                        # Keep cookies/session in process memory for the verification pass and
+                        # bounded same-site probes. Never persist them as evidence.
+                        self._session_state = context.storage_state()
+                    except Exception:
+                        self._session_state = None
                 if deep_qa and obs.ok:
                     self._collect_deep_qa(page, obs)    # real perf + axe on the already-open page
                 if vidtmp is not None:
@@ -416,8 +447,12 @@ class PlaywrightBackend:
                     pass
         return obs
 
+    @staticmethod
+    def _needs_manual_action(obs: PageObservation) -> bool:
+        return bool(obs.captcha_marker or obs.access_blocked_marker or obs.status in (401, 403, 429))
+
     def _observe_with_page(self, page, url: str, timeout_s: float, max_bytes: int,
-                           obs: PageObservation) -> None:
+                           obs: PageObservation, *, install_handlers: bool = True) -> None:
         console_errors: List[str] = []
         failed: List[str] = []
         blocked: List[str] = []
@@ -430,9 +465,10 @@ class PlaywrightBackend:
                 blocked.append(req_url)
                 route.abort()
 
-        page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
-        page.on("requestfailed", lambda r: failed.append(r.url))
-        page.route("**/*", _on_route)
+        if install_handlers:
+            page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+            page.on("requestfailed", lambda r: failed.append(r.url))
+            page.route("**/*", _on_route)
 
         start = time.time()
         response = page.goto(url, wait_until="load", timeout=timeout_s * 1000)

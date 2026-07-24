@@ -90,13 +90,16 @@ class _FakeContext:
     def close(self):
         self.closed = True
 
+    def storage_state(self):
+        return {"cookies": [{"name": "clearance", "value": "in-memory-only"}], "origins": []}
+
 
 class _FakeBrowser:
     def __init__(self, context):
         self._context = context
         self.closed = False
 
-    def new_context(self):
+    def new_context(self, **_kwargs):
         return self._context
 
     def close(self):
@@ -108,7 +111,7 @@ class _FakeFactory:
         self.context = _FakeContext(page)
         self.browser = _FakeBrowser(self.context)
         self.p = types.SimpleNamespace(chromium=types.SimpleNamespace(
-            launch=lambda headless=True: self.browser))
+            launch=lambda **_kwargs: self.browser))
 
     def __call__(self):
         return self
@@ -188,3 +191,27 @@ def test_screenshot_ref_is_basename_only(tmp_path):
     obs = _backend(page, screenshot_dir=str(shot_dir)).observe("https://example.com/", 5, 1_000_000)
     assert obs.screenshot_ref == "page.png"          # never an absolute path
     assert page.screenshotted.endswith("page.png")   # actually written into the confined dir
+
+
+def test_manual_gate_rechecks_in_same_browser_context():
+    page = _FakePage(
+        final_url="https://example.com/",
+        status=403,
+        content="<html><body><h1>Verify you are human</h1><div>captcha</div></body></html>",
+    )
+    calls = []
+
+    def _gate(gated_page, observation):
+        calls.append(observation.status)
+        # Simulate the operator completing the visible challenge before pressing Continue.
+        gated_page._status = 200
+        gated_page._content = (
+            "<html><head><title>Account</title></head><body><main>Ready</main></body></html>")
+        return "continue"
+
+    backend = _backend(page, headful=True, manual_gate=_gate)
+    obs = backend.observe("https://example.com/", 5, 1_000_000)
+    assert calls == [403]
+    assert obs.status == 200 and obs.title == "Account"
+    assert obs.captcha_marker is False
+    assert backend._session_state is not None         # process memory only; not an evidence artifact

@@ -73,7 +73,9 @@ reporting, and delivery pack generation:
    contact intelligence → controlled disclosure → human-approved outreach draft → paid
    audit opportunity. **Approved target architecture; a bounded local slice is now
    implemented and running** (Prospect QA Scout v1.0.1 QA runtime + Phase 8.4 discovery /
-   commercial triage). Contact intelligence, disclosure, and outreach remain future-facing.
+   commercial triage, followed by the implemented local contact, disclosure, draft, review,
+   approval, and disabled-by-default delivery contours). Unrestricted discovery, autonomous
+   outreach, and optional cloud/SaaS operation remain future-facing.
    See [docs/architecture/PROSPECT_QA_RADAR_SPEC.md](architecture/PROSPECT_QA_RADAR_SPEC.md)
    for the target and [docs/architecture/SCOUT_RUNTIME_V1.md](architecture/SCOUT_RUNTIME_V1.md)
    for the implemented runtime.

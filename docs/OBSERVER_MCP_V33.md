@@ -66,9 +66,10 @@ Claude Code / Claude Desktop / VS Code (`mcpServers`):
 ## Evidence export (MCP-independent fallback)
 
 If MCP is not yet connected, call `ObserverAPI.export_ai_review_bundle(campaign_id)` (or the
-Dashboard **Export evidence** action) to produce `outputs/scout/_bundles/<id>/AI_REVIEW_BUNDLE.json`
-+ `.md` (campaign-scoped, redacted, relative refs, integrity sha256). An external assistant can
-review a run from that file alone.
+Dashboard **Export internal campaign record** action under Advanced run diagnostics) to produce
+`outputs/scout/_bundles/<id>/AI_REVIEW_BUNDLE.json` + `.md` (campaign-scoped, redacted, relative
+refs, integrity sha256). An external assistant can review a run from that file alone. It is not the
+client-ready exact-target ZIP exposed on a completed target card.
 
 ## Secure remote connection
 

@@ -127,9 +127,9 @@ def test_dashboard_and_observer_link_the_same_promoted_evidence(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
-    assert "Browser trace (redacted)" in html
+    assert "Browser event trace (structured JSON)" in html
     assert "Evidence manifest + integrity hashes" in html
-    assert "Structured evidence files (diagnostic)" in html
+    assert "Advanced diagnostics" in html
     assert "Raw evidence files" not in html
     assert "landing.png" in html and "verification.png" in html
 

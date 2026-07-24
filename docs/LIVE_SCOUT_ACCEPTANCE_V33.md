@@ -72,12 +72,14 @@ cleanup failure / unexpected state → that target is blocked/marked non-client-
 continue). The Dashboard always shows the exact stop reason; an honest partial/blocked result is
 shown instead of false success.
 
-## K. Export the evidence bundle
+## K. Export the internal campaign record
 
-On the progress page click **Export evidence** → it writes
+Under **Advanced run diagnostics** on the progress page click
+**Export internal campaign record** → it writes
 `outputs/scout/_bundles/<campaign_id>/EVIDENCE_BUNDLE.json` (run state, stop reason, discovery
-state, brain decision trail) and shows the path. Copy that file (and referenced artifacts under
-`outputs/scout/`) back to the reviewer.
+state, brain decision trail) and shows the path. This is an operator/reviewer diagnostic, not a
+client attachment. For a client, open a completed exact target and select
+**Download client-ready evidence (.zip)**.
 
 ## L. CLI fallback (diagnostics only — not the primary path)
 
