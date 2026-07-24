@@ -139,6 +139,41 @@ def _seed_scout_operator(tmp_path):
     return run_id
 
 
+def _seed_persisted_activity(tmp_path):
+    """Two production campaigns + one diagnostic, with no run attached to the service."""
+    production_a = "campaign-acme-saas-20260724t090000z-0f9d21"
+    production_b = "campaign-beta-commerce-20260724t091000z-a1b2c3"
+    diagnostic = "smoke-activity"
+    control = tmp_path / "scout" / "_runcontrol"
+    control.mkdir(parents=True, exist_ok=True)
+    for campaign_id in (production_a, production_b, diagnostic):
+        (control / f"{campaign_id}.json").write_text(
+            f'{{"campaign_id":"{campaign_id}","state":"completed"}}',
+            encoding="utf-8",
+        )
+    for campaign_id, rows in (
+        (production_a, [
+            {"at": "2026-07-24T09:00:00+00:00", "event": "campaign_started"},
+            {"at": "2026-07-24T09:02:00+00:00", "event": "promoted_to_scout",
+             "candidate": "acme.example"},
+            {"at": "2026-07-24T09:04:00+00:00", "event": "campaign_finished"},
+        ]),
+        (production_b, [
+            {"at": "2026-07-24T09:10:00+00:00", "event": "campaign_started"},
+            {"at": "2026-07-24T09:12:00+00:00", "event": "actionable_target_reached",
+             "target": 1},
+            {"at": "2026-07-24T09:14:00+00:00", "event": "campaign_finished"},
+        ]),
+        (diagnostic, [
+            {"at": "2026-07-24T09:20:00+00:00", "event": "campaign_started"},
+        ]),
+    ):
+        store = RunStore(str(tmp_path), campaign_id)
+        for row in rows:
+            store.append_event(row)
+    return production_a, production_b, diagnostic
+
+
 def _fixture_png(width=320, height=180):
     """Small valid screenshot-like PNG fixture without an image-library dependency."""
     rows = []
@@ -207,6 +242,71 @@ def test_all_primary_pages_have_no_serious_axe_violations(tmp_path):
     finally:
         server.shutdown()
     assert not failures, f"serious/critical axe violations: {failures}"
+
+
+def test_activity_survives_restart_and_filters_diagnostics_in_real_chromium(tmp_path):
+    production_a, production_b, diagnostic = _seed_persisted_activity(tmp_path)
+    # No service.attach(): this is the exact cold-start state that previously rendered empty.
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    axe = Axe()
+    screenshot_dir = Path("reports/screenshots/operator")
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            desktop = browser.new_page(viewport={"width": 1280, "height": 900})
+            desktop.goto(url + "/activity", wait_until="load")
+            assert desktop.get_by_text("No operator activity yet.", exact=False).count() == 0
+            assert desktop.locator("tbody tr").count() == 6
+            assert desktop.get_by_text(production_a, exact=True).count() == 3
+            assert desktop.get_by_text(production_b, exact=True).count() == 3
+            assert desktop.get_by_text(diagnostic, exact=True).count() == 0
+            assert desktop.get_by_text("Target promoted to Scout", exact=True).is_visible()
+            serious = _serious(axe.run(desktop).get("violations", []))
+            assert not serious, [v["id"] for v in serious]
+            desktop.evaluate("()=>window.scrollTo(0,0)")
+            assert desktop.evaluate("()=>window.scrollY") == 0
+            desktop.screenshot(
+                path=screenshot_dir / "09-scout-activity-production-desktop.png",
+                full_page=True,
+            )
+
+            desktop.get_by_role("link", name="Show diagnostics").click()
+            assert "diagnostics=1" in desktop.url
+            assert desktop.locator("tbody tr").count() == 7
+            assert desktop.get_by_text(diagnostic, exact=True).count() == 1
+            assert desktop.get_by_text(
+                "is included below and should not be treated as production",
+                exact=False,
+            ).is_visible()
+            serious = _serious(axe.run(desktop).get("violations", []))
+            assert not serious, [v["id"] for v in serious]
+            # Clicking the toggle can preserve the previous document's scroll position. Reset it
+            # before capturing so CI evidence contains the complete header/navigation, not a
+            # misleading cropped state.
+            desktop.evaluate("()=>window.scrollTo(0,0)")
+            assert desktop.evaluate("()=>window.scrollY") == 0
+            desktop.screenshot(
+                path=screenshot_dir / "10-scout-activity-diagnostics-desktop.png",
+                full_page=True,
+            )
+
+            mobile = browser.new_page(viewport={"width": 390, "height": 844})
+            mobile.goto(url + "/activity", wait_until="load")
+            assert mobile.locator("tbody tr").count() == 6
+            assert mobile.evaluate(
+                "()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
+            serious = _serious(axe.run(mobile).get("violations", []))
+            assert not serious, [v["id"] for v in serious]
+            mobile.evaluate("()=>window.scrollTo(0,0)")
+            assert mobile.evaluate("()=>window.scrollY") == 0
+            mobile.screenshot(
+                path=screenshot_dir / "11-scout-activity-production-mobile.png",
+                full_page=True,
+            )
+            browser.close()
+    finally:
+        server.shutdown()
 
 
 def test_keyboard_focus_is_visible_and_nav_reachable(tmp_path):
