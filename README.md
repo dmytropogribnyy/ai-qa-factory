@@ -1,697 +1,200 @@
-# Guided QA Automation Workbench
+# AI QA Factory
 
+[![CI](https://github.com/dmytropogribnyy/ai-qa-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/dmytropogribnyy/ai-qa-factory/actions/workflows/ci.yml)
+
+> **Guided QA Automation Workbench**  
 > **AI drafts. Senior QA decides.**
 
-A local, AI-assisted QA automation platform for real client projects.  
-Built for Dmytro Pogribnyy — SDET / QA Automation Lead.
+AI QA Factory is a local, senior-led system for structured QA consulting and bounded public-site quality analysis. It turns briefs and approved targets into reviewable QA plans, Playwright scaffolds, controlled execution decisions, evidence packages, and release-focused delivery material.
 
----
+The system is deliberately **not an unrestricted autopilot**. AI output is treated as a draft, risky actions require explicit approval, missing evidence is never invented, and public-site Scout execution remains bounded by fail-closed safety rules.
 
-## What this is
+## Product surfaces
 
-**AI QA Factory is evolving into a Guided QA Automation Workbench** for real client QA automation work.
+| Surface | What it does | Honest boundary |
+|---|---|---|
+| **Guided client-work lifecycle** | Classifies briefs, builds a project blueprint, produces QA strategy/test design, generates Playwright + TypeScript starter projects, and persists approval, validation, review, repair, and delivery-preparation states | Does not autonomously implement or deliver client work without senior review |
+| **Scout operator dashboard** | Creates and controls prospect-QA campaigns, tracks progress/history, reviews findings, evidence, coverage, and guarded lifecycle actions | Local loopback application, not a hosted multi-user SaaS |
+| **Static public-site inspection** | Runs bounded HTTP/HTML analysis over explicitly approved public URLs and persists verified findings and reports | Read-only; unsafe redirects, prohibited targets, and access challenges fail closed |
+| **Deep Capture** | Can add real Chromium screenshots, axe observations, timing, console/network evidence, and a redacted browser-event trace | Conditional on Playwright + Chromium; automatic execution remains read-only navigation |
+| **Evidence delivery** | Builds an exact-target client package with offline summary, findings, coverage, available visuals, sanitized technical records, and integrity hashes | Completed analysis only; screenshots and video require human review |
+| **Observer MCP** | Exposes read-only project, campaign, run, target, evidence, and diagnostic views | Read-only; process identity makes stale deployments visible |
 
-Conceptually similar in flow to Lovable, Make, or n8n — but specialized for QA automation consulting:
+The canonical runtime truth is maintained in the [Current Runtime Capability Matrix](docs/CAPABILITY_MATRIX.md). It distinguishes **runtime**, **conditional**, **generator/planning**, and **not runtime** capabilities.
 
+## Operating model
+
+### Client work
+
+```text
+Brief or task
+  → classify context and risks
+  → build project blueprint
+  → draft QA strategy and test design
+  → generate Playwright + TypeScript scaffold
+  → request approval
+  → validate, review, and repair
+  → prepare evidence and delivery package
+  → senior QA review
 ```
-Understand → Classify Inputs → Build Project Blueprint
-    → Plan Strategically → Plan Tactically → Select Tools
-    → Ask Approval → Execute Safely → Collect Evidence → Report Clearly
+
+Typical outputs include:
+
+- project blueprint and risk classification;
+- strategic QA plan and tactical test design;
+- Playwright + TypeScript starter framework;
+- API-test structure and CI recommendations;
+- review findings and repair guidance;
+- internal summary and client-facing delivery material.
+
+Generated plans and scaffolds are **not proof that a client system was exercised**. Target-specific selectors, flows, credentials, and environment behavior still require evidence and validation.
+
+### Prospect QA Scout
+
+```text
+Campaign filters or approved URLs
+  → URL safety and suppression checks
+  → bounded static inspection
+  → optional qualified Deep Capture
+  → finding verification and prioritization
+  → exact-run evidence package
+  → operator review
+  → optional copy-only contact draft
 ```
 
-The workbench accepts a brief, client task, or job post; classifies the context; builds a QA strategy and test automation plan; generates a Playwright TypeScript scaffold; and stops — waiting for your review before anything touches a real environment or goes to a client.
+The local dashboard supports campaign progress, pause/resume/stop controls, archived history, needs-attention handoffs, target detail, evidence download, and guarded cleanup workflows.
 
-**It is not a full autopilot.** It uses human approval gates at every risky step.
+Scout may surface source-attributed public contact addresses and prepare a factual copy-only draft for a completed target with an actionable finding. **Nothing is sent automatically.**
 
----
+## Evidence and diagnostics
 
-## What it supports
+A completed target can include:
 
-For the evidence-based distinction between executable runtime, conditional integrations,
-generator/planning output, and unavailable features, run `python main.py capabilities` or read
-[`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md). The lists below describe product scope;
-they do not imply that every item executes autonomously.
+- separate landing and verification screenshots when capture succeeds;
+- verified findings and coverage data;
+- accessibility, timing, console, and network observations when available;
+- a bounded redacted browser-event trace;
+- an optional short reproduction video for a qualified read-only flow-entry failure;
+- an offline HTML summary;
+- sanitized structured records;
+- SHA-256 integrity manifests;
+- linkage to the exact campaign, run, and target.
 
-**Inputs (current and planned):**
-- Text briefs and job posts
-- Task URLs (Jira, Linear, Notion tickets)
-- Target application URLs (classified, not fetched automatically)
-- Screenshots (via vision model — planned)
-- Uploaded archives and repos (planned)
-- API documentation (OpenAPI, Postman — planned)
+Evidence is path-confined, bounded, redacted, and secret-scanned where applicable. Missing capture is reported as missing and is never replaced with synthetic evidence.
 
-**Project types:**
-- Web SaaS (multi-tenant, auth, billing)
-- E-commerce (checkout, cart, payment flows)
-- API backends (REST, GraphQL)
-- AI-generated applications
-- Admin panels
-- Auth-heavy applications
-- Mixed UI + API
-- Unknown / to be classified
+## Safety contract
 
-**Outputs:**
-- Project Blueprint (source of truth)
-- Strategic QA plan
-- Tactical test plan and test cases
-- Playwright TypeScript scaffold (full npm project)
-- API test suite
-- Evidence pack
-- Internal summary report
-- Client-facing delivery report (gated behind explicit approval)
+AI QA Factory is designed to fail closed.
 
----
+- Public Scout analysis is read-only.
+- No purchases, bookings, account creation, form submissions, or uncontrolled business interactions.
+- No CAPTCHA or access-control bypass. A visible Chromium handoff can wait for an operator to complete a legitimate access check, then continue, defer, or skip.
+- No automatic or bulk outreach.
+- External email requires separate credentials, exact-recipient confirmation, reviewed content, explicit approval, and enabled controls.
+- Production, authentication, payment, security-sensitive, and external-environment work requires the appropriate approval and environment boundary.
+- Parallel Scout site execution is not implemented; concurrency remains `1`.
+- Mobile/native execution, formal compliance certification, deep load testing, and formal penetration testing are not current runtime capabilities.
 
-## Safety model
-
-| Action | Behaviour |
-|---|---|
-| Analyze text input | Automatic |
-| Generate strategy / scaffold | Automatic |
-| Run local validation (compile, lint, dry-run) | Automatic |
-| Run tests against staging URL | **Requires approval** |
-| Run tests against production | **Requires explicit read-only approval** |
-| Test payment / auth / security flows | **Requires approval + sandbox confirmation** |
-| Send client-facing report | **Requires final approval** |
-
-External and staging execution is blocked by default. `--approve` flag unlocks it per run.  
-See [`docs/APPROVAL_MODEL.md`](docs/APPROVAL_MODEL.md) and [`docs/SAFETY_RULES.md`](docs/SAFETY_RULES.md).
-
----
+See [Approval Model](docs/APPROVAL_MODEL.md) and [Safety Rules](docs/SAFETY_RULES.md).
 
 ## Quick start
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # macOS/Linux
-pip install -r requirements.txt
-copy .env.example .env
-python -m pytest -q             # full suite, mock mode, no API keys needed
-python main.py system-health
-python tools/docs_audit.py      # verify documentation is current
-python tools/classify_inputs.py --input "Need Playwright tests for SaaS dashboard" --no-write
+### Windows operator setup
+
+```powershell
+scripts\setup-local.ps1
+scripts\doctor-local.ps1
+scripts\start-local.ps1
 ```
 
----
+The dashboard opens locally at `http://127.0.0.1:8765`.
 
-## Current commands
+Stop it with:
+
+```powershell
+scripts\stop-local.ps1
+```
+
+### Portable Python setup
 
 ```bash
-# System
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest -q
+python main.py system-health
+python main.py capabilities
+python main.py dashboard
+```
+
+The deterministic test suite runs without API keys. Real model providers and conditional integrations require separate local configuration.
+
+## Selected commands
+
+```bash
+# Runtime truth and readiness
 python main.py system-health
 python main.py capabilities
 python main.py agents
 
-# Opportunity evaluation
+# Opportunity and QA planning
 python main.py prescreen --input brief.txt
-python main.py filter   --input brief.txt
-python main.py upwork   --input brief.txt --source-platform upwork --require-real-llm
-python main.py batch-filter --input real_jobs/
-
-# QA delivery
 python main.py test-design --input brief.txt --require-real-llm
-python main.py scaffold    --input brief.txt --require-real-llm
-python main.py plan        --input brief.txt --require-real-llm
-python main.py audit       --input brief.txt --require-real-llm
-python main.py full        --input brief.txt --require-real-llm
-python main.py review      --input tests/smoke.spec.ts
-python main.py delivery    --input brief.txt --require-real-llm
+python main.py plan --input brief.txt --require-real-llm
 
-# Execution control
+# Framework and delivery preparation
+python main.py scaffold --input brief.txt --require-real-llm
+python main.py audit --input brief.txt --require-real-llm
 python main.py full --input brief.txt --step
-python main.py full --input brief.txt --dry-run
-python main.py full --input brief.txt --only proposal_writer
-python main.py full --input brief.txt --from-step proposal_writer
-python main.py run-tests --project-path outputs/<id>/framework --kind playwright
-python main.py ask --project-id <id> --question "Why apply_selectively?"
-
-# Workbench tools (Phase 3A+)
-python tools/build_strategy.py --project-id <id>          # Phase 2C: QA strategy
-python tools/docs_audit.py                                 # docs freshness check
-python tools/agent_readiness_audit.py                      # agent readiness check
-
-# Controlled execution tools (Phase 4D+)
-python tools/run_browser_demo.py --project-id <id> --approve-demo-execution
-python tools/inspect_credentials.py --project-id <id>     # Phase 4E: credential safety
-python tools/run_demo_auth.py --project-id <id> \
-    --approve-demo-auth-execution --auth-profile saucedemo_demo_auth
-
-# Scenario execution matrix (Phase 4G)
-python tools/build_execution_matrix.py --project-id <id>
-python tools/build_execution_matrix.py --project-id <id> \
-    --decide-url https://www.saucedemo.com --scenario-type no_auth_smoke
-
-# AI Intelligence Core (Phase 5K)
-python tools/run_intake_agent.py --project-id <id> \
-    --input-text "We need to test the login API and session management"
-python tools/run_test_oracle.py --project-id <id> --classification api_testing
-python tools/run_evidence_intelligence.py --project-id <id>
-
-# E2E Pipeline (Phase 5J)
-python tools/run_e2e_pipeline.py --project-id <id>          # plan mode
-python tools/run_e2e_pipeline.py --project-id <id> \
-    --enable-api-smoke --approve-pipeline-execution         # execute
-python tools/run_db_smoke.py --project-id <id> \
-    --provider postgresql --db-url-env-var STAGING_DB_URL \
-    --table users --approve-db-smoke
+python main.py review --input tests/smoke.spec.ts
+python main.py delivery --input brief.txt --require-real-llm
 ```
 
-### Scout operator console
+The complete implemented/planned command reference lives in [docs/COMMANDS.md](docs/COMMANDS.md).
 
-Start the unified local operator Dashboard with `python main.py dashboard`; use **Scout → Needs
-attention** for CAPTCHA/Cloudflare handoff, **History** for active/archived exact-run results, and a
-target card for outcome-first findings, evidence, and coverage. Raw IDs, JSON, hashes, and low-level
-browser diagnostics are collapsed under **Advanced diagnostics**. The exposed browser trace is a
-redacted structured event record, not a native Playwright `trace.zip`; Inspector remains a live
-developer tool. A completed exact target can be downloaded as one bounded client-ready ZIP with an
-offline HTML summary, findings, coverage, screenshots, optional reproduced-interaction video,
-sanitized console/network/accessibility evidence, and integrity hashes; incomplete targets cannot
-be mislabeled as client-ready. Confirmed actionable results can also surface source-attributed
-public contact emails and a copy-only factual draft that offers fixes only after agreed scope and
-repo/staging access. See [`docs/RUNBOOK_SCOUT.md`](docs/RUNBOOK_SCOUT.md) for safe
-continuation, archive, skip, evidence download/cleanup, and completed-run deletion.
+## Optional real-model configuration
 
-Full command reference with planned future commands: [`docs/COMMANDS.md`](docs/COMMANDS.md)
-
----
-
-## Configuration
+Copy `.env.example` to a local `.env` and supply only the providers you intend to use:
 
 ```env
 LLM_MODE=real
 MODEL_PROFILE=premium_hybrid
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=your-openai-key-here
+ANTHROPIC_API_KEY=your-anthropic-key-here
 ```
 
-Role routing in `premium_hybrid`:
+Never commit credentials, OAuth tokens, authenticated browser state, client data, or generated evidence containing sensitive information.
 
-| Role | Model | Used for |
-|---|---|---|
-| `architect` | `gpt-5.5` | Strategy, capability routing, prescreening |
-| `coding` | `claude-sonnet-4-6` | Scaffold, test implementation |
-| `review` | `claude-opus-4-7` | Quality gate, self-health, deep review |
-| `fast` | `claude-sonnet-4-6` | Proposals, summaries, delivery notes |
-| `vision` | `gpt-5.5` | Screenshot / visual input (planned) |
-| `fallback` | `gpt-5.4-mini` | Backup |
-
----
-
-## Tooling decisions
-
-- **Orchestrator:** Registry-based (current default). LangGraph is optional future backend — not mandatory now.
-- **Automation framework:** Playwright + TypeScript is the primary target.
-- **Reporting:** Markdown + JSONL locally. Allure is an optional future adapter.
-- **Observability:** Local JSONL logs. LangSmith is optional — not mandatory now.
-- **Playwright MCP:** Not a mandatory runtime dependency.
-- **Playwright codegen / trace viewer:** Useful helpers, not managed by the workbench.
-
-See [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) for rationale.
-
----
-
-## Tests
+## Validation
 
 ```bash
-.venv\Scripts\python.exe -m pytest -q   # always mock mode — no API keys consumed
+python -m pytest -q
+python tools/docs_audit.py --no-write
+python tools/agent_readiness_audit.py
 ```
 
-Expected: **all tests pass** in mock mode (no API keys consumed). Exact per-release totals
-live in the versioned release notes under [`docs/releases/`](docs/releases/) and the current
-handoff, not inline here, so this instruction never drifts as the suite grows.
+Exact per-release totals belong in versioned [release notes](docs/releases/) rather than this README, so the public overview does not drift as the suite grows.
 
----
-
-## Docs
+## Documentation
 
 | Document | Purpose |
 |---|---|
-| [`docs/VISION.md`](docs/VISION.md) | Product vision and roadmap |
-| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Daily operating guide |
-| [`docs/COMMANDS.md`](docs/COMMANDS.md) | Full command reference (implemented + planned) |
-| [`docs/APPROVAL_MODEL.md`](docs/APPROVAL_MODEL.md) | Risk levels, approval gates, what runs automatically |
-| [`docs/SAFETY_RULES.md`](docs/SAFETY_RULES.md) | Hard rules — what never runs automatically |
-| [`docs/TOOLING_DECISIONS.md`](docs/TOOLING_DECISIONS.md) | Orchestrator, LangGraph, Playwright, Allure, LangSmith decisions |
-| [`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md) | Current executable, conditional, planning-only, and unavailable capabilities |
-| [`docs/SCHEMA_FOUNDATION.md`](docs/SCHEMA_FOUNDATION.md) | `core/schemas/` layer — 50+ domain models |
-| [`docs/PROJECT_TYPES.md`](docs/PROJECT_TYPES.md) | Supported project types with risks and test focus |
-| [`docs/DOCUMENTATION_GOVERNANCE.md`](docs/DOCUMENTATION_GOVERNANCE.md) | How to keep docs accurate as the project evolves |
-| [`docs/DOCS_MANIFEST.md`](docs/DOCS_MANIFEST.md) | Registry of all documentation files and their status |
-| [`docs/PHASE_CONTRACTS.md`](docs/PHASE_CONTRACTS.md) | Phase boundaries — what is implemented vs planned |
-| [`docs/ARTIFACT_CONTRACTS.md`](docs/ARTIFACT_CONTRACTS.md) | Artifact paths, ownership, and delivery rules |
-| [`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md) | Agent operating rules and safety obligations |
-| [`docs/AGENT_HANDOFF_TEMPLATE.md`](docs/AGENT_HANDOFF_TEMPLATE.md) | Final phase report template |
-| [`docs/architecture/PROSPECT_QA_RADAR_SPEC.md`](docs/architecture/PROSPECT_QA_RADAR_SPEC.md) | Prospect QA Radar / Super Scout — approved architecture; Phase 8.2 contracts + Phase 8.3 Scout v1.0 runtime implement a bounded read-only slice |
-| [`docs/architecture/SCOUT_RUNTIME_V1.md`](docs/architecture/SCOUT_RUNTIME_V1.md) | Prospect QA Scout v1.0 runtime — component map, runtime boundary, and reuse decisions |
-
----
-
-## Changelog highlights
-
-This section is chronological release history. Statements inside an older release describe that
-release and may be superseded by a newer entry above; use the current capability matrix for the
-running product.
-
-<!-- sync-anchor: v5.0.8 model routing profiles — kept for internal test compatibility -->
-### v2.0.2 — Prospect QA Radar v2.0.2 (operator-path hotfix: Gmail wired into the real CLI, current)
-
-- **Gmail is now wired into the public `scout send --provider gmail_personal`** through a production
-  runtime provider registry (was only in tests before). A **provider preflight** runs BEFORE the
-  approval is consumed or a message reserved — an unknown/unconfigured/unauthorized/wrong-account/
-  insufficient-scope provider yields a clean `BLOCKED` with nothing reserved and zero provider calls.
-- **OAuth account verification is fail-closed**: the authorized account is proven via a verified
-  Google id-token claim (never an invented identity); an unprovable/wrong account or invalid scopes
-  raise and write no token; `gmail_status` never treats an altered `account` field as proof.
-- Deterministic operator-path acceptance (fake transport, fake creds, no network, no Google libs, no
-  real send). OAuth remains **unconfigured until local setup**; **no provider is live-accepted and no
-  real external message has been sent.** See
-  [`docs/releases/PROSPECT_QA_RADAR_V2.0.2.md`](docs/releases/PROSPECT_QA_RADAR_V2.0.2.md).
-
-### v2.0.1 — Prospect QA Radar v2.0.1 (Final Independent Acceptance + Gmail primary provider)
-
-- **CI root cause fixed** (a test's hardcoded Windows `cwd` broke Linux CI) with a regression guard.
-- **Genuine Gmail API provider is primary** (sender pinned to `dipptrue@gmail.com`): real MIME +
-  base64url + injected transport + local send-only OAuth desktop flow; no token leakage; honest
-  idempotency. **Resend** is an optional secondary for `darrowcode.com` only, excluded from the
-  critical path. Deterministic tests use a fake transport — no network, no Google libs, no credential.
-- **Send core hardened**: complete contact provenance (schema v3) + real persisted gate records
-  (no synthetic `reval-live`), mandatory reviewed-content proof hash, enforced state machines +
-  finalized send-attempts, a closed pre-provider control race (zero provider calls on a late block),
-  a provider-event trust model (forged relationships quarantined), daily outreach limits (5/day,
-  ceiling 10), and a complete one-at-a-time review + Gmail CLI.
-- CI sets `PROSPECT_RADAR_EXTERNAL_SEND_DISABLED=1`; every real transport refuses external calls.
-  **No provider is live-accepted and no real external message has been sent.** See
-  [`docs/GMAIL_PROVIDER_SETUP.md`](docs/GMAIL_PROVIDER_SETUP.md) and
-  [`docs/releases/PROSPECT_QA_RADAR_V2.0.1.md`](docs/releases/PROSPECT_QA_RADAR_V2.0.1.md).
-
-### v2.0.0 — Prospect QA Radar v2.0.0 (complete local, human-approved product)
-
-- **Final Phase II** completes the product: immutable draft revisions + single-use expiring
-  approvals (bound to exact recipient/body/finding/evidence/disclosure/suppression hashes; any
-  change invalidates them) → immediate pre-send revalidation from authoritative truth → controlled
-  provider send → immutable send history → normalized delivery/reply/bounce/opt-out events →
-  human-approved follow-ups → commercial metrics. New packages `core/scout/comms`,
-  `core/scout/integrations`; additive SQLite schema-v2 migration (a real v1.9.0 DB upgrades
-  preserving history + suppression).
-- **Sending is disabled by default and dry-run by default.** `python main.py scout send` sends ONE
-  approved revision; live needs `--approve-send` + `--reviewer` + exact `--confirm-recipient` (no
-  bulk / "approve all"). The provider is called **at most once** per approval; an ambiguous outcome
-  is `OUTCOME_UNKNOWN` and never auto-retried. Opt-out/bounce/complaint immediately block; security
-  findings never enter outreach. **Exactly-once external delivery is not claimed.**
-- **MCP + VS Code integration audit:** 14 servers in `config/mcp_servers.v2.yaml`, all disabled by
-  default, honestly classified, never live-accepted; agent-only ≠ Factory. `.vscode` recommendation
-  files. CI (deterministic + browser + provider-contract) never sends an external message.
-- One command: `python main.py scout radar-demo` (complete-product demo to a confined LOCAL SINK;
-  **nothing sent externally**). The functional roadmap is complete; only a verification-only Final
-  Independent Acceptance pass remains. **Local product; no cloud/SaaS, deployment, or real send.**
-
-### v1.9.0 — Prospect QA Radar v1.9.0 (complete local pre-send prospect pipeline)
-
-- **Final Phase I** completes the local pre-send workflow: adaptive deep QA (real axe-core + a
-  real rendered `chrome_perf_observation` — not Lighthouse — + deep technical SEO + a bounded
-  reversible cart action with verified cleanup) → normalized verified findings + a sanitized,
-  hashed evidence center → a transactional SQLite company/site memory (migrations, backup/restore,
-  corruption fail-closed, idempotent import) → durable scheduler/queues → rechecks + site
-  fingerprints + retention → public contact intelligence + suppression governance → audit-offer
-  mapping → controlled disclosure → outreach **drafts** → human review queue. New packages
-  `core/scout/pipeline`, `core/scout/memory`, `core/scout/scheduler`, `core/scout/outreach`.
-- **Nothing is sent.** There is no send command, no send button, and no external-communication
-  worker; a DB CHECK makes a "sent" draft unrepresentable. Inferred/named-person contacts are
-  never send-eligible without review; `NO_OUTREACH` permanently blocks draft readiness;
-  reversible-cleanup failure blocks client-safe evidence.
-- One command: `python main.py scout presend-demo` (deterministic; no network/browser). Real
-  axe/performance/reversible have a marked real-Chromium acceptance (`-m final1_browser_acceptance`).
-  The remaining roadmap is frozen at **Final Phase II** (human-approved sending) + a
-  verification-only pass. **Local release; no sending, cloud/SaaS, or production deployment.**
-
-### v8.4.0 — Prospect QA Scout v1.1.0 (local discovery + commercial-triage release)
-
-- **Discovery front end**: `python main.py scout campaign-run|campaign-demo|campaign-plan|
-  providers` extends the Scout runtime from explicit seeds to campaign → controlled discovery →
-  normalization/dedup/suppression → cheap commercial triage → bounded promotion into the existing
-  Scout QA engine. New package `core/scout/discovery/`.
-- **Providers**: a deterministic fixture provider and a bounded, path-confined, secret-scanned
-  file-import provider (CSV/JSON/NDJSON/newline); typed provider metadata (auth by env-var
-  reference only); terms-blocked / disabled / unapproved-live providers never execute; the real
-  provider path is an adapter interface with a factual readiness report (no scraping fallback).
-  Live discovery is opt-in (`--approve-live-discovery`) and never required by tests.
-- **Bounded + explainable**: the campaign matrix and budgets (matrix ceiling, per-provider result
-  budget, candidate/eligible/promoted caps, optional cost ceiling) fail closed; commercial triage
-  uses the Phase 8.2 `LeadScorecard` and **never authorizes contact or outreach**.
-- **Safety**: discovery content is untrusted; duplicates, `NO_SCAN`-suppressed, and invalid/private
-  URLs are never fetched; a promoted candidate never bypasses Scout URL safety; artifacts are
-  content-secret-scanned. Reuses the Phase 8.2 contracts, Scout URL safety/profiler, `RunStore`,
-  and the dashboard — no second engine/persistence/crawler. **Local release; no contact
-  enrichment, outreach, cloud/SaaS, or production deployment.**
-
-### v8.3.1 — Prospect QA Scout v1.0.1 (hardened local release)
-
-- **Dashboard controls now really work**: `scout dashboard --seeds` starts a run owned by one
-  `ScoutService`, so pause/resume/cancel/global-kill genuinely drive it and the report is built
-  when it finishes; `--run-id` attaches read-only. `/api/control` fail-closes with HTTP 409 on a
-  read-only/attached run instead of returning fake success (plus a same-origin CSRF guard).
-- **Playwright SSRF hardening**: every navigation/redirect/subresource is intercepted and
-  re-validated against the URL policy (loopback/private/link-local/reserved/unsupported-scheme
-  blocked), the final URL is re-validated before content is read, rendered HTML is byte-bounded,
-  and the browser always closes on error. A real local Chromium acceptance test now proves the
-  live path against an allow-listed local fixture (marker `playwright_acceptance`).
-- **Run isolation**: fresh scans get a unique run id (timestamp + entropy); the engine fails
-  closed on run-id reuse and on a resume whose config does not match — no stale-artifact mixing.
-- **Honest concurrency**: sequential-only runtime; `concurrency` fails closed unless `1`.
-- Docs corrected for truthfulness (no brittle inline test totals; static accessibility/performance
-  are bounded heuristics, not axe/Lighthouse). **Local release; no cloud/SaaS/unrestricted
-  discovery/automated outreach/production deployment.**
-
-### v8.3.0 — Prospect QA Scout v1.0 (local release)
-
-- **First ARK runtime**: `python main.py scout` runs a bounded, **read-only**, local QA vertical
-  over 1–10 explicit public seed URLs. New package `core/scout/`.
-- Pipeline: campaign → fail-closed URL eligibility (rejects localhost/private-IP/creds/unsafe
-  ports and DNS-rebinding) → bounded profiling → read-only checks (links, accessibility, SEO,
-  structured data, mobile, performance, pre-submit validation, business-flow, console) →
-  independent second-pass verification → sanitized evidence → non-authorizing scoring →
-  durable persistence/resume → localhost dashboard → report export.
-- Pluggable backend: stdlib `StaticHttpBackend` (offline-safe, drives the deterministic E2E)
-  and an optional lazy `PlaywrightBackend` (live browser; never required by tests).
-- Safety: CAPTCHA/access-prohibition → `MANUAL_ACTION_REQUIRED` (no interaction/bypass); only
-  independently reproduced + sanitized findings are client-safe; scoring never authorizes
-  outreach; report is content-secret-scanned before an atomic publish; dashboard is
-  `127.0.0.1`-only with path-confined artifact serving and a global kill switch.
-- One command: `python main.py scout demo` (bundled deterministic demo; no external network/
-  browser). 4090 tests total (+74 Phase 8.3). **Local release; no cloud/SaaS/unrestricted
-  discovery/automated outreach/production deployment.**
-
-### v8.2.3 — Prospect Radar contracts: contact, storage & controlled disclosure
-
-- Slice 3/4 hardening: hostname IP/label rejection + IDNA normalization; `ProspectLifecycle`
-  history-integrity + approved-lineage (`APPROVED` requires actor + approval_ref); governance
-  ISO/cooldown/monitor rules + inert composed `CleanupPolicy`; scoring `math.isfinite` weight
-  validation + outreach-eligibility gating.
-- New public-contact contracts (`prospect_contact.py`): `ContactProvenance`, `ContactStatus`,
-  `ContactRecord`, `ContactCollection` — public sources only; deterministic normalization with
-  no invented country code / no deliverability claim; inferred contacts can never be VERIFIED;
-  named-person → manual review; only VERIFIED is an outreach candidate; dedup keeps stricter status.
-- New controlled-disclosure contracts (`prospect_disclosure.py`): `StorageClass`,
-  `DisclosureLevel`, `DisclosureStage`, `DisclosureItem`, `FindingDisclosurePolicy`,
-  `DisclosureManifest` — storage vs. disclosure kept separate; `OUTREACH_ELIGIBLE` requires
-  independent verification + `CLIENT_SAFE`; manifest readiness is **computed** from references;
-  nothing is sent. Planning/contracts only. Remaining Phase 8.2 contracts stay planned.
-
-### v8.2.2 — Prospect Radar contracts: identity, lifecycle, governance & scoring
-
-- Slice-2 hardening: distinct `BUSINESS_TYPES`/`RESOURCE_TYPES`; `SiteProfile` surface
-  de-dup + public/authenticated exclusivity; `BusinessFlowProfile` rejects `DESTRUCTIVE`;
-  `SiteFingerprint` requires valid `sha256` hex digests; `CoverageArea` hygiene.
-- Slice 3 (identity/lifecycle/governance, planning-only): `DomainIdentity`,
-  `CompanyIdentity` (`prospect_identity.py`); `ProspectLifecycle` + deterministic transition
-  map (`prospect_lifecycle.py`); `SuppressionPolicy`, `ProspectRetentionPolicy` (composing
-  the existing `CleanupPolicy`), `RecheckPolicy`, `ProspectGovernancePlan`
-  (`prospect_governance.py`). No DNS/network/scheduler/filesystem runtime; deletion never
-  executed; `CONTACTED` requires approved lineage.
-- Slice 4 (scoring foundation): `ScoreDimension`, `LeadScorecard`, `ProspectPriority`
-  (`prospect_scoring.py`) — 12 independent visible dimensions, optional weighted total only
-  from explicit validated weights, no automatic outreach eligibility, no hidden single score.
-- Reuses `SchemaMixin`, `SourceReference`, `Confidence`, `WorkRunState` shape, and
-  `CleanupPolicy` — no duplicate engines. Remaining Phase 8.2 contracts stay planned.
-
-### v8.2.1 — Prospect Radar contracts: hardening + business/site profiles
-
-- Hardened slice-1 `InteractionBoundary` with deterministic fail-closed normalization
-  (mandatory approval classes preserved; permitted never overlaps restricted;
-  reversible-write forces cleanup; public-only forces authenticated off; side-effect flags
-  require written authorization; evasion switches always off). `DiscoverySourcePolicy`
-  rejects unknown provider status; `MarketPolicy` rejects `"none"` + a real outreach channel.
-- New slice-2 planning-only contracts (schema/contracts only — **no runtime, discovery,
-  browser, network, MCP, crawler, provider, contact lookup, outreach, or database**):
-  `BusinessContext`, `SiteProfile`, `BusinessFlowProfile` (`core/schemas/prospect_business.py`)
-  and `CoverageArea`, `CoverageMap`, `SiteFingerprint` (`core/schemas/prospect_coverage.py`).
-- QA coverage stays separate from commercial opportunity; `COVERED`/`PARTIAL` require an
-  evidence/verification reference; fingerprints reject secret/session inputs and are
-  deterministic. Reuses `Confidence`, `SourceReference`, `InteractionActionClass`, and
-  `ATOMIC_CAPABILITIES` — no duplicate schemas. Remaining Phase 8.2 contracts stay planned.
-
-### v8.2.0 — Prospect Radar planning contracts, slice 1
-
-- New planning-only domain contracts (schema/contracts only — **no runtime, discovery,
-  browser, network, or MCP**): `ProspectCampaign`, `CampaignTargetCriteria`, `MarketPolicy`,
-  `DiscoverySourcePolicy` (`core/schemas/prospect_campaign.py`) and `InteractionActionClass`
-  + fail-closed `InteractionBoundary` (`core/schemas/prospect_interaction.py`).
-- Fail-closed defaults: only `READ_ONLY` permitted; destructive blocked; financial /
-  external-communication approval-gated; CAPTCHA-bypass and access-control / proxy-stealth
-  evasion cannot be enabled through the contract; market policy never auto-approves outreach.
-- New planning-only capability profile `prospect_qa_radar` (9 profiles total; reuses
-  existing atomic capabilities, records the rest as planned gaps).
-- Reuses `SchemaMixin`, `SourceReference`, and the `WorkRunState` / `ToolExecutionPolicy`
-  patterns — no duplicate schemas. Remaining Phase 8.2 contracts stay planned.
-
-### v8.1.0 — ARK planning-only work entrypoint
-
-- New command `python main.py work` (planning-only): turns a brief into a reviewable plan.
-  **No LLM in the core path, no MCP calls, no network, no browser, no execution.**
-- Deterministic pipeline (`core/orchestration/`): redact → classify → infer profile →
-  extract requirements → analyse missing info → plan capabilities → compose toolchain →
-  enforced state machine → content-scanned atomic artifact publication.
-- Universal `UniversalProfileSelector` (8 profiles; unknown work stays unresolved, never
-  silently QA). MCP-backed steps stay unresolved candidates (`tool_name=""`,
-  `availability_verified=false`) until Phase 8.3 discovery.
-- Real content secret scanning before an atomic publish (the legacy scanner only checked
-  filenames); artifacts confined to `outputs/<project_id>/40_ark_work/`.
-- Additive schema fields (resolution status, candidate/discovery, `factory_process_launch_unverified`,
-  `ProfileSelection`); `WorkStateManager` enforces transitions + `state_version`.
-- 3635 tests total (72 new Phase 8.1 tests). Still no live MCP client / discovery.
-
-### v8.0.0 — ARK universal orchestration foundation
-
-- **Planning/schema foundation only — no runtime MCP client yet.** No `main.py work` command
-  is available; existing QA workflows remain unchanged.
-- ARK layer builds additively on the mature QA Factory core (see `docs/PRODUCT_VISION_2026.md`,
-  `docs/UNIVERSAL_WORK_FACTORY.md`, `docs/REUSE_MAP_PHASE8.md`).
-- New additive schemas: `WorkPacket`, `Requirement`, `Capability`/`CapabilityProfile`,
-  `CapabilityPlan`, `MCPServerDescriptor`/`MCPToolDescriptor`, `ToolchainPlan`/`SelectedMCPTool`/
-  `ToolExecutionPolicy`/`ExecutionBudget`, `WorkRunState`, `WorkDeliveryManifest`, `EvidenceClaim`,
-  capability-gap schemas. `ClientDeliveryManifest` and `ToolSelection` unchanged.
-- Reference-only MCP manifest `config/mcp_servers.yaml` (all servers `enabled: false`, no
-  `@latest`, env-var auth references only) + atomic capability registry + 8 capability profiles.
-- MCP consumption is **planned, not implemented**: no live discovery, no MCP invocation, no
-  browser/network execution, no external writes, no server install/enable.
-- 3563 tests total (44 new Phase 8.0 tests).
-
-### v7.4.0 — Auth Demo Workflow
-
-- Phase 7R: `core/auth_demo_workflow.py` — `AuthDemoScenario`, `AuthDemoResult` (safety invariants via `__post_init__`), `AuthDemoWorkflow` orchestrating 7A→7B→7C→7D in planning-only mode
-- Phase 7R: `tools/run_auth_demo_workflow.py` — CLI with blocked-flag guard; no real credentials or storageState required
-- Phase 7R: Generates 5 artifact subdirs + `33_client_audit/client_report.md` with Authentication Coverage (Executed/Planned/Skipped/Blocked sections)
-- Phase 7R: 4 hardcoded blocked safety cases in every run: personal account, production account, raw CLI password, CAPTCHA bypass
-- Phase 7R: `approved_for_client_delivery=False`, `human_review_required=True` always enforced
-- Phase 7R: AGENT_CONTRACT.md updated with 7D and 7R agent rules
-- Phase 7R: 84 new tests; 3519 total
-
-### v7.3.0 — Email/Password Auth Runner
-
-- Phase 7D: `core/schemas/email_password.py` — `EmailPasswordRunStatus` (5 states), `EmailPasswordModeReadiness` (3 states), `EmailPasswordInputs`, `EmailPasswordPlan`, `EmailPasswordRunResult` — all with 7 safety invariants via `__post_init__`
-- Phase 7D: `core/email_password_runner.py` — `EmailPasswordRunner`: check_env_vars (presence only), build_plan, run (Node.js smoke), render_artifacts, format_auth_coverage_section
-- Phase 7D: `tools/run_email_password_smoke.py` — CLI with blocked-flag guard; `--approve-execution` required for actual smoke; raw secrets never accepted via CLI
-- Phase 7D: Credential flow: Python passes env var NAMES via `EP_USERNAME_ENV_VAR`/`EP_PASSWORD_ENV_VAR`; Node reads values — Python never touches credential values
-- Phase 7D: Supported target: `orangehrm_demo` (OrangeHRM open-source demo)
-- Phase 7D: Output artifacts: `outputs/<project>/37_email_password_auth/` — `email_password_plan.json`, `email_password_report.json`, `email_password_summary.md`
-- Phase 7D: 84 new tests; 3435 total
-
-### v7.2.0 — Google OAuth StorageState Runner
-
-- Phase 7C: `core/schemas/google_oauth.py` — `GoogleOAuthMode` (6 values), `GoogleOAuthModeReadiness` (3 states), `GoogleOAuthRunStatus` (5 states), `GoogleOAuthInputs`, `GoogleOAuthPlan`, `GoogleOAuthRunResult` — all with 8–9 safety invariants via `__post_init__`
-- Phase 7C: `core/google_oauth_runner.py` — `GoogleOAuthRunner`: classify_mode, build_plan, run (storageState reuse), render_artifacts, format_auth_coverage_section
-- Phase 7C: `tools/run_google_oauth_smoke.py` — CLI with blocked-flag guard; 1 executable mode + 5 planning-only; `--approve-execution` required for actual smoke
-- Phase 7C: Output artifacts: `outputs/<project>/16_google_oauth/` — `google_oauth_plan.json`, `google_oauth_report.json`, `google_oauth_summary.md`
-- Phase 7C: URL allowlist — 6 Google HTTPS prefixes; captcha/recaptcha/challenge/anti-bot URLs always blocked
-- Phase 7C: `next_runner: "google_oauth_runner"` from Phase 7B is now implemented
-- Phase 7C: 106 new tests; 3351 total
-
-### v7.1.0 — Auth Strategy Selector
-
-- Phase 7B: `core/schemas/auth_strategy.py` — `DecisionStatus` (5 states), `AuthStrategyDecision` with 8 safety invariants via `__post_init__`
-- Phase 7B: `core/auth_strategy_selector.py` — `AuthStrategySelector`: picks best method from 7A plan using 15-method priority order
-- Phase 7B: `tools/select_auth_strategy.py` — CLI with two modes: `--plan-file` (load 7A JSON) or inline (run planner + select)
-- Phase 7B: Output artifacts: `outputs/<project>/35_auth_strategy/auth_strategy_decision.json` + `auth_strategy_summary.md`
-- Phase 7B: `safe_to_execute=True` only when `decision_status == ready_for_execution`; `next_runner` names the runner for Phase 7C+
-- Phase 7B: `AuthCapabilityPlan.from_dict()` added for JSON deserialization
-- Phase 7B: 83 new tests; 3245 total
-
-### v7.0.0 — Auth Capability Planner
-
-- Phase 7A: `core/schemas/auth_capability.py` — `AuthMethodType` (15 methods), `AuthReadiness` (7 states), `AuthMethodCapability`, `AuthCapabilityInputs`, `AuthCapabilityPlan`
-- Phase 7A: `core/auth_capability_planner.py` — `AuthCapabilityPlanner`: classifies all 15 auth methods, writes planning artifacts
-- Phase 7A: `tools/plan_auth_capability.py` — CLI with blocked-flag guard, env-var-name-only pattern, ASCII readiness markers
-- Phase 7A: Output artifacts: `outputs/<project>/34_auth_capability/auth_capability_plan.json` + `auth_capability_summary.md`
-- Phase 7A: Safety invariants enforced by `__post_init__` — `personal_account_allowed`, `captcha_bypass_allowed`, `auth_bypass_allowed` always `False`; `human_review_required` always `True`
-- Phase 7A: Blocked CLI flags exit 1 before argparse: `--password`, `--secret`, `--token`, `--cookie`, `--totp-seed`, `--access-token`, `--bearer`, `--client-secret`, `--api-key`
-- Phase 7A: 88 new tests; 3162 total
-
-### v6.7.0 — Client Delivery Report v1
-
-- Phase 6.3: `core/reporting/client_delivery_report.py` — professional client-facing QA audit report generator
-- Phase 6.3: `client_report.md` — 12-section report with Executive Summary, Risk Matrix, Key Findings, Recommended Actions
-- Phase 6.3: Human-readable language (not system log); severity-based action language; skipped modules explained
-- Phase 6.3: Always DRAFT + `approved_for_client_delivery = False` — report is never auto-approved
-- Phase 6.3: Path to `client_report.md` printed at end of `run_client_audit.py` write run
-- Phase 6.3: 83 new tests; 3074 total
-
-### v6.6.0 — Structured Finding Schema + Risk Matrix
-
-- Phase 6.2: `core/schemas/finding.py` — typed `Finding` dataclass with `Severity`, `FindingCategory`, `FindingStatus`, `Confidence` enums
-- Phase 6.2: `core/risk/risk_matrix.py` — `RiskMatrix` + `risk_score()` (deterministic scoring and sorting)
-- Phase 6.2: `core/risk/finding_adapters.py` — adapters: `findings_from_api_contract()`, `findings_from_secret_scan()`
-- Phase 6.2: `ClientAuditResult` extended with `structured_findings`, `total_findings`, `risk_summary` (backward-compat `findings: int` preserved)
-- Phase 6.2: `run_report.json` includes full structured findings + risk matrix summary
-- Phase 6.2: `summary.md` includes `## Risk Matrix` section with top risks and recommended actions
-- Phase 6.2: 98 new tests; 2991 total
-
-### v6.5.0 — One-Command Client Audit Workflow
-
-- Phase 6.1: `tools/run_client_audit.py` — single entrypoint for a full client QA audit
-- Phase 6.1: `core/client_audit_workflow.py` — thin orchestrator over existing modules
-- Phase 6.1: `core/schemas/client_audit.py` — `ClientAuditMode`, `ClientAuditInputs`, `ClientAuditResult` with `__post_init__` safety invariants
-- Phase 6.1: 4 workflow modes: `safe_audit`, `api_only`, `frontend_readonly`, `delivery_only`
-- Phase 6.1: Preflight plan printed before any module runs (detected inputs, enabled/skipped/blocked)
-- Phase 6.1: Output dir `33_client_audit/` with plan JSON, preflight MD, run report JSON, summary MD
-- Phase 6.1: 106 new tests; 2893 total
-- Blocked: `--auto-approve-all`, `--skip-human-review`, `--force-deliver`
-
-### v6.4.0 — MCP Demo Workflow Validation
-
-- Phase 6-R: `tools/run_mcp_demo_workflow.py` — 7-step demo runner validates full QA Factory flow
-- Phase 6-R: Flow: health → analyze → quality_audit → flaky_analysis → proposals → delivery_pack → blocked_apply
-- Phase 6-R: `--no-write` dry run; `--json-output` full JSON results; blocked flags exit 1
-- Phase 6-R: 49 new end-to-end tests; 2787 total
-- Phase 6-R: ASCII-only output (Windows cp1252 safe)
-
-### v6.3.0 — QA Factory as MCP Server
-
-- Phase 6: `integrations/mcp/` — thin adapter layer over existing core modules
-- Phase 6: 7 MCP tools: `qa_factory_health`, `analyze_project`, `run_quality_audit`, `run_flaky_test_analysis`, `generate_delivery_pack`, `propose_self_healing_fixes`, `apply_self_healing_fixes`
-- Phase 6: `tool_handlers.py` — pure Python, testable without mcp package
-- Phase 6: `server.py` — MCP stdio server (requires: `pip install mcp`)
-- Phase 6: `tools/run_mcp_server.py` — CLI with `--list-tools`, `--demo-health`, `--version`
-- Phase 6: All tools default to planning_only/analysis_only; no credentials accepted; `human_review_required=True` in every response
-- Phase 6: 95 new tests; 2738 total
-- Blocked: `--approve-delivery`, `--skip-review`, `--auto-start-browser`, `--credentials`
-
-### v6.2.0 — Flaky Test Analyzer + Self-Healing Proposals
-
-- Phase 5O: `FlakyTestAnalyzer` — static analysis of Playwright spec files (no network, no browser)
-- Phase 5O: `analyze()` — detects hard waits, fragile selectors, non-web-first assertions, dynamic classes
-- Phase 5O: `analyze_selectors()` — stability score 0–100 (strong=getByRole/Label/TestId, weak=nth/xpath/generated-class)
-- Phase 5O: `generate_healing_proposals()` — proposals only, `applied=False` by default
-- Phase 5O: `apply_proposals()` — TODO comment insertion, requires `--approve-code-modification`
-- Phase 5O: 3 new schemas (`FlakyTestAnalysisReport`, `SelectorStabilityReport`, `SelfHealingReport`) + 3 sub-schemas
-- Phase 5O: Client Delivery Pack reads dir 32, flaky analysis row in QA report table
-- Phase 5O: Demo fixtures (`stable_test.spec.ts`, `flaky_test.spec.ts`) in `fixtures/demo_quality_audit/playwright_specs/`
-- Phase 5O: 75 new tests; 2643 total
-- Blocked: `--auto-fix`, `--skip-human-review`, `--approve-delivery`, `--force-apply`
-
-### v6.1.0 — Quality Audit Delivery Workflow
-
-- Phase 5N-R: `demo_quality_audit` fixture set (29_accessibility + 30_performance + 31_passive_security)
-- Phase 5N-R: `planning_only` fixtures (accessibility + performance) + `executed` fixture (passive security: 3/5 OWASP headers)
-- Phase 5N-R: 96 golden tests — fixture integrity, planning_only mode, approved execution, delivery pack 5N integration, ZIP safety, content quality
-- Phase 5N-R: QA report table correctly distinguishes `planning_only` vs `executed` per module
-- Phase 5N-R: Evidence Index references 29/30/31 artifact dirs with execution status
-
-### v6.0.0 — Accessibility + Performance + Passive Security
-
-- Phase 5N: `AccessibilityRunner` — axe-core Playwright skeleton + approved execution path (WCAG 2.1 AA)
-- Phase 5N: `PerformanceSmokeRunner` — Core Web Vitals CDP skeleton + approved execution (LCP/FCP/TTFB)
-- Phase 5N: `PassiveSecurityRunner` — OWASP header skeleton + real passive HEAD request (approved)
-- Phase 5N: 3 new schemas (`AccessibilityReport`, `PerformanceSmokeReport`, `PassiveSecurityReport`)
-- Phase 5N: Hybrid mode — `planning_only` (default) vs `executed`; delivery pack distinguishes both
-- Phase 5N: Client Delivery Pack updated — shows "Generated checks only; execution requires approval" for planning_only
-- Phase 5N: 174 new tests (58 each); 2472 total
-- All safety invariants double-enforced in `__post_init__` + injection-proof via `from_dict`
-
-### v5.9.0 — Client Delivery Pack
-
-- Phase 5P: `ClientDeliveryPack` — aggregate all phase outputs into a client-ready delivery package
-- Phase 5P: `SecretScanner` — pre-delivery scan blocks storageState, .env, credentials, cookies, tokens
-- Phase 5P: 9 delivery artifacts: QA_Report.md/html, Bug_Report, Test_Cases.csv, Risk_Matrix, Recommendations, Evidence_Index, Delivery_Checklist, manifest + ZIP
-- Phase 5P: `approved_for_client_delivery=False` hardcoded — manual sign-off always required
-- Phase 5P: CLI `create_client_delivery_pack.py` with blocked `--approve`, `--auto-send`, `--skip-secret-scan` flags
-- Phase 5P: 108 new tests; 2226 total
-- All safety invariants double-enforced in `__post_init__` + injection-proof via `from_dict`
-
-### v5.8.0 — Demo Workflow Hardening
-
-- Phase 5M-R: 4 realistic fixture specs (`petstore_openapi.json`, `sample_openapi.yaml`, `risky_api_openapi.json`, `postman_sample.json`)
-- Phase 5M-R: 51 end-to-end demo workflow tests (`tests/test_phase5mr_demo_workflow.py`)
-- Phase 5M-R: DELETE method always `blocked_by_default` (path-independent fix)
-- Phase 5M-R: PyYAML ImportError gives clear install instructions
-- Phase 5M-R: CI/CD content hardening verified programmatically (no secrets/deploy/git-push/PR-create)
-- Phase 5M-R: 51 new tests; 2118 total
-
-### v5.7.0 — API Contract Importer + CI/CD Builder
-
-- Phase 5M: `APIContractImporter` — parse OpenAPI JSON/YAML and Postman collections into classified endpoint reports
-- Phase 5M: `APITestGenerator` — generate Playwright API smoke + schema test skeletons (safe_readonly only; planning artifact, not auto-executable)
-- Phase 5M: `CICDBuilder` — generate GitHub Actions + GitLab CI workflows for Playwright smoke (planning artifact, manual copy required)
-- Phase 5M: Safety classification per endpoint: `safe_readonly / requires_approval / blocked_by_default`
-- Phase 5M: 3 CLI tools (`import_api_contract.py`, `generate_api_tests.py`, `build_cicd_config.py`)
-- Phase 5M: 3 artifact dirs (`25_api_contract/`, `26_generated_tests/`, `27_cicd/`)
-- Phase 5M: 101 new tests; 2067 total
-- All safety invariants double-enforced in `__post_init__` + `from_dict` across all new schemas
-
-### v5.6.0 — Desktop Browser Execution CLI + Advanced Smoke Suite
-
-- Phase 5L: `tools/run_browser_execution.py` — approval-gated desktop Playwright smoke CLI
-- Phase 5L: Dual-approval model for ecommerce targets (Amazon, Alza): both `--approve-demo-execution` AND `--approve-public-readonly-execution` required
-- Phase 5L: 4 advanced smoke spec files (desktop + mobile, Amazon + Alza) with dual-viewport `test.skip()` guards
-- Phase 5L: Hardcoded site URLs in spec files to prevent cross-site BASE_URL contamination
-- Phase 5L: Playwright scaffold with `screenshot/video/trace: retain-on-failure`, HTML reporter
-- Phase 5L: 35 new tests in `tests/test_phase5l_browser_execution_cli.py`
-- Phase 5L: `tsconfig.json` fixed — `noEmit: true`, `rootDir: "."`, `lib: ["ES2020", "DOM"]` (resolves 9 VS Code TS errors)
-- Phase 5K: `IntakeAgent` — heuristic work-request classifier; raw input never stored
-- Phase 5K: `TestOracle` — prioritized scenario generator; planning artifact, not executable
-- Phase 5K: `EvidenceIntelligence` — read-only artifact gap analyzer; no network/subprocess
-- Phase 5K: risk level detection bug fixed — keywords checked before `if not scores:` early return
-- Phase 5J-R: `stop_on_first_failure` pipeline mode; demo pipeline CLI (`run_demo_pipeline.py`)
-- Phase 5J: `E2EPipelineRunner` + `DBSmokeRunner`; 9-module fixed execution order
-- Phase 5I: mobile viewport emulation, visual regression, GitHub OAuth
-- Phase 5H: multi-target expansion, task source integration, Google Auth modes
-- All safety invariants double-enforced in `__post_init__` + `from_dict`
-- 1966 tests passing (1931 Python + 35 Phase 5L)
-
-### v5.2.0 — Controlled Execution + Scenario Matrix
-
-- Phase 3A: `core/framework_scaffold_builder.py` — Playwright TypeScript scaffold generator
-- Phase 3B: `core/scaffold_validator.py`, client scenario fixtures (`fixtures/client_scenarios/`) — scaffold validation and scenario library
-- Phase 3C: `core/toolchain_validator.py` — local toolchain validation (tsc, eslint, npx playwright)
-- Phase 4A: `core/schemas/execution_approval.py` — execution readiness checklist (approval-gated)
-- Phase 4B: `core/schemas/evidence.py` — evidence foundation with redaction and quality gates
-- Phase 4C: `core/schemas/reporting.py`, `core/schemas/delivery_preview.py` — report drafts, delivery preview, safety checklists
-- Phase 4ABC: `core/schemas/scenario_evaluation.py` — scenario batch evaluation, 4 synthetic + 8 real-world scenarios
-- Phase 4D: `core/browser_demo_runner.py`, `tools/run_browser_demo.py` — approval-gated browser demo execution (SauceDemo only)
-- Phase 4E: `core/credential_safety_inspector.py`, `tools/inspect_credentials.py` — credential safety inspection with hardcoded guards
-- Phase 4F: `core/demo_auth_runner.py`, `tools/run_demo_auth.py` — approval-gated demo auth execution (SauceDemo only, public credentials)
-- Phase 4G: `core/scenario_execution_matrix.py`, `tools/build_execution_matrix.py` — scenario execution matrix, 9 canonical lanes, dedicated test account planning
-- All safety invariants double-enforced in `__post_init__` + `from_dict` — bypass-proof
-- 1335 tests passing
-
-### v5.1.0 — Guided QA Automation Workbench
-
-- Product direction: evolving from opportunity router to full QA automation workbench
-- `core/version.py`: `APP_VERSION`, `STATE_SCHEMA_VERSION`, `RELEASE_LABEL`
-- New docs: VISION, COMMANDS, APPROVAL_MODEL, TOOLING_DECISIONS, SAFETY_RULES, PROJECT_TYPES
-- Phase 1B: 35 schema modules in `core/schemas/` — domain models, auth/credential, mobile, integration, documentation governance
-- Phase 1B-DOCS: `tools/docs_audit.py`, `DOCUMENTATION_GOVERNANCE.md`, `DOCS_MANIFEST.md`
-- Phase 2A: `core/input_context_resolver.py`, `core/work_request_classifier.py` — input classification, secret redaction
-- Phase 2B: `core/project_blueprint_builder.py` — project blueprint from classified inputs (8 project types)
-- Phase 2B-AGENT: `docs/AGENT_CONTRACT.md`, `docs/PHASE_CONTRACTS.md`, `docs/ARTIFACT_CONTRACTS.md`, `docs/AGENT_HANDOFF_TEMPLATE.md`, `tools/agent_readiness_audit.py`
-- Phase 2C: `core/qa_strategy_planner.py`, `core/schemas/qa_strategy.py`, `tools/build_strategy.py` — QA strategy planner, 8 artifact types in `02_strategy/`
-- Pre-screen first: opportunity evaluation workflows fully supported and preserved
-
-### v5.0.9 — Validation hardened
-
-Patches: api_testing routing (P1), mobile risk flag (P2), SaaS billing check (P3), test-design mode (P4).
-
-### v5.0.8 — Model routing additions
-
-Role-based model routing profiles: architect / coding / review / fast / vision / fallback.  
-`system-health`, `--project-id`, `--source-platform` added.
+| [Operator Quickstart](docs/QUICKSTART_OPERATOR.md) | Fast local setup and daily workflow |
+| [Client Work Operator Guide](docs/CLIENT_WORK_OPERATOR_GUIDE.md) | Senior-led brief-to-delivery workflow |
+| [Scout Operator Guide](docs/SCOUT_OPERATOR_GUIDE.md) | Campaign and prospect-QA operation |
+| [Current Runtime Capability Matrix](docs/CAPABILITY_MATRIX.md) | Executable, conditional, planning-only, and unavailable capabilities |
+| [Commands](docs/COMMANDS.md) | CLI reference |
+| [Approval Model](docs/APPROVAL_MODEL.md) | Approval and risk levels |
+| [Safety Rules](docs/SAFETY_RULES.md) | Non-negotiable execution boundaries |
+| [Scout Runbook](docs/RUNBOOK_SCOUT.md) | Continuation, archive, evidence, and cleanup procedures |
+| [Prospect QA Radar specification](docs/architecture/PROSPECT_QA_RADAR_SPEC.md) | Scout architecture and product contracts |
+| [Release notes](docs/releases/) | Versioned implementation and verification history |
+
+## Scope statement
+
+AI QA Factory demonstrates a practical quality-engineering operating model: structured intake, risk-aware planning, controlled automation, evidence discipline, and senior review. It is built to accelerate professional QA work without confusing generated material with verified execution or allowing automation to cross safety boundaries silently.
+
+Built and operated by [Dmytro Pogribnyy](https://dmytropogribnyy.github.io/) — Senior QA Automation Engineer / SDET.
+
+<!-- Compatibility anchors retained for regression tests: v5.0.8 model routing profiles; premium_hybrid -->
