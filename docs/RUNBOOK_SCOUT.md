@@ -61,9 +61,10 @@ path that surfaces per-target findings in the Dashboard — see §3.)
   The exact-target attachment is capped at 20 MiB and contains an offline HTML summary, Markdown,
   client-facing findings, coverage, screenshots, an optional qualifying reproduction video,
   sanitized console/network/accessibility data, a structured event trace when recorded, and a
-  SHA-256 manifest. It excludes raw observations/headers, cookies, browser storage, absolute paths,
-  run/prospect IDs, and commercial scorecards. Review screenshots/video before attaching the ZIP to
-  email; an incomplete target cannot be exported as a completed client package.
+  SHA-256 manifest. Structured text is secret-scanned. It excludes raw observations/headers,
+  cookies, browser storage, absolute paths, run/prospect IDs, and commercial scorecards.
+  Screenshots/video still require human review before attaching the ZIP to email; an incomplete
+  target cannot be exported as a completed client package.
 - With at least one confirmed actionable finding, **Next actions** also shows up to five public
   contact emails found in the captured page metadata/links, with the public source page, and a
   copy-only outreach draft. Same-domain generic mailboxes are preferred. The draft lists only

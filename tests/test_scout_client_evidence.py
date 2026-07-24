@@ -153,7 +153,9 @@ def test_client_bundle_is_target_scoped_and_excludes_operator_raw_data(tmp_path)
         assert forbidden not in blob
     manifest = json.loads(files["MANIFEST.json"])
     assert manifest["domain"] == "alpha.example"
-    assert manifest["client_safe_scope"] is True
+    assert manifest["client_oriented_scope"] is True
+    assert manifest["structured_content_secret_scanned"] is True
+    assert manifest["visual_review_required"] is True
     assert all(len(row["sha256"]) == 64 for row in manifest["entries"])
     assert result["bytes"] < 20 * 1024 * 1024
     with zipfile.ZipFile(result["path"]) as archive:
@@ -181,7 +183,7 @@ def test_dashboard_download_is_an_attachment_and_target_page_links_it(tmp_path):
         server.shutdown()
         server.server_close()
     assert "Download client-ready evidence (.zip)" in page
-    assert "One target · client-safe · up to 20 MiB" in page
+    assert "One target · client-oriented · review required · up to 20 MiB" in page
     assert content_type == "application/zip"
     assert 'attachment; filename="alpha.example-qa-evidence.zip"' == disposition
     assert cache == "no-store"

@@ -956,9 +956,12 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                           or str((body or {}).get("run") or "")).strip()
             try:
                 item = challenge_manager.start(domain, source_run=source_run)
+            except ValueError:
+                return self._json(400, {"ok": False, "error": "Enter a valid public domain."})
             except Exception as exc:
                 return self._json(400, {"ok": False,
-                                        "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+                    "error": ("Could not open the manual browser check "
+                              f"({type(exc).__name__}). Check system readiness and try again.")})
             return self._json(202, {"ok": True, "session": item})
 
         def _scout_challenge_action(self, parsed):
@@ -2727,7 +2730,8 @@ function startCampaign(){{
                 f'<div class="row" style="margin-top:16px">'
                 f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run_id)}'
                 f'&amp;domain={_esc(domain)}">Download client-ready evidence (.zip)</a>'
-                f'<span class="muted">One target · client-safe · up to 20 MiB</span></div>'
+                f'<span class="muted">One target · client-oriented · review required · '
+                f'up to 20 MiB</span></div>'
                 f'<p class="muted">The ZIP includes an offline HTML summary, findings, coverage, '
                 f'screenshots, optional reproduced-interaction video, sanitized console/network '
                 f'evidence, and integrity hashes. Review it before attaching it to email.</p></div>'

@@ -205,7 +205,10 @@ class ChallengeSessionManager:
                 item = self._sessions[session_id]
                 item.update({
                     "state": "failed",
-                    "message": f"Could not run the manual browser check: {type(exc).__name__}: {str(exc)[:160]}",
+                    "message": (
+                        "Could not run the manual browser check "
+                        f"({type(exc).__name__}). Check system readiness and try again."
+                    ),
                     "updated_at": _now(),
                 })
                 self._persist_locked()

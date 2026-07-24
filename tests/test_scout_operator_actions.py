@@ -168,6 +168,23 @@ def test_manual_challenge_session_waits_then_completes_same_attempt(tmp_path):
     assert detail["analysis_complete"] is True
 
 
+def test_manual_challenge_failure_persists_no_raw_exception_details(tmp_path):
+    def broken_backend(**_kwargs):
+        raise RuntimeError("Bearer abcdefghijklmnopqrstuvwxyz /private/operator/path")
+
+    manager = ChallengeSessionManager(
+        str(tmp_path), wait_timeout_s=1, backend_factory=broken_backend,
+        resolve_dns=False)
+    item = manager.start("blocked.example")
+    failed = _wait_state(manager, item["id"], {"failed"})
+    assert failed["state"] == "failed"
+    assert "Bearer" not in failed["message"] and "/private/" not in failed["message"]
+    persisted = (
+        tmp_path / "scout" / "_operator" / "challenge_sessions.json"
+    ).read_text(encoding="utf-8")
+    assert "abcdefghijklmnopqrstuvwxyz" not in persisted and "/private/" not in persisted
+
+
 def test_incomplete_page_has_manual_actions_and_hides_outreach(tmp_path):
     store = RunStore(str(tmp_path), "blocked-run")
     store.save_state({"status": "COMPLETED", "prospects": {
