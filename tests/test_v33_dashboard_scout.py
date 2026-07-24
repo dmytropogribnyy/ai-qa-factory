@@ -3,9 +3,11 @@ endpoints are refused without CSRF; read models return the expected shape. No li
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 
+from core.scout.campaign_service import CampaignService
 from core.scout.dashboard import start_dashboard
 from core.scout.service import ScoutService
 
@@ -27,6 +29,17 @@ def _post_nocsrf(url, body):
             return r.status, r.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8")
+
+
+def _post(url, body, csrf):
+    req = urllib.request.Request(
+        url,
+        method="POST",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Scout-CSRF": csrf},
+    )
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return response.status, response.read().decode("utf-8")
 
 
 def test_scout_pages_render_under_csp(tmp_path):
@@ -67,3 +80,44 @@ def test_mutating_scout_endpoints_refused_without_csrf(tmp_path):
             assert code == 403, path                  # CSRF/origin guard blocks it
     finally:
         server.shutdown()
+
+
+def test_preflight_uses_the_current_campaign_form_values(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_preflight(self, **kwargs):
+        captured.update(kwargs)
+        return {"preflight": {"ok": True, "checks": []}}
+
+    monkeypatch.setattr(CampaignService, "preflight", fake_preflight)
+    server, url = _dash(tmp_path)
+    try:
+        _, html, _ = _get(url + "/scout/new")
+        csrf = re.search(r'const CSRF="([^"]+)"', html).group(1)
+        status, payload = _post(
+            url + "/api/scout/preflight",
+            {
+                "campaign_preset": "us-de-commercial",
+                "session_preset": "extended",
+                "overrides": {
+                    "countries": ["sk"],
+                    "exclude_keywords": ["jobs"],
+                    "max_pages_per_site": 7,
+                    "browser_mode": "playwright",
+                },
+                "probe_browser": False,
+            },
+            csrf,
+        )
+    finally:
+        server.shutdown()
+
+    assert status == 200
+    assert json.loads(payload)["ok"] is True
+    assert captured["campaign_preset"] == "us-de-commercial"
+    assert captured["session_preset"] == "extended"
+    assert captured["overrides"]["countries"] == ["sk"]
+    assert captured["overrides"]["exclude_keywords"] == ["jobs"]
+    assert captured["overrides"]["max_pages_per_site"] == 7
+    assert captured["overrides"]["browser_mode"] == "playwright"
+    assert captured["probe_browser_launch"] is False

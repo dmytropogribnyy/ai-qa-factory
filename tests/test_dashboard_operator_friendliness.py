@@ -137,6 +137,11 @@ def test_scout_form_uses_operator_language_and_accessible_choices(tmp_path):
     assert "alert('approve the bounded live run" not in html
     assert "Playwright/Chromium" not in html
     assert "Advanced campaign controls" in html
+    assert "Campaign preset" in html
+    assert "Campaign goal" not in html
+    assert "starts one bounded run now" in html
+    assert "Scheduled Daily Scout" not in html
+    assert "Leave blank to use the selected preset" in html
 
 
 def test_scout_advanced_controls_are_operator_friendly(tmp_path):
@@ -155,6 +160,12 @@ def test_scout_advanced_controls_are_operator_friendly(tmp_path):
     assert "Readiness details appear here." not in html
     assert "JSON.stringify(j.preflight" not in html
     assert 'role="status" aria-live="polite" hidden' in html
+    assert "visible page signals" in html
+    assert "session_preset:document.getElementById('session').value||null,overrides:ov()" in html
+    assert "probe_browser:document.getElementById('deepcapture').checked" in html
+    assert "Cannot check this setup" in html
+    assert "document.querySelectorAll('.campaign-card input,.campaign-card select')" in html
+    assert ".option-field .field-help{margin:8px 0 0}" in html
 
 
 def test_activity_uses_campaign_name_not_internal_id(tmp_path):
@@ -214,6 +225,7 @@ def test_footer_keeps_build_sha_out_of_ordinary_pages(tmp_path):
     finally:
         server.shutdown()
     assert "AI QA Factory" in html
+    assert "AI QA Factory AI QA Factory" not in html
     assert "&middot; build" not in html
 
 

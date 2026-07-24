@@ -2042,9 +2042,12 @@ function startCampaign(){{
                 return self._json(*refusal)
             body = body or {}
             preset = str(body.get("campaign_preset") or "balanced-production")
+            overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else None
             try:
                 out = self._campaign_service().preflight(
                     campaign_preset=preset,
+                    session_preset=body.get("session_preset") or None,
+                    overrides=overrides,
                     probe_browser_launch=bool(body.get("probe_browser", True)),
                     do_network=bool(body.get("probe_network", True)))
             except Exception as exc:
@@ -2134,13 +2137,16 @@ function startCampaign(){{
                 '<a class="chip" href="/scout/attention">Needs attention</a>'
                 '<a class="chip" href="/scout">Scan a known URL</a></div>'
                 '<div class="card formstack campaign-card"><h2>Campaign setup</h2>'
-                '<label>Campaign goal<select id="preset">' + opts + '</select></label>'
+                '<label>Campaign preset<select id="preset">' + opts + '</select></label>'
+                '<p class="field-help">Each preset on this page starts one bounded run now; '
+                'it does not create a recurring schedule.</p>'
                 '<label>Run size<select id="session">'
                 '<option value="">Use campaign default</option>'
                 + sess + '</select></label>'
                 '<label>Countries<input id="countries" placeholder="US, DE"></label>'
-                '<p class="field-help">Enter country codes separated by commas, or leave blank '
-                'to search without a country restriction.</p>'
+                '<p class="field-help">Enter country codes separated by commas. Leave blank to use '
+                'the selected preset: global presets stay unrestricted, while regional presets '
+                'keep their preset countries.</p>'
                 '<fieldset class="option-field"><legend>Industries</legend>'
                 '<div class="option-grid">' + ind_opts + '</div>'
                 '<p class="field-help">Choose any that matter. With none selected, Scout uses the '
@@ -2168,11 +2174,12 @@ function startCampaign(){{
                 'selected, Scout uses the campaign default.</p></fieldset>'
                 '<label>Words to exclude<input id="excludekw" '
                 'placeholder="jobs, investor relations"></label>'
-                '<p class="field-help">Sites matching these optional words are filtered out.</p>'
+                '<p class="field-help">Sites containing these words in visible page signals are '
+                'filtered out before QA analysis.</p>'
                 '</section>'
                 '<section class="advanced-section" aria-labelledby="limits-heading">'
                 '<h3 id="limits-heading">Run limits</h3>'
-                '<p class="field-help section-help">Blank fields inherit the selected campaign goal '
+                '<p class="field-help section-help">Blank fields inherit the selected campaign preset '
                 'and run size.</p><div class="limit-grid">'
                 '<label>Minimum commercial fit <span class="label-note">0–100</span>'
                 '<input id="minscore" type="number" min="0" max="100" '
@@ -2216,7 +2223,8 @@ function startCampaign(){{
                 "function csv(s){return s.split(',').map(x=>x.trim()).filter(Boolean);}\n"
                 "function checks(name){return Array.from(document.querySelectorAll("
                 "'input[name=\"'+name+'\"]:checked')).map(e=>e.value);}\n"
-                "function readinessText(j){var p=j.preflight||j;"
+                "function readinessText(j){if(j&&j.ok===false)return 'Cannot check this setup — '+"
+                "(j.error||'review the campaign values.');var p=j.preflight||j;"
                 "if(!p||!Array.isArray(p.checks))return 'Readiness check finished.';"
                 "var names={tavily_key:'Search provider',browser:'Browser evidence',"
                 "network:'Internet connection',evidence_dir:'Evidence storage',"
@@ -2246,10 +2254,16 @@ function startCampaign(){{
                 "document.getElementById('pf').onclick=function(){"
                 "var out=document.getElementById('pfout');var button=this;"
                 "out.hidden=false;out.textContent='Checking system readiness…';button.disabled=true;"
-                "J('/api/scout/preflight',{campaign_preset:document.getElementById('preset').value})"
+                "J('/api/scout/preflight',{campaign_preset:document.getElementById('preset').value,"
+                "session_preset:document.getElementById('session').value||null,overrides:ov(),"
+                "probe_browser:document.getElementById('deepcapture').checked})"
                 ".then(function(j){out.textContent=readinessText(j);button.disabled=false;})"
                 ".catch(function(e){out.textContent='Readiness check failed: '+e;"
                 "button.disabled=false;});};\n"
+                "document.querySelectorAll('.campaign-card input,.campaign-card select')"
+                ".forEach(function(control){control.addEventListener('change',function(){"
+                "var out=document.getElementById('pfout');if(!out.hidden){out.hidden=true;"
+                "out.textContent='';}});});\n"
                 "document.getElementById('run').onclick=function(){"
                 "var approve=document.getElementById('approve');var msg=document.getElementById('msg');"
                 "var run=document.getElementById('run');"
@@ -4268,11 +4282,12 @@ dialog::backdrop{background:#000a}dialog h2{margin-top:0}
 .formstack details[open]>summary{margin-bottom:10px}
 .page-intro{max-width:720px;margin:-6px 0 14px}
 .campaign-card{max-width:900px;margin-top:12px}.campaign-card>h2{margin-top:0}
-.field-help{max-width:620px;margin:-9px 0 14px;color:var(--muted);font-size:12px}
+.field-help{max-width:620px;margin:-9px 0 14px;color:var(--muted);font-size:12px;line-height:1.45}
 .option-field{border:0;padding:0;margin:0 0 14px;min-width:0}
 .option-field legend{padding:0;margin:0 0 7px;color:var(--text);font-weight:600;font-size:13px}
 .option-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
  gap:7px;max-width:720px}
+.option-field .field-help{margin:8px 0 0}
 .formstack .option-tile{display:flex;align-items:center;gap:8px;margin:0;padding:8px 10px;
  border:1px solid var(--border);border-radius:6px;background:var(--input);font-weight:400;
  font-size:13px;cursor:pointer}
@@ -4463,7 +4478,7 @@ def _build_footer_html() -> str:
             f'{_esc(ident.get("warning",""))}</span> &middot; ' if ident.get("stale") else "")
     return ('<footer style="max-width:var(--maxw);margin:0 auto;padding:10px var(--pad);'
             'color:var(--muted);font-size:12px;border-top:1px solid var(--border)">'
-            f'{warn}AI QA Factory {_esc(ident.get("product_version",""))}</footer>')
+            f'{warn}{_esc(ident.get("product_version",""))}</footer>')
 
 
 def _page(title: str, active: str, body: str, script: str = "") -> str:
