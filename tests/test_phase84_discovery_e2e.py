@@ -190,6 +190,18 @@ def test_actionable_stop_emits_one_timeline_event_for_all_remaining_candidates(t
     ]
 
     engine._promote_into_scout(records)
+    # A fresh writer replaying the same milestone models restart/recovery.  The durable event
+    # identity, rather than one engine instance's memory, keeps the append idempotent.
+    replay = DiscoveryEngine(
+        cfg,
+        build_demo_registry(),
+        RunStore(str(tmp_path), cfg.campaign_id),
+        clock=lambda: "2026-07-24T10:01:00+00:00",
+    )
+    replay._budget["actionable"] = 1
+    replay._promote_into_scout([
+        CandidateRecord(candidate_id="candidate-replayed", promotion_decision=PROMO_PROMOTED)
+    ])
 
     events = [event for event in store.read_events()
               if event.get("event") == "actionable_target_reached"]

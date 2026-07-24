@@ -10,7 +10,9 @@ from core.scout.store import RunStore
 
 _PROD_A = "campaign-acme-saas-20260724t090000z-0f9d21"
 _PROD_B = "campaign-beta-commerce-20260724t091000z-a1b2c3"
+_PROD_C = "campaign-gamma-booking-20260724t092000z-b2c3d4"
 _DIAGNOSTIC = "smoke-activity"
+_LEGACY_DIAGNOSTIC_ARTIFACT = "scout-demo"
 
 
 def _register_campaign(output_dir, campaign_id):
@@ -38,7 +40,7 @@ def _get_html(url):
 
 
 def test_activity_loads_all_persisted_production_campaigns_after_restart(tmp_path):
-    for campaign_id in (_PROD_A, _PROD_B, _DIAGNOSTIC):
+    for campaign_id in (_PROD_A, _PROD_B, _PROD_C, _DIAGNOSTIC):
         _register_campaign(tmp_path, campaign_id)
     _event(tmp_path, _PROD_A, "2026-07-24T09:00:00+00:00", "campaign_started",
            campaign_id=_PROD_A)
@@ -46,8 +48,12 @@ def test_activity_loads_all_persisted_production_campaigns_after_restart(tmp_pat
            candidate="acme.example")
     _event(tmp_path, _PROD_B, "2026-07-24T09:10:00+00:00", "campaign_finished",
            campaign_id=_PROD_B)
+    _event(tmp_path, _PROD_C, "2026-07-24T09:15:00+00:00", "campaign_finished",
+           campaign_id=_PROD_C)
     _event(tmp_path, _DIAGNOSTIC, "2026-07-24T09:20:00+00:00", "campaign_started",
            campaign_id=_DIAGNOSTIC)
+    _event(tmp_path, _LEGACY_DIAGNOSTIC_ARTIFACT, "2026-07-24T09:21:00+00:00",
+           "campaign_started", campaign_id=_LEGACY_DIAGNOSTIC_ARTIFACT)
 
     # An idle service models the real post-restart state: no campaign is attached in memory.
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
@@ -58,17 +64,26 @@ def test_activity_loads_all_persisted_production_campaigns_after_restart(tmp_pat
     finally:
         server.shutdown()
 
-    assert production["scout_campaigns_considered"] == 2
-    assert {event["campaign_id"] for event in production["events"]} == {_PROD_A, _PROD_B}
+    assert production["scout_campaigns_considered"] == 3
+    assert {event["campaign_id"] for event in production["events"]} == {
+        _PROD_A, _PROD_B, _PROD_C,
+    }
     assert [event["event_id"] for event in production["events"]].count(f"{_PROD_A}#0") == 1
     assert _DIAGNOSTIC not in json.dumps(production)
     assert "No operator activity yet" not in html
     assert "Campaign started" in html and "Target promoted to Scout" in html
 
-    assert with_diagnostics["scout_campaigns_considered"] == 3
+    assert with_diagnostics["scout_campaigns_considered"] == 4
     assert {event["campaign_id"] for event in with_diagnostics["events"]} == {
-        _PROD_A, _PROD_B, _DIAGNOSTIC,
+        _PROD_A, _PROD_B, _PROD_C, _DIAGNOSTIC,
     }
+    diagnostic_events = [
+        event for event in with_diagnostics["events"]
+        if event["campaign_id"] == _DIAGNOSTIC
+    ]
+    assert diagnostic_events and all(event["diagnostic"] is True for event in diagnostic_events)
+    assert all(event["diagnostic"] is False for event in production["events"])
+    assert _LEGACY_DIAGNOSTIC_ARTIFACT not in json.dumps(with_diagnostics)
 
 
 def test_attached_canonical_campaign_is_not_duplicated(tmp_path):
@@ -121,4 +136,33 @@ def test_diagnostic_attached_run_stays_hidden_without_explicit_toggle(tmp_path):
     assert production["events"] == []
     assert production["scout_campaigns_considered"] == 0
     assert {event["campaign_id"] for event in diagnostics["events"]} == {_DIAGNOSTIC}
+    assert diagnostics["events"][0]["diagnostic"] is True
+    assert "Diagnostic" in diagnostics_html
     assert "is included below and should not be treated as production" in diagnostics_html
+
+
+def test_legacy_actionable_milestone_is_projected_once_without_mutating_raw_audit(tmp_path):
+    _register_campaign(tmp_path, _PROD_A)
+    _event(tmp_path, _PROD_A, "2026-07-24T09:00:00+00:00", "campaign_started")
+    for second in ("01", "02", "03"):
+        _event(tmp_path, _PROD_A, f"2026-07-24T09:00:{second}+00:00",
+               "actionable_target_reached", target=2)
+    # Other repeated event types are valid history and must never be hidden by milestone dedupe.
+    _event(tmp_path, _PROD_A, "2026-07-24T09:00:04+00:00", "provider_error", provider="fixture")
+    _event(tmp_path, _PROD_A, "2026-07-24T09:00:05+00:00", "provider_error", provider="fixture")
+    store = RunStore(str(tmp_path), _PROD_A)
+    assert len(store.read_events()) == 6
+
+    payloads = []
+    for _restart in range(2):
+        server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+        try:
+            payloads.extend(_get_json(f"{url}/api/activity") for _ in range(2))
+        finally:
+            server.shutdown()
+
+    assert all(payload == payloads[0] for payload in payloads[1:])
+    actions = [event["action"] for event in payloads[0]["events"]]
+    assert actions.count("actionable_target_reached") == 1
+    assert actions.count("provider_error") == 2
+    assert len(store.read_events()) == 6

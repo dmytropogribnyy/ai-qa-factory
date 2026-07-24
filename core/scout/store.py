@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+_EVENT_WRITE_LOCK = threading.Lock()
 
 
 class StoreError(Exception):
@@ -83,6 +87,30 @@ class RunStore:
 
     # --- events (append-only) ---------------------------------------------
     def append_event(self, event: Dict[str, Any]) -> None:
+        with _EVENT_WRITE_LOCK:
+            self._append_event_unlocked(event)
+
+    def append_event_once(self, event: Dict[str, Any], *,
+                          identity_fields: tuple[str, ...]) -> bool:
+        """Append one persisted event for the supplied identity within this run.
+
+        The run directory is the campaign identity.  The persisted scan makes retries and
+        fresh-process replay idempotent; the lock makes the check-and-append atomic for the
+        process model used by the campaign service.  Existing raw audit lines are never changed.
+        """
+        if not identity_fields:
+            raise StoreError("event identity_fields cannot be empty")
+        missing = [field for field in identity_fields if field not in event]
+        if missing:
+            raise StoreError(f"event identity fields missing: {missing}")
+        with _EVENT_WRITE_LOCK:
+            for existing in self.read_events():
+                if all(existing.get(field) == event.get(field) for field in identity_fields):
+                    return False
+            self._append_event_unlocked(event)
+            return True
+
+    def _append_event_unlocked(self, event: Dict[str, Any]) -> None:
         path = self._confine("events.jsonl")
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:

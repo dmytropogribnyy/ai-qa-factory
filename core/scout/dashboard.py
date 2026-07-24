@@ -46,6 +46,27 @@ _ARK_DIR = "40_ark_work"
 _DRAIN_CAP_BYTES = 2 * 1024 * 1024
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
+
+def _project_scout_activity_events(run_id: str, raw_events: list[dict]
+                                   ) -> list[tuple[int, dict]]:
+    """Project raw Scout audit events without rewriting the append-only source.
+
+    ``actionable_target_reached`` is the one unique milestone: legacy writers could append it
+    once per remaining candidate, so Activity keeps the first occurrence per campaign + target.
+    Every other event remains repeatable and is preserved exactly as recorded.
+    """
+    projected: list[tuple[int, dict]] = []
+    seen_actionable_targets: set[tuple[str, object]] = set()
+    for event_index, event in enumerate(raw_events):
+        if event.get("event") == "actionable_target_reached":
+            identity = (run_id, event.get("target"))
+            if identity in seen_actionable_targets:
+                continue
+            seen_actionable_targets.add(identity)
+        projected.append((event_index, event))
+    return projected[-100:]
+
+
 # Per-project mutation locks so concurrent double-submits are serialized (v3.1 P1). Shared across
 # the per-request WorkExecutionService instances in this process.
 import threading as _threading  # noqa: E402
@@ -3290,19 +3311,19 @@ function startCampaign(){{
                     events.append({"time": hd.get("at", ""), "actor": hd.get("actor", ""),
                                    "action": f'{hd.get("from_state")} -> {hd.get("to_state")}',
                                    "object": pid, "result": hd.get("reason", "")})
-            # Scout activity is append-only persisted campaign history. Enumerate it from the same
-            # ProjectIndex/canonical _runcontrol source as the rest of the Dashboard so a process
-            # restart cannot make completed campaigns disappear from Activity. The currently
-            # attached run is retained as a backwards-compatible fallback for older direct Scout
-            # runs that pre-date run-control; campaign ids are de-duplicated before reading.
+            # Scout activity is append-only persisted campaign history. Enumerate canonical
+            # campaigns directly from _runcontrol, the same source Observer uses, so the diagnostics
+            # toggle cannot inflate campaign counts with per-target/legacy artifact folders. The
+            # currently attached run remains a backwards-compatible fallback for an older direct
+            # Scout run that pre-dates run-control; campaign ids are de-duplicated before reading.
             scout_run_ids = []
             try:
-                from core.orchestration.project_index import ProjectIndex
+                from core.scout.canonical_runs import canonical_campaigns
                 scout_run_ids = [
-                    p.project_id
-                    for p in ProjectIndex(service.output_dir).list_projects(
-                        include_diagnostics=include_diagnostics)
-                    if p.type == "scout_campaign" and (not project or p.project_id == project)
+                    row["campaign_id"]
+                    for row in canonical_campaigns(
+                        service.output_dir, include_diagnostics=include_diagnostics)
+                    if not project or row["campaign_id"] == project
                 ]
             except Exception:
                 pass
@@ -3319,6 +3340,8 @@ function startCampaign(){{
             scout_events = 0
             scout_runs_without_history = 0
             for run_id in scout_run_ids:
+                from core.scout.canonical_runs import is_diagnostic_run
+                diagnostic = is_diagnostic_run(run_id)
                 try:
                     run_events = RunStore(service.output_dir, run_id).read_events()
                 except Exception:
@@ -3326,8 +3349,7 @@ function startCampaign(){{
                 if not run_events:
                     scout_runs_without_history += 1
                     continue
-                for event_index, ev in enumerate(run_events[-100:],
-                                                 start=max(0, len(run_events) - 100)):
+                for event_index, ev in _project_scout_activity_events(run_id, run_events):
                     events.append({
                         "time": str(ev.get("at", "")),
                         "actor": "scout-engine",
@@ -3337,6 +3359,7 @@ function startCampaign(){{
                             f"{k}={v}" for k, v in ev.items() if k not in ("at", "event")),
                         "campaign_id": run_id,
                         "event_id": f"{run_id}#{event_index}",
+                        "diagnostic": diagnostic,
                     })
                     scout_events += 1
             events.sort(key=lambda e: e["time"], reverse=True)
@@ -3353,7 +3376,8 @@ function startCampaign(){{
                     f'<tr><td data-label="Time" class="muted">{_fmt_ts(e["time"])}</td>'
                     f'<td data-label="Actor">{_esc(e["actor"])}</td>'
                     f'<td data-label="Action">{_esc(e["action"])}</td>'
-                    f'<td data-label="Object">{_esc(e["object"])}</td>'
+                    f'<td data-label="Object"><span>{_esc(e["object"])}</span>'
+                    f'{" " + _badge("Diagnostic", "attention") if e.get("diagnostic") else ""}</td>'
                     f'<td data-label="Result" class="muted">{_esc(e["result"])}</td></tr>'
                     for e in data["events"])
             else:

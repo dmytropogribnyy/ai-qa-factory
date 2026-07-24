@@ -258,7 +258,6 @@ class DiscoveryEngine:
 
     def _promote_into_scout(self, promoted: List[CandidateRecord]) -> None:
         cfg = self.config
-        actionable_stop_emitted = False
         for idx, rec in enumerate(promoted, start=1):
             # Actionable-target stop: finish as soon as enough Priority-A prospects are found so
             # the run never continues indefinitely. A target of 0 disables this stop.
@@ -267,9 +266,8 @@ class DiscoveryEngine:
                 rec.promotion_decision = PROMO_NOT_PROMOTED
                 rec.add_reason("actionable_target_reached")
                 self._stop_reason = self._stop_reason or "actionable_target_reached"
-                if not actionable_stop_emitted:
-                    self._event("actionable_target_reached", target=cfg.actionable_target)
-                    actionable_stop_emitted = True
+                self._event_once("actionable_target_reached", ("target",),
+                                 target=cfg.actionable_target)
                 continue
             # Whole-run duration ceiling also bounds the QA phase (not only discovery).
             if self._over_time_budget():
@@ -366,4 +364,10 @@ class DiscoveryEngine:
         event = {"at": self.clock(), "event": kind, **fields}
         self.store.append_event(event)
         if self.progress:
+            self.progress(event)
+
+    def _event_once(self, kind: str, identity_fields: tuple[str, ...], **fields) -> None:
+        event = {"at": self.clock(), "event": kind, **fields}
+        if self.store.append_event_once(
+                event, identity_fields=("event", *identity_fields)) and self.progress:
             self.progress(event)
