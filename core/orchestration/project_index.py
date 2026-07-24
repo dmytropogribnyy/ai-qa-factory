@@ -132,13 +132,18 @@ class ProjectIndex:
     def _scout_entry(self, cid: str, *, diagnostic: bool) -> ProjectEntry:
         base = self._out / "scout" / cid
         st = self._read_json(base / "state.json")
+        cfg = self._read_json(base / "config.json")
         report = base / "report"
         evidence = len(list(report.glob("*.json"))) if report.is_dir() else 0
         counts = st.get("counts", {}) if isinstance(st.get("counts"), dict) else {}
         status = st.get("status") or ("COMPLETED" if report.is_dir() else "UNKNOWN")
+        campaign_name = str(cfg.get("campaign_name") or "").strip()
+        # Prefer the operator-chosen campaign name. Internal ids remain available in diagnostics,
+        # but should not be the title of every ordinary campaign row.
+        display_title = campaign_name if campaign_name and campaign_name != cid else "Scout campaign"
         return ProjectEntry(
             project_id=(st.get("campaign_id") or cid), type="scout_campaign",
-            title=(st.get("campaign_id") or cid), source="scout",
+            title=display_title, source="scout",
             created_at=st.get("started_at", ""),
             updated_at=st.get("updated_at", st.get("started_at", "")),
             lifecycle_state=status,

@@ -28,21 +28,39 @@ validation, blockers, approvals, delivery) — never chat, terminal, or editor c
 
 ## Navigation
 
-`Overview · Scout · Work · More (Tools · Activity · Settings · Documentation)`.
+`Overview · Scout · Work · More (Activity · Collaboration · Settings · Help)`.
 
 | Route | Purpose |
 |---|---|
-| `/` | Overview inbox: Needs your attention, Active work, Active Scout campaigns |
-| `/scout`, `/scout/campaigns`, `/results`, `/company` | Scout: home (+ start & Pause/Resume/Stop Safely/Cancel), campaigns, results, company detail |
-| `/work`, `/work/<id>` | Work list (saved-view filters) and project detail (Summary/Plan/Results/Delivery) |
-| `/tools` | Honest tool readiness levels |
+| `/` | Stable Overview inbox: Needs your attention, Active work, Active Scout campaigns |
+| `/scout`, `/scout/campaigns` | Scout launch, current/archived campaigns and state-aware controls |
+| `/scout/history`, `/scout/target`, `/scout/run` | QA history, target evidence and exact-run retention |
+| `/results`, `/company` | Companies & outreach (commercial follow-up, separate from QA History) |
+| `/work`, `/work/<id>` | Active work by default; Completed/All views; project Summary/Plan/Results/Delivery |
 | `/activity` | Recent lifecycle transitions (from state history) |
-| `/settings`, `/docs` | Workspace/density/Scout defaults/Gmail status; local documentation |
+| `/collab` | Active collaboration by default; completed cycles in a separate view |
+| `/settings` | Appearance, Scout defaults, integrations, Data & retention; advanced diagnostics |
+| `/tools` | Advanced technical readiness, linked from Settings rather than primary navigation |
+| `/docs` | Operator Help Center; developer reference files stay under Advanced |
 
-`/` shows the Scout run view when the dashboard is bound to an active Scout run (preserved v3.0.x
-behavior); it is the Overview inbox in operator-home mode. `/scout`, `/results`, `/company` and
-`/projects` render in the same shared layout; **Results** has text/contact-state/severity filters
-(URL-persisted).
+In operator-home mode, `/` always stays Overview even when a Scout run is active; explicit Scout
+pages own progress and controls. The legacy `/projects` route redirects to canonical `/work`.
+**Companies & outreach** keeps text/contact-state/severity filters in the URL.
+
+Ordinary views show human titles and keep campaign/run/project IDs, model names, token counts,
+build SHAs, CI references, and raw readiness data inside **Advanced** diagnostics. Production views
+hide smoke/acceptance/replay/demo data unless the operator explicitly enables diagnostics.
+
+## Data & retention
+
+Settings explains the three cleanup classes before the operator acts:
+
+- **Archive** — reversible; hides a target or run from current views.
+- **Forget target** — removes History/dedup memory while preserving exact-run evidence.
+- **Delete** — permanent; limited to selected heavy evidence or an inactive exact run.
+
+Completed Work and Collaboration are removed from the default active queue but remain available in
+their dedicated completed views. Raw Activity remains append-only.
 
 **Interactions.** Overview, Work list, and project detail do bounded same-origin polling: a *Live /
 Last updated* indicator plus an "Updates available — Refresh" banner when persisted state changes.

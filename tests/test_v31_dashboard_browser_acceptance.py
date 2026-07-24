@@ -53,8 +53,9 @@ pytestmark = [
                        reason="Chromium build not available (run: python -m playwright install chromium)"),
 ]
 
-_PRIMARY_PAGES = ["/", "/work", "/work/alpha", "/tools", "/activity", "/settings", "/docs",
-                  "/scout", "/scout/campaigns", "/results", "/projects", "/company?id=unknown",
+_PRIMARY_PAGES = ["/", "/work", "/work/alpha", "/tools", "/activity", "/collab",
+                  "/settings", "/docs", "/scout", "/scout/campaigns", "/results",
+                  "/company?id=unknown",
                   "/results?q=x&sev=high", "/scout/new", "/scout/history",
                   "/scout/attention"]
 
@@ -434,10 +435,9 @@ def test_scout_form_is_themed_and_axe_clean_both_themes(tmp_path):
         server.shutdown()
 
 
-def test_legacy_run_bound_root_is_themed_and_axe_clean(tmp_path):
-    # v3.2 item 26/31: the legacy run-bound Scout root (rendered at / when a Scout run is attached)
-    # is Pro-Dark themed (no default-white controls), free of serious/critical a11y violations in
-    # BOTH themes, and has no horizontal overflow at 390px.
+def test_operator_overview_stays_stable_with_attached_run_and_is_axe_clean(tmp_path):
+    # Operator friendliness: an attached Scout run never replaces the stable Overview front door.
+    # Explicit Scout pages own run controls. Overview remains accessible in both themes and mobile.
     from core.scout.store import RunStore
     store = RunStore(str(tmp_path), "run-legacy")
     store.reset()
@@ -455,8 +455,8 @@ def test_legacy_run_bound_root_is_themed_and_axe_clean(tmp_path):
             page = browser.new_page()
             page.goto(url + "/", wait_until="load")
             html = page.content()
-            assert 'header class="top"' not in html and "<main>" not in html  # the LEGACY root
-            assert "--l-bg" in html and "Prospects" in html   # themed legacy run-bound view
+            assert 'header class="top"' in html and "<main>" in html
+            assert "<h1>Overview</h1>" in html
             bg = page.evaluate("()=>getComputedStyle(document.body).backgroundColor")
             assert bg not in ("rgba(0, 0, 0, 0)", "rgb(255, 255, 255)"), bg  # not default white
             for theme in ("dark", "light"):

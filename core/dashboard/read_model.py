@@ -243,6 +243,10 @@ def _matches_view(item: ProjectListItem, view: str) -> bool:
     v = (view or "all").lower()
     if v in ("all", ""):
         return True
+    if v == "active":
+        # Completed work remains available in its own view, but no longer crowds the operator's
+        # day-to-day queue. This is a read-only archive-style projection; source records are kept.
+        return item.status not in ("COMPLETED", "CANCELLED")
     if v == "needs_attention":
         return item.health in ("attention", "blocked") or item.blockers > 0
     if v == "ready_to_execute":

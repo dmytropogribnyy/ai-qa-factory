@@ -3,6 +3,31 @@
 Client work runs in **Claude Code**. The Factory analyzes first and never starts implementation
 before you approve.
 
+## Fastest start in Claude Code Chat (VS Code)
+
+Open this repository in VS Code and paste the client request into Claude Code Chat. You do not need
+to remember the CLI sequence: `CLAUDE.md` recognizes client-work phrases, requires analysis first,
+and tells Claude to use the persisted Factory lifecycle.
+
+Use this compact prompt:
+
+```text
+Analyze this client request first. Create a saved work item and show fit, risks, missing access,
+questions, plan, and validation. Do not implement until I approve.
+
+Client brief:
+[paste the full request, links, files, budget, deadline, and access already available]
+
+Done when:
+[expected deliverables and tests]
+```
+
+Claude should run the same `analyze-job` path described below, present the feasibility result, and
+wait. After you approve the scope, reply naturally (for example, “Approve this plan and begin
+implementation; validate everything and prepare the delivery package”). Claude then drives the
+guarded `client-work` lifecycle and reports the evidence. Start the separate operator overview at
+any time with `python main.py dashboard`.
+
 > **Email identities:** for any client signup / email-verification / magic-link / password-reset
 > testing, use the operator-owned **Gmail QA Test Inbox** (`drdiplextech@gmail.com`, read-only) per
 > the canonical `docs/EMAIL_IDENTITY_AND_MAILBOX_POLICY.md`. Client communication and Scout outreach

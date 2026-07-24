@@ -34,10 +34,11 @@ violations must be preserved.
 
 | Route | Page | Notes |
 |---|---|---|
-| `/` | Overview inbox (operator-home) / Scout run view (run-bound) | attention, active work, campaigns |
+| `/` | Stable Overview inbox (operator-home) | attention, active work, campaigns |
 | `/work` · `/work/<id>` | Work list (saved-view filters) · Project detail | tabs: Summary/Plan/Results/Delivery |
-| `/scout` · `/scout/campaigns` · `/results` · `/company` | Scout module | start + Pause/Resume/Stop Safely/Cancel preserved |
-| `/tools` · `/activity` · `/settings` · `/docs` | More | honest readiness · state history · config · local docs |
+| `/scout` · `/scout/campaigns` · `/results` · `/company` | Scout module | state-aware controls; QA history and commercial follow-up stay distinct |
+| `/activity` · `/collab` · `/settings` · `/docs` | More | activity · collaboration · settings/retention · operator help |
+| `/tools` | Advanced readiness | linked from Settings, not primary navigation |
 | `/work-evidence` | safe evidence preview/download | confined; active content never inline |
 
 ### JSON read-model endpoints (UI consumes these; do not parse raw files)

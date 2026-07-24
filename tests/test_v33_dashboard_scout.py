@@ -38,7 +38,7 @@ def test_scout_pages_render_under_csp(tmp_path):
             assert "default-src 'self'" in headers.get("Content-Security-Policy", ""), path
         _, newbody, _ = _get(url + "/scout/new")
         assert "New Scout campaign" in newbody
-        assert "Run readiness preflight" in newbody
+        assert "Check system readiness" in newbody
     finally:
         server.shutdown()
 
