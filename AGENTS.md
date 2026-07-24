@@ -25,20 +25,30 @@ universal orchestration + MCP-consumption layer on top. See `docs/PRODUCT_VISION
    runners; prefer ready MCP servers / existing backends before building new ones.
 8. **No `@latest` for client work.** Pin MCP/tool versions; upgrades require review.
 
-## Current phase
+## Current implementation boundaries
 
-Phase 8.0 and Phase 8.1 are **complete**. The Phase 8.1 planning workflow (`main.py work`) is
-implemented and **planning-only**. **Live MCP discovery and external execution remain future
-work.** Phase 8.2 (planned) is contracts/docs only. `docs/PHASE_CONTRACTS.md` controls the
-current scope of any phase. Do not commit or push without human review.
+Keep the product surfaces distinct:
 
-## Prospect QA Radar / Super Scout (future-facing)
+- `python main.py work` is the implemented Phase 8.1 planning front door and remains
+  **planning-only**.
+- `analyze-job` / `client-work` and the operator Dashboard implement a persisted, approval-gated
+  client-work execution lifecycle.
+- `python main.py scout`, the bounded discovery/triage runtime, and the local Prospect QA
+  pre-send pipeline are implemented. External sending is disabled by default and remains
+  individually human-approved.
 
-See [docs/architecture/PROSPECT_QA_RADAR_SPEC.md](docs/architecture/PROSPECT_QA_RADAR_SPEC.md).
-Prospect Radar is a future-facing ARK work contour. Agents must implement it **incrementally**;
-`PHASE_CONTRACTS.md` controls current scope; no full-spec implementation in a single phase. All
-existing reuse, safety, approval, independent-verification, and source-of-truth rules remain
-mandatory (this section weakens none of them).
+`docs/PHASE_CONTRACTS.md` controls the exact capability boundary. Do not commit or push without
+human review.
+
+## Prospect QA Radar / Super Scout
+
+See the target architecture in
+[docs/architecture/PROSPECT_QA_RADAR_SPEC.md](docs/architecture/PROSPECT_QA_RADAR_SPEC.md) and the
+implemented local runtime in
+[docs/architecture/SCOUT_RUNTIME_V1.md](docs/architecture/SCOUT_RUNTIME_V1.md). Do not mistake the
+complete target specification for a claim that every optional cloud or autonomous capability is
+live. All reuse, safety, approval, independent-verification, and source-of-truth rules remain
+mandatory. Never add automatic CAPTCHA solving/bypass or unapproved external communication.
 
 ## Before claiming done
 

@@ -24,6 +24,21 @@ def test_claude_md_reflects_implemented_client_work_execution():
             assert "work" in line.lower() and ("ark" in line.lower() or "main.py work" in line.lower())
 
 
+def test_start_here_docs_distinguish_planning_front_door_from_scout_runtime():
+    agents = _read("AGENTS.md")
+    claude = _read("CLAUDE.md")
+    architecture = _read("docs/architecture/README.md")
+    vision = _read("docs/PRODUCT_VISION_2026.md")
+
+    assert "`python main.py work`" in agents and "**planning-only**" in agents
+    assert "`python main.py scout`" in agents and "are implemented" in agents
+    assert "SCOUT_RUNTIME_V1.md" in agents and "SCOUT_RUNTIME_V1.md" in claude
+    assert "Future-facing / not implemented" not in architecture
+    assert "Bounded local runtime implemented" in architecture
+    assert "Contact intelligence, disclosure, and outreach remain future-facing" not in vision
+    assert "disabled-by-default delivery contours" in vision
+
+
 def test_work_execution_model_is_implemented_not_planned():
     t = _read("docs/WORK_EXECUTION_MODEL.md")
     assert "IMPLEMENTED" in t
