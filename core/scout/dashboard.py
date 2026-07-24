@@ -2126,10 +2126,13 @@ function startCampaign(){{
                 f'combined {scores.get("combined_opportunity","—")}</p></div>'
                 f'<div class="card"><h2>Why Scout tested this / what it skipped</h2>'
                 f'<p><b>Depth:</b> {_esc((b.get("allocation") or {}).get("depth","—"))} · '
-                f'<b>Allowed interaction:</b> {_esc(plan.get("allowed_interaction_mode","—"))}</p>'
+                f'<b>Policy ceiling:</b> {_esc(plan.get("allowed_interaction_mode","—"))}</p>'
                 f'<p><b>Checks selected:</b> {_esc(", ".join(plan.get("checks_selected",[])))}</p>'
                 f'<p><b>Checks skipped:</b> {_esc(", ".join(plan.get("checks_skipped",[])))}</p>'
                 f'<p><b>Stop boundary:</b> {_esc(", ".join(plan.get("stop_boundaries",[])) or "—")}</p>'
+                f'<p class="muted">Current automatic Scout execution uses read-only navigation. '
+                f'The policy ceiling describes what a separately authorized flow could permit; it '
+                f'is not evidence that an interaction ran.</p>'
                 f'<p class="muted"><b>Decisions:</b> {_esc(" · ".join(plan.get("decisions",[])))}</p></div>'
                 f'<div class="card"><h2>Persisted record</h2>'
                 f'<p><b>Status:</b> {_badge((entry or {}).get("analysis_status","—"))} · '
@@ -2144,8 +2147,9 @@ function startCampaign(){{
                    'this target</button>'
                    '<button class="chip" type="button" onclick="replay()">Watch headed replay'
                    '</button><span id="rescanmsg" class="muted"></span></div>' if entry else '')
-                + '<p class="muted">Recheck / Reproduce / Record short video / Capture stronger '
-                'evidence are available on a live-analyzed target (bounded, fail-closed).</p></div>')
+                + '<p class="muted">A rescan starts a fresh bounded pass. When qualified-auto video '
+                'is configured, Scout keeps a short clip only if Playwright reproduces an eligible '
+                'broken flow-entry navigation cleanly; otherwise no video is created.</p></div>')
 
             # Within-site coverage (PR-B): how many meaningful pages Scout explored on THIS target,
             # under which profile, and why it stopped. Independent of how many domains a campaign

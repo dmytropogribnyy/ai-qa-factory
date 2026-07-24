@@ -57,9 +57,19 @@ def test_snapshot_v2_schema_and_no_overstated_rows():
     snap = snapshot()
     assert snap["schema"].endswith("/v2")
     by_id = {s["service_id"]: s for s in snap["services"]}
-    # These two multi-provider rows must never present as Live/Fixture Verified in the aggregate.
+    # Multi-provider rows must never present as Live/Fixture Verified in the aggregate. Docker is
+    # environment-dependent: when no CLI is installed, both Docker and AWS honestly resolve to
+    # Needs Client; when Docker is installed, the mixed row is Partially Verified.
     assert by_id["cicd"]["readiness"] == "Partially Verified"
-    assert by_id["docker_aws"]["readiness"] == "Partially Verified"
+    docker_aws = by_id["docker_aws"]
+    docker_comps = {c["component_id"]: c["readiness"] for c in docker_aws["components"]}
+    assert docker_comps["aws"] == "Needs Client"
+    expected = (
+        "Needs Client"
+        if docker_comps["docker"] == "Needs Client"
+        else "Partially Verified"
+    )
+    assert docker_aws["readiness"] == expected
     # bdd is genuinely executable (internal profile) but the row is NOT overstated as fully verified:
     # the real Cucumber runtime is Needs Client, so the aggregate is Partially Verified.
     assert by_id["bdd"]["readiness"] == "Partially Verified"

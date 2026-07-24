@@ -97,6 +97,9 @@ def test_target_and_observer_select_latest_persisted_campaign(tmp_path):
         dashboard.server_close()
     assert "fresh campaign finding" in html
     assert "old campaign finding" not in html
+    assert "Policy ceiling" in html
+    assert "Current automatic Scout execution uses read-only navigation" in html
+    assert "Recheck / Reproduce / Record short video" not in html
 
 
 def test_legacy_brains_without_timestamp_use_stable_campaign_fallback(tmp_path):

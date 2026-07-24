@@ -6,6 +6,7 @@ from pathlib import Path
 
 from core.agent_registry import build_agent_registry
 from core.config import get_settings
+from core.scout import SCOUT_VERSION
 from core.version import APP_VERSION  # v5.0.8 legacy label preserved below for test compat
 from core.initial_analysis_engine import InitialAnalysisEngine
 from core.llm_router import LLMRouter
@@ -634,7 +635,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # Phase 8.3 — Prospect QA Scout (bounded, read-only local runtime)
     scout_cmd = subparsers.add_parser(
-        "scout", help="Prospect QA Scout v1.0 — bounded read-only local QA over public seeds"
+        "scout",
+        help=f"Prospect QA Scout v{SCOUT_VERSION} — bounded local QA over public seeds",
+        description=(
+            f"Prospect QA Scout v{SCOUT_VERSION}. Bounded public-site QA with static or optional "
+            "Playwright capture; no form submission, purchase, booking, CAPTCHA solving, or "
+            "outreach during QA."
+        ),
     )
     scout_cmd.add_argument("action", choices=[
         "run", "demo", "dashboard", "control", "smoke",
@@ -657,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
                                 "pages/site, deep=up to 20; default adaptive). A selected profile "
                                 "overrides --max-pages.")
     scout_cmd.add_argument("--concurrency", type=int, default=1,
-                           help="Must be 1 in v1.0.x (parallel execution is deferred)")
+                           help="Must be 1; parallel site execution is not implemented")
     scout_cmd.add_argument("--run-id", dest="run_id", default="")
     scout_cmd.add_argument("--resume", action="store_true")
     scout_cmd.add_argument("--port", type=int, default=8765, help="Dashboard port")
@@ -791,8 +798,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result.success else 1
 
     if args.mode == "capabilities":
-        path = Path("docs/CAPABILITY_MATRIX.md")
-        print(path.read_text(encoding="utf-8") if path.exists() else "Capability matrix missing.")
+        path = Path(__file__).resolve().parent / "docs" / "CAPABILITY_MATRIX.md"
+        if not path.exists():
+            print("Capability matrix missing.", file=sys.stderr)
+            return 1
+        print(f"Running identity: AI QA Factory v{APP_VERSION}; Scout v{SCOUT_VERSION}")
+        print("Statuses: runtime | conditional | generator/planning | not runtime")
+        print()
+        print(path.read_text(encoding="utf-8"))
         return 0
 
     if args.mode == "system-health":
@@ -851,7 +864,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     print("=" * 72)
-    print(f"AI QA Factory v5.0.8 completed: {state.project_id}")
+    print(f"AI QA Factory v{APP_VERSION} completed: {state.project_id}")
     print(f"Mode: {state.mode}")
     print(f"Execution mode: {state.execution_mode}")
     print(f"Source platform: {state.source_platform}")

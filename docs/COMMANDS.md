@@ -3315,11 +3315,13 @@ before an atomic publish; MCP servers are candidates only (no discovery); run st
 
 ---
 
-## `scout` — Prospect QA Scout v1.0.1 (bounded read-only local runtime) `[implemented]`
+## `scout` — Prospect QA Scout (current bounded local runtime) `[implemented]`
 
-Phase 8.3 runtime (hardened in 8.3.1). Runs a bounded, **read-only**, local QA vertical over
-1–10 explicit public seed URLs. It never submits forms, logs in, sends outreach, solves
-CAPTCHAs, evades access controls, or performs any external side effect.
+The exact Scout version is printed by `python main.py capabilities` and
+`python main.py --help`. The current runtime runs bounded local QA over 1–10 explicit public
+seed URLs. Static inspection is read-only. Optional Playwright capture may perform only
+read-only navigation and observation; it never clicks business actions, submits forms, creates
+accounts, purchases, books, solves CAPTCHAs, evades access controls, or authorizes outreach.
 
 ```bash
 # One command: deterministic bundled demo (no external network, no browser)
@@ -3351,9 +3353,12 @@ chromium`) · `--max-sites` · `--max-pages` · `--concurrency` (must be `1`; pa
 deferred) · `--run-id` · `--resume` (requires `--run-id`) · `--port` · `--signal`.
 
 **Artifacts:** `outputs/scout/<run_id>/` — `config.json`, `state.json`, `events.jsonl`,
-`prospects/<id>/{observation,findings,evidence,scorecard}.json`, and `report/` (CAMPAIGN_SUMMARY,
-PROSPECT_SHORTLIST, VERIFIED_FINDINGS, COVERAGE_AND_LIMITATIONS, SCORECARD_SUMMARY,
-EVIDENCE_INDEX.json, REPORT.json).
+`prospects/<id>/{observation,findings,evidence,scorecard,browser_trace,evidence_manifest}.json`,
+separate landing/verification screenshots when Playwright is enabled, and a bounded
+`reproduction.webm` only for a safely reproduced sequential defect when qualified-auto video is
+explicitly configured. The `report/` directory contains CAMPAIGN_SUMMARY, PROSPECT_SHORTLIST,
+VERIFIED_FINDINGS, COVERAGE_AND_LIMITATIONS, SCORECARD_SUMMARY, EVIDENCE_INDEX.json, and
+REPORT.json.
 
 **Safety:** fail-closed URL eligibility on **both** backends (rejects localhost/private-IP/creds/
 unsafe ports and DNS-rebinding; the static backend re-validates every redirect hop, the
