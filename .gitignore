@@ -98,3 +98,6 @@ real_sites/
 # OpenAI tunnel-client binary (downloaded, not tracked)
 tools/tunnel-client.exe
 tools/tunnel-client*/
+
+# Browser-automation scratch output (page snapshots, audit screenshots, console logs)
+.playwright-mcp/

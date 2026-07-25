@@ -297,7 +297,10 @@ def test_overview_uses_operator_language_and_progressive_disclosure(tmp_path):
         html = _get(url + "/")
     finally:
         server.shutdown()
-    assert "Active work</span><strong>0</strong>" in html
+    # The headline tile counts OPEN work (everything unfinished) because that is exactly the set
+    # behind the link it points at; "Active work" now names only the narrower running set below.
+    assert "Open work</span><strong>0</strong>" in html
+    assert 'href="/work?view=active"' in html
     assert "Projects 0" not in html
     assert "Nothing needs your attention" in html
     assert "No active client work" in html
