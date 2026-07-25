@@ -652,8 +652,11 @@ def test_project_name_pattern_is_enforced_by_a_real_browser(tmp_path):
 
             accepted = {v: valid(v) for v in
                         ("checkout-regression", "acme_client.v2", "Project-2026-07", "a")}
+            # Raw strings: "bad\name" would be bad + NEWLINE + ame, which tests something else
+            # entirely. The backslash and the newline are both worth rejecting, so assert each.
             rejected = {v: valid(v) for v in
-                        ("bad name", "bad/name", "bad\name", "drop;table", "naïve", "a b")}
+                        ("bad name", "bad/name", r"bad\name", "bad\nname", "../escape",
+                         "drop;table", "naïve", "a b")}
             browser.close()
     finally:
         server.shutdown()
