@@ -59,8 +59,14 @@ destination are derived from the same projection, never from two separate rules:
 | Overview tile | Destination | Means |
 |---|---|---|
 | Open work | `/work?view=active` | every client project that is not COMPLETED/CANCELLED |
-| Needs attention | `/work?view=needs_attention` | blocked, approval-ready, or review-ready work |
+| Needs attention (client work) | `/work?view=needs_attention` | blocked, approval-ready, or review-ready **client work** |
 | Active Scout campaigns | `/scout/campaigns` | campaigns currently running |
+
+Work attention and Scout attention are counted separately because they resolve to different
+surfaces. A **failed Scout campaign is never folded into the client-work tile** — it would promise
+more rows than `/work?view=needs_attention` can contain. Failed campaigns instead appear in their
+own labelled block under *Scout* on Overview, with their own count and a link to
+`/scout/campaigns`, so they stay visible without distorting the work queue.
 
 The Overview *Active work* table is deliberately narrower than the Open work tile: it lists only
 work that is approved and ready to run, running, or being validated.

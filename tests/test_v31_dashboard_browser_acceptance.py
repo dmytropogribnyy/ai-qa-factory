@@ -625,3 +625,39 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             browser.close()
     finally:
         server.shutdown()
+
+
+def test_project_name_pattern_is_enforced_by_a_real_browser(tmp_path):
+    """`pattern` is compiled with the RegExp `v` flag. An unescaped trailing '-' throws, and a
+    pattern the browser cannot compile is ignored entirely - the field then accepts anything while
+    still advertising a rule. Only a real engine can prove the constraint is live, so assert both
+    directions: a hyphenated name is accepted, and forbidden input is rejected.
+    """
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+            page.goto(url + "/work?create=1#client-brief", wait_until="load")
+            field = page.locator("#cw_pid")
+            assert field.get_attribute("pattern"), "the field must still advertise a rule"
+
+            def valid(value: str) -> bool:
+                field.fill(value)
+                return page.evaluate(
+                    "() => document.getElementById('cw_pid').checkValidity()")
+
+            accepted = {v: valid(v) for v in
+                        ("checkout-regression", "acme_client.v2", "Project-2026-07", "a")}
+            rejected = {v: valid(v) for v in
+                        ("bad name", "bad/name", "bad\name", "drop;table", "naïve", "a b")}
+            browser.close()
+    finally:
+        server.shutdown()
+    assert not errors, f"the page reported an error, so the pattern may not have compiled: {errors}"
+    assert all(accepted.values()), f"legitimate names rejected: {accepted}"
+    assert not any(rejected.values()), (
+        f"forbidden input accepted, so the pattern is not being enforced: {rejected}")

@@ -133,7 +133,12 @@ class ToolReadinessItem:
 class OverviewSnapshot:
     schema: str = SCHEMA_VERSION
     generated_at: str = ""
+    # Work that needs the operator - exactly the /work?view=needs_attention set.
     attention: List[Dict[str, Any]] = field(default_factory=list)
+    # Scout campaigns that need the operator. Kept SEPARATE from `attention`: the two lists have
+    # different destinations, so mixing them made the "Needs attention" tile promise more rows than
+    # /work?view=needs_attention can ever contain.
+    scout_attention: List[Dict[str, Any]] = field(default_factory=list)
     active_work: List[Dict[str, Any]] = field(default_factory=list)
     active_campaigns: List[Dict[str, Any]] = field(default_factory=list)
     recent_results: List[Dict[str, Any]] = field(default_factory=list)
@@ -200,14 +205,16 @@ class DashboardReadModel:
                 status=p.lifecycle_state,
                 reason=(p.blockers[0] if p.blockers else p.operator_next_action),
                 next_action=p.operator_next_action, href=f"/work/{p.project_id}"))
-        for c in scouts:
-            if str(c.lifecycle_state).upper() in ("FAILED", "ERROR"):
-                attention.append(AttentionItem(
-                    kind="scout", title="Scout campaign failed", project_id=c.project_id,
-                    project_title=(c.title or c.project_id),
-                    project_type="scout_campaign", status=c.lifecycle_state,
-                    reason="the campaign ended in a failed state", next_action=c.operator_next_action,
-                    href="/scout/campaigns"))
+        # Failed campaigns are surfaced on their own terms, with their own count and their own
+        # destination (/scout/campaigns) - never folded into the work-attention number.
+        scout_attention: List[AttentionItem] = [
+            AttentionItem(
+                kind="scout", title="Scout campaign failed", project_id=c.project_id,
+                project_title=(c.title or c.project_id),
+                project_type="scout_campaign", status=c.lifecycle_state,
+                reason="the campaign ended in a failed state", next_action=c.operator_next_action,
+                href="/scout/campaigns")
+            for c in scouts if str(c.lifecycle_state).upper() in ("FAILED", "ERROR")]
         active_work = [self._to_list_item(p).to_dict() for p in clients
                        if p.lifecycle_state in _ACTIVE_WORK]
         active_campaigns = [self._to_scout_item(c).to_dict() for c in scouts
@@ -226,10 +233,13 @@ class DashboardReadModel:
         open_work = sum(1 for p in clients if _matches_view(self._to_list_item(p), "active"))
         return OverviewSnapshot(
             generated_at=self._clock(),
-            attention=[a.to_dict() for a in attention], active_work=active_work,
+            attention=[a.to_dict() for a in attention],
+            scout_attention=[a.to_dict() for a in scout_attention],
+            active_work=active_work,
             active_campaigns=active_campaigns, recent_results=recent, alert=None,
             counts={"attention": len(attention), "active_work": len(active_work),
                     "open_work": open_work,
+                    "scout_attention": len(scout_attention),
                     "active_campaigns": len(active_campaigns),
                     "projects": len(clients), "campaigns": len(scouts),
                     "diagnostics_hidden": diagnostics_hidden})

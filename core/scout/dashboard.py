@@ -1636,6 +1636,18 @@ function startCampaign(){{
             def _crow(c):
                 return (f'<tr><td>{_esc(c["title"])}</td><td>{_badge(c["status"])}</td>'
                         f'<td>{_esc(c["next_action"])}</td></tr>')
+            # Failed campaigns need the operator too, but they live on a different surface, so they
+            # get their own honest block instead of being counted into the work-attention tile.
+            def _srow(s):
+                return (f'<li><strong>{_esc(s["project_title"])}</strong> — '
+                        f'{_esc(s["reason"])}</li>')
+            failed_scout = ("".join(_srow(s) for s in ov.scout_attention))
+            scout_failed_block = (
+                f'<div class="card" style="border-color:var(--attention)">'
+                f'<strong>&#9888; {len(ov.scout_attention)} Scout campaign(s) ended in a failed '
+                f'state</strong><ul>{failed_scout}</ul>'
+                f'<p><a class="btn" href="/scout/campaigns">Review Scout campaigns</a></p></div>'
+                if failed_scout else '')
             camps = "".join(_crow(c) for c in ov.active_campaigns)
             camp_tbl = (f'<table><caption>Active Scout campaigns</caption><tr><th>Campaign</th>'
                         f'<th>Status</th><th>Next action</th></tr>{camps}</table>'
@@ -1669,7 +1681,8 @@ function startCampaign(){{
                     f'<strong>{ov.counts.get("open_work", 0)}</strong></a>'
                     f'<a class="summary-item" href="/work?view=needs_attention">'
                     f'<span class="muted">Needs attention</span>'
-                    f'<strong>{ov.counts.get("attention", 0)}</strong></a>'
+                    f'<strong>{ov.counts.get("attention", 0)}</strong>'
+                    f'<span class="tile-note">client work</span></a>'
                     f'<a class="summary-item" href="/scout/campaigns">'
                     f'<span class="muted">Active Scout campaigns</span>'
                     f'<strong>{ov.counts.get("active_campaigns", 0)}</strong></a></div>'
@@ -1679,7 +1692,8 @@ function startCampaign(){{
                     f'<p class="muted">Approved projects that are ready to run, running, or being '
                     f'validated. Everything not yet finished lives in Open work.</p>'
                     f'{work_tbl}'
-                    f'<h2>Scout</h2><div class="scrollx">{camp_tbl}</div>{diag_options}')
+                    f'<h2>Scout</h2>{scout_failed_block}'
+                    f'<div class="scrollx">{camp_tbl}</div>{diag_options}')
             script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
                       + self._poll_script(
                           "/api/overview",
@@ -4381,6 +4395,8 @@ tr:last-child td{border-bottom:none}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
  clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .attention-project{font-weight:600}
+/* Names the scope a tile counts, so its number is never read as covering the whole product. */
+.tile-note{display:block;font-size:11px;color:var(--muted)}
 .badge.ok{color:var(--ok)} .badge.attention{color:var(--attention)}
 .badge.blocked,.badge.danger{color:var(--error)} .badge.done{color:var(--muted)}
 .btn{display:inline-block;padding:8px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:14px}

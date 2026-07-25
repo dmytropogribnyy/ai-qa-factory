@@ -83,6 +83,72 @@ def test_overview_counts_match_the_view_they_link_to(tmp_path):
         f'Overview says {counts["open_work"]} open but /work?view=active lists {openw}')
 
 
+def _seed_failed_campaign(root: Path, campaign_id: str, name: str) -> None:
+    """A production Scout campaign that ended FAILED (not a diagnostic run)."""
+    control = root / "scout" / "_runcontrol"
+    control.mkdir(parents=True, exist_ok=True)
+    (control / f"{campaign_id}.json").write_text(
+        json.dumps({"campaign_id": campaign_id, "state": "failed"}), encoding="utf-8")
+    base = root / "scout" / campaign_id
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "config.json").write_text(json.dumps({"campaign_name": name}), encoding="utf-8")
+    (base / "state.json").write_text(json.dumps({
+        "campaign_id": campaign_id, "status": "FAILED",
+        "started_at": "2026-07-24T10:00:00Z"}), encoding="utf-8")
+
+
+def test_failed_scout_campaign_does_not_inflate_the_work_attention_tile(tmp_path):
+    """The "Needs attention" tile links to /work?view=needs_attention, which only ever contains
+    client work. Counting a failed Scout campaign into that same number made the tile promise more
+    rows than its own destination can show.
+    """
+    _seed(tmp_path, "awaiting", status="WAITING_FOR_INFORMATION", missing=["API base URL"])
+    _seed_failed_campaign(tmp_path, "campaign-acme-20260724t090000z-0f9d21", "Acme discovery")
+    service = ScoutService(str(tmp_path))
+    server, url = start_dashboard(service, operator_home=True)
+    try:
+        overview = _json(url + "/api/overview")
+        listed = _json(url + "/api/work?view=needs_attention")
+        html = _get(url + "/")
+    finally:
+        server.shutdown()
+    assert overview["counts"]["attention"] == listed["total"] == 1, (
+        f'tile says {overview["counts"]["attention"]}, /work?view=needs_attention lists '
+        f'{listed["total"]}')
+    assert {a["project_id"] for a in overview["attention"]} == {"awaiting"}
+    # The failed campaign must stay visible - counted and linked on its own terms, never hidden.
+    assert overview["counts"]["scout_attention"] == 1
+    scout_items = overview["scout_attention"]
+    assert [s["project_id"] for s in scout_items] == ["campaign-acme-20260724t090000z-0f9d21"]
+    assert all(s["href"] == "/scout/campaigns" for s in scout_items)
+    body = html.split("<main>", 1)[-1]
+    assert "Acme discovery" in body, "the failed campaign is not shown to the operator"
+    assert 'href="/scout/campaigns"' in body
+
+
+def test_every_overview_tile_that_links_to_work_matches_that_view(tmp_path):
+    """Generic guard: whatever tiles Overview grows, a tile pointing at a /work view must show that
+    view's row count. This catches the next variant of the defect without enumerating tiles.
+    """
+    _stand(tmp_path)
+    _seed_failed_campaign(tmp_path, "campaign-acme-20260724t090000z-0f9d21", "Acme discovery")
+    service = ScoutService(str(tmp_path))
+    server, url = start_dashboard(service, operator_home=True)
+    try:
+        html = _get(url + "/")
+        tiles = re.findall(
+            r'<a class="summary-item" href="(/work\?view=[a-z_]+)">.*?'
+            r'<span class="muted">([^<]+)</span>\s*<strong>(\d+)</strong>', html, re.S)
+        assert tiles, "Overview should still offer work tiles"
+        totals = {href: _json(url + href.replace("/work?", "/api/work?"))["total"]
+                  for href, _, _ in tiles}
+    finally:
+        server.shutdown()
+    for href, label, shown in tiles:
+        assert int(shown) == totals[href], (
+            f'tile "{label.strip()}" shows {shown} but {href} lists {totals[href]}')
+
+
 def test_overview_attention_list_is_the_needs_attention_view(tmp_path):
     """The cards under "Needs your attention" are the same projects the count promises."""
     service = _stand(tmp_path)
