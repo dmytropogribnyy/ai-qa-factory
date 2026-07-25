@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
+from core.dashboard.read_model import health_label, stage_label
+from core.orchestration.project_index import _INTAKE_STATES
 from core.scout import SCOUT_PRODUCT_NAME, SCOUT_VERSION
 from core.scout.campaign_start import CampaignLauncher
 from core.scout.service import ScoutService
@@ -1554,13 +1556,15 @@ function startCampaign(){{
                 "else{setStatus('Copy not supported \\u2014 select the text manually',false);}}\n")
 
         def _poll_html(self) -> str:
+            # Refresh re-renders the current page; it is an action, not a destination, so it is a
+            # real button (a link with href="#" is announced as a link and moves focus to the top).
             return ('<div class="row" style="font-size:12px"><span id="pollstate" class="muted" '
                     'aria-live="polite">Live</span><span class="muted">·</span>'
                     '<span class="muted">Last updated <span id="lastupd">just now</span></span>'
-                    '<span class="muted">·</span><a href="#" '
-                    'onclick="location.reload();return false">Refresh now</a>'
-                    '<span id="pollbanner" hidden> · <a href="#" '
-                    'onclick="location.reload();return false">Updates available — Refresh</a></span></div>')
+                    '<span class="muted">·</span><button type="button" class="linklike" '
+                    'onclick="location.reload()">Refresh now</button>'
+                    '<span id="pollbanner" hidden> · <button type="button" class="linklike" '
+                    'onclick="location.reload()">Updates available — Refresh</button></span></div>')
 
         def _poll_script(self, endpoint: str, sig_keys: str) -> str:
             # Bounded same-origin polling: refresh a freshness indicator and flag when the persisted
@@ -1584,21 +1588,43 @@ function startCampaign(){{
             diag = self._want_diagnostics(q or {})
             ov = self._read_model().overview(include_diagnostics=diag)
             def _att(a):
+                # Several projects can need attention for the SAME reason, so each card has to name
+                # the project it is about - otherwise the cards are indistinguishable.
+                project = _esc(a.get("project_title") or a.get("project_id", ""))
                 return (f'<div class="card"><div class="row" style="justify-content:space-between">'
-                        f'<div><strong>{_esc(a["title"])}</strong> {_badge(a["status"], "attention")}<br>'
+                        f'<div><strong>{_esc(a["title"])}</strong> '
+                        f'{_badge(stage_label(a["status"]), "attention")}<br>'
+                        f'<span class="attention-project">{project}</span><br>'
                         f'<span class="muted">{_esc(a["reason"])}</span></div>'
-                        f'<a class="btn primary" href="{_esc(a["href"])}">Open</a></div></div>')
+                        f'<a class="btn primary" href="{_esc(a["href"])}">'
+                        f'Open<span class="sr-only"> {project}</span></a></div></div>')
             att = "".join(_att(a) for a in ov.attention) or (
                 '<div class="card empty compact status-hero"><strong>Nothing needs your attention'
                 '</strong><div class="muted">Blocked or review-ready work will appear here.</div>'
                 '</div>')
             def _wrow(p):
                 return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></td>'
-                        f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
+                        f'<td>{_badge(p["stage"])}</td><td>{_badge(health_label(p["health"]), p["health"])}</td>'
                         f'<td>{_esc(p["next_action"])}</td></tr>')
+            def _wcard(p):
+                # Same responsive treatment the Work queue already uses: a four-column table is
+                # unreadable on a phone, so narrow viewports get cards instead.
+                return (f'<li><div class="card"><h3><a href="{_esc(p["href"])}">'
+                        f'{_esc(p["title"])}</a></h3>'
+                        f'<div class="muted meta">{_esc(p["project_id"])}</div>'
+                        f'<div class="row" style="margin:.4rem 0">{_badge(p["stage"])} '
+                        f'{_badge(health_label(p["health"]), p["health"])}</div>'
+                        f'<div><strong>Next:</strong> {_esc(p["next_action"])}</div></div></li>')
             work = "".join(_wrow(p) for p in ov.active_work)
-            work_tbl = (f'<table><caption>Active work</caption><tr><th>Project</th><th>Stage</th>'
-                        f'<th>Health</th><th>Next action</th></tr>{work}</table>'
+            open_work = ov.counts.get("open_work", 0)
+            more_open = (f'<p class="muted"><a href="/work?view=active">View all {open_work} open '
+                         f'project(s)</a></p>' if open_work > len(ov.active_work) else '')
+            work_tbl = (f'<div class="scrollx only-desktop"><table>'
+                        f'<caption>Approved and running now</caption><tr><th>Project</th>'
+                        f'<th>Stage</th><th>Health</th><th>Next action</th></tr>{work}</table></div>'
+                        f'<ul class="cards only-mobile" aria-label="Active work">'
+                        f'{"".join(_wcard(p) for p in ov.active_work)}</ul>'
+                        f'{more_open}'
                         if work else
                         '<div class="card empty compact"><strong>No active client work</strong>'
                         '<div class="muted">Paste a client brief to create a reviewable work plan.'
@@ -1638,8 +1664,9 @@ function startCampaign(){{
                 if diag_toggle else '')
             body = (f'<h1>Overview</h1>{diag_banner}'
                     f'<div class="summary-grid overview-summary">'
-                    f'<a class="summary-item" href="/work"><span class="muted">Active work</span>'
-                    f'<strong>{ov.counts.get("active_work", 0)}</strong></a>'
+                    f'<a class="summary-item" href="/work?view=active">'
+                    f'<span class="muted">Open work</span>'
+                    f'<strong>{ov.counts.get("open_work", 0)}</strong></a>'
                     f'<a class="summary-item" href="/work?view=needs_attention">'
                     f'<span class="muted">Needs attention</span>'
                     f'<strong>{ov.counts.get("attention", 0)}</strong></a>'
@@ -1648,7 +1675,10 @@ function startCampaign(){{
                     f'<strong>{ov.counts.get("active_campaigns", 0)}</strong></a></div>'
                     f'{self._poll_html()}'
                     f'<h2>Needs your attention</h2>{att}'
-                    f'<h2>Active work</h2><div class="scrollx">{work_tbl}</div>'
+                    f'<h2>Active work</h2>'
+                    f'<p class="muted">Approved projects that are ready to run, running, or being '
+                    f'validated. Everything not yet finished lives in Open work.</p>'
+                    f'{work_tbl}'
                     f'<h2>Scout</h2><div class="scrollx">{camp_tbl}</div>{diag_options}')
             script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
                       + self._poll_script(
@@ -1715,22 +1745,31 @@ function startCampaign(){{
                 f'<p class="muted">{diag_description}</p><div class="row">{diag_toggle}</div>'
                 '</details>')
             def _row(p):
-                return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></td>'
-                        f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
+                # Two briefs can share a title; the project name is what makes a row identifiable.
+                return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a>'
+                        f'<div class="muted meta">{_esc(p["project_id"])}</div></td>'
+                        f'<td>{_badge(p["stage"])}</td><td>{_badge(health_label(p["health"]), p["health"])}</td>'
                         f'<td>{_esc(p["next_action"])}</td>'
                         f'<td class="muted">{_esc(_fmt_ts(p["updated"]))}</td></tr>')
 
             def _card(p):
                 return (f'<li><div class="card"><h3><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></h3>'
+                        f'<div class="muted meta">{_esc(p["project_id"])}</div>'
                         f'<div class="row" style="margin:.4rem 0">{_badge(p["stage"])} '
-                        f'{_badge(p["health"], p["health"])}</div>'
+                        f'{_badge(health_label(p["health"]), p["health"])}</div>'
                         f'<div><strong>Next:</strong> {_esc(p["next_action"])}</div>'
                         f'<div class="muted meta">Updated {_esc(_fmt_ts(p["updated"]))}</div></div></li>')
 
             if data["projects"]:
                 rows = "".join(_row(p) for p in data["projects"])
-                desktop = (f'<div class="scrollx only-desktop"><table><caption>{data["total"]} '
-                           f'project(s) — view: {_esc(view)}</caption><tr><th>Project</th><th>Stage</th>'
+                # The caption names the view the way the operator selected it, not by its URL key.
+                view_label = dict(self._WORK_PRIMARY_VIEWS + self._WORK_STATUS_VIEWS).get(view, view)
+                # The result region gets its own heading so the page never jumps h1 -> h3 (the
+                # mobile cards are h3) and screen-reader users can navigate straight to it.
+                heading = '<h2 class="sr-only">Projects</h2>'
+                desktop = (f'{heading}<div class="scrollx only-desktop"><table>'
+                           f'<caption>{data["total"]} project(s) — {_esc(view_label)}</caption>'
+                           f'<tr><th>Project</th><th>Stage</th>'
                            f'<th>Health</th><th>Next action</th><th>Updated</th></tr>{rows}</table></div>')
                 cards = ('<ul class="cards only-mobile" aria-label="Projects">'
                          + "".join(_card(p) for p in data["projects"]) + "</ul>")
@@ -1776,7 +1815,9 @@ function startCampaign(){{
                 'work plan. Nothing will execute until you approve the plan.</p>'
                 '<div class="work-intake-grid">'
                 '<label for="cw_pid">Project name <span class="label-note">(optional)</span></label>'
-                '<input id="cw_pid" maxlength="64" pattern="[A-Za-z0-9._-]+" '
+                # The '-' is escaped on purpose: `pattern` is compiled with the RegExp `v` flag, and
+                # an unescaped trailing '-' makes the browser throw, silently disabling validation.
+                r'<input id="cw_pid" maxlength="64" pattern="[A-Za-z0-9._\-]+" '
                 'aria-describedby="cw_pid_help" placeholder="checkout-regression">'
                 '<small id="cw_pid_help" class="field-help">Letters, numbers, dots, underscores, and '
                 'hyphens. Leave blank to generate a safe name.</small>'
@@ -1883,7 +1924,13 @@ function startCampaign(){{
                                    + extra + ");})")
                     else:
                         onclick = action_js
-                    actbtns.append(f'<button class="{cls}" onclick="{onclick}">{_esc(a["label"])}</button>')
+                    # The handler is JS placed inside a double-quoted HTML attribute, and
+                    # json.dumps() emits double quotes: without escaping, the attribute ends at the
+                    # first one and the whole handler is truncated to `qaConfirm(` - which silently
+                    # turned every confirm-guarded action (Mark Delivered, Reopen Delivery) into a
+                    # dead button. Entities are decoded before the JS is evaluated, so _esc is safe.
+                    actbtns.append(f'<button class="{cls}" onclick="{_esc(onclick)}">'
+                                   f'{_esc(a["label"])}</button>')
                 elif a["id"] == "open_vscode":
                     actbtns.append(f'<a class="{cls}" href="{_esc(_vscode_file_uri(d["workspace_path"]))}">'
                                    f'{_esc(a["label"])}</a>')
@@ -1896,19 +1943,29 @@ function startCampaign(){{
                 elif a["id"] == "refresh":
                     actbtns.append('<button class="btn" onclick="location.reload()">Refresh</button>')
             header = (f'<p><a href="/work">&larr; Work</a></p><h1>{_esc(h["title"])}</h1>'
-                      f'<div class="row">{_badge(h["stage"])} {_badge(h["health"], h["health"])} '
-                      f'<span class="muted">{_esc(h["source"])} · {h["progress"]}%</span></div>'
+                      f'<div class="row">{_badge(h["stage"])} {_badge(health_label(h["health"]), h["health"])} '
+                      f'<span class="muted">{_esc(_source_label(h["source"]))} · '
+                      f'{h["progress"]}% complete</span></div>'
                       f'{self._poll_html()}'
                       f'<div class="row" style="margin:.6rem 0">{"".join(actbtns)}'
                       f'<span id="copystatus" class="muted" aria-live="polite"></span></div>')
             summary = d["summary"]
             blockers = "".join(f"<li>{_esc(x)}</li>" for x in summary["blockers"]) or "<li class=muted>none</li>"
+            # Intake questions are a different thing from execution blockers, and the Work list
+            # counts them - so the detail has to show them instead of reporting "none".
+            missing = summary.get("missing_information") or []
+            still_blocking = summary["status"] in _INTAKE_STATES
+            missing_block = (
+                f'<p><strong>Information needed from the client:</strong>'
+                f'{"" if still_blocking else " <span class=\'muted\'>(recorded at intake; no longer blocking)</span>"}'
+                f'</p><ul>{"".join(f"<li>{_esc(x)}</li>" for x in missing)}</ul>') if missing else ''
             panel = {
                 "summary": (
                     '<div class="card">'
                     f'<p><strong>Next:</strong> {_esc(summary["next_action"])}</p>'
                     f'<p><strong>Validation:</strong> {summary["tests_passed"]}/{summary["tests_run"]} · '
                     f'evidence {summary["evidence_count"]}</p>'
+                    f'{missing_block}'
                     f'<p><strong>Blockers:</strong></p><ul>{blockers}</ul></div>'),
                 "plan": (
                     '<div class="card">'
@@ -1926,7 +1983,7 @@ function startCampaign(){{
                     f'</details></div>'),
                 "delivery": (
                     '<div class="card">'
-                    f'<p>State: {_badge(d["delivery"]["status"], "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
+                    f'<p>State: {_badge(stage_label(d["delivery"]["status"]), "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
                     f'<p class="muted">Reviewed by {_esc(d["delivery"]["reviewed_by"] or "—")} · '
                     f'digest {_esc((d["delivery"]["manifest_digest"] or "—")[:23])}</p>'
                     f'<details><summary>Included files ({len(d["delivery"]["included_files"])})</summary>'
@@ -2521,7 +2578,9 @@ function startCampaign(){{
                     f'<span class="muted">or</span>'
                     f'<label class="muted">from <input name="from" type="date" value="{_esc(frm)}"></label>'
                     f'<label class="muted">to <input name="to" type="date" value="{_esc(to)}"></label>'
-                    f'<input name="text" placeholder="filter domain/text" value="{_esc(qtext)}">'
+                    f'<label class="sr-only" for="history_text">Filter by domain or text</label>'
+                    f'<input id="history_text" name="text" placeholder="filter domain/text" '
+                    f'value="{_esc(qtext)}">'
                     f'<button class="chip">Filter</button>'
                     f'<a class="chip" href="/scout/history">Reset</a></form>'
                     f'<div class="scrollx">{table}</div>'
@@ -4294,6 +4353,9 @@ _TOKENS_CSS = """
 *{box-sizing:border-box}
 body{font-family:var(--font);margin:0;background:var(--bg);color:var(--text);line-height:1.5}
 a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+/* An in-page action that should read as a link but behave (and be announced) as a button. */
+.linklike{background:none;border:0;padding:0;font:inherit;color:var(--link);cursor:pointer}
+.linklike:hover{text-decoration:underline}
 header.top{background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
 header.top .wrap{max-width:var(--maxw);margin:0 auto;display:flex;align-items:center;gap:var(--gap);padding:10px var(--pad)}
 header.top .brand{font-weight:700} header.top nav{display:flex;gap:4px;margin-left:8px}
@@ -4314,7 +4376,11 @@ caption{text-align:left;color:var(--muted);padding:6px 2px;font-size:13px}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;height:var(--row)}
 th{background:var(--surface-2);color:var(--muted);font-weight:600}
 tr:last-child td{border-bottom:none}
-.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--badge-bg);color:var(--muted)}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--badge-bg);color:var(--muted);white-space:nowrap}
+/* Visible only to assistive tech: gives a repeated control ("Open") a unique accessible name. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+ clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.attention-project{font-weight:600}
 .badge.ok{color:var(--ok)} .badge.attention{color:var(--attention)}
 .badge.blocked,.badge.danger{color:var(--error)} .badge.done{color:var(--muted)}
 .btn{display:inline-block;padding:8px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:14px}
@@ -4362,6 +4428,9 @@ details>summary{cursor:pointer;color:var(--muted)}
 .cards{list-style:none;margin:0;padding:0} .cards li{margin-bottom:var(--gap)}
 .cards .card h3{font-size:15px;margin:0 0 .3rem} .cards .meta{font-size:12px}
 .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--gap)}
+/* On a phone two 150px tiles fit but leave a lone half-width orphan on the next row; one full
+   column reads better than a ragged grid. */
+@media (max-width:420px){.summary-grid{grid-template-columns:1fr}}
 .retention-grid,.help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
  gap:var(--gap)}
 .help-grid .card{margin-bottom:0}.help-grid h2{margin-top:0}
@@ -4567,7 +4636,8 @@ def _nav_html(active: str) -> str:
             f'<nav aria-label="Primary">{"".join(links)}'
             f'<details style="position:relative"><summary class="btn nav-more" '
             f'style="padding:6px 12px"{more_cur}>More</summary>'
-            f'<div class="card" style="position:absolute;right:0;min-width:180px;z-index:10">{more}</div>'
+            f'<div class="card nav-menu" style="position:absolute;right:0;min-width:180px;'
+            f'z-index:10">{more}</div>'
             f'</details></nav>{toggle}</div></header>')
 
 
@@ -4649,6 +4719,17 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
 
 def _badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{_esc(text)}</span>'
+
+
+# Stored source values are lowercase tokens; the operator reads the platform name.
+_SOURCE_LABEL = {"upwork": "Upwork", "direct": "Direct client", "other": "Other source",
+                 "manual": "Source not specified", "unknown": "Source not specified",
+                 "scout": "Scout"}
+
+
+def _source_label(source: str) -> str:
+    key = (source or "").strip().lower()
+    return _SOURCE_LABEL.get(key) or key.replace("_", " ").capitalize() or "Source not specified"
 
 
 _COLLAB_STATE_KIND = {"NEEDS_OWNER": "attention", "BLOCKED": "blocked", "FIXING": "attention",

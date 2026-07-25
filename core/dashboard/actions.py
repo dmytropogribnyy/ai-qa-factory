@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.dashboard.read_model import health_of, stage_label
+from core.orchestration.project_index import _INTAKE_STATES, client_next_action
 from core.orchestration.work_execution import WorkExecutionService
 
 _ARK = "40_ark_work"
@@ -129,13 +130,21 @@ class ProjectDetailBuilder:
         prog = self._read(pid, "EXECUTION_PROGRESS.json")
         blockers = list(prog.get("outcome", {}).get("blockers", []))
         view = self._svc.status(pid)
+        # The detail view answers the operator's questions with the SAME logic as the Work list.
+        # Previously it ran a second next-action engine (which had no entry for
+        # WAITING_FOR_INFORMATION and fell back to "review the project state") and a second notion
+        # of "blockers", so one project described itself differently on two screens.
+        missing = list(wp.get("missing_information", []))
+        blocking = ([] if state.status not in _INTAKE_STATES else list(missing)) + blockers
+        next_action = client_next_action(fr, state.status, blocking)
         header = {"project_id": pid, "title": wp.get("title") or fr.get("client_intent") or pid,
                   "source": wp.get("source_platform") or "manual", "stage": stage_label(state.status),
-                  "status": state.status, "health": ("attention" if blockers else health_of(state.status)),
+                  "status": state.status, "health": ("attention" if blocking else health_of(state.status)),
                   "progress": view.progress, "updated_at": state.updated_at,
                   "activity_count": len(state.history)}
         summary = {"status": state.status, "stage": stage_label(state.status),
-                   "next_action": view.next_action, "progress": view.progress, "blockers": blockers,
+                   "next_action": next_action, "progress": view.progress, "blockers": blockers,
+                   "missing_information": missing,
                    "acceptance_criteria": fr.get("acceptance_criteria", []),
                    "required_tools": fr.get("selected_tools", []),
                    "tests_run": view.tests_run, "tests_passed": view.tests_passed,

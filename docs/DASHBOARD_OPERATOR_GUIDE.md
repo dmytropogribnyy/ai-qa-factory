@@ -32,7 +32,7 @@ validation, blockers, approvals, delivery) — never chat, terminal, or editor c
 
 | Route | Purpose |
 |---|---|
-| `/` | Stable Overview inbox: Needs your attention, Active work, Active Scout campaigns |
+| `/` | Stable Overview inbox: Open work, Needs attention, Active Scout campaigns |
 | `/scout`, `/scout/campaigns` | Scout launch, current/archived campaigns and state-aware controls |
 | `/scout/history`, `/scout/target`, `/scout/run` | QA history, target evidence and exact-run retention |
 | `/results`, `/company` | Companies & outreach (commercial follow-up, separate from QA History) |
@@ -50,6 +50,27 @@ pages own progress and controls. The legacy `/projects` route redirects to canon
 Ordinary views show human titles and keep campaign/run/project IDs, model names, token counts,
 build SHAs, CI references, and raw readiness data inside **Advanced** diagnostics. Production views
 hide smoke/acceptance/replay/demo data unless the operator explicitly enables diagnostics.
+
+### Counting rules the operator can rely on
+
+Every headline count equals the number of rows behind the link it points at — the count and its
+destination are derived from the same projection, never from two separate rules:
+
+| Overview tile | Destination | Means |
+|---|---|---|
+| Open work | `/work?view=active` | every client project that is not COMPLETED/CANCELLED |
+| Needs attention | `/work?view=needs_attention` | blocked, approval-ready, or review-ready work |
+| Active Scout campaigns | `/scout/campaigns` | campaigns currently running |
+
+The Overview *Active work* table is deliberately narrower than the Open work tile: it lists only
+work that is approved and ready to run, running, or being validated.
+
+**Blockers vs. information needed.** A project shows *Blockers* only for what is stopping it right
+now. Intake questions block only until the operator approves the plan; afterwards they remain
+visible on the project as "Information needed from the client (recorded at intake; no longer
+blocking)". An approved project is therefore never described as both *Ready to execute* and
+*blocked on missing information*. The Work list and the project detail read one shared next-action
+rule, so a project states the same next step on every screen.
 
 ## Data & retention
 
