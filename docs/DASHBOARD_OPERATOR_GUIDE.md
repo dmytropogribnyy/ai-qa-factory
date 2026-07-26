@@ -86,10 +86,23 @@ run interrupted before its result was recorded (`PENDING`), an operator skip (`S
 a future engine adds — reads as 0 confirmed findings on **every** surface: the Target page, the run
 results, `/api/scout/target`, and the raw-JSON `/api/prospect` diagnostic.
 
-The rule lives in one place, `analysis_incomplete()` in `core/scout/campaign_service.py`, and both
-read paths call it, so a new surface inherits the rule instead of re-deriving it. A historical record
+The rule lives in one place, `analysis_incomplete()` in `core/scout/campaign_service.py`, and every
+read path calls it, so a new surface inherits the rule instead of re-deriving it. A historical record
 with no status at all keeps its previous artifact-loading behaviour; that is the single deliberate
 exemption.
+
+**Which screen you get does not depend on how you arrived.** The Target page picks the truthful
+renderer from that same predicate, never from whether a `run` was pinned in the link. This matters
+because History links to a target without a run, and a domain is registered as analyzed once it is
+promoted — regardless of how its individual QA run ended. A target whose latest run was interrupted
+therefore reads as *Not analyzed* whether it was opened from a run page or from History.
+
+**Result-bearing artifacts follow the result.** The finding records, the priority scorecard derived
+from them, the reproduction record and its video clip are reachable only for a completed analysis —
+withheld from the page and refused by `/scout/artifact` with `409` otherwise, because that URL is
+user-facing and guessable. Nothing is deleted from disk. Page-level capture stays available for an
+incomplete target — screenshots, the page observation, the browser trace and the stop-reason record —
+because that is what explains why the run stopped.
 
 `/api/prospect` stays useful for diagnosing an interrupted run: it still returns the page-level
 `observation` and `evidence`, and it always states `prospect_status` and `analysis_complete`. What it
