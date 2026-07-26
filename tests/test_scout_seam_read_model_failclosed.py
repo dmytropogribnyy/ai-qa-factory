@@ -12,6 +12,7 @@ import json
 
 from core.scout.campaign_service import CampaignService
 from core.scout.dashboard import start_dashboard
+from core.scout.discovery.analyzed_registry import ANALYZED, AnalyzedSiteRegistry
 from core.scout.service import ScoutService
 from core.scout.store import RunStore
 from tests.scout_seam_fixtures import RUN_A, build_seam_stand, get, no_tavily
@@ -20,6 +21,12 @@ from tests.scout_seam_fixtures import RUN_A, build_seam_stand, get, no_tavily
 def test_pending_target_exposes_no_findings_through_the_read_model(tmp_path, monkeypatch):
     no_tavily(monkeypatch)
     build_seam_stand(str(tmp_path))
+    # A real reproduction.json makes the "no reproduction" assertion below falsifiable — without
+    # one on disk, det.get("reproduction") would be None regardless of the fix.
+    RunStore(str(tmp_path), RUN_A).save_prospect_artifact(
+        "04-delta", "reproduction.json",
+        {"signature": "delta_high", "reproduced": True, "video_ref": "reproduction.webm"})
+
     det = CampaignService(str(tmp_path)).target_detail("delta.example", run=RUN_A)
 
     assert det["prospect_status"] == "PENDING"
@@ -28,7 +35,10 @@ def test_pending_target_exposes_no_findings_through_the_read_model(tmp_path, mon
     assert det.get("reproduction") in (None, {})
 
 
-def test_skipped_target_exposes_no_findings_through_the_read_model(tmp_path, monkeypatch):
+def test_skipped_target_reports_incomplete_analysis_with_no_findings(tmp_path, monkeypatch):
+    """eta has no findings.json at all (see scout_seam_fixtures.py), so this cannot demonstrate a
+    findings LEAK — only that a SKIPPED target honestly reports analysis_complete is False and
+    surfaces no findings, never a false healthy conclusion."""
     no_tavily(monkeypatch)
     build_seam_stand(str(tmp_path))
     det = CampaignService(str(tmp_path)).target_detail("eta.example", run=RUN_A)
@@ -95,9 +105,17 @@ def test_read_api_does_not_leak_a_pending_targets_findings(tmp_path, monkeypatch
 
 def test_unpinned_target_page_does_not_render_a_pending_targets_findings(tmp_path, monkeypatch):
     """Without ?run= the page never reaches the gate at dashboard.py:2655 — the read model is the
-    only thing standing between the operator and an unconfirmed finding."""
+    only thing standing between the operator and an unconfirmed finding.
+
+    A plain PENDING prospect is never registered by _register_analyzed_run (it only records DONE
+    targets), so without seeding the registry here the unpinned resolution finds no run at all and
+    the assertion below would be vacuous. Register delta.example -> RUN_A directly, mirroring how
+    the fixture registers zeta.example, so the unpinned path genuinely resolves RUN_A and exercises
+    the real read-model gate."""
     no_tavily(monkeypatch)
     build_seam_stand(str(tmp_path))
+    AnalyzedSiteRegistry(str(tmp_path)).record_analysis(
+        "delta.example", status=ANALYZED, campaign_id=RUN_A)
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
     try:
         status, html = get(f"{url}/scout/target?domain=delta.example")
