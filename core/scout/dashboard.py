@@ -2129,7 +2129,15 @@ function startCampaign(){{
                 queued_html = (f'<b>{len(queued)} '
                                f'{"target" if len(queued) == 1 else "targets"} in this run:</b> '
                                f'{_esc(", ".join(queued))}. ' if queued else '')
-                table = (f'<div class="card empty muted">{queued_html}Analysis in progress — '
+                # Say the same thing the status badge above says. The engine persists the run as
+                # PENDING first and only flips it to RUNNING once it actually begins, so while the
+                # worker is starting and the browser is launching the badge reads "Queued" — claiming
+                # "analysis in progress" beside it would be the contradiction this notice exists to
+                # remove, in the other direction.
+                phase = ("Analysis in progress"
+                         if str(st.get("status", "") or "").strip().upper() == "RUNNING"
+                         else "The run is starting")
+                table = (f'<div class="card empty muted">{queued_html}{phase} — '
                          f'no target has finished yet. Each one appears here as it completes.</div>')
             else:
                 table = '<div class="card empty muted">No prospects in this run.</div>'

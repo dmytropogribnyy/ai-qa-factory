@@ -27,7 +27,7 @@ _SEEDS = ["https://alpha.example/", "https://beta.example/"]
 
 
 def _running_stand(tmp_path, monkeypatch, *, running: bool, prospects: dict | None = None,
-                   with_config: bool = True):
+                   with_config: bool = True, run_status: str | None = None):
     """A dashboard whose bound ScoutService reports an ACTIVE run whose prospect map is still empty.
 
     This is the real mid-run shape: the engine persists the run and its config first, and only writes
@@ -35,7 +35,7 @@ def _running_stand(tmp_path, monkeypatch, *, running: bool, prospects: dict | No
     """
     out = str(tmp_path)
     store = RunStore(out, _RUN)
-    store.save_state({"status": "RUNNING" if running else "COMPLETED",
+    store.save_state({"status": run_status or ("RUNNING" if running else "COMPLETED"),
                       "prospects": prospects or {}})
     if with_config:
         store.write_config(ScoutRunConfig(campaign_name="adhoc", seeds=list(_SEEDS),
@@ -136,4 +136,22 @@ def test_a_running_run_that_has_results_shows_them_normally(tmp_path, monkeypatc
         server.shutdown()
 
     assert "Targets in this run" in html          # the real table
+    assert "No prospects in this run" not in html
+
+
+def test_a_starting_run_does_not_claim_analysis_is_already_under_way(tmp_path, monkeypatch):
+    """The engine persists a run as PENDING and only flips it to RUNNING once it actually begins, so
+    while the worker starts and the browser launches the status badge reads "Queued". The notice must
+    agree with that badge instead of announcing analysis that has not started — the owner's live
+    screen showed exactly this pair (ACTIVE / Queued) and it must not read as a contradiction."""
+    no_tavily(monkeypatch)
+    server, url = _running_stand(tmp_path, monkeypatch, running=True, run_status="PENDING")
+    try:
+        _, html = get(f"{url}/scout")
+    finally:
+        server.shutdown()
+
+    assert "The run is starting" in html
+    assert "Analysis in progress" not in html
+    assert "no target has finished yet" in html.lower()
     assert "No prospects in this run" not in html
