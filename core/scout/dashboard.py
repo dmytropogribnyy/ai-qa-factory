@@ -2109,10 +2109,30 @@ function startCampaign(){{
                 f'<td data-label="Actionable">{_esc(p.get("verified_defects", 0))}</td>'
                 f'<td data-label="Open">{_scout_details_primary(run_id, p)}</td></tr>'
                 for pid, p in sorted(prospects.items()))
-            table = (f'<table class="responsive-table"><caption>Targets in this run</caption>'
-                     f'<thead><tr><th>Target</th><th>Status</th><th>Priority</th>'
-                     f'<th>Actionable</th><th>Open</th></tr></thead><tbody>{prows}</tbody></table>'
-                     if prows else '<div class="card empty muted">No prospects in this run.</div>')
+            if prows:
+                table = (f'<table class="responsive-table"><caption>Targets in this run</caption>'
+                         f'<thead><tr><th>Target</th><th>Status</th><th>Priority</th>'
+                         f'<th>Actionable</th><th>Open</th></tr></thead><tbody>{prows}</tbody></table>')
+            elif running:
+                # An ACTIVE run whose prospect map is still empty is NOT an empty run: the engine
+                # persists the run and its config before it populates that map, and the populated map
+                # only reaches disk once the first target finishes. Saying "no prospects" here while
+                # a browser is working on one contradicts the ACTIVE badge next to it. The run's own
+                # config carries the seeds, so the queued targets can be named from persisted data —
+                # and when no config is readable we say what is happening without inventing a list.
+                queued = []
+                try:
+                    cfg = service.store.load_config() if service.store is not None else {}
+                    queued = [canonical_domain(s) or s for s in (cfg or {}).get("seeds", [])]
+                except (StoreError, AttributeError):
+                    queued = []
+                queued_html = (f'<b>{len(queued)} '
+                               f'{"target" if len(queued) == 1 else "targets"} in this run:</b> '
+                               f'{_esc(", ".join(queued))}. ' if queued else '')
+                table = (f'<div class="card empty muted">{queued_html}Analysis in progress — '
+                         f'no target has finished yet. Each one appears here as it completes.</div>')
+            else:
+                table = '<div class="card empty muted">No prospects in this run.</div>'
             start_panel = "" if running else _START_PANEL_HTML
             results_link = (f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Run results</a>'
                             if run_id else '')
