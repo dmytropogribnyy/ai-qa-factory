@@ -899,7 +899,6 @@ The link goes to the Manual URL Scan page without query parameters. Do not inven
 parameter: `/scout` has no documented `url=` argument, and a link that silently ignores its own
 argument is the class of defect this slice exists to remove. If prefilling is wanted, that is a
 separate task with its own test.
-```
 
 and use `actions_html` where the button row was interpolated in `body`.
 
