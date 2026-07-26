@@ -102,9 +102,16 @@ target is still `Queued`; once the engine acts, the target's own status becomes 
 marker is gone. A request left behind in the file for a target that has since finished can never
 apply and is never advertised.
 
-A target that cannot be skipped — because it already completed, failed or was blocked — is refused
-with its real status, and that refusal keeps the operator on the page instead of being erased by a
-reload, because a refusal is not persisted anywhere else.
+A target that cannot be skipped is refused with its real status, and that refusal keeps the operator
+on the page instead of being erased by a reload, because a refusal is not persisted anywhere else. A
+target cannot be skipped once it has completed, failed or been blocked — **and also once the engine
+has started it**: the request is read immediately before each target begins and never interrupts one
+mid-analysis, so such a target is refused as *already started*.
+
+That last case needs one fact the status cannot carry. A target the engine is analyzing stays
+`PENDING` in the compact state until it finishes, so the engine records `started_at` the moment it
+begins one. Every surface reads that: a started target reads *In progress* rather than *Queued*, it
+carries no skip marker, and the banner never promises that it will not start.
 
 ### Incomplete Scout targets never show confirmed findings
 

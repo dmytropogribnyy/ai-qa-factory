@@ -27,7 +27,8 @@ _SEEDS = ["https://alpha.example/", "https://beta.example/"]
 
 
 def _running_stand(tmp_path, monkeypatch, *, running: bool, prospects: dict | None = None,
-                   with_config: bool = True, run_status: str | None = None):
+                   with_config: bool = True, run_status: str | None = None,
+                   control: dict | None = None, seeds: list | None = None):
     """A dashboard whose bound ScoutService reports an ACTIVE run whose prospect map is still empty.
 
     This is the real mid-run shape: the engine persists the run and its config first, and only writes
@@ -39,7 +40,8 @@ def _running_stand(tmp_path, monkeypatch, *, running: bool, prospects: dict | No
         store.save_state({"status": run_status or ("RUNNING" if running else "COMPLETED"),
                           "prospects": prospects or {}})
     if with_config:
-        store.write_config(ScoutRunConfig(campaign_name="adhoc", seeds=list(_SEEDS),
+        store.write_config(ScoutRunConfig(campaign_name="adhoc",
+                                          seeds=list(_SEEDS if seeds is None else seeds),
                                           browser_mode="static", resolve_dns=False,
                                           output_dir=out, run_id=_RUN).to_dict())
     service = ScoutService(out)
@@ -47,7 +49,7 @@ def _running_stand(tmp_path, monkeypatch, *, running: bool, prospects: dict | No
     def _status(self):
         state = {} if run_status == "__absent__" else (store.load_state() or {})
         return {"run_id": _RUN, "running": running, "mode": "ACTIVE" if running else "OWNED_FINISHED",
-                "controllable": running, "control": {}, "state": state}
+                "controllable": running, "control": control or {}, "state": state}
 
     monkeypatch.setattr(ScoutService, "status", _status)
     monkeypatch.setattr(ScoutService, "store", property(lambda self: store))
@@ -228,4 +230,77 @@ def test_an_idle_page_does_not_poll(tmp_path, monkeypatch):
         server.shutdown()
 
     assert 'id="pollstate"' not in html
+
+
+# -- a paused or stopping run is not an analyzing one ----------------------------------------------
+
+
+def test_a_paused_run_does_not_claim_analysis_is_happening(tmp_path, monkeypatch):
+    """The engine blocks inside its control gate without writing any status, so the persisted status
+    stays RUNNING while nothing is happening. The control flags are on this page and must win."""
+    no_tavily(monkeypatch)
+    server, url = _running_stand(tmp_path, monkeypatch, running=True, control={"paused": True})
+    try:
+        _, html = get(f"{url}/scout")
+    finally:
+        server.shutdown()
+
+    assert "Paused" in html
+    assert "Analysis in progress" not in html
+    assert "until you resume" in html
+
+
+def test_a_stopping_run_does_not_promise_more_targets(tmp_path, monkeypatch):
+    """Stop & save lets the current target finish and starts no new one — so "each one appears here
+    as it completes" would be a promise the run will not keep."""
+    no_tavily(monkeypatch)
+    server, url = _running_stand(tmp_path, monkeypatch, running=True, control={"cancelled": True})
+    try:
+        _, html = get(f"{url}/scout")
+    finally:
+        server.shutdown()
+
+    assert "Stopping" in html
+    assert "no new target starts" in html
+    assert "Each one appears here as it completes" not in html
+
+
+# -- seeds are seeds, not targets ------------------------------------------------------------------
+
+
+def test_seeds_are_named_as_seeds_and_repeats_are_collapsed(tmp_path, monkeypatch):
+    """The engine drops policy-rejected seeds, collapses duplicates and truncates to the site limit,
+    so the submitted list is not the target list and must not be presented as one."""
+    no_tavily(monkeypatch)
+    server, url = _running_stand(tmp_path, monkeypatch, running=True,
+                                 seeds=["https://alpha.example", "https://alpha.example/",
+                                        "https://beta.example/"])
+    try:
+        _, html = get(f"{url}/scout")
+    finally:
+        server.shutdown()
+
+    assert "2 seeds submitted" in html            # the repeat collapsed
+    assert "targets in this run" not in html      # and they are not called targets
+    assert html.count("alpha.example") >= 1
+    assert "beta.example" in html
+
+
+def test_a_long_seed_list_is_capped(tmp_path, monkeypatch):
+    """Defensive cap. Every supported entry point refuses more than MAX_SEEDS URLs, so a longer list
+    can only reach the page from a legacy or hand-edited config — written directly here, because
+    ScoutRunConfig would (correctly) refuse to build one."""
+    no_tavily(monkeypatch)
+    server, url = _running_stand(tmp_path, monkeypatch, running=True, with_config=False)
+    RunStore(str(tmp_path), _RUN).write_config(
+        {"campaign_name": "legacy", "run_id": _RUN,
+         "seeds": [f"https://site{i}.example/" for i in range(14)]})
+    try:
+        _, html = get(f"{url}/scout")
+    finally:
+        server.shutdown()
+
+    assert "14 seeds submitted" in html
+    assert "and 4 more" in html
+    assert "site13.example" not in html
 

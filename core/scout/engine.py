@@ -146,6 +146,14 @@ class ScoutEngine:
             if cfg.resume and prospects[pid].get("status") == P_DONE:
                 self._event("prospect_skipped_done", prospect=pid)
                 continue
+            # Record that this target has STARTED, and persist it before any work begins. Until this
+            # existed the run could not distinguish "queued" from "being analyzed right now": both
+            # read PENDING on disk, because the compact state was only written after the target
+            # finished. That made the operator surfaces claim a target the browser was already
+            # loading would "not start", and let a skip request be accepted for it even though the
+            # skip check above has by then already been passed and cannot interrupt it.
+            prospects[pid]["started_at"] = self.clock()
+            self.store.save_state(state)
             try:
                 self._process_prospect(pid, elig.normalized, prospects)
             except Exception as exc:  # a single prospect failure must not sink the run

@@ -100,9 +100,12 @@ def test_summary_labels_match_the_row_labels(tmp_path, monkeypatch):
         server.shutdown()
 
     tiles = _tiles(html)
+    body = html.split("<tbody>")[-1].split("</tbody>")[0]
     for label in ("Completed", "Needs your help", "Could not complete", "Queued", "Skipped"):
         assert label in tiles, f"tile {label!r} missing"
-        assert f">{label}</span>" in html or label in html
+        # The rows must use the SAME word. Asserting `label in html` would be a tautology — label was
+        # parsed out of that very html — so look for it inside the table body specifically.
+        assert f">{label}</span>" in body, f"rows do not use the tile's word for {label!r}"
 
 
 # -- F2: a bulk action must leave visible, persistent, honest evidence ------------------------------

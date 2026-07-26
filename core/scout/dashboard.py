@@ -1612,7 +1612,7 @@ function startCampaign(){{
             # - the operator clicks Refresh. Pauses when the tab is hidden.
             return (
                 "(function(){var base=null;var url=" + json.dumps(endpoint) + ";"
-                "function sig(j){try{return JSON.stringify((" + sig_keys + ")(j));}catch(e){return '';}}"
+                "function sig(j){try{return JSON.stringify((" + sig_keys + ")(j));}catch(e){return 'sig-error:'+String(e);}}"
                 "function tick(){if(document.hidden)return;"
                 "fetch(url,{headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
                 "var s=sig(j);if(base===null)base=s;"
@@ -2104,7 +2104,7 @@ function startCampaign(){{
             from core.scout.discovery.domain_intel import canonical_domain
             prows = "".join(
                 f'<tr><td data-label="Target">{_esc(canonical_domain(p.get("url","")) or p.get("url",""))}</td>'
-                f'<td data-label="Status">{_badge(_prospect_status_label(p.get("status", "")))}</td>'
+                f'<td data-label="Status">{_badge(_run_prospect_label(p))}</td>'
                 f'<td data-label="Priority">{_esc(p.get("priority", "") or "—")}</td>'
                 f'<td data-label="Actionable">{_esc(p.get("verified_defects", 0))}</td>'
                 f'<td data-label="Open">{_scout_details_primary(run_id, p)}</td></tr>'
@@ -2120,25 +2120,49 @@ function startCampaign(){{
                 # a browser is working on one contradicts the ACTIVE badge next to it. The run's own
                 # config carries the seeds, so the queued targets can be named from persisted data —
                 # and when no config is readable we say what is happening without inventing a list.
-                queued = []
+                seeds = []
                 try:
                     cfg = service.store.load_config() if service.store is not None else {}
-                    queued = [canonical_domain(s) or s for s in (cfg or {}).get("seeds", [])]
-                except (StoreError, AttributeError):
-                    queued = []
-                queued_html = (f'<b>{len(queued)} '
-                               f'{"target" if len(queued) == 1 else "targets"} in this run:</b> '
-                               f'{_esc(", ".join(queued))}. ' if queued else '')
+                    seeds = list((cfg or {}).get("seeds") or [])
+                except (StoreError, AttributeError, TypeError):
+                    seeds = []
+                # These are the SEEDS as submitted, not the targets the engine will end up with: it
+                # drops policy-rejected ones, collapses duplicates by normalized URL and truncates to
+                # the campaign's site limit. Call them seeds, collapse the obvious repeats so one
+                # domain is not printed twice, and cap the list so a large import cannot fill the
+                # card.
+                shown, seen = [], set()
+                for raw in seeds:
+                    dom = canonical_domain(raw) or str(raw)
+                    if dom not in seen:
+                        seen.add(dom)
+                        shown.append(dom)
+                extra = max(len(shown) - 10, 0)
+                listed = ", ".join(shown[:10]) + (f" and {extra} more" if extra else "")
+                queued_html = (f'<b>{len(shown)} '
+                               f'{"seed" if len(shown) == 1 else "seeds"} submitted:</b> '
+                               f'{_esc(listed)}. ' if shown else '')
                 # Say the same thing the status badge above says. The engine persists the run as
                 # PENDING first and only flips it to RUNNING once it actually begins, so while the
                 # worker is starting and the browser is launching the badge reads "Queued" — claiming
                 # "analysis in progress" beside it would be the contradiction this notice exists to
                 # remove, in the other direction.
-                phase = ("Analysis in progress"
-                         if str(st.get("status", "") or "").strip().upper() == "RUNNING"
-                         else "The run is starting")
-                table = (f'<div class="card empty muted">{queued_html}{phase} — '
-                         f'no target has finished yet. Each one appears here as it completes.</div>')
+                # A paused or stopping run writes no status of its own — the engine blocks inside its
+                # control gate and the persisted status stays RUNNING — so reading the status alone
+                # would announce analysis that is not happening. The control flags are on this very
+                # page; consult them first.
+                control = status.get("control") or {}
+                if control.get("paused"):
+                    phase, tail = "Paused", "no target will start until you resume"
+                elif control.get("cancelled") or control.get("killed"):
+                    phase, tail = "Stopping", "the current target finishes and no new target starts"
+                elif str(st.get("status", "") or "").strip().upper() == "RUNNING":
+                    phase, tail = ("Analysis in progress",
+                                   "no target has finished yet. Each one appears here as it completes")
+                else:
+                    phase, tail = ("The run is starting",
+                                   "no target has finished yet. Each one appears here as it completes")
+                table = (f'<div class="card empty muted">{queued_html}{phase} — {tail}.</div>')
             else:
                 table = '<div class="card empty muted">No prospects in this run.</div>'
             start_panel = "" if running else _START_PANEL_HTML
@@ -2158,7 +2182,7 @@ function startCampaign(){{
                     # opened and a finished run kept reading as a starting one. Same freshness row
                     # and same polling helper the sibling operator screens already use; it never
                     # auto-reloads, so a confirm dialog or a half-typed URL is never interrupted.
-                    + (self._poll_html() if run_id else '')
+                    + (self._poll_html() if running else '')
                     + f'<div class="row">{controls}</div></div>'
                     f'<div class="row"><a class="chip" href="/scout/campaigns">Campaigns</a>'
                     f'{results_link}</div>'
@@ -2247,9 +2271,10 @@ function startCampaign(){{
                 + (self._poll_script(
                     "/api/status",
                     "function(j){var p=(j.state||{}).prospects||{};"
-                    "return [j.running,j.mode,(j.state||{}).status,Object.keys(p).sort(),"
-                    "Object.keys(p).sort().map(function(k){return p[k].status;})]}")
-                   if run_id else ""))
+                    "var ks=Object.keys(p).sort();"
+                    "return [j.running,j.mode,(j.state||{}).status,j.control||{},ks,"
+                    "ks.map(function(k){var e=p[k]||{};return [e.status,!!e.started_at];})]}")
+                   if running else ""))
             return _page("AI QA Factory — Scout", "/scout", body, script)
 
         def _scout_campaigns_page(self, q=None) -> str:
@@ -3536,8 +3561,13 @@ function startCampaign(){{
                 } if store is not None else set()
             except StoreError:
                 skip_requested = set()
+            # Only a target that has NOT started can still be stopped: the engine checks the request
+            # immediately before it begins each target and never interrupts one mid-operation. A
+            # started target stays PENDING until it finishes, so started_at — not the status — is
+            # what keeps this marker from promising something that cannot happen.
             queued_skips = [pid for pid in sorted(skip_requested)
-                            if str((prospects.get(pid) or {}).get("status", "")) == "PENDING"]
+                            if str((prospects.get(pid) or {}).get("status", "")) == "PENDING"
+                            and not (prospects.get(pid) or {}).get("started_at")]
             rows = []
             for pid, p in sorted(prospects.items()):
                 dom = canonical_domain(p.get("url", "") or p.get("final_url", "")) or ""
@@ -3545,7 +3575,7 @@ function startCampaign(){{
                 total = int(p.get("verified_findings", 0) or 0)
                 actionable = int(p.get("verified_defects", 0) or 0)
                 info = max(total - actionable, 0)
-                status_label = _run_status_label(status)
+                status_label = _run_prospect_label(p)
                 complete = "Complete" if status == "DONE" else (
                     "Not analyzed" if status in ("PENDING", "SKIPPED") else "Incomplete")
                 details = (f'<a href="/scout/target?run={_esc(run_id)}&domain={_esc(dom)}">Details</a>'
@@ -4315,14 +4345,34 @@ def _run_status_label(status: str) -> str:
     return str(status or "Unknown").replace("_", " ").title()
 
 
+def _run_prospect_label(prospect: dict) -> str:
+    """Human label for one prospect ROW, which needs one fact the bare status cannot carry.
+
+    A target the engine has started stays PENDING in the compact state until it finishes, so status
+    alone cannot tell "waiting its turn" from "being analyzed right now" — and calling the second one
+    "Queued" is false while a browser is loading it. The engine persists ``started_at`` the moment it
+    begins a target, and that is what separates the two.
+    """
+    p = prospect or {}
+    status = str(p.get("status", "") or "")
+    if status == "PENDING" and p.get("started_at"):
+        return "In progress"
+    return _run_status_label(status)
+
+
 def _run_status_summary(prospects: dict) -> list:
-    """(label, count) per outcome present in the run, in the canonical order above with any unknown
-    status appended. The counts sum to len(prospects) — the page asserts nothing the data cannot."""
+    """(label, count) per outcome present in the run, in the canonical order above, with "In progress"
+    kept next to "Queued" and any unknown status appended. The counts sum to len(prospects) — the page
+    asserts nothing the data cannot support."""
     counts: dict = {}
     for p in prospects.values():
-        label = _run_status_label(str((p or {}).get("status", "") or ""))
-        counts[label] = counts.get(label, 0) + 1
-    ordered = [(label, counts.pop(label)) for _, label in _RUN_STATUS_LABELS if label in counts]
+        counts[_run_prospect_label(p)] = counts.get(_run_prospect_label(p), 0) + 1
+    order = []
+    for _, label in _RUN_STATUS_LABELS:
+        if label == "Queued":
+            order.append("In progress")
+        order.append(label)
+    ordered = [(label, counts.pop(label)) for label in order if label in counts]
     return ordered + sorted(counts.items())
 
 

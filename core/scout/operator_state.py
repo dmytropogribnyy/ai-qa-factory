@@ -108,9 +108,17 @@ class OperatorStateStore:
         refused = []
         for pid in _unique(prospect_ids):
             RunStore._safe_component(pid)
-            status = str((prospects.get(pid) or {}).get("status") or "")
-            if status == "PENDING":
+            entry = prospects.get(pid) or {}
+            status = str(entry.get("status") or "")
+            # A target the engine has already started cannot be skipped: the engine reads this file
+            # immediately BEFORE it begins each target and never interrupts one mid-operation, so
+            # accepting the request would promise something that cannot happen. Such a target is
+            # still PENDING in the compact state until it finishes, which is why the persisted
+            # started_at — not the status alone — is what makes the refusal truthful.
+            if status == "PENDING" and not entry.get("started_at"):
                 requested.append(pid)
+            elif status == "PENDING":
+                refused.append({"prospect_id": pid, "status": "already started"})
             else:
                 refused.append({"prospect_id": pid, "status": status or "unknown"})
         prior = store.load_artifact("operator_actions.json") or {}
