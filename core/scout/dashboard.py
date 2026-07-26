@@ -3253,6 +3253,28 @@ function startCampaign(){{
                     "captcha_detected": "The site requested a human verification check.",
                     "access_prohibited": "The site blocked automated access.",
                 }.get(raw_reason, "The browser could not complete this target automatically.")
+            # The badge/chip/title must tell the SAME story as human_reason above, using only
+            # statuses that really exist. /scout/attention's blocked list is filtered to
+            # MANUAL_ACTION_REQUIRED only (core/scout/challenge_session.py's _blocked_targets), so
+            # the "Needs attention" chip and the alarmed hero styling are honest ONLY for a real
+            # challenge — offering them to a PENDING/SKIPPED/FAILED target promises a destination it
+            # can never reach. Reuse the wording already used elsewhere in this file for the same
+            # statuses (the run-results table maps FAILED -> "Could not complete", SKIPPED ->
+            # "Skipped") instead of inventing new vocabulary.
+            if challenge:
+                status_label = "Needs your help"
+            elif prospect_status == "SKIPPED":
+                status_label = "Skipped"
+            elif prospect_status == "PENDING":
+                status_label = "Not analyzed"
+            else:
+                status_label = "Could not complete"
+            hero_class = "status-hero attention" if challenge else "status-hero"
+            badge_kind = "attention" if challenge else ""
+            attention_chip = ('<a class="chip" href="/scout/attention">Needs attention</a>'
+                               if challenge else '')
+            page_title = ("AI QA Factory — Needs attention" if challenge
+                          else f"AI QA Factory — {status_label}")
 
             def _art_url(rel: str) -> str:
                 return f'/scout/artifact?run={_esc(run_id)}&rel={_esc(rel)}'
@@ -3289,9 +3311,9 @@ function startCampaign(){{
                     'way to get a result.</p>')
             body = (
                 f'<h1>{_esc(domain)}</h1><div class="row">{nav}'
-                f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
-                '<div class="card status-hero attention">'
-                f'<div class="row">{_badge("Needs your help", "attention")}'
+                f'{attention_chip}</div>'
+                f'<div class="card {hero_class}">'
+                f'<div class="row">{_badge(status_label, badge_kind)}'
                 f'<span>{_esc(human_reason)}</span></div>'
                 '<p><b>0 confirmed findings — analysis incomplete.</b> No conclusion about the site and no outreach '
                 'draft were created.</p>'
@@ -3339,7 +3361,7 @@ function startCampaign(){{
                 "clearInterval(POLL);if(s.state==='completed')setTimeout(function(){location.href="
                 "'/scout/target?run='+encodeURIComponent(s.result_run)+'&domain='+encodeURIComponent(DOM);"
                 "},900);}}")
-            return _page("AI QA Factory — Needs attention", "/scout", body, script)
+            return _page(page_title, "/scout", body, script)
 
         def _scout_attention_page(self) -> str:
             data = challenge_manager.snapshot()
