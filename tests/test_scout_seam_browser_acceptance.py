@@ -113,3 +113,65 @@ def test_archived_run_page_warns_and_offers_restore(tmp_path):
             browser.close()
     finally:
         server.shutdown()
+
+
+def test_a_partial_bulk_result_keeps_the_operator_on_the_page_with_the_reason(tmp_path):
+    """The client half of the bulk-feedback fix, which server-rendered tests cannot reach.
+
+    A clean success reloads, because the reloaded page carries the persistent banner and marker. A
+    partial result must NOT reload: the refusal is not persisted anywhere, so a reload would erase
+    the only account of it and the operator would be told nothing at all.
+    """
+    build_seam_stand(str(tmp_path))
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(f"{url}/scout/run?id={RUN_A}", wait_until="load")
+
+            # alpha is DONE and cannot be skipped; delta is queued and can be.
+            for domain in ("alpha.example", "delta.example"):
+                page.locator("tr", has_text=domain).first.locator("input.pick").check()
+            page.get_by_role("button", name="Skip queued").click()
+            page.wait_for_function(
+                "() => (document.getElementById('bulkmsg')||{}).textContent.trim().length > 0")
+
+            message = page.locator("#bulkmsg").inner_text()
+            assert "refused" in message, f"the refusal was not reported: {message!r}"
+            assert "01-alpha" in message, f"the refused target is not named: {message!r}"
+            # Still on the same page: the message was not erased by a reload.
+            assert page.locator("#bulkmsg").is_visible()
+            assert errors == [], f"JavaScript errors during the bulk action: {errors}"
+            browser.close()
+    finally:
+        server.shutdown()
+
+
+def test_a_clean_bulk_success_reloads_into_the_persistent_confirmation(tmp_path):
+    """With nothing refused there is nothing transient to preserve, so the page reloads and the
+    operator sees the banner and the row marker that survive any later refresh."""
+    build_seam_stand(str(tmp_path))
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(f"{url}/scout/run?id={RUN_A}", wait_until="load")
+
+            page.locator("tr", has_text="delta.example").first.locator("input.pick").check()
+            with page.expect_navigation(wait_until="load"):
+                page.get_by_role("button", name="Skip queued").click()
+
+            assert "will not start" in page.content()
+            row = page.locator("tr", has_text="delta.example").first
+            assert "Skip requested" in row.inner_text()
+            assert errors == [], f"JavaScript errors during the bulk action: {errors}"
+            browser.close()
+    finally:
+        server.shutdown()
+
