@@ -827,9 +827,23 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     return {"error": "prospect not found in run", "run": run, "prospect_id": pid}
             else:
                 store = service.store
+                # No run-membership check on this legacy unpinned path, so the persisted status is
+                # resolved the SAME way: load this store's state if one is attached. Any failure or
+                # absence leaves it genuinely unknown (the legacy exemption below then applies).
+                try:
+                    state = (store.load_state() or {}) if store is not None else {}
+                except StoreError:
+                    state = {}
             if store is None or not pid:
                 return {"error": "no prospect"}
-            out = {"prospect_id": pid}
+            # Same completeness predicate the read model (target_detail) applies, so this diagnostic
+            # endpoint cannot drift from it — see campaign_service.analysis_incomplete.
+            from core.scout.campaign_service import analysis_incomplete
+            pstate = (state.get("prospects", {}) or {}).get(pid, {}) or {}
+            prospect_status = str(pstate.get("status", "") or "")
+            analysis_complete = (prospect_status == "DONE") if prospect_status else None
+            out = {"prospect_id": pid, "prospect_status": prospect_status,
+                   "analysis_complete": analysis_complete}
             if run:
                 out["run"] = run
             for name in ("observation.json", "findings.json", "evidence.json", "scorecard.json"):
@@ -837,6 +851,16 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     out[name.split(".")[0]] = store.load_prospect_artifact(pid, name)
                 except StoreError:
                     out[name.split(".")[0]] = None
+            if analysis_incomplete(prospect_status):
+                # Confirmed findings and their derived scorecard exist only for a completed analysis
+                # (core/scout/engine.py writes scorecard.json only on the DONE path). Withhold both
+                # by name -- no `verified` key anywhere in this payload -- while distinguishing
+                # "withheld because incomplete" from "artifact genuinely absent on disk". observation
+                # and evidence stay: they are page-level diagnostics, not confirmed findings.
+                out["findings"] = {"withheld": "analysis_incomplete",
+                                   "artifact_present": out.get("findings") is not None}
+                out["scorecard"] = {"withheld": "analysis_incomplete",
+                                    "artifact_present": out.get("scorecard") is not None}
             return out
 
         def _artifact(self, rel: str):

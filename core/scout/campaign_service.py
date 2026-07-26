@@ -52,6 +52,21 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def analysis_incomplete(prospect_status: str) -> bool:
+    """True when a persisted prospect status means the analysis did NOT complete.
+
+    Fail closed for EVERY non-empty status other than DONE — MANUAL_ACTION_REQUIRED and FAILED, but
+    also PENDING/SKIPPED (a run interrupted between the findings write and the compact-state update)
+    and any status a future engine adds. An empty/unknown legacy status keeps the historical
+    artifact-loading behaviour deliberately (the sole exemption).
+
+    This is the ONE shared definition of "did the analysis complete", used by both the read model
+    (``target_detail`` below) and the raw-JSON diagnostic endpoint (``dashboard._prospect`` /
+    ``/api/prospect``) so the two surfaces cannot drift apart.
+    """
+    return bool(prospect_status) and prospect_status != "DONE"
+
+
 # Known per-prospect structured evidence artifacts the engine may persist, with readable labels.
 # target_detail() only exposes an entry when the file genuinely exists on disk (never a dead link).
 _STRUCTURED_EVIDENCE_ARTIFACTS: tuple = (
@@ -495,14 +510,11 @@ class CampaignService:
                     evidence_status = "ok"
                     pstate = (state.get("prospects", {}) or {}).get(prospect_id, {}) or {}
                     prospect_status = pstate.get("status", "")
-                    # Fail closed for EVERY non-empty status other than DONE — MANUAL_ACTION_REQUIRED
-                    # and FAILED, but also PENDING/SKIPPED (a run interrupted between the findings
-                    # write and the compact-state update) and any status a future engine adds.
                     # Confirmed findings and a finding reproduction exist only for a COMPLETED
                     # analysis, and this must hold in the read model so the UI, the read API and the
-                    # unpinned page all inherit it. An empty/unknown legacy status keeps the previous
-                    # artifact-loading behaviour deliberately (the sole exemption).
-                    incomplete = bool(prospect_status) and prospect_status != "DONE"
+                    # unpinned page all inherit it. See analysis_incomplete() above — the ONE shared
+                    # definition, so this surface and /api/prospect cannot drift apart.
+                    incomplete = analysis_incomplete(prospect_status)
                     analysis_complete = (prospect_status == "DONE") if prospect_status else None
                     if incomplete:
                         analysis_complete = False
