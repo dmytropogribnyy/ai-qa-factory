@@ -6,8 +6,8 @@ Golden-Path UX defects the first live campaign surfaced:
   * B — chip-styled BUTTONS did not inherit a text colour (buttons don't inherit `color`), so action
         buttons showed dark default text on the dark surface. Central CSS now gives every chip button
         a contrasting colour + hover/focus/active/disabled + semantic primary/danger variants.
-  * C — analyzed domains and campaign titles were dead text. They are now links; and after a terminal
-        run state the Pause/Resume/Stop controls are disabled (honest UI).
+  * C — analyzed domains and campaign titles were dead text. They are now links; and the progress
+        page only shows controls that are valid for the current run state (honest UI).
 
 All assertions target strings that exist ONLY because of the B/C edits (verified absent from the
 pre-hotfix dashboard), so they are genuine regressions guards, not incidental matches.
@@ -61,14 +61,17 @@ def test_run_campaign_button_is_primary(tmp_path):
 # -- part C: interactivity (links + terminal-state control disabling) ------------------------------
 
 
-def test_progress_page_links_domains_and_disables_terminal_controls(tmp_path):
+def test_progress_page_links_domains_and_hides_invalid_controls(tmp_path):
     server, url = _dash(tmp_path)
     try:
         _, body = _get(url + "/scout/progress?id=none")
-        # Pause / Resume / Stop carry stable ids so the client can disable them
+        # Pause / Resume / Stop carry stable ids so the client can switch them by state.
         assert 'id="bp"' in body and 'id="br"' in body and 'id="bs"' in body
-        # after a terminal run state those controls are disabled (honest UI)
-        assert "stopped_with_checkpoint" in body and "disabled=term" in body
+        # Terminal states hide every command; paused states replace Pause with Resume.
+        assert "stopped_with_checkpoint" in body
+        assert "bp.hidden=term||paused" in body
+        assert "br.hidden=term||!paused" in body
+        assert "bs.hidden=term" in body
         # each analyzed domain row is rendered as a link to its target detail card (progress-specific
         # client builder; the pre-hotfix progress page rendered the domain as plain text)
         assert "encodeURIComponent(x.domain" in body and "/scout/target?domain=" in body

@@ -48,9 +48,11 @@ gate, and one delivery format. See [architecture/UNIFIED_PRODUCT_REUSE_MAP.md](a
 
 One local dashboard (`core/scout/dashboard.py`, extended — not a second app) is the Administrator/
 Operator front door over the same core. `python main.py dashboard` serves a localhost Overview inbox,
-a Work list + project detail (Summary/Plan/Results/Delivery) with a Claude Code handoff (Open in VS
-Code, Copy Work Order), the mandatory Scout module (home/campaigns/results/company with the preserved
-start + Pause/Resume/Stop Safely/Cancel), honest Tools readiness, Activity, and Settings. It reads
+a Work queue + planning-only brief intake and project detail (Summary/Plan/Results/Delivery) with a
+Claude Code handoff (Open in VS Code, Copy Work Order), the mandatory Scout module
+(home/campaigns/results/company with the preserved
+start + state-aware Pause/Resume/Stop), Activity, Collaboration, Settings with advanced readiness,
+and an operator Help Center. It reads
 persisted state through read-only DTOs (`core/dashboard/`) with polling + a manual Refresh, and
 performs mutations only through guarded `/api/work/*` endpoints that call the same
 `WorkExecutionService`/`ClientWorkService` the CLI uses — **never a command or argv over HTTP**

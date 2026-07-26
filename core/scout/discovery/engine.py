@@ -131,8 +131,12 @@ class DiscoveryEngine:
             records, self.suppression_policies,
             allow_readonly_when_no_outreach=cfg.allow_readonly_profiling_when_no_outreach)
         # 4. technical eligibility (cheap static profiling; never fetch dup/NO_SCAN/invalid)
-        ctx = TriageContext(languages=list(cfg.languages), countries=list(cfg.countries),
-                            min_commercial_threshold=cfg.min_commercial_threshold)
+        ctx = TriageContext(
+            languages=list(cfg.languages),
+            countries=list(cfg.countries),
+            min_commercial_threshold=cfg.min_commercial_threshold,
+            exclude_keywords=list(cfg.exclude_keywords),
+        )
         self._triage(records, ctx)
         # 5. promotion decision (explainable top-N; uncertain identity held for review)
         promoted = self._decide_promotions(records)

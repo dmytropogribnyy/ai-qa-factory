@@ -105,19 +105,23 @@ def test_capture_dashboard_screenshots(tmp_path):
         cid = ""
 
     desktop = {
-        "overview": "/", "scout-home": "/scout", "scout-campaigns": "/scout/campaigns",
-        "results": "/results?sev=", "company": f"/company?id={cid}" if cid else "/company?id=unknown",
-        "work-list": "/work", "projects": "/projects", "project-summary": "/work/alpha?tab=summary",
+        "overview": "/", "scout-new": "/scout/new", "scout-home": "/scout",
+        "scout-campaigns": "/scout/campaigns", "scout-history": "/scout/history",
+        "companies": "/results?sev=",
+        "company": f"/company?id={cid}" if cid else "/company?id=unknown",
+        "work-active": "/work", "work-completed": "/work?view=completed",
+        "project-summary": "/work/alpha?tab=summary",
         "project-plan": "/work/alpha?tab=plan", "project-results": "/work/alpha?tab=results",
         "project-delivery": "/work/alpha?tab=delivery", "tools": "/tools", "activity": "/activity",
-        "settings": "/settings", "docs": "/docs",
+        "collaboration": "/collab", "settings": "/settings", "help": "/docs",
     }
-    mobile = {"overview": "/", "scout-home": "/scout", "work-list": "/work", "projects": "/projects",
-              "project-detail": "/work/alpha", "docs": "/docs", "nav-more": "/tools"}
+    mobile = {"overview": "/", "scout-new": "/scout/new", "scout-home": "/scout",
+              "work-list": "/work", "project-detail": "/work/alpha", "help": "/docs",
+              "nav-more-current": "/collab"}
     # Representative Light-theme pages (dark is the default; these prove the toggle looks right).
-    # Includes /projects and /docs, and /scout to prove the themed LEGACY root in Light too.
-    light = {"overview": "/", "work-list": "/work", "tools": "/tools", "projects": "/projects",
-             "docs": "/docs", "scout-home": "/scout"}
+    # Includes the Help/Settings consolidation and /scout to prove the legacy surface is themed too.
+    light = {"overview": "/", "work-list": "/work", "settings": "/settings",
+             "help": "/docs", "scout-home": "/scout"}
     captured = []
     try:
         with sync_playwright() as p:

@@ -4,6 +4,7 @@ Classify-only: no URL fetching, no browser execution, no credential use, no exte
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import List
 
@@ -202,9 +203,26 @@ def _collect_signals(text: str, task_type: str, input_map: InputMap) -> List[str
     return signals
 
 
+_TITLE_LIMIT = 80
+
+
 def _extract_title(text: str) -> str:
-    first_line = text.strip().split("\n")[0][:80].strip()
-    return first_line if first_line else "Untitled work request"
+    """A readable one-line title for the brief.
+
+    A hard character cut used to slice mid-word, so the Dashboard showed project names like
+    "... and add a regression". Prefer the first sentence when it fits, otherwise cut on a word
+    boundary and mark the truncation.
+    """
+    first_line = text.strip().split("\n")[0].strip()
+    if not first_line:
+        return "Untitled work request"
+    if len(first_line) <= _TITLE_LIMIT:
+        return first_line
+    sentence = re.split(r"(?<=[.!?])\s", first_line, maxsplit=1)[0].strip()
+    if sentence and len(sentence) <= _TITLE_LIMIT:
+        return sentence
+    cut = first_line[:_TITLE_LIMIT].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return (cut or first_line[:_TITLE_LIMIT].rstrip()) + "..."
 
 
 def _extract_summary(text: str) -> str:

@@ -28,21 +28,73 @@ validation, blockers, approvals, delivery) — never chat, terminal, or editor c
 
 ## Navigation
 
-`Overview · Scout · Work · More (Tools · Activity · Settings · Documentation)`.
+`Overview · Scout · Work · More (Activity · Collaboration · Settings · Help)`.
 
 | Route | Purpose |
 |---|---|
-| `/` | Overview inbox: Needs your attention, Active work, Active Scout campaigns |
-| `/scout`, `/scout/campaigns`, `/results`, `/company` | Scout: home (+ start & Pause/Resume/Stop Safely/Cancel), campaigns, results, company detail |
-| `/work`, `/work/<id>` | Work list (saved-view filters) and project detail (Summary/Plan/Results/Delivery) |
-| `/tools` | Honest tool readiness levels |
+| `/` | Stable Overview inbox: Open work, Needs attention, Active Scout campaigns |
+| `/scout`, `/scout/campaigns` | Scout launch, current/archived campaigns and state-aware controls |
+| `/scout/history`, `/scout/target`, `/scout/run` | QA history, target evidence and exact-run retention |
+| `/results`, `/company` | Companies & outreach (commercial follow-up, separate from QA History) |
+| `/work`, `/work/<id>` | Active/Needs attention/Completed/All views, stage filter, brief analysis; project Summary/Plan/Results/Delivery |
 | `/activity` | Recent lifecycle transitions (from state history) |
-| `/settings`, `/docs` | Workspace/density/Scout defaults/Gmail status; local documentation |
+| `/collab` | Active collaboration by default; completed cycles in a separate view |
+| `/settings` | Appearance, Scout defaults, integrations, Data & retention; advanced diagnostics |
+| `/tools` | Advanced technical readiness, linked from Settings rather than primary navigation |
+| `/docs` | Operator Help Center; developer reference files stay under Advanced |
 
-`/` shows the Scout run view when the dashboard is bound to an active Scout run (preserved v3.0.x
-behavior); it is the Overview inbox in operator-home mode. `/scout`, `/results`, `/company` and
-`/projects` render in the same shared layout; **Results** has text/contact-state/severity filters
-(URL-persisted).
+In operator-home mode, `/` always stays Overview even when a Scout run is active; explicit Scout
+pages own progress and controls. The legacy `/projects` route redirects to canonical `/work`.
+**Companies & outreach** keeps text/contact-state/severity filters in the URL.
+
+Ordinary views show human titles and keep campaign/run/project IDs, model names, token counts,
+build SHAs, CI references, and raw readiness data inside **Advanced** diagnostics. Production views
+hide smoke/acceptance/replay/demo data unless the operator explicitly enables diagnostics.
+
+### Counting rules the operator can rely on
+
+Every headline count equals the number of rows behind the link it points at — the count and its
+destination are derived from the same projection, never from two separate rules:
+
+| Overview tile | Destination | Means |
+|---|---|---|
+| Open work | `/work?view=active` | every client project that is not COMPLETED/CANCELLED |
+| Needs attention (client work) | `/work?view=needs_attention` | blocked, approval-ready, or review-ready **client work** |
+| Active Scout campaigns | `/scout/campaigns` | campaigns currently running |
+
+Work attention and Scout attention are counted separately because they resolve to different
+surfaces. A **failed Scout campaign is never folded into the client-work tile** — it would promise
+more rows than `/work?view=needs_attention` can contain. Failed campaigns instead appear in their
+own labelled block under *Scout* on Overview, with their own count and a link to
+`/scout/campaigns`, so they stay visible without distorting the work queue.
+
+The Overview *Active work* table is deliberately narrower than the Open work tile: it lists only
+work that is approved and ready to run, running, or being validated.
+
+**Blockers vs. information needed.** A project shows *Blockers* only for what is stopping it right
+now. Intake questions block only until the operator approves the plan; afterwards they remain
+visible on the project as "Information needed from the client (recorded at intake; no longer
+blocking)". An approved project is therefore never described as both *Ready to execute* and
+*blocked on missing information*. The Work list and the project detail read one shared next-action
+rule, so a project states the same next step on every screen.
+
+## Data & retention
+
+Settings explains the three cleanup classes before the operator acts:
+
+- **Archive** — reversible; hides a target or run from current views.
+- **Forget target** — removes History/dedup memory while preserving exact-run evidence.
+- **Delete** — permanent; limited to selected heavy evidence or an inactive exact run.
+
+Completed Work and Collaboration are removed from the default active queue but remain available in
+their dedicated completed views. Raw Activity remains append-only.
+
+On **Work**, the four primary views stay visible while individual lifecycle stages live in the
+**Status** selector. Diagnostic projects are available only under **Advanced view options**. The
+empty Active/All states link directly to **Analyze a client brief**; that form creates a persisted,
+reviewable feasibility assessment and work plan, but never begins execution. The source platform is
+an optional bounded choice (`Upwork`, `Direct client`, or `Other`), not an integration or import.
+Validation and server errors appear beside the form and move focus to the field that needs attention.
 
 **Interactions.** Overview, Work list, and project detail do bounded same-origin polling: a *Live /
 Last updated* indicator plus an "Updates available — Refresh" banner when persisted state changes.
@@ -62,7 +114,12 @@ fallbacks with visible copy feedback.
   handoffs**, done in VS Code via the CLI. There is no arbitrary-command or argv endpoint.
 - **Nothing is sent.** `mark-delivered` records your assertion that you sent the prepared package
   manually; the Dashboard never sends email, submits a form, scans a third party, or bypasses a login.
-- **Upwork intake is manual**: paste the brief (+ optional source reference). There is no Upwork API.
+- **Upwork intake is manual**: select Upwork as the source and paste the brief. There is no Upwork
+  API, source-reference field, or background import.
+
+The shared footer identifies ordinary pages as **AI QA Factory · Operator Dashboard**. Scout routes
+retain the Scout product/version identity so operators can distinguish the module without making
+Work or Overview look like Scout-only screens.
 
 ## Lifecycle & delivery
 

@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
+from core.dashboard.read_model import health_label, stage_label
+from core.orchestration.project_index import _INTAKE_STATES
 from core.scout import SCOUT_PRODUCT_NAME, SCOUT_VERSION
 from core.scout.campaign_start import CampaignLauncher
 from core.scout.service import ScoutService
@@ -165,6 +168,14 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if self.command != "HEAD":
                 self.wfile.write(body)
 
+        def _redirect(self, location: str, status: int = 303) -> None:
+            """Redirect legacy duplicate routes to their canonical operator surface."""
+            self.send_response(status)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+
         # --- routing ---
         def do_GET(self):
             parsed = urlsplit(self.path)
@@ -218,13 +229,13 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/projects":
                 return self._json(200, self._projects_snapshot())
             if path == "/projects":
-                return self._html(200, self._projects_page())
+                return self._redirect("/work")
             # v3.1 operator dashboard read-model routes
             if path == "/api/overview":
                 return self._json(200, self._read_model().overview(
                     include_diagnostics=self._want_diagnostics(q)).to_dict())
             if path == "/api/work":
-                view = (q.get("view") or ["all"])[0]
+                view = (q.get("view") or ["active"])[0]
                 return self._json(200, self._read_model().project_list(
                     view=view, include_diagnostics=self._want_diagnostics(q)))
             if path.startswith("/api/work/"):
@@ -245,7 +256,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/settings":
                 if (q.get("refresh") or [""])[0]:
                     cached_access_snapshot(refresh=True)   # explicit operator refresh
-                return self._html(200, self._settings_page())
+                return self._html(200, self._settings_page(q))
             if path == "/api/access":
                 return self._json(200, cached_access_snapshot(
                     refresh=bool((q.get("refresh") or [""])[0])))
@@ -257,7 +268,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 # Direct Collaboration Driver monitor (Issue #14.D) — read-only over the canonical store.
                 return self._json(200, self._collab_snapshot())
             if path == "/collab":
-                return self._html(200, self._collab_page())
+                return self._html(200, self._collab_page(q))
             if path == "/api/discovery":
                 # v3.3 read-only live-discovery + analyzed-site history (no secret; loopback-only).
                 from core.scout.discovery.discovery_status import discovery_status
@@ -279,7 +290,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/scout/attention":
                 return self._json(200, challenge_manager.snapshot())
             if path == "/scout/new":
-                return self._html(200, self._scout_new_page())
+                return self._html(200, self._scout_new_page(q))
             if path == "/scout/progress":
                 return self._html(200, self._scout_progress_page((q.get("id") or [""])[0]))
             if path == "/scout/history":
@@ -309,9 +320,9 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/work-evidence":
                 return self._work_evidence((q.get("project") or [""])[0], (q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
-                # Operator home = the new Overview inbox; a Scout-run-bound dashboard keeps its
-                # existing run view at "/" (regression-preserved). Both link to each other.
-                if operator_home and not service.is_running() and not self._has_active_run():
+                # The operator front door is stable: an active Scout run never replaces Overview.
+                # Run controls and results stay on the explicit Scout surfaces.
+                if operator_home:
                     return self._html(200, self._operator_overview_page(q))
                 return self._html(200, self._overview_html())
             return self._json(404, {"error": "not found"})
@@ -343,14 +354,16 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             return CollaborationMonitor(
                 out, head_resolver=lambda branch="": resolve_branch_head(".", branch)).snapshot()
 
-        def _collab_page(self) -> str:
+        def _collab_page(self, q=None) -> str:
             try:
                 snap = self._collab_snapshot()
             except Exception as exc:
                 return _page("Collaboration", "/collab",
                              f'<h1>Collaboration</h1><p class="muted">Monitor unavailable: '
                              f'{_esc(type(exc).__name__)}</p>')
-            return _page("Collaboration", "/collab", _collab_body(snap),
+            show_completed = ((q or {}).get("completed") or [""])[0] in ("1", "true", "yes")
+            return _page("Collaboration", "/collab", _collab_body(
+                snap, show_completed=show_completed),
                          script="setTimeout(function(){location.reload();},15000);")
 
         do_HEAD = do_GET
@@ -1543,11 +1556,15 @@ function startCampaign(){{
                 "else{setStatus('Copy not supported \\u2014 select the text manually',false);}}\n")
 
         def _poll_html(self) -> str:
+            # Refresh re-renders the current page; it is an action, not a destination, so it is a
+            # real button (a link with href="#" is announced as a link and moves focus to the top).
             return ('<div class="row" style="font-size:12px"><span id="pollstate" class="muted" '
                     'aria-live="polite">Live</span><span class="muted">·</span>'
                     '<span class="muted">Last updated <span id="lastupd">just now</span></span>'
-                    '<span id="pollbanner" hidden> · <a href="#" '
-                    'onclick="location.reload();return false">Updates available — Refresh</a></span></div>')
+                    '<span class="muted">·</span><button type="button" class="linklike" '
+                    'onclick="location.reload()">Refresh now</button>'
+                    '<span id="pollbanner" hidden> · <button type="button" class="linklike" '
+                    'onclick="location.reload()">Updates available — Refresh</button></span></div>')
 
         def _poll_script(self, endpoint: str, sig_keys: str) -> str:
             # Bounded same-origin polling: refresh a freshness indicator and flag when the persisted
@@ -1571,29 +1588,74 @@ function startCampaign(){{
             diag = self._want_diagnostics(q or {})
             ov = self._read_model().overview(include_diagnostics=diag)
             def _att(a):
+                # Several projects can need attention for the SAME reason, so each card has to name
+                # the project it is about - otherwise the cards are indistinguishable.
+                project = _esc(a.get("project_title") or a.get("project_id", ""))
                 return (f'<div class="card"><div class="row" style="justify-content:space-between">'
-                        f'<div><strong>{_esc(a["title"])}</strong> {_badge(a["status"], "attention")}<br>'
-                        f'<span class="muted">{_esc(a["project_id"])} — {_esc(a["reason"])}</span></div>'
-                        f'<a class="btn primary" href="{_esc(a["href"])}">Open</a></div></div>')
+                        f'<div><strong>{_esc(a["title"])}</strong> '
+                        f'{_badge(stage_label(a["status"]), "attention")}<br>'
+                        f'<span class="attention-project">{project}</span><br>'
+                        f'<span class="muted">{_esc(a["reason"])}</span></div>'
+                        f'<a class="btn primary" href="{_esc(a["href"])}">'
+                        f'Open<span class="sr-only"> {project}</span></a></div></div>')
             att = "".join(_att(a) for a in ov.attention) or (
-                '<div class="card empty"><strong>You\'re all caught up</strong>'
-                '<div class="muted">No projects require your attention.</div></div>')
+                '<div class="card empty compact status-hero"><strong>Nothing needs your attention'
+                '</strong><div class="muted">Blocked or review-ready work will appear here.</div>'
+                '</div>')
             def _wrow(p):
                 return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></td>'
-                        f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
+                        f'<td>{_badge(p["stage"])}</td><td>{_badge(health_label(p["health"]), p["health"])}</td>'
                         f'<td>{_esc(p["next_action"])}</td></tr>')
+            def _wcard(p):
+                # Same responsive treatment the Work queue already uses: a four-column table is
+                # unreadable on a phone, so narrow viewports get cards instead.
+                return (f'<li><div class="card"><h3><a href="{_esc(p["href"])}">'
+                        f'{_esc(p["title"])}</a></h3>'
+                        f'<div class="muted meta">{_esc(p["project_id"])}</div>'
+                        f'<div class="row" style="margin:.4rem 0">{_badge(p["stage"])} '
+                        f'{_badge(health_label(p["health"]), p["health"])}</div>'
+                        f'<div><strong>Next:</strong> {_esc(p["next_action"])}</div></div></li>')
             work = "".join(_wrow(p) for p in ov.active_work)
-            work_tbl = (f'<table><caption>Active work</caption><tr><th>Project</th><th>Stage</th>'
-                        f'<th>Health</th><th>Next action</th></tr>{work}</table>'
-                        if work else '<div class="card empty muted">No active work.</div>')
+            open_work = ov.counts.get("open_work", 0)
+            more_open = (f'<p class="muted"><a href="/work?view=active">View all {open_work} open '
+                         f'project(s)</a></p>' if open_work > len(ov.active_work) else '')
+            work_tbl = (f'<div class="scrollx only-desktop"><table>'
+                        f'<caption>Approved and running now</caption><tr><th>Project</th>'
+                        f'<th>Stage</th><th>Health</th><th>Next action</th></tr>{work}</table></div>'
+                        f'<ul class="cards only-mobile" aria-label="Active work">'
+                        f'{"".join(_wcard(p) for p in ov.active_work)}</ul>'
+                        f'{more_open}'
+                        if work else
+                        '<div class="card empty compact"><strong>No active client work</strong>'
+                        '<div class="muted">Paste a client brief to create a reviewable work plan.'
+                        '</div><p class="row empty-actions">'
+                        '<a class="btn primary" href="/work?create=1#client-brief">'
+                        'Analyze a client brief</a>'
+                        '<a class="btn" href="/docs">How client work operates</a></p>'
+                        '</div>')
             def _crow(c):
                 return (f'<tr><td>{_esc(c["title"])}</td><td>{_badge(c["status"])}</td>'
                         f'<td>{_esc(c["next_action"])}</td></tr>')
+            # Failed campaigns need the operator too, but they live on a different surface, so they
+            # get their own honest block instead of being counted into the work-attention tile.
+            def _srow(s):
+                return (f'<li><strong>{_esc(s["project_title"])}</strong> — '
+                        f'{_esc(s["reason"])}</li>')
+            failed_scout = ("".join(_srow(s) for s in ov.scout_attention))
+            scout_failed_block = (
+                f'<div class="card" style="border-color:var(--attention)">'
+                f'<strong>&#9888; {len(ov.scout_attention)} Scout campaign(s) ended in a failed '
+                f'state</strong><ul>{failed_scout}</ul>'
+                f'<p><a class="btn" href="/scout/campaigns">Review Scout campaigns</a></p></div>'
+                if failed_scout else '')
             camps = "".join(_crow(c) for c in ov.active_campaigns)
             camp_tbl = (f'<table><caption>Active Scout campaigns</caption><tr><th>Campaign</th>'
                         f'<th>Status</th><th>Next action</th></tr>{camps}</table>'
-                        if camps else '<div class="card empty muted">No active Scout campaigns. '
-                        '<a href="/scout">Open Scout</a></div>')
+                        if camps else
+                        '<div class="card empty compact"><strong>Scout is ready</strong>'
+                        '<div class="muted">Start a bounded campaign when you want to discover new '
+                        'prospects.</div><p><a class="btn primary" href="/scout/new">Start a Scout '
+                        'campaign</a></p></div>')
             hidden = ov.counts.get("diagnostics_hidden", 0)
             diag_toggle = (
                 '<a class="chip" href="/">&#10003; Production only — hide diagnostics</a>' if diag else
@@ -1601,16 +1663,37 @@ function startCampaign(){{
                  if hidden else ''))
             diag_banner = ('<div class="banner warn">Showing diagnostic data (smoke/acceptance/'
                            'replay/demo). These are not production work.</div>' if diag else '')
+            hidden_description = (
+                'Diagnostic records are visible in this view; production counts remain separate.'
+                if diag else
+                ('1 test, replay, or diagnostic record is hidden from production counts.'
+                 if hidden == 1 else
+                 f'{hidden} test, replay, or diagnostic records are hidden from production counts.'))
+            diag_options = (
+                f'<details class="advanced compact-details"><summary>Advanced view options</summary>'
+                f'<p class="muted">{hidden_description}</p>'
+                f'<div class="row">{diag_toggle}</div></details>'
+                if diag_toggle else '')
             body = (f'<h1>Overview</h1>{diag_banner}'
-                    f'<div class="row"><span class="chip">Projects {ov.counts.get("projects", 0)}</span>'
-                    f'<span class="chip">Needs attention {ov.counts.get("attention", 0)}</span>'
-                    f'<span class="chip">Active Scout campaigns {ov.counts.get("active_campaigns", 0)}'
-                    f'</span>{diag_toggle}'
-                    f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                    f'<div class="summary-grid overview-summary">'
+                    f'<a class="summary-item" href="/work?view=active">'
+                    f'<span class="muted">Open work</span>'
+                    f'<strong>{ov.counts.get("open_work", 0)}</strong></a>'
+                    f'<a class="summary-item" href="/work?view=needs_attention">'
+                    f'<span class="muted">Needs attention</span>'
+                    f'<strong>{ov.counts.get("attention", 0)}</strong>'
+                    f'<span class="tile-note">client work</span></a>'
+                    f'<a class="summary-item" href="/scout/campaigns">'
+                    f'<span class="muted">Active Scout campaigns</span>'
+                    f'<strong>{ov.counts.get("active_campaigns", 0)}</strong></a></div>'
                     f'{self._poll_html()}'
                     f'<h2>Needs your attention</h2>{att}'
-                    f'<h2>Active work</h2><div class="scrollx">{work_tbl}</div>'
-                    f'<h2>Scout</h2><div class="scrollx">{camp_tbl}</div>')
+                    f'<h2>Active work</h2>'
+                    f'<p class="muted">Approved projects that are ready to run, running, or being '
+                    f'validated. Everything not yet finished lives in Open work.</p>'
+                    f'{work_tbl}'
+                    f'<h2>Scout</h2>{scout_failed_block}'
+                    f'<div class="scrollx">{camp_tbl}</div>{diag_options}')
             script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
                       + self._poll_script(
                           "/api/overview",
@@ -1621,28 +1704,65 @@ function startCampaign(){{
                           "+'|'+c.progress})]}"))
             return _page("AI QA Factory — Overview", "/", body, script)
 
-        _WORK_VIEWS = (("all", "All Work"), ("needs_attention", "Needs Attention"),
-                       ("ready_to_execute", "Ready to Execute"), ("in_progress", "In Progress"),
-                       ("blocked", "Blocked"), ("ready_for_review", "Ready for Review"),
-                       ("ready_for_delivery", "Ready for Delivery"),
-                       ("delivery_prepared", "Delivery Prepared"), ("completed", "Completed"))
+        _WORK_PRIMARY_VIEWS = (("active", "Active"), ("needs_attention", "Needs attention"),
+                               ("completed", "Completed"), ("all", "All"))
+        _WORK_STATUS_VIEWS = (("ready_to_execute", "Ready to execute"),
+                              ("in_progress", "In progress"), ("blocked", "Blocked"),
+                              ("ready_for_review", "Ready for review"),
+                              ("ready_for_delivery", "Ready for delivery"),
+                              ("delivery_prepared", "Delivery prepared"))
 
         def _work_list_page(self, q) -> str:
-            view = (q.get("view") or ["all"])[0]
+            view = (q.get("view") or ["active"])[0]
+            allowed_views = {v for v, _ in self._WORK_PRIMARY_VIEWS + self._WORK_STATUS_VIEWS}
+            if view not in allowed_views:
+                view = "active"
             diag = self._want_diagnostics(q)
             data = self._read_model().project_list(view=view, include_diagnostics=diag)
             _dsuffix = "&diagnostics=1" if diag else ""
             views = "".join(
-                f'<a class="chip" href="/work?view={v}{_dsuffix}" '
-                f'{"style=font-weight:600" if v == view else ""}>{_esc(lbl)}</a>'
-                for v, lbl in self._WORK_VIEWS)
-            views += (
-                f'<a class="chip" href="/work?view={view}">&#10003; Production only</a>' if diag else
-                f'<a class="chip" href="/work?view={view}&diagnostics=1">Show diagnostics</a>')
+                f'<a class="chip" href="/work?view={v}{_dsuffix}"'
+                f'{" aria-current=\"page\"" if v == view else ""}>{_esc(lbl)}</a>'
+                for v, lbl in self._WORK_PRIMARY_VIEWS)
+            status_options = ['<option value="" disabled'
+                              + (' selected' if view not in dict(self._WORK_STATUS_VIEWS) else '')
+                              + '>Choose a stage</option>']
+            status_options.extend(
+                f'<option value="{v}"{" selected" if v == view else ""}>{_esc(lbl)}</option>'
+                for v, lbl in self._WORK_STATUS_VIEWS)
+            diag_hidden = (
+                '<input type="hidden" name="diagnostics" value="1">' if diag else '')
+            status_filter = (
+                '<form class="work-status-filter" action="/work" method="get">'
+                '<label for="work_status">Status</label>'
+                f'<select id="work_status" name="view" onchange="document.getElementById('
+                f'\'work_status_apply\').disabled=!this.value">{"".join(status_options)}</select>'
+                f'{diag_hidden}<button id="work_status_apply" class="btn" type="submit"'
+                f'{" disabled" if view not in dict(self._WORK_STATUS_VIEWS) else ""}>Apply</button>'
+                '</form>')
+            hidden = self._read_model().overview(
+                include_diagnostics=False).counts.get("diagnostics_hidden", 0)
+            diag_toggle = (
+                f'<a class="chip" href="/work?view={view}">&#10003; Production only — hide '
+                'diagnostics</a>' if diag else
+                f'<a class="chip" href="/work?view={view}&diagnostics=1">Show diagnostics'
+                f'{f" ({hidden})" if hidden else ""}</a>')
+            diag_description = (
+                f'{hidden} test, replay, or diagnostic record'
+                f'{" is" if hidden == 1 else "s are"} hidden from production views.'
+                if not diag else
+                'Diagnostic work is visible in this view and remains excluded from production '
+                'counts on Overview.')
+            diag_options = (
+                '<details class="advanced compact-details work-view-options">'
+                '<summary>Advanced view options</summary>'
+                f'<p class="muted">{diag_description}</p><div class="row">{diag_toggle}</div>'
+                '</details>')
             def _row(p):
+                # Two briefs can share a title; the project name is what makes a row identifiable.
                 return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a>'
-                        f'<div class="muted">{_esc(p["project_id"])}</div></td>'
-                        f'<td>{_badge(p["stage"])}</td><td>{_badge(p["health"], p["health"])}</td>'
+                        f'<div class="muted meta">{_esc(p["project_id"])}</div></td>'
+                        f'<td>{_badge(p["stage"])}</td><td>{_badge(health_label(p["health"]), p["health"])}</td>'
                         f'<td>{_esc(p["next_action"])}</td>'
                         f'<td class="muted">{_esc(_fmt_ts(p["updated"]))}</td></tr>')
 
@@ -1650,45 +1770,125 @@ function startCampaign(){{
                 return (f'<li><div class="card"><h3><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></h3>'
                         f'<div class="muted meta">{_esc(p["project_id"])}</div>'
                         f'<div class="row" style="margin:.4rem 0">{_badge(p["stage"])} '
-                        f'{_badge(p["health"], p["health"])}</div>'
+                        f'{_badge(health_label(p["health"]), p["health"])}</div>'
                         f'<div><strong>Next:</strong> {_esc(p["next_action"])}</div>'
                         f'<div class="muted meta">Updated {_esc(_fmt_ts(p["updated"]))}</div></div></li>')
 
             if data["projects"]:
                 rows = "".join(_row(p) for p in data["projects"])
-                desktop = (f'<div class="scrollx only-desktop"><table><caption>{data["total"]} '
-                           f'project(s) — view: {_esc(view)}</caption><tr><th>Project</th><th>Stage</th>'
+                # The caption names the view the way the operator selected it, not by its URL key.
+                view_label = dict(self._WORK_PRIMARY_VIEWS + self._WORK_STATUS_VIEWS).get(view, view)
+                # The result region gets its own heading so the page never jumps h1 -> h3 (the
+                # mobile cards are h3) and screen-reader users can navigate straight to it.
+                heading = '<h2 class="sr-only">Projects</h2>'
+                desktop = (f'{heading}<div class="scrollx only-desktop"><table>'
+                           f'<caption>{data["total"]} project(s) — {_esc(view_label)}</caption>'
+                           f'<tr><th>Project</th><th>Stage</th>'
                            f'<th>Health</th><th>Next action</th><th>Updated</th></tr>{rows}</table></div>')
                 cards = ('<ul class="cards only-mobile" aria-label="Projects">'
                          + "".join(_card(p) for p in data["projects"]) + "</ul>")
                 table = desktop + cards
             else:
-                table = ('<div class="card empty">No projects in this view. '
-                         '<a href="/work?view=all">Clear filter</a></div>')
+                empty_states = {
+                    "active": (
+                        "No active client work",
+                        "Analyze a brief to create a feasibility assessment and reviewable plan.",
+                        '<a class="btn primary" href="/work?create=1#client-brief">'
+                        'Analyze a client brief</a>',
+                    ),
+                    "needs_attention": (
+                        "Nothing needs your attention",
+                        "Blocked, approval-ready, and review-ready work will appear here.",
+                        '<a class="btn" href="/work?view=active">View active work</a>',
+                    ),
+                    "completed": (
+                        "No completed client work",
+                        "Finished and manually delivered projects will remain available here.",
+                        '<a class="btn" href="/work?view=active">View active work</a>',
+                    ),
+                    "all": (
+                        "No client work yet",
+                        "Paste a client brief to create the first reviewable work plan.",
+                        '<a class="btn primary" href="/work?create=1#client-brief">'
+                        'Analyze a client brief</a>',
+                    ),
+                }
+                title, description, action = empty_states.get(
+                    view,
+                    ("No work at this stage",
+                     "Projects will appear here when they reach the selected lifecycle stage.",
+                     '<a class="btn" href="/work?view=active">View active work</a>'))
+                table = (f'<div class="card empty compact"><strong>{title}</strong>'
+                         f'<div class="muted">{description}</div>'
+                         f'<p class="row empty-actions">{action}</p></div>')
+            open_intake = " open" if (q.get("create") or [""])[0] in ("1", "true", "yes") else ""
             create = (
-                '<details class="card"><summary>Create work from a pasted client brief</summary>'
-                '<p class="muted">Analysis only — nothing is executed. This reuses analyze-job.</p>'
-                '<p><label>Project name (optional)<br><input id="cw_pid" placeholder="my-project"></label></p>'
-                '<p><label>Source platform (optional)<br><input id="cw_src" placeholder="upwork / direct"></label></p>'
-                '<p><label>Client brief<br><textarea id="cw_brief" rows="5" style="width:100%"></textarea></label></p>'
-                '<p><button class="btn primary" onclick="createWork(this)">Analyze brief</button></p>'
-                '<p class="muted">No Upwork API — paste the brief and (optionally) a source reference.</p>'
+                f'<details id="client-brief" class="card work-intake"{open_intake}>'
+                '<summary>Analyze a client brief</summary>'
+                '<p class="muted work-intake-intro">Create a reviewable feasibility assessment and '
+                'work plan. Nothing will execute until you approve the plan.</p>'
+                '<div class="work-intake-grid">'
+                '<label for="cw_pid">Project name <span class="label-note">(optional)</span></label>'
+                # The '-' is escaped on purpose: `pattern` is compiled with the RegExp `v` flag, and
+                # an unescaped trailing '-' makes the browser throw, silently disabling validation.
+                r'<input id="cw_pid" maxlength="64" pattern="[A-Za-z0-9._\-]+" '
+                'aria-describedby="cw_pid_help" placeholder="checkout-regression">'
+                '<small id="cw_pid_help" class="field-help">Letters, numbers, dots, underscores, and '
+                'hyphens. Leave blank to generate a safe name.</small>'
+                '<label for="cw_src">Source platform <span class="label-note">(optional)</span></label>'
+                '<select id="cw_src"><option value="manual">Not specified</option>'
+                '<option value="upwork">Upwork</option><option value="direct">Direct client</option>'
+                '<option value="other">Other</option></select>'
+                '<label for="cw_brief">Client brief</label>'
+                '<textarea id="cw_brief" rows="7" required aria-describedby="cw_brief_help cw_error" '
+                'placeholder="Paste the client request, scope, deliverables, deadline, budget, and '
+                'available access."></textarea>'
+                '<small id="cw_brief_help" class="field-help">Include enough detail to assess fit, '
+                'risks, missing access, validation, and expected deliverables.</small></div>'
+                '<div id="cw_error" class="form-error" role="alert" aria-live="assertive" '
+                'tabindex="-1" hidden></div>'
+                '<div class="row work-intake-actions"><button class="btn primary" type="button" '
+                'onclick="createWork(this)">Analyze and create plan</button>'
+                '<span id="cw_status" class="muted" role="status" aria-live="polite"></span></div>'
                 '</details>')
             script = (self._work_actions_script() +
-                      "function createWork(btn){var b=document.getElementById('cw_brief').value.trim();"
-                      "if(!b){alert('paste a client brief');return;}"
-                      "if(btn){if(btn.dataset.busy)return;btn.dataset.busy='1';btn.disabled=true;}"
+                      "function clearWorkError(){var e=document.getElementById('cw_error');"
+                      "var b=document.getElementById('cw_brief'),p=document.getElementById('cw_pid');"
+                      "if(e){e.hidden=true;e.textContent='';}if(b)b.removeAttribute('aria-invalid');"
+                      "if(p)p.removeAttribute('aria-invalid');}\n"
+                      "function showWorkError(message,field){var e=document.getElementById('cw_error');"
+                      "var s=document.getElementById('cw_status');if(s)s.textContent='';"
+                      "if(e){e.textContent=message;e.hidden=false;}if(field){"
+                      "field.setAttribute('aria-invalid','true');field.focus();}else if(e)e.focus();}\n"
+                      "function setWorkBusy(btn,busy){if(!btn)return;if(busy){"
+                      "btn.dataset.busy='1';btn.disabled=true;}else{btn.disabled=false;"
+                      "delete btn.dataset.busy;}}\n"
+                      "function createWork(btn){var brief=document.getElementById('cw_brief');"
+                      "var pid=document.getElementById('cw_pid');var b=brief.value.trim();"
+                      "clearWorkError();if(!b){showWorkError('Paste a client brief to continue.',brief);"
+                      "return;}var p=pid.value.trim();if(p&&!/^[A-Za-z0-9._-]{1,64}$/.test(p)){"
+                      "showWorkError('Use only letters, numbers, dots, underscores, or hyphens in "
+                      "the project name.',pid);return;}if(btn&&btn.dataset.busy)return;"
+                      "setWorkBusy(btn,true);var status=document.getElementById('cw_status');"
+                      "if(status)status.textContent='Analyzing the brief and creating a plan…';"
                       "fetch('/api/work/analyze',{method:'POST',headers:{'Content-Type':'application/json',"
                       "'X-Scout-CSRF':CSRF},body:JSON.stringify({text:b,"
-                      "project_id:document.getElementById('cw_pid').value.trim(),"
-                      "source_platform:document.getElementById('cw_src').value.trim()})})"
+                      "project_id:p,source_platform:document.getElementById('cw_src').value})})"
                       ".then(r=>r.json()).then(function(j){if(j.ok){location.href='/work/'+j.project_id;}"
-                      "else{alert(j.error||'refused');if(btn){btn.disabled=false;delete btn.dataset.busy;}}})"
-                      ".catch(function(e){alert(''+e);if(btn){btn.disabled=false;delete btn.dataset.busy;}});}")
-            body = (f'<h1>Work</h1><div class="row">{views}'
-                    f'<button class="btn" onclick="location.reload()">Refresh</button></div>'
+                      "else{setWorkBusy(btn,false);showWorkError(j.error||"
+                      "'Could not analyze this brief. Review the fields and try again.');}})"
+                      ".catch(function(){setWorkBusy(btn,false);showWorkError("
+                      "'The analysis could not start. Check that the Dashboard is running and try "
+                      "again.');});}"
+                      "var cwb=document.getElementById('cw_brief');if(cwb)cwb.addEventListener("
+                      "'input',clearWorkError);var cwp=document.getElementById('cw_pid');"
+                      "if(cwp)cwp.addEventListener('input',clearWorkError);")
+            body = (f'<h1>Work</h1><p class="muted">Active client work is shown by default. '
+                    f'Completed items remain available in the Completed view.</p>'
+                    f'<div class="work-filter-bar"><nav class="work-primary-views" '
+                    f'aria-label="Work views">{views}</nav>{status_filter}</div>'
                     f'{self._poll_html()}'
-                    f'{table}{create}')
+                    f'{table}{diag_options}{create}')
             # Poll the current view; the banner never auto-reloads, so the Create-work form is safe.
             # The signature notices same-status changes (progress/updated/blockers/evidence/next).
             script = (script + self._poll_script(
@@ -1730,9 +1930,21 @@ function startCampaign(){{
                         extra = "Object.assign(" + fixed + ",promptFields(" + fields_js + "))"
                     else:
                         extra = fixed
-                    conf = ("if(!confirm('" + _esc(a["label"]) + "?'))return;" if a.get("confirm") else "")
-                    onclick = conf + "wact(this,'" + act + "'," + extra + ")"
-                    actbtns.append(f'<button class="{cls}" onclick="{onclick}">{_esc(a["label"])}</button>')
+                    action_js = "wact(this,'" + act + "'," + extra + ")"
+                    if a.get("confirm"):
+                        onclick = ("var btn=this;qaConfirm(" + json.dumps(a["label"] + "?")
+                                   + "," + json.dumps(a["label"])
+                                   + ").then(function(ok){if(ok)wact(btn,'" + act + "',"
+                                   + extra + ");})")
+                    else:
+                        onclick = action_js
+                    # The handler is JS placed inside a double-quoted HTML attribute, and
+                    # json.dumps() emits double quotes: without escaping, the attribute ends at the
+                    # first one and the whole handler is truncated to `qaConfirm(` - which silently
+                    # turned every confirm-guarded action (Mark Delivered, Reopen Delivery) into a
+                    # dead button. Entities are decoded before the JS is evaluated, so _esc is safe.
+                    actbtns.append(f'<button class="{cls}" onclick="{_esc(onclick)}">'
+                                   f'{_esc(a["label"])}</button>')
                 elif a["id"] == "open_vscode":
                     actbtns.append(f'<a class="{cls}" href="{_esc(_vscode_file_uri(d["workspace_path"]))}">'
                                    f'{_esc(a["label"])}</a>')
@@ -1745,19 +1957,29 @@ function startCampaign(){{
                 elif a["id"] == "refresh":
                     actbtns.append('<button class="btn" onclick="location.reload()">Refresh</button>')
             header = (f'<p><a href="/work">&larr; Work</a></p><h1>{_esc(h["title"])}</h1>'
-                      f'<div class="row">{_badge(h["stage"])} {_badge(h["health"], h["health"])} '
-                      f'<span class="muted">{_esc(h["source"])} · {h["progress"]}%</span></div>'
+                      f'<div class="row">{_badge(h["stage"])} {_badge(health_label(h["health"]), h["health"])} '
+                      f'<span class="muted">{_esc(_source_label(h["source"]))} · '
+                      f'{h["progress"]}% complete</span></div>'
                       f'{self._poll_html()}'
                       f'<div class="row" style="margin:.6rem 0">{"".join(actbtns)}'
                       f'<span id="copystatus" class="muted" aria-live="polite"></span></div>')
             summary = d["summary"]
             blockers = "".join(f"<li>{_esc(x)}</li>" for x in summary["blockers"]) or "<li class=muted>none</li>"
+            # Intake questions are a different thing from execution blockers, and the Work list
+            # counts them - so the detail has to show them instead of reporting "none".
+            missing = summary.get("missing_information") or []
+            still_blocking = summary["status"] in _INTAKE_STATES
+            missing_block = (
+                f'<p><strong>Information needed from the client:</strong>'
+                f'{"" if still_blocking else " <span class=\'muted\'>(recorded at intake; no longer blocking)</span>"}'
+                f'</p><ul>{"".join(f"<li>{_esc(x)}</li>" for x in missing)}</ul>') if missing else ''
             panel = {
                 "summary": (
                     '<div class="card">'
                     f'<p><strong>Next:</strong> {_esc(summary["next_action"])}</p>'
                     f'<p><strong>Validation:</strong> {summary["tests_passed"]}/{summary["tests_run"]} · '
                     f'evidence {summary["evidence_count"]}</p>'
+                    f'{missing_block}'
                     f'<p><strong>Blockers:</strong></p><ul>{blockers}</ul></div>'),
                 "plan": (
                     '<div class="card">'
@@ -1775,7 +1997,7 @@ function startCampaign(){{
                     f'</details></div>'),
                 "delivery": (
                     '<div class="card">'
-                    f'<p>State: {_badge(d["delivery"]["status"], "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
+                    f'<p>State: {_badge(stage_label(d["delivery"]["status"]), "attention" if d["delivery"]["status"] == "DELIVERY_PREPARED" else "")}</p>'
                     f'<p class="muted">Reviewed by {_esc(d["delivery"]["reviewed_by"] or "—")} · '
                     f'digest {_esc((d["delivery"]["manifest_digest"] or "—")[:23])}</p>'
                     f'<details><summary>Included files ({len(d["delivery"]["included_files"])})</summary>'
@@ -1826,10 +2048,15 @@ function startCampaign(){{
             running = bool(status.get("running"))
             prospects = st.get("prospects", {})
             if controllable:
-                controls = ('<button class="btn" onclick="ctl(\'pause\')">Pause</button>'
-                            '<button class="btn" onclick="ctl(\'resume\')">Resume</button>'
-                            '<button class="btn" onclick="ctl(\'cancel\')">Stop Safely</button>'
-                            '<button class="btn danger" onclick="ctl(\'kill\')">Cancel (kill)</button>')
+                primary_control = (
+                    '<button class="btn primary" onclick="ctl(\'resume\')">Resume</button>'
+                    if str(mode).upper() == "PAUSED" else
+                    '<button class="btn primary" onclick="ctl(\'pause\')">Pause</button>')
+                controls = (primary_control
+                            + '<button class="btn" onclick="ctl(\'cancel\')">Stop &amp; save</button>'
+                            + '<details class="advanced"><summary>Emergency action</summary>'
+                            + '<button class="btn danger" onclick="ctl(\'kill\')">'
+                            + 'Cancel immediately</button></details>')
             else:
                 controls = (f'<em class="muted">Controls unavailable — this run is '
                             f'<strong>{_esc(mode)}</strong> (read-only).</em>')
@@ -1854,7 +2081,8 @@ function startCampaign(){{
                     f'<a href="/scout/new">Discover Prospects</a>. Nothing is sent without your action.</p>'
                     f'<div class="row"><a class="chip" href="/scout/new">Discover Prospects (adaptive)</a>'
                     f'<a class="chip" href="/scout/history">History</a>'
-                    f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
+                    f'<a class="chip" href="/scout/attention">Needs attention</a>'
+                    f'<a class="chip" href="/results">Companies &amp; outreach</a></div>'
                     f'<div class="card"><p>Scan mode {_badge(mode)} · status '
                     f'{_badge(_prospect_status_label(st.get("status", "n/a")))}</p>'
                     f'<div class="row">{controls}</div></div>'
@@ -1956,7 +2184,8 @@ function startCampaign(){{
             archived_count = sum(1 for p in all_camps if p.project_id in archived_ids)
             current_count = len(all_camps) - archived_count
             rows = "".join(
-                f'<tr><td><a href="/scout/progress?id={_esc(c.project_id)}">{_esc(c.title)}</a></td>'
+                f'<tr><td><a href="/scout/progress?id={_esc(c.project_id)}">'
+                f'{_esc(_friendly_record_label(c.title, c.project_id, "Scout campaign"))}</a></td>'
                 f'<td>{_badge(c.lifecycle_state)}</td>'
                 f'<td>{c.progress}%</td><td>{c.evidence_count}</td>'
                 f'<td class="muted">{_esc(c.operator_next_action)}</td>'
@@ -1975,7 +2204,7 @@ function startCampaign(){{
                     f'<a class="chip" href="/scout/new">New adaptive campaign</a>'
                     f'<a class="chip" href="/scout/history">History</a>'
                     f'<a class="chip" href="/scout">Manual URL Scan</a>'
-                    f'<a class="chip" href="/results">Results</a>'
+                    f'<a class="chip" href="/results">Companies &amp; outreach</a>'
                     f'<span class="chip">Active {len(ov.active_campaigns)}</span></div>'
                     f'<div class="tabs" role="tablist" aria-label="Campaign views">'
                     f'<a role="tab" aria-selected="{"true" if not show_archived else "false"}" '
@@ -2000,9 +2229,12 @@ function startCampaign(){{
                 return self._json(*refusal)
             body = body or {}
             preset = str(body.get("campaign_preset") or "balanced-production")
+            overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else None
             try:
                 out = self._campaign_service().preflight(
                     campaign_preset=preset,
+                    session_preset=body.get("session_preset") or None,
+                    overrides=overrides,
                     probe_browser_launch=bool(body.get("probe_browser", True)),
                     do_network=bool(body.get("probe_network", True)))
             except Exception as exc:
@@ -2046,76 +2278,158 @@ function startCampaign(){{
             except Exception as exc:
                 return self._json(400, {"ok": False, "error": str(exc)})
 
-        def _scout_new_page(self) -> str:
+        def _scout_new_page(self, q=None) -> str:
             cat = self._campaign_service().catalog()
+            show_diagnostics = self._want_diagnostics(q or {})
+            presets = [p for p in cat["campaign_presets"]
+                       if show_diagnostics or not p.get("is_smoke")]
             opts = "".join(
                 f'<option value="{_esc(p["key"])}"{" selected" if p["key"]==cat["default_campaign_preset"] else ""}>'
-                f'{_esc(p["label"])}{" (smoke)" if p.get("is_smoke") else ""}</option>'
-                for p in cat["campaign_presets"])
+                f'{_esc(p["label"])}{" (diagnostic)" if p.get("is_smoke") else ""}</option>'
+                for p in presets)
             sess = "".join(f'<option value="{_esc(s["key"])}">{_esc(s["label"])} '
                            f'({s["max_discovered"]} discovered / {s["max_qa_analyzed"]} QA / '
                            f'{s["max_duration_min"]}m)</option>' for s in cat["session_presets"])
-            strat = "".join(f'<option value="{_esc(s)}">{_esc(s)}</option>'
-                            for s in cat["strategies"])
-            ind_opts = "".join(f'<option value="{_esc(i)}">{_esc(i)}</option>'
-                               for i in cat["industries"])
-            site_opts = "".join(f'<option value="{_esc(s)}">{_esc(s.replace("_", " "))}</option>'
-                                for s in cat["site_types"])
+            strategy_labels = {
+                "conservative": "Conservative — strongest commercial fit",
+                "balanced": "Balanced — recommended",
+                "opportunity": "Wider discovery — more opportunities",
+            }
+            strat = "".join(
+                f'<option value="{_esc(s)}">{_esc(strategy_labels.get(s, s.title()))}</option>'
+                for s in cat["strategies"])
+            ind_opts = "".join(
+                f'<label class="option-tile"><input type="checkbox" name="industry" '
+                f'value="{_esc(i)}"><span>{_esc(i)}</span></label>'
+                for i in cat["industries"])
+            site_type_labels = {
+                "commercial_product_company": "Commercial product",
+                "b2b_saas": "B2B SaaS",
+                "ecommerce": "E-commerce",
+                "booking_travel": "Travel and booking",
+                "professional_services": "Professional services",
+                "marketplace": "Marketplace",
+                "personal_portfolio": "Personal portfolio",
+            }
+            site_opts = "".join(
+                f'<label class="option-tile"><input type="checkbox" name="sitetype" '
+                f'value="{_esc(s)}"><span>{_esc(site_type_labels.get(s, s.replace("_", " ").title()))}'
+                '</span></label>'
+                for s in cat["site_types"])
             body = (
                 '<h1>New Scout campaign</h1>'
-                '<div class="row"><a class="chip" href="/scout/history">History</a>'
+                '<p class="page-intro muted">Find public business websites worth reviewing for '
+                'QA opportunities. Scout analyzes them safely and never contacts anyone.</p>'
+                '<div class="row"><a class="chip" href="/scout/history">Campaign history</a>'
                 '<a class="chip" href="/scout/attention">Needs attention</a>'
-                '<a class="chip" href="/scout">Manual URL Scan</a></div>'
-                '<div class="card formstack"><h2>Campaign basics</h2>'
-                '<label>Campaign type<br><select id="preset">' + opts + '</select></label>'
-                '<label>Run size and time budget<br><select id="session">'
+                '<a class="chip" href="/scout">Scan a known URL</a></div>'
+                '<div class="card formstack campaign-card"><h2>Campaign setup</h2>'
+                '<label>Campaign preset<select id="preset">' + opts + '</select></label>'
+                '<p class="field-help">Each preset on this page starts one bounded run now; '
+                'it does not create a recurring schedule.</p>'
+                '<label>Run size<select id="session">'
                 '<option value="">Use campaign default</option>'
                 + sess + '</select></label>'
-                '<label>Countries (comma-separated; blank = no restriction)<br>'
-                '<input id="countries" placeholder="us, de"></label>'
-                '<label>Industries (optional; blank = campaign default)<br>'
-                '<select id="industries" multiple size="6">' + ind_opts + '</select></label>'
-                '<label>Keywords / commercial signals (comma-separated)<br>'
-                '<input id="keywords" placeholder="pricing, free trial, book demo"></label>'
-                '<label><input type="checkbox" id="deepcapture"> Deep capture (Playwright): real '
-                'screenshots + network evidence (console errors, failed resources, timing). Slower; '
-                'needs Chromium installed. Off = fast static analysis.</label>'
-                '<details class="advanced"><summary>Advanced options and readiness</summary>'
-                '<label>Strategy<br><select id="strategy"><option value="">Use campaign default</option>'
-                + strat + '</select></label>'
-                '<label>Languages (comma-separated)<br><input id="languages" placeholder="en, de"></label>'
-                '<label>Site types (optional)<br><select id="sitetypes" multiple size="6">'
-                + site_opts + '</select></label>'
-                '<label>Exclude keywords (comma-separated)<br><input id="excludekw"></label>'
-                '<label>Minimum commercial score 0–100<br>'
+                '<label>Countries<input id="countries" placeholder="US, DE"></label>'
+                '<p class="field-help">Enter country codes separated by commas. Leave blank to use '
+                'the selected preset: global presets stay unrestricted, while regional presets '
+                'keep their preset countries.</p>'
+                '<fieldset class="option-field"><legend>Industries</legend>'
+                '<div class="option-grid">' + ind_opts + '</div>'
+                '<p class="field-help">Choose any that matter. With none selected, Scout uses the '
+                'campaign default.</p></fieldset>'
+                '<label>Signals to look for<input id="keywords" '
+                'placeholder="pricing, free trial, book demo"></label>'
+                '<p class="field-help">Optional keywords, separated by commas.</p>'
+                '<label class="feature-choice"><input type="checkbox" id="deepcapture"> '
+                '<span><strong>Capture screenshots and browser evidence</strong>'
+                '<small>Slower, but creates stronger proof for client-ready findings.</small>'
+                '</span></label>'
+                '<details class="advanced campaign-advanced">'
+                '<summary>Advanced campaign controls</summary>'
+                '<p class="field-help advanced-intro">Optional refinements for unusual campaigns. '
+                'Leave them unchanged to use the tested campaign defaults.</p>'
+                '<section class="advanced-section" aria-labelledby="targeting-heading">'
+                '<h3 id="targeting-heading">Targeting refinements</h3>'
+                '<label>Site selection approach<select id="strategy">'
+                '<option value="">Use campaign default</option>' + strat + '</select></label>'
+                '<label>Website languages<input id="languages" placeholder="en, de"></label>'
+                '<p class="field-help">Optional language codes, separated by commas.</p>'
+                '<fieldset class="option-field compact-options"><legend>Website types</legend>'
+                '<div class="option-grid">' + site_opts + '</div>'
+                '<p class="field-help">Choose only when you need to narrow the campaign. With none '
+                'selected, Scout uses the campaign default.</p></fieldset>'
+                '<label>Words to exclude<input id="excludekw" '
+                'placeholder="jobs, investor relations"></label>'
+                '<p class="field-help">Sites containing these words in visible page signals are '
+                'filtered out before QA analysis.</p>'
+                '</section>'
+                '<section class="advanced-section" aria-labelledby="limits-heading">'
+                '<h3 id="limits-heading">Run limits</h3>'
+                '<p class="field-help section-help">Blank fields inherit the selected campaign preset '
+                'and run size.</p><div class="limit-grid">'
+                '<label>Minimum commercial fit <span class="label-note">0–100</span>'
                 '<input id="minscore" type="number" min="0" max="100" '
-                'placeholder="Use campaign default"></label>'
-                '<label>Maximum discovered domains<br><input id="maxdisc" type="number" min="1"></label>'
-                '<label>Maximum pages per site<br><input id="maxpages" type="number" min="1"></label>'
-                '<div class="row"><button id="pf" class="chip">Run readiness preflight</button></div>'
-                '<pre id="pfout" class="scrollx muted">Readiness details appear here.</pre>'
+                'placeholder="Campaign default"><small>Higher values keep only stronger prospects.'
+                '</small></label>'
+                '<label>Discovery cap<input id="maxdisc" type="number" min="1" '
+                'placeholder="Campaign default"><small>Maximum candidate websites discovered.'
+                '</small></label>'
+                '<label>Page cap per site<input id="maxpages" type="number" min="1" max="50" '
+                'placeholder="Campaign default"><small>Maximum pages reviewed on each website.'
+                '</small></label></div></section>'
+                '<section class="advanced-section readiness-section" '
+                'aria-labelledby="readiness-heading">'
+                '<h3 id="readiness-heading">System readiness</h3>'
+                '<p class="field-help section-help">Checks search access, browser capture, evidence '
+                'storage and safety limits. It does not start a campaign.</p>'
+                '<div class="row"><button type="button" id="pf" class="chip">'
+                'Check system readiness</button></div>'
+                '<div id="pfout" class="readiness-output" role="status" aria-live="polite" '
+                'hidden></div></section>'
+                + ('<p class="muted">Diagnostic campaign presets are visible in this view. '
+                   '<a href="/scout/new">Return to production presets</a>.</p>'
+                   if show_diagnostics else
+                   '<p class="muted"><a href="/scout/new?diagnostics=1">'
+                   'Show diagnostic campaign presets</a></p>') +
                 '</details>'
-                '<p class="muted">Presets are editable templates. Every run is finite (hard '
-                'ceilings) and never sends anything. Live discovery needs your explicit approval '
-                'and a configured Tavily key.</p>'
-                '<label><input type="checkbox" id="approve"> I approve one bounded LIVE discovery '
-                'run (real external sites, no submissions/purchases/messages)</label>'
-                '<div class="row"><button id="run" class="chip primary">Run campaign</button></div>'
-                '<div id="msg" class="muted"></div></div>')
+                '<div class="banner safety-note"><strong>Safe, read-only discovery</strong>'
+                '<p>Every campaign has a fixed time and size limit. Scout may visit real public '
+                'websites, but it will not submit forms, make purchases or send messages.</p></div>'
+                '<label class="approval-choice"><input type="checkbox" id="approve"> '
+                '<span><strong>Approve live discovery for this campaign</strong>'
+                '<small>This approval applies only to this one bounded run.</small></span></label>'
+                '<div class="row campaign-actions"><button type="button" id="run" '
+                'class="chip primary">Run campaign</button>'
+                '<span id="msg" class="muted" role="status" aria-live="polite"></span></div></div>')
             script = (
                 "const CSRF=" + json.dumps(csrf_token) + ";\n"
                 "function J(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json',"
                 "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json());}\n"
                 "function v(id){var e=document.getElementById(id);return e?e.value.trim():'';}\n"
                 "function csv(s){return s.split(',').map(x=>x.trim()).filter(Boolean);}\n"
-                "function multi(id){var e=document.getElementById(id);"
-                "return e?Array.from(e.selectedOptions).map(o=>o.value):[];}\n"
+                "function checks(name){return Array.from(document.querySelectorAll("
+                "'input[name=\"'+name+'\"]:checked')).map(e=>e.value);}\n"
+                "function readinessText(j){if(j&&j.ok===false)return 'Cannot check this setup — '+"
+                "(j.error||'review the campaign values.');var p=j.preflight||j;"
+                "if(!p||!Array.isArray(p.checks))return 'Readiness check finished.';"
+                "var names={tavily_key:'Search provider',browser:'Browser evidence',"
+                "network:'Internet connection',evidence_dir:'Evidence storage',"
+                "runtime:'Scout runtime',safety_policy:'Campaign limits and safety',"
+                "auth_dependency:'Public-site access',scheduling:'Scheduling (optional)'};"
+                "var states={ready:'Ready',configured:'Configured',skipped:'Not needed',"
+                "not_ready:'Needs setup',blocked:'Blocked',error:'Error'};"
+                "var lines=[p.ok?'Ready to run':'Action needed before launch'];"
+                "p.checks.forEach(function(c){var line=(names[c.key]||c.label||c.key)+': '+"
+                "(states[c.status]||c.status);if(c.required&&c.status!=='ready'&&"
+                "c.status!=='configured'&&c.status!=='skipped'&&c.detail)line+=' — '+c.detail;"
+                "lines.push(line);});return lines.join('\\n');}\n"
                 "function ov(){var o={};"
                 "var c=v('countries');if(c)o.countries=csv(c);"
                 "var lg=v('languages');if(lg)o.languages=csv(lg);"
                 "var st=document.getElementById('strategy').value;if(st)o.strategy=st;"
-                "var ind=multi('industries');if(ind.length)o.industries=ind;"
-                "var sty=multi('sitetypes');if(sty.length)o.site_types=sty;"
+                "var ind=checks('industry');if(ind.length)o.industries=ind;"
+                "var sty=checks('sitetype');if(sty.length)o.site_types=sty;"
                 "var kw=v('keywords');if(kw)o.keywords=csv(kw);"
                 "var ex=v('excludekw');if(ex)o.exclude_keywords=csv(ex);"
                 "var ms=v('minscore');if(ms)o.min_commercial_threshold=parseInt(ms,10);"
@@ -2125,21 +2439,30 @@ function startCampaign(){{
                 "if(dc&&dc.checked)o.browser_mode='playwright';"
                 "return o;}\n"
                 "document.getElementById('pf').onclick=function(){"
-                "document.getElementById('pfout').textContent='running real probes (browser launch"
-                " + network)…';"
-                "J('/api/scout/preflight',{campaign_preset:document.getElementById('preset').value})"
-                ".then(function(j){document.getElementById('pfout').textContent="
-                "JSON.stringify(j.preflight||j,null,2);}).catch(e=>{"
-                "document.getElementById('pfout').textContent='preflight failed: '+e;});};\n"
+                "var out=document.getElementById('pfout');var button=this;"
+                "out.hidden=false;out.textContent='Checking system readiness…';button.disabled=true;"
+                "J('/api/scout/preflight',{campaign_preset:document.getElementById('preset').value,"
+                "session_preset:document.getElementById('session').value||null,overrides:ov(),"
+                "probe_browser:document.getElementById('deepcapture').checked})"
+                ".then(function(j){out.textContent=readinessText(j);button.disabled=false;})"
+                ".catch(function(e){out.textContent='Readiness check failed: '+e;"
+                "button.disabled=false;});};\n"
+                "document.querySelectorAll('.campaign-card input,.campaign-card select')"
+                ".forEach(function(control){control.addEventListener('change',function(){"
+                "var out=document.getElementById('pfout');if(!out.hidden){out.hidden=true;"
+                "out.textContent='';}});});\n"
                 "document.getElementById('run').onclick=function(){"
-                "if(!document.getElementById('approve').checked){alert('approve the bounded live run"
-                " first');return;}var msg=document.getElementById('msg');msg.textContent='launching…';"
+                "var approve=document.getElementById('approve');var msg=document.getElementById('msg');"
+                "var run=document.getElementById('run');"
+                "if(!approve.checked){msg.textContent='Approve live discovery before starting.';"
+                "approve.focus();return;}msg.textContent='Starting campaign…';run.disabled=true;"
                 "J('/api/scout/launch',{campaign_preset:document.getElementById('preset').value,"
                 "session_preset:document.getElementById('session').value||null,"
                 "approve_live_discovery:true,overrides:ov()}).then(function(j){"
                 "if(j.ok){location.href='/scout/progress?id='+encodeURIComponent(j.campaign_id);}"
-                "else{msg.textContent='launch refused: '+(j.error||'unknown');}})"
-                ".catch(e=>{msg.textContent='launch failed: '+e;});};\n")
+                "else{run.disabled=false;msg.textContent='Campaign could not start: '+"
+                "(j.error||'unknown error');}})"
+                ".catch(e=>{run.disabled=false;msg.textContent='Campaign could not start: '+e;});};\n")
             return _page("AI QA Factory — New Scout campaign", "/scout", body, script)
 
         def _scout_progress_page(self, cid: str) -> str:
@@ -2147,8 +2470,10 @@ function startCampaign(){{
                     '<a class="chip" href="/scout/new">New campaign</a>'
                     '<a class="chip" href="/scout/history">History</a></div>'
                     '<div class="card"><div id="p" class="muted">loading…</div>'
-                    '<div class="row"><button id="bp" class="chip" onclick="ctl(\'pause\')">Pause</button>'
-                    '<button id="br" class="chip" onclick="ctl(\'resume\')">Resume</button>'
+                    '<div class="row"><button id="bp" class="chip primary" '
+                    'onclick="ctl(\'pause\')">Pause</button>'
+                    '<button id="br" class="chip primary" hidden '
+                    'onclick="ctl(\'resume\')">Resume</button>'
                     '<button id="bs" class="chip danger" onclick="ctl(\'stop\')">Stop &amp; Save</button></div>'
                     '<details class="advanced"><summary>Advanced run diagnostics</summary>'
                     '<button class="chip" onclick="exp()">Export internal campaign record</button>'
@@ -2167,9 +2492,12 @@ function startCampaign(){{
                 "function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
                 "function load(){fetch('/api/scout/progress?id='+encodeURIComponent(CID)).then(r=>r.json())"
                 ".then(function(j){var c=j.counters||{};var d=(j.decisions||[]);"
-                # After a terminal state, Pause/Resume/Stop no longer apply -> disable them (honest UI).
-                "var term=['completed','stopped_with_checkpoint','failed','cancelled'].indexOf(String(j.run_state))>=0;"
-                "['bp','br','bs'].forEach(function(id){var b=document.getElementById(id);if(b)b.disabled=term;});"
+                # Show only actions that make sense in the current state.
+                "var state=String(j.run_state||'').toLowerCase();"
+                "var term=['completed','stopped_with_checkpoint','failed','cancelled'].indexOf(state)>=0;"
+                "var paused=['paused','pause_requested'].indexOf(state)>=0;"
+                "var bp=document.getElementById('bp'),br=document.getElementById('br'),bs=document.getElementById('bs');"
+                "if(bp)bp.hidden=term||paused;if(br)br.hidden=term||!paused;if(bs)bs.hidden=term;"
                 # Each analyzed domain links to its target detail (findings/evidence); same tab.
                 "var rows=d.map(function(x){var enc=encodeURIComponent(x.domain||'');"
                 "var run=encodeURIComponent(x.scout_run||'');var href='/scout/target?domain='+enc+"
@@ -2177,8 +2505,12 @@ function startCampaign(){{
                 "return '<tr><td><a href=\"'+href+'\">'+esc(x.domain)+'</a></td><td>'+esc(x.priority)+"
                 "'</td><td>'+esc((x.allocation||{}).depth)+'</td><td>'+esc((x.brain||{}).business_model||'')+"
                 "'</td></tr>';}).join('');"
-                "document.getElementById('p').innerHTML='<div class=row><span class=chip>State: '+esc(j.run_state)+"
-                "'</span><span class=chip>Stop: '+esc(j.stop_reason||'—')+'</span></div>'+"
+                "var labels={running:'Running',paused:'Paused',pause_requested:'Pausing',"
+                "completed:'Completed',stopped_with_checkpoint:'Stopped and saved',failed:'Failed',"
+                "cancelled:'Cancelled'};"
+                "document.getElementById('p').innerHTML='<div class=row><span class=chip>Status: '+"
+                "esc(labels[state]||String(j.run_state||'Unknown').replaceAll('_',' '))+'</span>'+"
+                "(j.stop_reason?'<span class=chip>Stopped because: '+esc(j.stop_reason)+'</span>':'')+'</div>'+"
                 "'<table><tr><th>Discovered</th><th>Eligible</th><th>QA analyzed</th><th>Actionable</th>'+"
                 "'<th>Already</th><th>Rejected</th><th>Failed</th></tr><tr><td>'+[c.discovered,c.eligible,"
                 "c.qa_analyzed,c.actionable,c.already_analyzed,c.rejected,c.failed].map(v=>esc(v==null?0:v)).join('</td><td>')+"
@@ -2260,7 +2592,9 @@ function startCampaign(){{
                     f'<span class="muted">or</span>'
                     f'<label class="muted">from <input name="from" type="date" value="{_esc(frm)}"></label>'
                     f'<label class="muted">to <input name="to" type="date" value="{_esc(to)}"></label>'
-                    f'<input name="text" placeholder="filter domain/text" value="{_esc(qtext)}">'
+                    f'<label class="sr-only" for="history_text">Filter by domain or text</label>'
+                    f'<input id="history_text" name="text" placeholder="filter domain/text" '
+                    f'value="{_esc(qtext)}">'
                     f'<button class="chip">Filter</button>'
                     f'<a class="chip" href="/scout/history">Reset</a></form>'
                     f'<div class="scrollx">{table}</div>'
@@ -2286,8 +2620,9 @@ function startCampaign(){{
                 "'Content-Type':'application/json'},body:JSON.stringify({action:action,domains:d,"
                 "confirm:!!confirmFlag})}).then(r=>r.json()).then(j=>{if(j.ok)location.reload();"
                 "else document.getElementById('bulkmsg').textContent=j.error||'Action failed';});}"
-                "function forgetSelected(){if(confirm('Forget selected targets from dedup/history? "
-                "Exact-run evidence will remain.'))bulk('forget_targets',true);}")
+                "function forgetSelected(){qaConfirm('Forget selected targets from dedup/history? "
+                "Exact-run evidence will remain.','Forget targets').then(function(ok){"
+                "if(ok)bulk('forget_targets',true);});}")
             return _page("AI QA Factory — Scout history", "/scout", body, script)
 
         def _scout_target_page(self, domain: str, run: str = "") -> str:
@@ -2634,9 +2969,7 @@ function startCampaign(){{
                      # Won/Delivered are commitments: require an explicit operator confirmation
                      # (they map to confirm=1; the server refuses them otherwise).
                      'var need=(s==="won"||s==="delivered");'
-                     'if(need&&!window.confirm("Mark this prospect \\""+s+"\\"? Do this only after a '
-                     'real, confirmed client agreement/delivery.")){return;}'
-                     'if(m){m.textContent="saving…";}'
+                     'function save(){if(m){m.textContent="saving…";}'
                      'fetch("/api/scout/engagement?domain="+encodeURIComponent(DOM)+"&status="+'
                      'encodeURIComponent(s)+(need?"&confirm=1":""),{method:"POST",'
                      'headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},body:"{}"})'
@@ -2644,6 +2977,9 @@ function startCampaign(){{
                      'if(j.ok){location.reload();}else if(m){m.textContent='
                      '(j.needs_confirmation?"confirmation required":"failed");}})'
                      '.catch(function(){if(m){m.textContent="request error";}});}'
+                     'if(need){qaConfirm("Mark this prospect \\""+s+"\\"? Do this only after a real, '
+                     'confirmed client agreement/delivery.","Confirm "+s).then(function(ok){'
+                     'if(ok)save();});return;}save();}'
                      'function startCW(){var m=document.getElementById("cwmsg");'
                      'if(m){m.textContent="running analyze-job…";}'
                      'fetch("/api/scout/start-client-work?domain="+encodeURIComponent(DOM),'
@@ -2659,9 +2995,10 @@ function startCampaign(){{
                      # In-flight/double-click guard: refuse a second call while one is pending.
                      'if(POLISHING){return;}'
                      # Explicit paid-call confirmation (budget controls are not in place until Slice 3).
-                     'if(!window.confirm("Polish with AI may make a PAID model call when a live LLM '
+                     'qaConfirm("Polish with AI may make a PAID model call when a live LLM '
                      'is configured. Budget limits and no-repeat caching arrive in Slice 3, so each '
-                     'confirmed click may repeat the call. Continue?")){return;}'
+                     'confirmed click may repeat the call.","Polish with AI").then(function(ok){'
+                     'if(!ok){return;}'
                      'POLISHING=true;if(b){b.disabled=true;}if(m){m.textContent="polishing…";}'
                      'fetch("/api/scout/polish-draft?domain="+encodeURIComponent(DOM),'
                      '{method:"POST",headers:{"X-Scout-CSRF":CSRF,"Content-Type":"application/json"},'
@@ -2672,7 +3009,7 @@ function startCampaign(){{
                      'if(g){g.textContent=j.draft.generated_by||"deterministic";}'
                      'if(m){m.textContent="";}}else if(m){m.textContent="failed: "+(j.error||"unknown");}})'
                      '.catch(function(){if(m){m.textContent="request error";}})'
-                     '.then(function(){POLISHING=false;if(b){b.disabled=false;}});}</script>')
+                     '.then(function(){POLISHING=false;if(b){b.disabled=false;}});});}</script>')
 
             return _page("AI QA Factory — Target detail", "/scout", body)
 
@@ -3159,14 +3496,15 @@ function startCampaign(){{
                 "domains:ps.map(x=>x.dataset.domain).filter(Boolean),confirm:!!confirmFlag})"
                 ".then(j=>{if(j.ok)location.reload();else document.getElementById('bulkmsg').textContent="
                 "j.error||'Action failed';});}"
-                "function deleteEvidence(){if(confirm('Delete screenshots, videos and browser traces "
-                "for selected targets? Findings and summary history will remain.'))"
-                "selectedAction('delete_evidence',true);}"
+                "function deleteEvidence(){qaConfirm('Delete screenshots, videos and browser traces "
+                "for selected targets? Findings and summary history will remain.','Delete evidence')"
+                ".then(function(ok){if(ok)selectedAction('delete_evidence',true);});}"
                 "function runAction(a){post({action:a,run_id:RUN}).then(j=>{if(j.ok)location.reload();"
                 "else alert(j.error||'Action failed');});}"
-                "function deleteRun(){var typed=prompt('Permanent deletion. Type the exact run ID: '+RUN);"
-                "if(typed!==RUN)return;post({action:'delete_run',run_id:RUN,confirm:true}).then(j=>{"
-                "if(j.ok)location.href='/scout/history';else alert(j.error||'Delete failed');});}")
+                "function deleteRun(){qaConfirm('Permanent deletion. Type the exact run ID to continue.',"
+                "'Delete entire run',RUN).then(function(ok){if(!ok)return;"
+                "post({action:'delete_run',run_id:RUN,confirm:true}).then(j=>{"
+                "if(j.ok)location.href='/scout/history';else alert(j.error||'Delete failed');});});}")
             return _page("AI QA Factory — Run results", "/scout", body, script)
 
         # --- Scout data pages, unified into the shared layout (reuse existing data) -----------
@@ -3224,11 +3562,15 @@ function startCampaign(){{
                 f'<label>Min severity<br><select name="sev">{sev_opts}</select></label>'
                 '<span style="align-self:end"><button class="btn primary" type="submit">Filter</button> '
                 '<a class="btn" href="/results">Reset</a></span></div></form>')
-            body = (f'<h1>Results</h1><div class="row"><a class="chip" href="/scout">Manual URL Scan</a>'
+            body = (f'<h1>Companies &amp; outreach</h1>'
+                    f'<p class="muted">A commercial view of analyzed companies, public contacts and '
+                    f'draft outreach. For QA history and evidence, use <a href="/scout/history">'
+                    f'Scout History</a>.</p>'
+                    f'<div class="row"><a class="chip" href="/scout/history">QA History</a>'
                     f'<a class="chip" href="/scout/campaigns">Campaigns</a></div>'
                     f'{form}{chips}<div class="scrollx">{table}</div>'
                     '<p class="muted">Read-only. No outreach is sent from here.</p>')
-            return _page("AI QA Factory — Results", "/scout", body)
+            return _page("AI QA Factory — Companies & outreach", "/scout", body)
 
         def _company_page(self, cid: str) -> str:
             d = self._company_detail(cid)
@@ -3247,18 +3589,19 @@ function startCampaign(){{
             gmail_action = (f'<a class="btn" href="{_esc(compose)}" target="_blank" rel="noopener">'
                             "Open in Gmail</a>" if recip and draft else "<em>no draft/contact yet</em>")
             body = (
-                f'<p><a href="/results">&larr; Results</a></p>'
+                f'<p><a href="/results">&larr; Companies &amp; outreach</a></p>'
                 f'<h1>{_esc(d["company"].get("canonical_name") or cid)}</h1>'
-                f'<p class="muted">domain {_esc(d["company"].get("primary_domain"))}</p>'
+                f'<p class="muted">{_esc(d["company"].get("primary_domain"))}</p>'
                 f'<h2>Findings</h2><div class="scrollx"><table><caption>{len(d["findings"])} finding(s)</caption>'
                 f'<tr><th>Capability</th><th>Severity</th><th>Title</th><th>Verification</th>'
                 f'<th>Client-safe</th></tr>{frows or "<tr><td colspan=5 class=muted>none</td></tr>"}</table></div>'
-                '<h2>Public contact + provenance</h2><div class="card">'
-                f'<p>Contact: <code>{_esc(recip)}</code> ({_esc(contact.get("status"))}) · '
-                f'source {_esc(prov.get("source_category"))} · published '
+                '<h2>Public contact</h2><div class="card">'
+                f'<p>Contact: <code>{_esc(recip)}</code> ({_esc(contact.get("status"))})</p>'
+                '<details class="advanced"><summary>Contact provenance</summary>'
+                f'<p>Source: {_esc(prov.get("source_category"))} · published '
                 f'{_esc(prov.get("publicly_published_for_contact"))} · verified '
                 f'{_esc(prov.get("last_verified_at"))}</p>'
-                f'<p class="muted">source URL: {_esc(prov.get("source_url"))}</p></div>'
+                f'<p class="muted">Source URL: {_esc(prov.get("source_url"))}</p></details></div>'
                 '<h2>Draft (edit in Gmail; nothing is sent from here)</h2><div class="card">'
                 f'<p><strong>Subject:</strong> {_esc(draft.get("subject", "(none)"))}</p>'
                 f'<pre>{_esc(draft.get("body", "(no draft)"))}</pre>'
@@ -3266,24 +3609,6 @@ function startCampaign(){{
                 'company contacted. Live API send stays the optional, one-at-a-time scout send CLI '
                 'path.</span></p></div>')
             return _page(f"AI QA Factory — {cid}", "/scout", body)
-
-        def _projects_page(self) -> str:
-            snap = self._projects_snapshot()
-            rows = "".join(
-                f'<tr><td>{_esc(p["project_id"])}</td><td>{_badge(p["type"])}</td>'
-                f'<td>{_esc(p["title"])}</td><td>{_badge(p["lifecycle_state"])}</td>'
-                f'<td>{_esc(p["progress"])}%</td><td>{_esc(len(p["blockers"]))}</td>'
-                f'<td>{_esc(p["evidence_count"])}</td>'
-                f'<td class="muted">{_esc(p["operator_next_action"])}</td></tr>'
-                for p in snap.get("projects", []))
-            table = (f'<table><caption>{snap.get("project_count", 0)} projects + campaigns</caption>'
-                     f'<tr><th>Project</th><th>Type</th><th>Title</th><th>State</th><th>Progress</th>'
-                     f'<th>Blockers</th><th>Evidence</th><th>Next action</th></tr>{rows}</table>'
-                     if rows else '<div class="card empty muted">None yet.</div>')
-            body = (f'<h1>Projects</h1><p class="muted">Client-work projects and Scout campaigns from '
-                    f'the existing project state (read-only). See also <a href="/work">Work</a>.</p>'
-                    f'<div class="scrollx">{table}</div>')
-            return _page("AI QA Factory — Projects", "/work", body)
 
         def _evidence_li(self, e) -> str:
             rel = e.get("relative_path", "")
@@ -3300,6 +3625,11 @@ function startCampaign(){{
             wx = WorkExecutionService(output_dir=service.output_dir)
             index = self._read_model().project_list(
                 view="all", include_diagnostics=include_diagnostics)["projects"]
+            from core.orchestration.project_index import ProjectIndex
+            object_titles = {
+                p.project_id: _friendly_record_label(p.title, p.project_id, "Scout campaign")
+                for p in ProjectIndex(service.output_dir).list_projects(include_diagnostics)
+            }
             targets = [project] if project else [p["project_id"] for p in index]
             for pid in targets:
                 try:
@@ -3310,7 +3640,10 @@ function startCampaign(){{
                     hd = h.to_dict() if hasattr(h, "to_dict") else dict(h)
                     events.append({"time": hd.get("at", ""), "actor": hd.get("actor", ""),
                                    "action": f'{hd.get("from_state")} -> {hd.get("to_state")}',
-                                   "object": pid, "result": hd.get("reason", "")})
+                                   "object": pid,
+                                   "object_label": object_titles.get(
+                                       pid, _friendly_record_label("", pid, "Work item")),
+                                   "result": hd.get("reason", "")})
             # Scout activity is append-only persisted campaign history. Enumerate canonical
             # campaigns directly from _runcontrol, the same source Observer uses, so the diagnostics
             # toggle cannot inflate campaign counts with per-target/legacy artifact folders. The
@@ -3355,6 +3688,8 @@ function startCampaign(){{
                         "actor": "scout-engine",
                         "action": str(ev.get("event", "scout_event")),
                         "object": run_id,
+                        "object_label": object_titles.get(
+                            run_id, _friendly_record_label("", run_id, "Scout campaign")),
                         "result": ", ".join(
                             f"{k}={v}" for k, v in ev.items() if k not in ("at", "event")),
                         "campaign_id": run_id,
@@ -3384,7 +3719,8 @@ function startCampaign(){{
                 rows = "".join(
                     f'<tr><td data-label="When" class="muted">{_fmt_ts(e["time"])}</td>'
                     f'<td data-label="Activity">{_esc(_activity_label(e["action"]))}</td>'
-                    f'<td data-label="Target" class="muted">{_esc(e["object"])}</td></tr>'
+                    f'<td data-label="Target" class="muted">'
+                    f'{_esc(e.get("object_label") or e["object"])}</td></tr>'
                     for e in data["events"])
             if rows:
                 heads = ('<th>Time</th><th>Actor</th><th>Action</th><th>Object</th><th>Result</th>'
@@ -3409,7 +3745,7 @@ function startCampaign(){{
                          f'<div class="scrollx">{table}</div>')
 
 
-        def _settings_page(self) -> str:
+        def _settings_page(self, q=None) -> str:
             from core.orchestration.tool_broker import ToolBroker
             gmail = next((t for t in ToolBroker(clock=lambda: "").discover()
                          if t.id == "gmail_personal"), None)
@@ -3431,22 +3767,56 @@ function startCampaign(){{
                 'No secrets or absolute paths are shown.</p></div>')
             body = (
                 '<h1>Settings</h1>'
-                '<div class="card"><h2>Display density</h2>'
-                '<div class="row"><button class="btn" onclick="setDensity(\'comfortable\')">Comfortable</button>'
-                '<button class="btn" onclick="setDensity(\'compact\')">Compact</button></div>'
-                '<p class="muted">Saved in this browser only (no server preference database).</p></div>'
+                '<div class="card"><h2>Appearance</h2>'
+                '<p class="muted">Theme is changed from the header. Choose how much information fits '
+                'on each page.</p>'
+                '<div class="row" role="group" aria-label="Display density">'
+                '<button id="density-comfortable" class="btn" aria-pressed="false" '
+                'onclick="setDensity(\'comfortable\')">Comfortable</button>'
+                '<button id="density-compact" class="btn" aria-pressed="false" '
+                'onclick="setDensity(\'compact\')">Compact</button>'
+                '<span id="density-status" class="muted" aria-live="polite"></span></div>'
+                '<p class="muted">Saved in this browser only.</p></div>'
                 '<div class="card"><h2>Scout defaults (bounded, read-only)</h2>'
-                '<p class="muted">1–10 public https seeds · static browser · concurrency 1 · read-only.</p></div>'
-                f'<div class="card"><h2>Gmail</h2><p>Setup status: {_badge(gmail_state)} '
-                '<span class="muted">(no secret is shown; live send is a separate opt-in CLI path)</span></p></div>'
-                '<details class="card advanced"><summary>System diagnostics</summary>'
+                '<p>Up to 10 public websites per manual scan, one site at a time. Nothing is sent, '
+                'submitted or purchased automatically.</p></div>'
+                '<div class="card" id="data-retention"><h2>Data &amp; retention</h2>'
+                '<p>Use archive for everyday cleanup. Permanent deletion is limited to exact Scout '
+                'runs and heavy evidence, with confirmation.</p>'
+                '<div class="retention-grid">'
+                '<div class="summary-item"><span class="badge ok">Reversible</span>'
+                '<strong>Archive</strong><span class="muted">Hides targets or runs from current views. '
+                'Restore them from Archived.</span></div>'
+                '<div class="summary-item"><span class="badge attention">Keeps audit</span>'
+                '<strong>Forget target</strong><span class="muted">Removes History/dedup memory while '
+                'preserving exact-run evidence.</span></div>'
+                '<div class="summary-item"><span class="badge danger">Permanent</span>'
+                '<strong>Delete</strong><span class="muted">Deletes selected heavy evidence or an '
+                'entire inactive run. Raw Activity remains append-only.</span></div></div>'
+                '<div class="row" style="margin-top:12px">'
+                '<a class="btn" href="/scout/history?archived=1">Archived targets</a>'
+                '<a class="btn" href="/scout/campaigns?archived=1">Archived campaigns</a>'
+                '<a class="btn" href="/work?view=completed">Completed work</a>'
+                '<a class="btn" href="/collab?completed=1">Completed collaboration</a></div></div>'
+                f'<div class="card"><h2>Integrations</h2><p>Gmail: {_badge(gmail_state)} '
+                '<span class="muted">Optional. No secret values are shown, and sending remains a '
+                'separate opt-in action.</span></p>'
+                '<p><a href="/tools">Open advanced readiness</a></p></div>'
+                '<details class="card advanced"><summary>Advanced integrations &amp; system diagnostics</summary>'
                 f'<p><b>Output workspace:</b> <code>{_esc(str(service.output_dir))}</code></p>'
                 + build_card +
                 f'{self._access_section()}'
                 '</details>')
-            script = ("function setDensity(d){document.documentElement.setAttribute('data-density',d);"
-                      "try{localStorage.setItem('qa_density',d);}catch(e){}}"
-                      "try{var d=localStorage.getItem('qa_density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}")
+            script = (
+                "function applyDensity(d){d=d==='compact'?'compact':'comfortable';"
+                "document.documentElement.setAttribute('data-density',d);"
+                "['comfortable','compact'].forEach(function(x){var b=document.getElementById('density-'+x);"
+                "if(b)b.setAttribute('aria-pressed',x===d?'true':'false');});"
+                "var s=document.getElementById('density-status');if(s)s.textContent="
+                "(d==='compact'?'Compact':'Comfortable')+' selected';}"
+                "function setDensity(d){applyDensity(d);try{localStorage.setItem('qa_density',d);}catch(e){}}"
+                "try{applyDensity(localStorage.getItem('qa_density')||'comfortable');}"
+                "catch(e){applyDensity('comfortable');}")
             return _page("AI QA Factory — Settings", "/settings", body, script)
 
         # Safe evidence preview/download for client-work projects (v3.1 M7). Path-confined, size-
@@ -3499,21 +3869,23 @@ function startCampaign(){{
                 return {"Runtime Available": "ok", "Fixture Verified": "ok", "Live Verified": "ok",
                         "Blocked": "blocked", "Unavailable": "blocked"}.get(level, "")
             rows = "".join(
-                f'<tr><td>{_esc(t["name"])}<div class="muted">{_esc(t["id"])}</div></td>'
+                f'<tr><td>{_esc(t["name"])}</td>'
                 f'<td>{_esc(t["capability"])}</td><td>{_badge(t["ui_level"], _lvl_kind(t["ui_level"]))}</td>'
                 f'<td class="muted">{_esc(t["readiness"])}</td>'
                 f'<td class="muted">{_esc(t["reason"])}</td>'
                 f'<td class="muted">{_esc(t["setup_action"])}</td></tr>' for t in data["tools"])
-            table = (f'<table><caption>Honest readiness (no live MCP/network call; '
-                     f'any_live_accepted={data["any_live_accepted"]})</caption>'
+            table = (f'<table><caption>Current readiness (no live external call from this page)</caption>'
                      f'<tr><th>Tool</th><th>Capability</th><th>Level</th><th>Readiness</th>'
                      f'<th>Reason</th><th>Setup action</th></tr>{rows}</table>')
-            body = (f'<h1>Tools</h1><p class="muted">Honest tool readiness (no live MCP/network call). '
-                    f'A test file is never a runtime binding; a binding present is "Binding Available"; '
-                    f'a checked runtime is "Runtime Available"; nothing is "Live Verified" without a '
-                    f'real live acceptance.</p><div class="scrollx">{table}</div>'
-                    f'{self._service_capability_section()}')
-            return _page("AI QA Factory — Tools · Tool readiness", "/tools", body)
+            body = (f'<p><a href="/settings">&larr; Settings</a></p>'
+                    f'<h1>Advanced readiness</h1><p class="muted">Technical readiness for integrations '
+                    f'and optional execution tools. Ordinary Scout work does not require every item '
+                    f'on this page.</p>'
+                    f'<details class="card advanced"><summary>Tool readiness matrix</summary>'
+                    f'<div class="scrollx">{table}</div></details>'
+                    f'<details class="card advanced"><summary>Service capability matrix</summary>'
+                    f'{self._service_capability_section()}</details>')
+            return _page("AI QA Factory — Advanced readiness", "/settings", body)
 
         def _service_capability_section(self) -> str:
             from core.orchestration.service_capability import snapshot as _svc_snap
@@ -3608,9 +3980,53 @@ function startCampaign(){{
                     ("Tool readiness guide", "TOOL_READINESS_GUIDE.md"),
                     ("Troubleshooting", "TROUBLESHOOTING_OPERATOR.md")]
             items = "".join(f"<li>{_esc(lbl)} — <code>docs/{_esc(f)}</code></li>" for lbl, f in docs)
-            body = (f'<h1>Documentation</h1><div class="card"><p class="muted">Local documentation '
-                    f'(open in your editor):</p><ul>{items}</ul></div>')
-            return _page("AI QA Factory — Documentation", "/docs", body)
+            body = (
+                '<h1>Help</h1><p class="muted">Short answers for the most common operator tasks.</p>'
+                '<div class="help-grid">'
+                '<section class="card"><h2>Start a Scout campaign</h2>'
+                '<ol><li>Open <a href="/scout/new">New Scout campaign</a>.</li>'
+                '<li>Choose the run size, countries and industries.</li>'
+                '<li>Approve the bounded live run and select Run campaign.</li></ol>'
+                '<p>Every run has hard limits and never sends messages, submits forms or makes '
+                'purchases automatically.</p></section>'
+                '<section class="card"><h2>Use from Claude Code in VS Code</h2>'
+                '<p>Open this repository in VS Code, start Claude Code Chat, and paste the client brief '
+                'with the goal, constraints and what “done” means. Repository rules load '
+                'automatically from <code>CLAUDE.md</code> and <code>AGENTS.md</code>.</p>'
+                '<p>Ask the agent to analyze first and wait for approval before implementation. '
+                'Start this operator UI separately with <code>python main.py dashboard</code>.</p>'
+                '<details><summary>Prompt template</summary>'
+                '<pre>Analyze this client request first.\n'
+                'Create a saved work item and show fit, risks, missing access, questions, plan, '
+                'and validation.\nDo not implement until I approve.\n\n'
+                'Client brief:\n[paste the client request, links, files, budget, deadline, and '
+                'available access]\n\nDone when:\n'
+                '[state the expected deliverables and tests]</pre></details></section>'
+                '<section class="card"><h2>Review findings and evidence</h2>'
+                '<p>Use <a href="/scout/history">History</a> for analyzed websites. Open a target to '
+                'review client-safe findings, screenshots and downloadable evidence.</p>'
+                '<p>Use <a href="/results">Companies &amp; outreach</a> only for commercial follow-up '
+                'and public-contact drafts.</p></section>'
+                '<section class="card"><h2>Pause or stop safely</h2>'
+                '<p>The campaign progress page shows only the controls available in the current '
+                'state. Stop &amp; Save preserves a checkpoint so the result can be reviewed later.</p>'
+                '<p>Immediate cancellation is kept under Emergency action.</p></section>'
+                '<section class="card"><h2>Clean up old data</h2>'
+                '<p>Archive first whenever possible. Archive is reversible; Forget removes a target '
+                'from History/dedup but keeps exact-run evidence; Delete is permanent.</p>'
+                '<p><a href="/settings#data-retention">Open Data &amp; retention</a>.</p></section>'
+                '<section class="card"><h2>Diagnostics and integrations</h2>'
+                '<p>Production views hide smoke, replay and acceptance data by default. Technical '
+                'IDs, build details, models and readiness matrices stay inside Advanced sections.</p>'
+                '<p><a href="/settings">Open Settings</a>.</p></section>'
+                '<section class="card"><h2>When something looks wrong</h2>'
+                '<p>Refresh once, then check Needs attention. If the running build is stale or an '
+                'integration is unavailable, open Advanced integrations &amp; system diagnostics '
+                'in Settings.</p></section></div>'
+                f'<details class="card advanced"><summary>Reference files for developers</summary>'
+                f'<p class="muted">Open these local files in the repository editor.</p><ul>{items}</ul>'
+                f'</details>')
+            return _page("AI QA Factory — Help", "/docs", body)
 
     return _Handler
 
@@ -3951,6 +4367,9 @@ _TOKENS_CSS = """
 *{box-sizing:border-box}
 body{font-family:var(--font);margin:0;background:var(--bg);color:var(--text);line-height:1.5}
 a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+/* An in-page action that should read as a link but behave (and be announced) as a button. */
+.linklike{background:none;border:0;padding:0;font:inherit;color:var(--link);cursor:pointer}
+.linklike:hover{text-decoration:underline}
 header.top{background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
 header.top .wrap{max-width:var(--maxw);margin:0 auto;display:flex;align-items:center;gap:var(--gap);padding:10px var(--pad)}
 header.top .brand{font-weight:700} header.top nav{display:flex;gap:4px;margin-left:8px}
@@ -3963,18 +4382,28 @@ header.top .wrap{flex-wrap:wrap} header.top nav{flex-wrap:wrap}
 .scrollx{overflow-x:auto;max-width:100%;margin-bottom:var(--gap)}
 h1{font-size:22px;margin:.2rem 0 1rem} h2{font-size:16px;margin:1.4rem 0 .6rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);margin-bottom:var(--gap)}
+.banner{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);
+ padding:10px 12px;margin-bottom:var(--gap)}.banner.warn{border-color:var(--attention)}
 .muted{color:var(--muted)} .row{display:flex;gap:var(--gap);flex-wrap:wrap;align-items:center}
 table{border-collapse:collapse;width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}
 caption{text-align:left;color:var(--muted);padding:6px 2px;font-size:13px}
 th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;height:var(--row)}
 th{background:var(--surface-2);color:var(--muted);font-weight:600}
 tr:last-child td{border-bottom:none}
-.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--badge-bg);color:var(--muted)}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:var(--badge-bg);color:var(--muted);white-space:nowrap}
+/* Visible only to assistive tech: gives a repeated control ("Open") a unique accessible name. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+ clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.attention-project{font-weight:600}
+/* Names the scope a tile counts, so its number is never read as covering the whole product. */
+.tile-note{display:block;font-size:11px;color:var(--muted)}
 .badge.ok{color:var(--ok)} .badge.attention{color:var(--attention)}
 .badge.blocked,.badge.danger{color:var(--error)} .badge.done{color:var(--muted)}
 .btn{display:inline-block;padding:8px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:14px}
 .btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink);font-weight:600}
 .btn.danger{border-color:var(--error);color:var(--error)}
+.btn[aria-pressed="true"],.nav-more[aria-current="page"]{border-color:var(--accent);
+ box-shadow:inset 0 -2px 0 var(--accent)}
 .btn:disabled{opacity:.55;cursor:not-allowed}
 .btn:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .chip{display:inline-flex;gap:6px;align-items:center;padding:2px 10px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:999px;font-size:12px}
@@ -3992,6 +4421,9 @@ button.chip.primary:hover{background:var(--primary);filter:brightness(1.08)}
 .chip.danger,button.chip.danger{background:var(--surface-2);color:var(--error);border-color:var(--error)}
 button.chip.danger:hover{background:var(--error);color:var(--primary-ink)}
 .empty{padding:2rem;text-align:center;color:var(--muted)}
+.empty.compact{padding:18px 20px}.empty.compact strong{display:block;color:var(--text);
+ margin-bottom:3px}.empty.compact p{margin:12px 0 0}
+.empty-actions{justify-content:center}
 input,select,textarea{padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--input);color:var(--text);font-family:inherit;max-width:100%}
 textarea{width:100%;resize:vertical}
 input[type=checkbox]{accent-color:var(--accent);width:auto;vertical-align:middle}
@@ -4012,12 +4444,54 @@ details>summary{cursor:pointer;color:var(--muted)}
 .cards{list-style:none;margin:0;padding:0} .cards li{margin-bottom:var(--gap)}
 .cards .card h3{font-size:15px;margin:0 0 .3rem} .cards .meta{font-size:12px}
 .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--gap)}
+/* On a phone two 150px tiles fit but leave a lone half-width orphan on the next row; one full
+   column reads better than a ragged grid. */
+@media (max-width:420px){.summary-grid{grid-template-columns:1fr}}
+.retention-grid,.help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+ gap:var(--gap)}
+.help-grid .card{margin-bottom:0}.help-grid h2{margin-top:0}
 .summary-item{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px}
 .summary-item strong{display:block;font-size:20px;line-height:1.2;margin-top:3px}
+.overview-summary{margin-bottom:8px}.overview-summary .summary-item{color:var(--text)}
+.overview-summary .summary-item:hover{border-color:var(--muted);text-decoration:none}
+.compact-details{margin-top:20px;padding:10px 12px}
+.work-filter-bar{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--gap);
+ flex-wrap:wrap;margin-bottom:8px}
+.work-primary-views{display:flex;gap:7px;flex-wrap:wrap}
+.work-primary-views .chip[aria-current="page"]{border-color:var(--accent);color:var(--text);
+ box-shadow:inset 0 -2px 0 var(--accent);font-weight:600}
+.work-status-filter{display:flex;align-items:flex-end;gap:7px;flex-wrap:wrap}
+.work-status-filter label{display:block;color:var(--muted);font-size:12px;font-weight:600}
+.work-status-filter select{display:block;min-width:170px;margin-top:3px}
+.work-status-filter .btn{padding:6px 12px}
+.work-view-options{margin:4px 0 var(--gap)}
+.work-view-options p{margin-bottom:10px}
+.work-intake{margin-top:var(--gap)}
+.work-intake>summary{font-weight:600;color:var(--text)}
+.work-intake[open]>summary{margin-bottom:8px}
+.work-intake-intro{max-width:720px;margin:0 0 16px}
+.work-intake-grid{display:grid;grid-template-columns:minmax(140px,190px) minmax(0,1fr);
+ gap:7px 14px;max-width:820px;align-items:start}
+.work-intake-grid label{font-size:13px;font-weight:600;padding-top:7px}
+.work-intake-grid input,.work-intake-grid select{width:100%;max-width:440px}
+.work-intake-grid textarea{max-width:100%}
+.work-intake-grid .field-help{grid-column:2;margin:-2px 0 7px;max-width:620px}
+.work-intake-actions{margin-top:14px}
+.form-error{max-width:820px;margin-top:12px;padding:10px 12px;border:1px solid var(--error);
+ border-radius:6px;background:var(--surface-2);color:var(--error);font-size:13px}
+[aria-invalid="true"]{border-color:var(--error)!important}
 .evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:var(--gap)}
 .evidence-item{border:1px solid var(--border);border-radius:6px;padding:10px;min-width:0}
 .evidence-item h3{font-size:14px;margin:0 0 4px}
-.advanced{border-style:dashed}.advanced>summary{font-weight:600;color:var(--text)}
+.advanced{border:1px solid var(--border);border-radius:6px;padding:10px 12px;
+ background:var(--surface-2)}.advanced>summary{font-weight:600;color:var(--text)}
+.toast{position:fixed;right:16px;bottom:16px;z-index:30;max-width:min(420px,calc(100vw - 32px));
+ background:var(--elevated);border:1px solid var(--attention);border-radius:var(--radius);
+ padding:12px 14px;box-shadow:0 12px 32px #0008}
+dialog{width:min(520px,calc(100vw - 32px));background:var(--elevated);color:var(--text);
+ border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad)}
+dialog::backdrop{background:#000a}dialog h2{margin-top:0}
+[hidden]{display:none!important}
 .bulkbar{position:sticky;bottom:10px;z-index:4;border-color:var(--accent);box-shadow:0 8px 24px #0008}
 .status-hero{border-left:4px solid var(--ok)}.status-hero.attention{border-left-color:var(--attention)}
 .status-hero.blocked{border-left-color:var(--error)}
@@ -4031,7 +4505,48 @@ details>summary{cursor:pointer;color:var(--muted)}
   max-width:440px;margin-top:5px;font-weight:400}
 .formstack label>select[multiple]{max-width:100%}
 .formstack>label:has(>input[type=checkbox]){font-weight:400;color:var(--muted)}
-.formstack details>summary{margin:2px 0 10px}
+.formstack details>summary{margin:2px 0}
+.formstack details[open]>summary{margin-bottom:10px}
+.page-intro{max-width:720px;margin:-6px 0 14px}
+.campaign-card{max-width:900px;margin-top:12px}.campaign-card>h2{margin-top:0}
+.field-help{max-width:620px;margin:-9px 0 14px;color:var(--muted);font-size:12px;line-height:1.45}
+.option-field{border:0;padding:0;margin:0 0 14px;min-width:0}
+.option-field legend{padding:0;margin:0 0 7px;color:var(--text);font-weight:600;font-size:13px}
+.option-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+ gap:7px;max-width:720px}
+.option-field .field-help{margin:8px 0 0}
+.formstack .option-tile{display:flex;align-items:center;gap:8px;margin:0;padding:8px 10px;
+ border:1px solid var(--border);border-radius:6px;background:var(--input);font-weight:400;
+ font-size:13px;cursor:pointer}
+.formstack .option-tile:has(input:checked){border-color:var(--accent);
+ background:var(--surface-2);color:var(--text)}
+.formstack .option-tile input{margin:0;flex:0 0 auto}
+.campaign-advanced{max-width:720px;margin:6px 0 16px}
+.advanced-intro{margin:0 0 14px}
+.advanced-section{padding:14px 0;border-top:1px solid var(--border)}
+.advanced-section:first-of-type{padding-top:4px;border-top:0}
+.advanced-section h3{margin:0 0 10px;font-size:14px}
+.advanced-section:last-of-type{padding-bottom:4px}
+.compact-options .option-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.section-help{margin:-5px 0 12px}
+.limit-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.formstack .limit-grid label{margin:0}
+.formstack .limit-grid label>input{max-width:100%}
+.limit-grid small{display:block;margin-top:4px;color:var(--muted);font-size:11px;
+ font-weight:400;line-height:1.35}
+.label-note{color:var(--muted);font-weight:400}
+.readiness-output{margin-top:10px;padding:10px 12px;border:1px solid var(--border);
+ border-radius:6px;background:var(--code);color:var(--text);white-space:pre-line;font-size:12px}
+.formstack .feature-choice,.formstack .approval-choice{display:flex;align-items:flex-start;
+ gap:9px;max-width:720px;margin:4px 0 16px;padding:10px 12px;border:1px solid var(--border);
+ border-radius:6px;background:var(--surface-2);color:var(--text)}
+.feature-choice input,.approval-choice input{margin-top:4px}
+.feature-choice span,.approval-choice span{display:block}.feature-choice strong,
+.approval-choice strong{display:block;font-weight:600}.feature-choice small,
+.approval-choice small{display:block;margin-top:2px;color:var(--muted);font-size:12px}
+.safety-note{max-width:720px;margin-top:16px}.safety-note p{margin:3px 0 0;color:var(--muted);
+ font-size:13px}.campaign-actions{min-height:38px}.campaign-actions button.chip{min-height:38px;
+ padding:7px 16px;font-size:13px}
 /* Comfortable tap targets for chip-styled buttons/links (labels/badges stay compact). */
 button.chip,a.chip{min-height:30px;cursor:pointer}
 @media (max-width:640px){
@@ -4049,6 +4564,16 @@ button.chip,a.chip{min-height:30px;cursor:pointer}
   .responsive-table td.select-cell::before{display:none}
   .media-grid img,.media-grid video{max-width:100%!important;height:auto}
   .bulkbar{bottom:4px}
+  .option-grid{grid-template-columns:1fr}
+  .limit-grid{grid-template-columns:1fr}
+  .work-filter-bar{align-items:stretch}
+  .work-primary-views{width:100%}
+  .work-primary-views .chip{flex:1 1 calc(50% - 7px);justify-content:center}
+  .work-status-filter{width:100%}.work-status-filter label{flex:1 1 100%}
+  .work-status-filter select{min-width:0;width:100%}
+  .work-intake-grid{grid-template-columns:1fr;gap:5px}
+  .work-intake-grid label{padding-top:5px}
+  .work-intake-grid .field-help{grid-column:1;margin:-1px 0 7px}
 }
 """
 
@@ -4105,8 +4630,8 @@ def _theme_legacy(html: str) -> str:
 # "Scout" is the adaptive Discover Prospects workflow; the legacy seed scanner stays at /scout
 # (relabelled "Manual URL Scan"). The nav highlights Scout for any /scout* page.
 _NAV = (("Overview", "/"), ("Scout", "/scout/new"), ("Work", "/work"))
-_MORE = (("Collaboration", "/collab"), ("Tools", "/tools"), ("Activity", "/activity"),
-         ("Settings", "/settings"), ("Documentation", "/docs"))
+_MORE = (("Activity", "/activity"), ("Collaboration", "/collab"),
+         ("Settings", "/settings"), ("Help", "/docs"))
 
 
 def _nav_html(active: str) -> str:
@@ -4115,13 +4640,20 @@ def _nav_html(active: str) -> str:
         is_cur = (href == active) or (href.startswith("/scout") and active.startswith("/scout"))
         cur = ' aria-current="page"' if is_cur else ""
         links.append(f'<a href="{href}"{cur}>{label}</a>')
-    more = "".join(f'<a href="{h}">{lbl}</a>' for lbl, h in _MORE)
+    more_current = active in {h for _, h in _MORE}
+    more = "".join(
+        f'<a href="{h}"{" aria-current=\"page\"" if h == active else ""}>{lbl}</a>'
+        for lbl, h in _MORE)
+    more_cur = ' aria-current="page"' if more_current else ""
     toggle = ('<button type="button" class="theme-toggle" onclick="toggleTheme()" '
-              'aria-label="Toggle dark or light theme"><span id="themelabel">Dark</span></button>')
+              'aria-label="Switch to light theme" title="Switch to light theme">'
+              '<span id="themelabel">Light theme</span></button>')
     return (f'<header class="top"><div class="wrap"><span class="brand">AI QA Factory</span>'
             f'<nav aria-label="Primary">{"".join(links)}'
-            f'<details style="position:relative"><summary class="btn" style="padding:6px 12px">More</summary>'
-            f'<div class="card" style="position:absolute;right:0;min-width:180px;z-index:10">{more}</div>'
+            f'<details style="position:relative"><summary class="btn nav-more" '
+            f'style="padding:6px 12px"{more_cur}>More</summary>'
+            f'<div class="card nav-menu" style="position:absolute;right:0;min-width:180px;'
+            f'z-index:10">{more}</div>'
             f'</details></nav>{toggle}</div></header>')
 
 
@@ -4132,15 +4664,45 @@ _THEME_HEAD_JS = ("(function(){try{var t=localStorage.getItem('aiqa_theme')||'da
                   "document.documentElement.setAttribute('data-theme','dark');}})();")
 _THEME_TOGGLE_JS = ("function _applyThemeLabel(){var t=document.documentElement."
                     "getAttribute('data-theme')||'dark';var l=document.getElementById('themelabel');"
-                    "if(l)l.textContent=t==='light'?'Light':'Dark';}"
+                    "var b=l&&l.closest('button');var next=t==='light'?'dark':'light';"
+                    "if(l)l.textContent=next.charAt(0).toUpperCase()+next.slice(1)+' theme';"
+                    "if(b){b.setAttribute('aria-label','Switch to '+next+' theme');"
+                    "b.setAttribute('title','Switch to '+next+' theme');}}"
                     "function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme')"
                     "==='light'?'light':'dark';var next=cur==='light'?'dark':'light';"
                     "document.documentElement.setAttribute('data-theme',next);"
                     "try{localStorage.setItem('aiqa_theme',next);}catch(e){}_applyThemeLabel();}"
                     "_applyThemeLabel();")
 
+_PAGE_UI_HTML = (
+    '<div id="qa-toast" class="toast" role="status" aria-live="polite" '
+    'aria-atomic="true" hidden></div>'
+    '<dialog id="qa-confirm"><form method="dialog"><h2 id="qa-confirm-title">Confirm action</h2>'
+    '<p id="qa-confirm-message"></p><label id="qa-confirm-input-wrap" hidden>'
+    'Type the exact value to continue<input id="qa-confirm-input" autocomplete="off"></label>'
+    '<div class="row" style="margin-top:16px"><button class="btn" value="cancel">Cancel</button>'
+    '<button id="qa-confirm-submit" class="btn danger" value="confirm">Confirm</button></div>'
+    '</form></dialog>')
+_PAGE_UI_JS = (
+    "var _qaToastTimer=null;"
+    "function qaNotify(message){var t=document.getElementById('qa-toast');if(!t)return;"
+    "t.textContent=String(message||'Something went wrong');t.hidden=false;"
+    "if(_qaToastTimer)clearTimeout(_qaToastTimer);"
+    "_qaToastTimer=setTimeout(function(){t.hidden=true;},6500);}"
+    "window.alert=function(message){qaNotify(message);};"
+    "function qaConfirm(message,label,expected){return new Promise(function(resolve){"
+    "var d=document.getElementById('qa-confirm'),m=document.getElementById('qa-confirm-message'),"
+    "w=document.getElementById('qa-confirm-input-wrap'),i=document.getElementById('qa-confirm-input'),"
+    "b=document.getElementById('qa-confirm-submit');"
+    "if(!d||typeof d.showModal!=='function'){resolve(window.confirm(message));return;}"
+    "m.textContent=message;b.textContent=label||'Confirm';i.value='';"
+    "w.hidden=!expected;b.onclick=function(e){if(expected&&i.value!==expected){e.preventDefault();"
+    "qaNotify('The value does not match.');i.focus();}};"
+    "d.onclose=function(){resolve(d.returnValue==='confirm'&&(!expected||i.value===expected));};"
+    "d.showModal();if(expected)i.focus();});}")
 
-def _build_footer_html() -> str:
+
+def _build_footer_html(active: str = "/") -> str:
     """Compact build-identity footer (version + running SHA, plus a stale-build warning). Never
     raises to the page; cached so it costs no git subprocess per render."""
     try:
@@ -4150,14 +4712,16 @@ def _build_footer_html() -> str:
         return ""
     warn = (f'<span style="color:var(--attention);font-weight:600">&#9888; '
             f'{_esc(ident.get("warning",""))}</span> &middot; ' if ident.get("stale") else "")
+    scout_surface = active.startswith("/scout") or active in ("/results", "/company")
+    identity = (str(ident.get("product_version") or "AI QA Factory")
+                if scout_surface else "AI QA Factory &middot; Operator Dashboard")
     return ('<footer style="max-width:var(--maxw);margin:0 auto;padding:10px var(--pad);'
             'color:var(--muted);font-size:12px;border-top:1px solid var(--border)">'
-            f'{warn}{_esc(ident.get("product_version",""))} &middot; build '
-            f'<code>{_esc(ident.get("running_sha") or "unknown")}</code></footer>')
+            f'{warn}{identity if not scout_surface else _esc(identity)}</footer>')
 
 
 def _page(title: str, active: str, body: str, script: str = "") -> str:
-    scr = f"<script>{_THEME_TOGGLE_JS}{script}</script>"
+    scr = f"<script>{_THEME_TOGGLE_JS}{_PAGE_UI_JS}{script}</script>"
     return (f"<!doctype html><html lang=en><head><meta charset=utf-8>"
             f'<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<link rel=\"icon\" href=\"data:image/svg+xml,"
@@ -4165,20 +4729,35 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
             f"%3Crect width='16' height='16' rx='4' fill='%23c9a227'/%3E%3C/svg%3E\">"
             f"<title>{_esc(title)}</title><script>{_THEME_HEAD_JS}</script>"
             f"<style>{_TOKENS_CSS}</style></head><body>"
-            f"{_nav_html(active)}<main>{body}</main>{_build_footer_html()}{scr}</body></html>")
+            f"{_nav_html(active)}<main>{body}</main>{_PAGE_UI_HTML}"
+            f"{_build_footer_html(active)}{scr}</body></html>")
 
 
 def _badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{_esc(text)}</span>'
 
 
+# Stored source values are lowercase tokens; the operator reads the platform name.
+_SOURCE_LABEL = {"upwork": "Upwork", "direct": "Direct client", "other": "Other source",
+                 "manual": "Source not specified", "unknown": "Source not specified",
+                 "scout": "Scout"}
+
+
+def _source_label(source: str) -> str:
+    key = (source or "").strip().lower()
+    return _SOURCE_LABEL.get(key) or key.replace("_", " ").capitalize() or "Source not specified"
+
+
 _COLLAB_STATE_KIND = {"NEEDS_OWNER": "attention", "BLOCKED": "blocked", "FIXING": "attention",
                       "WAITING_FOR_CI": "attention", "DONE": "done"}
 
 
-def _collab_body(snap: dict) -> str:
-    """Render the Direct Collaboration Driver monitor (Issue #14.D) — one truthful status area over
-    the canonical store: driver heartbeat/spend, an owner-action banner, and a per-thread timeline."""
+def _collab_body(snap: dict, *, show_completed: bool = False) -> str:
+    """Render an operator-first collaboration monitor.
+
+    Current action, ownership and health stay visible. Model names, tokens, SHA/CI evidence and the
+    raw timeline remain available under Advanced details for debugging without dominating the page.
+    """
     d = snap.get("driver", {})
     b = d.get("budget", {})
     stale = ('<span style="color:var(--attention);font-weight:600">&#9888; heartbeat stale</span>'
@@ -4194,15 +4773,15 @@ def _collab_body(snap: dict) -> str:
     model = _esc(d.get("model") or "—")
     effort = _esc(d.get("reasoning_effort") or "—")
     driver_card = (
-        '<div class="card"><h2 style="margin-top:0">Reviewer driver</h2>'
-        f'<p>{_badge(d.get("stage","IDLE"))} &middot; heartbeat {_esc(beat)} {stale}</p>'
-        f'<p class="muted">model <code>{model}</code> &middot; effort {effort} &middot; processed '
-        f'{int(d.get("processed",0))}</p>'
-        f'<p class="muted">today {int(b.get("daily_calls",0))}/{int(b.get("cap_calls",0))} calls '
-        f'&middot; {int(b.get("daily_tokens",0))} tokens &middot; '
-        f'${float(b.get("daily_usd",0)):.2f}/${float(b.get("cap_usd",0)):.2f} '
-        f'<span title="spend is $0 until AIQA_REVIEWER_PRICE_PER_MTOK_IN/OUT is configured; token '
-        f'counts are real">(spend est.)</span></p>{err}</div>')
+        '<div class="card"><h2 style="margin-top:0">Reviewer</h2>'
+        f'<p>{_badge(d.get("stage","IDLE"))} {stale}</p>'
+        f'<p class="muted">{int(d.get("processed",0))} items processed today · '
+        f'${float(b.get("daily_usd",0)):.2f} estimated usage</p>{err}'
+        '<details class="advanced"><summary>Technical details</summary>'
+        f'<p>Heartbeat: {_esc(beat)} · model <code>{model}</code> · effort {effort}</p>'
+        f'<p>{int(b.get("daily_calls",0))}/{int(b.get("cap_calls",0))} calls · '
+        f'{int(b.get("daily_tokens",0))} tokens · '
+        f'${float(b.get("daily_usd",0)):.2f}/${float(b.get("cap_usd",0)):.2f}</p></details></div>')
 
     dl = snap.get("delivery", {})
     bsrc = dl.get("billing_source") or "unknown"
@@ -4210,11 +4789,12 @@ def _collab_body(snap: dict) -> str:
                      if bsrc == "subscription" else
                      ("Anthropic API credits" if bsrc == "api_credits" else "unknown (verify via /status)"))
     delivery_card = (
-        '<div class="card"><h2 style="margin-top:0">Claude delivery worker</h2>'
-        f'<p class="muted">delivered {int(dl.get("delivered",0))} &middot; model '
-        f'<code>{_esc(dl.get("claude_model") or "—")}</code> &middot; cost '
+        '<div class="card"><h2 style="margin-top:0">Delivery worker</h2>'
+        f'<p>{int(dl.get("delivered",0))} decisions delivered</p>'
+        '<details class="advanced"><summary>Technical details</summary>'
+        f'<p>Model <code>{_esc(dl.get("claude_model") or "—")}</code> · cost '
         f'${float(dl.get("claude_cost_usd",0)):.4f}</p>'
-        f'<p class="muted">billing source: <strong>{billing_label}</strong></p></div>')
+        f'<p>Billing source: <strong>{billing_label}</strong></p></details></div>')
     driver_card += delivery_card
 
     sup = snap.get("supervisor", {})
@@ -4222,50 +4802,88 @@ def _collab_body(snap: dict) -> str:
         sup_state = ('<span style="color:var(--attention);font-weight:600">&#9888; heartbeat stale</span>'
                      if not sup.get("fresh") else "supervisor alive")
         driver_card += (
-            '<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'
-            f'<p class="muted">{sup_state} &middot; last check {_esc(_fmt_ts(sup.get("checked_at","")))} '
-            f'&middot; at check: up={_esc(str(sup.get("dashboard_up_at_check")))} stale='
-            f'{_esc(str(sup.get("dashboard_stale_at_check")))} &middot; action '
-            f'{_esc(sup.get("dashboard_action") or "—")}</p></div>')
+            '<div class="card"><h2 style="margin-top:0">Background supervisor</h2>'
+            f'<p>{sup_state}</p><details class="advanced"><summary>Technical details</summary>'
+            f'<p>Last check {_esc(_fmt_ts(sup.get("checked_at","")))} · '
+            f'up={_esc(str(sup.get("dashboard_up_at_check")))} · '
+            f'stale={_esc(str(sup.get("dashboard_stale_at_check")))} · '
+            f'action {_esc(sup.get("dashboard_action") or "—")}</p></details></div>')
     else:
         driver_card += ('<div class="card"><h2 style="margin-top:0">Durable supervisor</h2>'
                         '<p class="muted">not installed — run tools/supervisor_install.ps1 for '
                         'session-independent Dashboard + driver recovery</p></div>')
 
     threads = snap.get("threads", [])
-    if not threads:
-        rows = '<div class="card"><p class="muted">No collaboration threads yet.</p></div>'
+    visible_threads = [t for t in threads
+                       if (t.get("state") == "DONE") is show_completed]
+    counts = snap.get("counts", {})
+    thread_toggle = (
+        '<a class="chip" href="/collab">&#10003; Active collaboration</a>'
+        if show_completed else
+        f'<a class="chip" href="/collab?completed=1">Completed ({int(counts.get("done", 0))})</a>')
+    if not visible_threads:
+        rows = ('<div class="card"><p class="muted">No completed collaboration tasks.</p></div>'
+                if show_completed else
+                '<div class="card"><p class="muted">No active collaboration tasks.</p></div>')
     else:
         cards = []
-        for t in threads:
+        for index, t in enumerate(visible_threads, start=1):
             kind = _COLLAB_STATE_KIND.get(t.get("state", ""), "")
             sha = _esc((t.get("head_sha") or "")[:12] or "—")
             match = ("&#10003; matches head" if t.get("reviewed_sha_matches_head")
                      else ("&#9888; stale head" if t.get("stale_head") else ""))
-            dec = (f'<td>{_esc(t.get("decision") or "—")} '
-                   f'<span class="muted">{match}</span></td>')
             pr = t.get("pr_number")
             pr_txt = f'#{int(pr)}' if pr else "—"
             timeline = " &rarr; ".join(
                 f'{_esc(ev.get("kind",""))}' for ev in t.get("timeline", [])) or "—"
             ci = ", ".join(_esc(r) for r in t.get("ci_refs", [])) or "—"
             cards.append(
-                f'<div class="card"><h3 style="margin:0 0 6px">{_esc(t.get("thread_id"))} '
+                f'<div class="card"><h3 style="margin:0 0 6px">Collaboration task {index} '
                 f'{_badge(t.get("state","") , kind)}</h3>'
-                f'<table><tr><td class="muted">actor</td><td>{_esc(t.get("actor"))}</td></tr>'
-                f'<tr><td class="muted">now</td><td>{_esc(t.get("current_action"))}</td></tr>'
-                f'<tr><td class="muted">next</td><td>{_esc(t.get("next_action"))}</td></tr>'
-                f'<tr><td class="muted">branch / PR</td><td>{_esc(t.get("branch") or "—")} &middot; '
+                f'<p><strong>Now:</strong> {_esc(t.get("current_action"))}</p>'
+                f'<p><strong>Next:</strong> {_esc(t.get("next_action"))}</p>'
+                f'<p class="muted">Owner: {_esc(t.get("actor"))} · PR {pr_txt}</p>'
+                f'<details class="advanced"><summary>Technical details</summary>'
+                f'<table><tr><td class="muted">Thread ID</td><td>{_esc(t.get("thread_id"))}</td></tr>'
+                f'<tr><td class="muted">Branch / PR</td><td>{_esc(t.get("branch") or "—")} · '
                 f'{pr_txt}</td></tr>'
-                f'<tr><td class="muted">head SHA</td><td><code>{sha}</code></td></tr>'
-                f'<tr><td class="muted">decision</td>{dec}</tr>'
+                f'<tr><td class="muted">Head SHA</td><td><code>{sha}</code></td></tr>'
+                f'<tr><td class="muted">Decision</td><td>{_esc(t.get("decision") or "—")} '
+                f'<span class="muted">{match}</span></td></tr>'
                 f'<tr><td class="muted">CI evidence</td><td>{ci}</td></tr>'
-                f'<tr><td class="muted">timeline</td><td>{timeline}</td></tr></table></div>')
+                f'<tr><td class="muted">Timeline</td><td>{timeline}</td></tr></table></details></div>')
         rows = "".join(cards)
 
-    return (f'<h1>Collaboration</h1><p class="muted">Autonomous GPT reviewer &harr; Claude worker '
-            f'&middot; current head <code>{_esc((snap.get("current_head") or "")[:12] or "—")}</code> '
-            f'&middot; auto-refreshes</p>{banner}{driver_card}{rows}')
+    return (f'<h1>Collaboration</h1><p class="muted">Reviewer and implementation worker status. '
+            f'This page refreshes automatically.</p>{banner}'
+            f'<div class="row"><span class="chip">Active {int(counts.get("active", 0))}</span>'
+            f'<span class="chip">Needs you {int(counts.get("needs_owner", 0))}</span>'
+            f'{thread_toggle}</div><div class="summary-grid" style="margin-top:12px">'
+            f'{driver_card}</div><h2>{"Completed" if show_completed else "Current tasks"}</h2>{rows}')
+
+
+def _friendly_record_label(title: object, record_id: object, fallback: str) -> str:
+    """Return a stable human label while keeping internal ids out of ordinary UI."""
+    display = _collapse_ws(title)
+    rid = str(record_id or "").strip()
+    if display and display != rid and display.lower() not in ("scout campaign", "work item"):
+        return display
+    stamp = re.search(r"(?i)(20\d{6})t(\d{6})z?", rid)
+    when = ""
+    if stamp:
+        try:
+            from datetime import datetime
+            dt = datetime.strptime("".join(stamp.groups()), "%Y%m%d%H%M%S")
+            when = dt.strftime("%b %d, %Y %H:%M UTC")
+        except ValueError:
+            when = ""
+    slug = rid[:stamp.start()] if stamp else rid
+    slug = re.sub(r"(?i)^(campaign-|run-)", "", slug).strip("-_ ")
+    slug = re.sub(r"[-_][0-9a-f]{6,40}$", "", slug, flags=re.I).strip("-_ ")
+    words = " ".join(part for part in re.split(r"[-_]+", slug) if part)
+    generic = {"", "campaign", "discovery", "run", "scout"}
+    label = fallback if words.lower() in generic else words.title()
+    return f"{label} · {when}" if when else (label or fallback)
 
 
 def _fmt_ts(iso: str) -> str:

@@ -53,8 +53,9 @@ pytestmark = [
                        reason="Chromium build not available (run: python -m playwright install chromium)"),
 ]
 
-_PRIMARY_PAGES = ["/", "/work", "/work/alpha", "/tools", "/activity", "/settings", "/docs",
-                  "/scout", "/scout/campaigns", "/results", "/projects", "/company?id=unknown",
+_PRIMARY_PAGES = ["/", "/work", "/work/alpha", "/tools", "/activity", "/collab",
+                  "/settings", "/docs", "/scout", "/scout/campaigns", "/results",
+                  "/company?id=unknown",
                   "/results?q=x&sev=high", "/scout/new", "/scout/history",
                   "/scout/attention"]
 
@@ -209,9 +210,12 @@ def test_pro_dark_default_toggle_persist_and_axe_both_themes(tmp_path):
             assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "dark"
             dark = _serious(axe.run(page).get("violations", []))
             assert not dark, [v["id"] for v in dark]
-            # Toggle to Light.
-            page.get_by_role("button", name="Toggle dark or light theme").click()
+            # Toggle to Light. The button is named after the action it performs, so the name must
+            # also flip once the theme has changed (an operator must never be offered "Switch to
+            # light theme" while already in Light).
+            page.get_by_role("button", name="Switch to light theme").click()
             assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "light"
+            assert page.get_by_role("button", name="Switch to dark theme").is_visible()
             light = _serious(axe.run(page).get("violations", []))
             assert not light, [v["id"] for v in light]
             # Persistence + no dark flash: a fresh navigation keeps Light set before paint.
@@ -258,8 +262,12 @@ def test_activity_survives_restart_and_filters_diagnostics_in_real_chromium(tmp_
             desktop.goto(url + "/activity", wait_until="load")
             assert desktop.get_by_text("No operator activity yet.", exact=False).count() == 0
             assert desktop.locator("tbody tr").count() == 6
-            assert desktop.get_by_text(production_a, exact=True).count() == 3
-            assert desktop.get_by_text(production_b, exact=True).count() == 3
+            # Rows are attributed by the operator-facing campaign name; the internal run id is an
+            # implementation detail and must not be what the operator reads.
+            body = desktop.content()
+            assert production_a not in body and production_b not in body
+            assert desktop.get_by_text("Acme Saas", exact=False).count() == 3
+            assert desktop.get_by_text("Beta Commerce", exact=False).count() == 3
             assert desktop.get_by_text(diagnostic, exact=True).count() == 0
             assert desktop.get_by_text("Target promoted to Scout", exact=True).is_visible()
             serious = _serious(axe.run(desktop).get("violations", []))
@@ -332,11 +340,19 @@ def test_ui_guarded_mutation_advances_lifecycle(tmp_path):
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.on("dialog", lambda d: d.accept())   # accept the mark-delivered confirm
             page.goto(url + "/work/alpha", wait_until="load")
-            assert "DELIVERY_PREPARED" in page.content()
+            assert page.get_by_text("Delivery prepared").first.is_visible()
+            # The handler is an inline attribute: if it is malformed the click throws and the button
+            # is silently dead, so fail loudly on any page error rather than on a later assertion.
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
             page.get_by_role("button", name="Mark Delivered (I sent it)").click()
+            # Confirmation is an in-page <dialog>, not window.confirm, and its confirm button is
+            # named after the action being confirmed.
+            dialog = page.locator("#qa-confirm")
+            dialog.get_by_role("button", name="Mark Delivered (I sent it)").click()
             page.wait_for_timeout(1200)               # let the guarded fetch complete
+            assert not errors, errors
             page.goto(url + "/work/alpha", wait_until="load")   # re-read persisted state
             assert "COMPLETED" in page.content()      # the mutation genuinely advanced the lifecycle
             browser.close()
@@ -434,10 +450,9 @@ def test_scout_form_is_themed_and_axe_clean_both_themes(tmp_path):
         server.shutdown()
 
 
-def test_legacy_run_bound_root_is_themed_and_axe_clean(tmp_path):
-    # v3.2 item 26/31: the legacy run-bound Scout root (rendered at / when a Scout run is attached)
-    # is Pro-Dark themed (no default-white controls), free of serious/critical a11y violations in
-    # BOTH themes, and has no horizontal overflow at 390px.
+def test_operator_overview_stays_stable_with_attached_run_and_is_axe_clean(tmp_path):
+    # Operator friendliness: an attached Scout run never replaces the stable Overview front door.
+    # Explicit Scout pages own run controls. Overview remains accessible in both themes and mobile.
     from core.scout.store import RunStore
     store = RunStore(str(tmp_path), "run-legacy")
     store.reset()
@@ -455,8 +470,8 @@ def test_legacy_run_bound_root_is_themed_and_axe_clean(tmp_path):
             page = browser.new_page()
             page.goto(url + "/", wait_until="load")
             html = page.content()
-            assert 'header class="top"' not in html and "<main>" not in html  # the LEGACY root
-            assert "--l-bg" in html and "Prospects" in html   # themed legacy run-bound view
+            assert 'header class="top"' in html and "<main>" in html
+            assert "<h1>Overview</h1>" in html
             bg = page.evaluate("()=>getComputedStyle(document.body).backgroundColor")
             assert bg not in ("rgba(0, 0, 0, 0)", "rgb(255, 255, 255)"), bg  # not default white
             for theme in ("dark", "light"):
@@ -610,3 +625,42 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             browser.close()
     finally:
         server.shutdown()
+
+
+def test_project_name_pattern_is_enforced_by_a_real_browser(tmp_path):
+    """`pattern` is compiled with the RegExp `v` flag. An unescaped trailing '-' throws, and a
+    pattern the browser cannot compile is ignored entirely - the field then accepts anything while
+    still advertising a rule. Only a real engine can prove the constraint is live, so assert both
+    directions: a hyphenated name is accepted, and forbidden input is rejected.
+    """
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+            page.goto(url + "/work?create=1#client-brief", wait_until="load")
+            field = page.locator("#cw_pid")
+            assert field.get_attribute("pattern"), "the field must still advertise a rule"
+
+            def valid(value: str) -> bool:
+                field.fill(value)
+                return page.evaluate(
+                    "() => document.getElementById('cw_pid').checkValidity()")
+
+            accepted = {v: valid(v) for v in
+                        ("checkout-regression", "acme_client.v2", "Project-2026-07", "a")}
+            # Raw strings: "bad\name" would be bad + NEWLINE + ame, which tests something else
+            # entirely. The backslash and the newline are both worth rejecting, so assert each.
+            rejected = {v: valid(v) for v in
+                        ("bad name", "bad/name", r"bad\name", "bad\nname", "../escape",
+                         "drop;table", "naïve", "a b")}
+            browser.close()
+    finally:
+        server.shutdown()
+    assert not errors, f"the page reported an error, so the pattern may not have compiled: {errors}"
+    assert all(accepted.values()), f"legitimate names rejected: {accepted}"
+    assert not any(rejected.values()), (
+        f"forbidden input accepted, so the pattern is not being enforced: {rejected}")

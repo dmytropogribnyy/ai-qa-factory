@@ -8,7 +8,7 @@ cheap page signals. The commercial score NEVER authorizes contact or outreach
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 from core.schemas.prospect_scoring import LeadScorecard, ScoreDimension
@@ -45,6 +45,7 @@ class TriageContext:
     languages: List[str]
     countries: List[str]
     min_commercial_threshold: int
+    exclude_keywords: List[str] = field(default_factory=list)
 
 
 def _haystack(obs: PageObservation) -> str:
@@ -77,6 +78,14 @@ def assess_technical(rec: CandidateRecord, obs: PageObservation, ctx: TriageCont
         reasons.append(f"unsupported_market:{rec.country_hint}")
     if ctx.languages and rec.language_hint and rec.language_hint not in ctx.languages:
         reasons.append(f"unsupported_language:{rec.language_hint}")
+    haystack = _haystack(obs)
+    excluded = next(
+        (keyword for raw in ctx.exclude_keywords
+         if (keyword := str(raw).strip().lower()) and keyword in haystack),
+        "",
+    )
+    if excluded:
+        reasons.append(f"excluded_keyword:{excluded}")
     rec.technical_reasons.extend(reasons)
     if reasons:
         rec.eligibility_status = TECH_REJECT

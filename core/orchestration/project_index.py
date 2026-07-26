@@ -20,6 +20,50 @@ _CLIENT_PROGRESS = {
     "COMPLETED": 100, "BLOCKED": 40, "FAILED": 100, "CANCELLED": 100,
 }
 
+# Lifecycle band in which the intake questions are still genuinely blocking: the operator has not
+# yet decided to proceed. Once the plan is approved, those questions become historical context -
+# a project that is "Ready to execute" must never simultaneously claim that blocking information is
+# missing (that contradiction reached the operator on both Overview and Work).
+_INTAKE_STATES = frozenset({"RECEIVED", "INTAKE_COMPLETE", "PLANNED", "WAITING_FOR_INFORMATION",
+                            "WAITING_FOR_APPROVAL"})
+
+# One operator-facing next action per lifecycle state. This is the single source of truth for the
+# whole Dashboard: the Work list, the Work detail, and the Overview attention cards all read it, so
+# they cannot drift apart again.
+_CLIENT_NEXT_ACTION = {
+    "READY_TO_EXECUTE": "start execution, or hand the work order to Claude Code",
+    "EXECUTING": "execution is in progress; record the produced artifacts when it finishes",
+    "EXECUTION_PARTIAL": "execution is in progress; record the produced artifacts when it finishes",
+    "VERIFYING": "run validation on the produced artifacts",
+    "REPAIR_REQUIRED": "fix the failed checks, then re-run execution",
+    "READY_FOR_REVIEW": "review the result, then advance it to delivery",
+    "READY_FOR_DELIVERY": "prepare the delivery package",
+    "DELIVERY_PREPARED": "send the prepared package manually, then mark it delivered",
+    "COMPLETED": "delivered - nothing further is required",
+    "BLOCKED": "resolve the blocker, then resume the work",
+    "FAILED": "review what failed, then decide whether to retry or close the project",
+    "CANCELLED": "cancelled - nothing further is required",
+}
+
+
+def client_next_action(fr: Dict[str, Any], status: str, blockers: List[str]) -> str:
+    """The one operator-facing next action for a client-work project.
+
+    ``blockers`` are the CURRENTLY blocking items (see ``_INTAKE_STATES``) - never the raw intake
+    list, or an approved project would be told to answer questions it has already moved past.
+    """
+    fixed = _CLIENT_NEXT_ACTION.get(status)
+    if fixed:
+        return fixed
+    if blockers:
+        return "answer the client questions (blocking information missing)"
+    verdict = fr.get("verdict", "")
+    if verdict == "NOT_RECOMMENDED":
+        return "review honest reasons to reject / offer a smaller in-scope slice"
+    if verdict in ("TAKE_AFTER_CLARIFICATION", "TAKE_AFTER_ACCESS_OR_TOOL_SETUP"):
+        return "clarify / set up access, then approve the plan"
+    return "review the feasibility summary, then approve the plan to proceed"
+
 
 @dataclass
 class ProjectEntry:
@@ -32,6 +76,7 @@ class ProjectEntry:
     lifecycle_state: str = ""
     progress: int = 0
     blockers: List[str] = field(default_factory=list)
+    missing_information: List[str] = field(default_factory=list)   # intake questions (context)
     workspace_path: str = ""
     evidence_count: int = 0
     deliverables: List[str] = field(default_factory=list)
@@ -85,7 +130,14 @@ class ProjectIndex:
             if not wp and not rs:
                 continue
             status = rs.get("status") or "RECEIVED"
-            blockers = list(wp.get("missing_information", []))
+            missing = list(wp.get("missing_information", []))
+            # "Blockers" has exactly one meaning across the Dashboard: what is stopping this project
+            # right now. Intake questions qualify only until the operator approves the plan (after
+            # that they are kept as context, not as a contradiction of the lifecycle state);
+            # execution blockers qualify whenever the executor recorded them.
+            ep = self._read_json(ark / "EXECUTION_PROGRESS.json")
+            blockers = ([] if status not in _INTAKE_STATES else list(missing)) + \
+                list(ep.get("outcome", {}).get("blockers", []))
             evidence = len(list((ark / "evidence").glob("*"))) if (ark / "evidence").is_dir() else 0
             out.append(ProjectEntry(
                 project_id=ark.parent.name, type="client_work",
@@ -94,6 +146,7 @@ class ProjectIndex:
                 created_at=wp.get("created_at", ""),
                 updated_at=(rs.get("updated_at") or wp.get("created_at", "")),
                 lifecycle_state=status, progress=_CLIENT_PROGRESS.get(status, 0), blockers=blockers,
+                missing_information=missing,
                 workspace_path=str(ark), evidence_count=evidence,
                 deliverables=list(fr.get("expected_deliverables", [])),
                 selected_capabilities=list(wp.get("detected_capabilities", [])),
@@ -132,13 +185,18 @@ class ProjectIndex:
     def _scout_entry(self, cid: str, *, diagnostic: bool) -> ProjectEntry:
         base = self._out / "scout" / cid
         st = self._read_json(base / "state.json")
+        cfg = self._read_json(base / "config.json")
         report = base / "report"
         evidence = len(list(report.glob("*.json"))) if report.is_dir() else 0
         counts = st.get("counts", {}) if isinstance(st.get("counts"), dict) else {}
         status = st.get("status") or ("COMPLETED" if report.is_dir() else "UNKNOWN")
+        campaign_name = str(cfg.get("campaign_name") or "").strip()
+        # Prefer the operator-chosen campaign name. Internal ids remain available in diagnostics,
+        # but should not be the title of every ordinary campaign row.
+        display_title = campaign_name if campaign_name and campaign_name != cid else "Scout campaign"
         return ProjectEntry(
             project_id=(st.get("campaign_id") or cid), type="scout_campaign",
-            title=(st.get("campaign_id") or cid), source="scout",
+            title=display_title, source="scout",
             created_at=st.get("started_at", ""),
             updated_at=st.get("updated_at", st.get("started_at", "")),
             lifecycle_state=status,
@@ -147,20 +205,7 @@ class ProjectIndex:
             deliverables=[], selected_capabilities=[], selected_tools=[],
             operator_next_action=self._scout_next_action(status, counts), diagnostic=diagnostic)
 
-    @staticmethod
-    def _client_next_action(fr: Dict[str, Any], status: str, blockers: List[str]) -> str:
-        if status == "DELIVERY_PREPARED":
-            return "send the prepared package manually, then mark it delivered"
-        if status in ("COMPLETED", "READY_FOR_DELIVERY"):
-            return "review the delivery package"
-        if blockers:
-            return "answer the client questions (blocking information missing)"
-        verdict = fr.get("verdict", "")
-        if verdict == "NOT_RECOMMENDED":
-            return "review honest reasons to reject / offer a smaller in-scope slice"
-        if verdict in ("TAKE_AFTER_CLARIFICATION", "TAKE_AFTER_ACCESS_OR_TOOL_SETUP"):
-            return "clarify / set up access, then approve the plan"
-        return "review the feasibility summary, then approve the plan to proceed"
+    _client_next_action = staticmethod(client_next_action)   # one shared source of truth
 
     @staticmethod
     def _scout_next_action(status: str, counts: Dict[str, Any]) -> str:

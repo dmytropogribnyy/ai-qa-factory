@@ -164,7 +164,7 @@ CAMPAIGN_PRESETS: Dict[str, CampaignPreset] = {
     ),
     "scheduled-daily": CampaignPreset(
         key="scheduled-daily",
-        label="Scheduled Daily Scout",
+        label="Daily Scout Profile",
         countries=(), languages=("en",),
         site_types=_ALL_COMMERCIAL_SITE_TYPES,
         industries=("SaaS", "E-commerce", "Professional services", "B2B platforms"),
