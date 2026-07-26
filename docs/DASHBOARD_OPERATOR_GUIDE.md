@@ -78,6 +78,34 @@ blocking)". An approved project is therefore never described as both *Ready to e
 *blocked on missing information*. The Work list and the project detail read one shared next-action
 rule, so a project states the same next step on every screen.
 
+### A run's summary accounts for every target in it
+
+The run-results tiles are not a selection of interesting numbers — they partition the run. `Targets`
+is the total, and the remaining tiles are one per outcome actually present, so their counts always
+sum to the total: a failed, an interrupted or an operator-skipped target can never sit in no category
+and disappear from the summary while the operator reads "3 completed, 1 needs attention" and
+concludes nothing else needs them.
+
+The tiles and the rows they count read the same status vocabulary (`_run_status_label`), so a state
+is called the same thing in both places: *Completed*, *Needs your help*, *Could not complete*,
+*Queued*, *Skipped*. A status this build has never seen is titled and counted rather than dropped.
+
+### A queued skip is visible, and "requested" is not "applied"
+
+Skipping queued targets writes a request that the engine reads before it starts each new target — so
+at the moment of the click nothing has happened yet to the target itself. The page therefore shows
+the request where it was made: a banner stating how many targets are queued to be skipped and that
+they will not start, plus a *Skip requested* marker on each affected row.
+
+The marker means the request is pending, not that the target was skipped. It appears only while the
+target is still `Queued`; once the engine acts, the target's own status becomes *Skipped* and the
+marker is gone. A request left behind in the file for a target that has since finished can never
+apply and is never advertised.
+
+A target that cannot be skipped — because it already completed, failed or was blocked — is refused
+with its real status, and that refusal keeps the operator on the page instead of being erased by a
+reload, because a refusal is not persisted anywhere else.
+
 ### Incomplete Scout targets never show confirmed findings
 
 A target's confirmed findings come from a completed analysis only. Any prospect whose persisted
