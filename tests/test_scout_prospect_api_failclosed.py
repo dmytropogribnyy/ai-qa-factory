@@ -31,6 +31,17 @@ def _target_shows_findings(payload: dict) -> bool:
     return bool(payload.get("findings"))
 
 
+def _assert_withheld(entry, *, artifact_present: bool) -> None:
+    """The withheld marker itself, not just the fields around it: must distinguish "the analysis
+    did not complete" (this shape) from "nothing was ever written" (artifact_present distinguishes
+    that within the shape). A collapse to `None` or `{}` here would silently merge those two
+    honestly-different cases back together -- exactly what the brief's marker exists to prevent."""
+    assert isinstance(entry, dict)
+    assert entry != {}
+    assert entry.get("withheld") == "analysis_incomplete"
+    assert entry.get("artifact_present") is artifact_present
+
+
 # --- 1. PENDING (04-delta): must fail closed --------------------------------------------------
 
 def test_pending_prospect_withholds_findings_and_reports_status(tmp_path, monkeypatch):
@@ -48,6 +59,10 @@ def test_pending_prospect_withholds_findings_and_reports_status(tmp_path, monkey
     assert payload["analysis_complete"] is False
     assert "verified" not in json.dumps(payload)            # nowhere in the payload, incl. nested
     assert "delta.example: delta (high)" not in body        # the leaked title, raw response text
+    # delta genuinely HAS a findings.json on disk (scout_seam_fixtures.py:72) but never a
+    # scorecard.json -- the marker must say so honestly, not collapse both to the same shape.
+    _assert_withheld(payload["findings"], artifact_present=True)
+    _assert_withheld(payload["scorecard"], artifact_present=False)
 
 
 # --- 2. SKIPPED (07-eta) and FAILED (03-gamma): same invariant --------------------------------
@@ -64,6 +79,11 @@ def test_skipped_and_failed_prospects_withhold_findings_too(tmp_path, monkeypatc
             assert payload["prospect_status"] == expected_status
             assert payload["analysis_complete"] is False
             assert "verified" not in json.dumps(payload)
+            # Neither gamma (scout_seam_fixtures.py:66-69) nor eta (:91-92) ever had a
+            # findings.json written -- artifact_present must say so, distinguishing "never
+            # written" from delta's "written, but withheld" in test 1.
+            _assert_withheld(payload["findings"], artifact_present=False)
+            _assert_withheld(payload["scorecard"], artifact_present=False)
     finally:
         server.shutdown()
 
@@ -86,6 +106,10 @@ def test_done_prospect_keeps_confirmed_findings(tmp_path, monkeypatch):
     verified = payload["findings"]["verified"]
     assert len(verified) == 5
     assert sum(1 for f in verified if f["severity"] != "info") == 3
+    # A DONE target carries no withheld marker at all -- the marker is specific to the
+    # analysis-incomplete case, never present alongside a genuinely confirmed analysis.
+    assert "withheld" not in payload["findings"]
+    assert payload["scorecard"] is None  # alpha never had a scorecard.json (fixture writes none)
 
 
 # --- 4. Parity: /api/prospect and /api/scout/target agree ------------------------------------
@@ -156,3 +180,5 @@ def test_unpinned_path_resolves_status_from_the_attached_run(tmp_path, monkeypat
     assert payload["prospect_status"] == "PENDING"
     assert payload["analysis_complete"] is False
     assert "verified" not in json.dumps(payload)
+    _assert_withheld(payload["findings"], artifact_present=True)
+    _assert_withheld(payload["scorecard"], artifact_present=False)
