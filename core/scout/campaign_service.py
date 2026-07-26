@@ -495,9 +495,14 @@ class CampaignService:
                     evidence_status = "ok"
                     pstate = (state.get("prospects", {}) or {}).get(prospect_id, {}) or {}
                     prospect_status = pstate.get("status", "")
-                    # An EXPLICIT terminal non-DONE status means the analysis did not complete; an
-                    # empty/unknown status (legacy seed data) keeps the prior "load findings" behaviour.
-                    incomplete = prospect_status in ("MANUAL_ACTION_REQUIRED", "FAILED")
+                    # Fail closed for EVERY non-empty status other than DONE — MANUAL_ACTION_REQUIRED
+                    # and FAILED, but also PENDING/SKIPPED (a run interrupted between the findings
+                    # write and the compact-state update) and any status a future engine adds.
+                    # Confirmed findings and a finding reproduction exist only for a COMPLETED
+                    # analysis, and this must hold in the read model so the UI, the read API and the
+                    # unpinned page all inherit it. An empty/unknown legacy status keeps the previous
+                    # artifact-loading behaviour deliberately (the sole exemption).
+                    incomplete = bool(prospect_status) and prospect_status != "DONE"
                     analysis_complete = (prospect_status == "DONE") if prospect_status else None
                     if incomplete:
                         analysis_complete = False
@@ -530,8 +535,9 @@ class CampaignService:
                                "axe_status": obs.get("axe_status", ""),
                                "axe_violations": (obs.get("axe_violations") or [])[:20],
                                "perf": obs.get("perf", {})}
-                    # Confirmed findings exist only for a completed analysis. A manual/failed target
-                    # has 0 confirmed findings — never surface a healthy conclusion for it.
+                    # Confirmed findings exist only for a completed analysis. Any incomplete
+                    # target — manual action, failed, interrupted, skipped, unknown — has 0
+                    # confirmed findings; never surface a healthy conclusion for it.
                     if not incomplete:
                         fdata = st.load_prospect_artifact(prospect_id, "findings.json") or {}
                         findings = list(fdata.get("verified", []))
