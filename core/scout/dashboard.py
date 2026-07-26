@@ -3479,6 +3479,22 @@ function startCampaign(){{
             from core.scout.discovery.domain_intel import canonical_domain
             from core.scout.operator_state import OperatorStateStore
             archived = OperatorStateStore(service.output_dir).run_archived(run_id)
+            # A skip the operator requested is persisted separately from state.json and applied by
+            # the engine before it starts each new target. The request is therefore a real, pending
+            # fact the page must show — otherwise a successful click leaves no trace and the operator
+            # cannot tell it worked. "Requested" and "applied" are different facts: the request only
+            # counts while the target is still queued; once the engine acts, the target's own status
+            # becomes SKIPPED and speaks for itself. An entry left behind for a target that has since
+            # finished can never apply and is not advertised.
+            try:
+                skip_requested = {
+                    str(pid) for pid in
+                    ((store.load_artifact("operator_actions.json") or {}).get("skip_prospects") or [])
+                } if store is not None else set()
+            except StoreError:
+                skip_requested = set()
+            queued_skips = [pid for pid in sorted(skip_requested)
+                            if str((prospects.get(pid) or {}).get("status", "")) == "PENDING"]
             rows = []
             for pid, p in sorted(prospects.items()):
                 dom = canonical_domain(p.get("url", "") or p.get("final_url", "")) or ""
@@ -3486,13 +3502,7 @@ function startCampaign(){{
                 total = int(p.get("verified_findings", 0) or 0)
                 actionable = int(p.get("verified_defects", 0) or 0)
                 info = max(total - actionable, 0)
-                status_label = {
-                    "DONE": "Completed",
-                    "MANUAL_ACTION_REQUIRED": "Needs your help",
-                    "FAILED": "Could not complete",
-                    "PENDING": "Queued",
-                    "SKIPPED": "Skipped",
-                }.get(status, str(status or "Unknown").replace("_", " ").title())
+                status_label = _run_status_label(status)
                 complete = "Complete" if status == "DONE" else (
                     "Not analyzed" if status in ("PENDING", "SKIPPED") else "Incomplete")
                 details = (f'<a href="/scout/target?run={_esc(run_id)}&domain={_esc(dom)}">Details</a>'
@@ -3516,7 +3526,11 @@ function startCampaign(){{
                     f'value="{_esc(pid)}" data-domain="{_esc(dom)}" '
                     f'aria-label="Select {_esc(dom or pid)}"></td>'
                     f'<td data-label="Target">{_esc(dom)}</td>'
-                    f'<td data-label="Status">{_badge(status_label, "attention" if status == "MANUAL_ACTION_REQUIRED" else "")}</td>'
+                    f'<td data-label="Status">'
+                    f'{_badge(status_label, "attention" if status == "MANUAL_ACTION_REQUIRED" else "")}'
+                    + (' <span class="badge attention">Skip requested</span>'
+                       if pid in queued_skips else '')
+                    + '</td>'
                     f'<td data-label="Actionable">{actionable}</td>'
                     f'<td data-label="Informational">{info}</td>'
                     f'<td data-label="Analysis">{_esc(complete)}</td>'
@@ -3541,14 +3555,21 @@ function startCampaign(){{
                     '<a class="chip" href="/scout/attention">Needs attention</a></div>'
                     + ('<div class="banner warn">This run is archived and hidden from normal '
                        'operator lists.</div>' if archived else '')
+                    + (f'<div class="banner">{len(queued_skips)} '
+                       f'{"target is" if len(queued_skips) == 1 else "targets are"} queued to be '
+                       f'skipped — {"it" if len(queued_skips) == 1 else "they"} will not start.'
+                       f'</div>' if queued_skips else '')
                     + f'<div class="card"><div class="summary-grid">'
                     f'<div class="summary-item"><span class="muted">Targets</span>'
                     f'<strong>{len(prospects)}</strong></div>'
-                    f'<div class="summary-item"><span class="muted">Completed</span>'
-                    f'<strong>{sum(1 for p in prospects.values() if p.get("status") == "DONE")}</strong></div>'
-                    f'<div class="summary-item"><span class="muted">Need attention</span>'
-                    f'<strong>{sum(1 for p in prospects.values() if p.get("status") == "MANUAL_ACTION_REQUIRED")}</strong></div>'
-                    f'</div><div class="scrollx" style="margin-top:12px">{table}</div></div>'
+                    # One tile per outcome actually present, from the same labels the rows use, so
+                    # the tiles account for every target instead of leaving failed, interrupted and
+                    # skipped ones in no category at all.
+                    + "".join(
+                        f'<div class="summary-item"><span class="muted">{_esc(label)}</span>'
+                        f'<strong>{count}</strong></div>'
+                        for label, count in _run_status_summary(prospects))
+                    + f'</div><div class="scrollx" style="margin-top:12px">{table}</div></div>'
                     f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
                     f'selected</b><div class="row">'
                     f'<button class="chip" onclick="selectedAction(\'skip_queued\')">Skip queued</button>'
@@ -3579,11 +3600,29 @@ function startCampaign(){{
                 "function post(b){return fetch('/api/scout/operator',{method:'POST',headers:{"
                 "'X-Scout-CSRF':CSRF,'Content-Type':'application/json'},body:JSON.stringify(b)})"
                 ".then(r=>r.json());}"
+                # The server already reports exactly what it did and what it refused; reloading
+                # without reading it threw that away and left a successful action looking identical
+                # to a dead button. A clean success reloads, because the reloaded page carries the
+                # persistent banner and per-row marker. A partial result keeps the operator on the
+                # page with the reason, since a refusal is not persisted anywhere and a reload would
+                # erase the only account of it.
+                "function bulkSummary(j){var out=[];"
+                "if(j.requested&&j.requested.length)out.push(j.requested.length+' queued to skip');"
+                "if(j.refused&&j.refused.length)out.push(j.refused.length+' refused ('+"
+                "j.refused.map(function(r){return (r.prospect_id||'?')+': '+(r.status||'unknown');})"
+                ".join(', ')+')');"
+                "if(j.removed&&j.removed.length)out.push(j.removed.length+' file(s) removed');"
+                "if(j.forgotten&&j.forgotten.length)out.push(j.forgotten.length+' removed from history');"
+                "if(j.message)out.push(j.message);"
+                "return out.join(' · ');}"
                 "function selectedAction(action,confirmFlag){var ps=picks();if(!ps.length)return;"
                 "post({action:action,run_id:RUN,prospect_ids:ps.map(x=>x.value),"
                 "domains:ps.map(x=>x.dataset.domain).filter(Boolean),confirm:!!confirmFlag})"
-                ".then(j=>{if(j.ok)location.reload();else document.getElementById('bulkmsg').textContent="
-                "j.error||'Action failed';});}"
+                ".then(j=>{var m=document.getElementById('bulkmsg');"
+                "if(!j.ok){m.textContent=j.error||'Action failed';return;}"
+                "var partial=(j.refused&&j.refused.length)?true:false;"
+                "m.textContent=bulkSummary(j)||'Done';"
+                "if(!partial)location.reload();});}"
                 "function deleteEvidence(){qaConfirm('Delete screenshots, videos and browser traces "
                 "for selected targets? Findings and summary history will remain.','Delete evidence')"
                 ".then(function(ok){if(ok)selectedAction('delete_evidence',true);});}"
@@ -4211,6 +4250,39 @@ def _finding_qa_value(f: dict) -> int:
 
 # Human-readable within-site coverage profile label (PR-B). "explicit" is the internal/back-compat
 # mode (never offered as an operator choice) — shown honestly as "Legacy explicit" rather than hidden.
+# One vocabulary for a prospect's outcome on the run-results page. The rows and the summary tiles
+# BOTH read it, so a tile and the rows it counts can never call the same state different things, and
+# the tiles partition the run by construction — every prospect lands in exactly one category, which
+# is what makes the summary exhaustive rather than merely true.
+_RUN_STATUS_LABELS = (
+    ("DONE", "Completed"),
+    ("MANUAL_ACTION_REQUIRED", "Needs your help"),
+    ("FAILED", "Could not complete"),
+    ("PENDING", "Queued"),
+    ("SKIPPED", "Skipped"),
+)
+
+
+def _run_status_label(status: str) -> str:
+    """Human label for a persisted prospect status. An unknown status is titled, never dropped —
+    a target must never fall out of the summary just because its status is new."""
+    for known, label in _RUN_STATUS_LABELS:
+        if status == known:
+            return label
+    return str(status or "Unknown").replace("_", " ").title()
+
+
+def _run_status_summary(prospects: dict) -> list:
+    """(label, count) per outcome present in the run, in the canonical order above with any unknown
+    status appended. The counts sum to len(prospects) — the page asserts nothing the data cannot."""
+    counts: dict = {}
+    for p in prospects.values():
+        label = _run_status_label(str((p or {}).get("status", "") or ""))
+        counts[label] = counts.get(label, 0) + 1
+    ordered = [(label, counts.pop(label)) for _, label in _RUN_STATUS_LABELS if label in counts]
+    return ordered + sorted(counts.items())
+
+
 _COVERAGE_PROFILE_LABEL = {"adaptive": "Adaptive", "deep": "Deep", "explicit": "Legacy explicit"}
 
 # Honest, human-readable page-coverage stop reasons (core/scout/coverage.py CoveragePlanner).
