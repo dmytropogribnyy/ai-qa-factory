@@ -2153,7 +2153,13 @@ function startCampaign(){{
                     f'<a class="chip" href="/results">Companies &amp; outreach</a></div>'
                     f'<div class="card"><p>Scan mode {_badge(mode)} · status '
                     f'{_badge(_prospect_status_label(st.get("status", "n/a")))}</p>'
-                    f'<div class="row">{controls}</div></div>'
+                    # This card states what a live process is doing, so it must also say whether the
+                    # statement is still current. Without it the page froze at the moment it was
+                    # opened and a finished run kept reading as a starting one. Same freshness row
+                    # and same polling helper the sibling operator screens already use; it never
+                    # auto-reloads, so a confirm dialog or a half-typed URL is never interrupted.
+                    + (self._poll_html() if run_id else '')
+                    + f'<div class="row">{controls}</div></div>'
                     f'<div class="row"><a class="chip" href="/scout/campaigns">Campaigns</a>'
                     f'{results_link}</div>'
                     f'<div class="scrollx">{table}</div>'
@@ -2234,7 +2240,16 @@ function startCampaign(){{
                 "coverage:(document.getElementById('impcoverage')||{}).value||'adaptive'})})"
                 ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
                 "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
-                "alert('start failed: '+e);});}\n")
+                "alert('start failed: '+e);});}\n"
+                # Watch exactly what this page renders: whether a run is live, the run's own status,
+                # and every target's status. A signature blind to those would leave the stale claim
+                # standing. Only a bound run is polled — an idle page has nothing to watch.
+                + (self._poll_script(
+                    "/api/status",
+                    "function(j){var p=(j.state||{}).prospects||{};"
+                    "return [j.running,j.mode,(j.state||{}).status,Object.keys(p).sort(),"
+                    "Object.keys(p).sort().map(function(k){return p[k].status;})]}")
+                   if run_id else ""))
             return _page("AI QA Factory — Scout", "/scout", body, script)
 
         def _scout_campaigns_page(self, q=None) -> str:
