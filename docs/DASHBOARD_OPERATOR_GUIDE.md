@@ -78,6 +78,37 @@ blocking)". An approved project is therefore never described as both *Ready to e
 *blocked on missing information*. The Work list and the project detail read one shared next-action
 rule, so a project states the same next step on every screen.
 
+### Incomplete Scout targets never show confirmed findings
+
+A target's confirmed findings come from a completed analysis only. Any prospect whose persisted
+status is non-empty and not `DONE` — a challenge (`MANUAL_ACTION_REQUIRED`), a failure (`FAILED`), a
+run interrupted before its result was recorded (`PENDING`), an operator skip (`SKIPPED`), or a status
+a future engine adds — reads as 0 confirmed findings on **every** surface: the Target page, the run
+results, `/api/scout/target`, and the raw-JSON `/api/prospect` diagnostic.
+
+The rule lives in one place, `analysis_incomplete()` in `core/scout/campaign_service.py`, and both
+read paths call it, so a new surface inherits the rule instead of re-deriving it. A historical record
+with no status at all keeps its previous artifact-loading behaviour; that is the single deliberate
+exemption.
+
+`/api/prospect` stays useful for diagnosing an interrupted run: it still returns the page-level
+`observation` and `evidence`, and it always states `prospect_status` and `analysis_complete`. What it
+withholds it says plainly — `{"withheld": "analysis_incomplete", "artifact_present": true|false}` —
+so "we are not showing this because the analysis never finished" is never confused with "there is
+nothing on disk".
+
+**Each incomplete state is described by what actually happened to it.** The Target screen derives its
+badge, its page title and its available action from the real status: a challenge says *Needs your
+help* and offers the manual check; a skipped target says *Skipped*; an interrupted one says *Not
+analyzed*; anything else says *Could not complete*. Only a real challenge links to
+`/scout/attention`, because only a challenge appears there.
+
+**Counts on a completed target.** For a `DONE` target the numbers satisfy
+`Actionable = findings with severity != "info"`, `Informational = findings with severity == "info"`,
+and `Total = Actionable + Informational`, which equals the number of findings the read API returns
+for that target. The run row reads the compact prospect counters and the Target card reads the
+findings artifact, so this is a direct number-to-number agreement between two independent sources.
+
 ## Data & retention
 
 Settings explains the three cleanup classes before the operator acts:
