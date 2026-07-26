@@ -67,6 +67,21 @@ def analysis_incomplete(prospect_status: str) -> bool:
     return bool(prospect_status) and prospect_status != "DONE"
 
 
+# Per-prospect artifacts that carry a QA RESULT rather than a page-level observation: the confirmed
+# finding records, the priority scorecard derived from them, and the reproduction record plus its
+# video clip. They may only be reached for a COMPLETED analysis — a screen that reports 0 confirmed
+# findings must not offer the result one click away, and the user-facing /scout/artifact URL is
+# guessable, so the rule cannot live in the page alone.
+_RESULT_BEARING_NAMES = frozenset({"findings.json", "scorecard.json", "reproduction.json"})
+_RESULT_BEARING_PREFIXES = ("reproduction.",)   # reproduction.webm / .mp4 and any future container
+
+
+def is_result_bearing_artifact(name: str) -> bool:
+    """True when this per-prospect file carries the QA result itself, not page-level diagnostics."""
+    low = str(name or "").strip().lower()
+    return low in _RESULT_BEARING_NAMES or low.startswith(_RESULT_BEARING_PREFIXES)
+
+
 # Known per-prospect structured evidence artifacts the engine may persist, with readable labels.
 # target_detail() only exposes an entry when the file genuinely exists on disk (never a dead link).
 _STRUCTURED_EVIDENCE_ARTIFACTS: tuple = (
@@ -556,14 +571,23 @@ class CampaignService:
                         reproduction = st.load_prospect_artifact(prospect_id, "reproduction.json") or None
                     try:
                         pdir = st.prospect_dir(prospect_id)
+                        # A page that reports 0 confirmed findings must not hand the operator the
+                        # result itself one click away. For an incomplete analysis the RESULT-BEARING
+                        # artifacts stay on disk but are not offered: the finding records, the
+                        # priority scorecard derived from them, the reproduction record, and the
+                        # reproduction video. Page-level capture (screenshots, observation, trace,
+                        # the stop-reason record) stays — it is what explains why the run stopped.
                         media = [f"prospects/{prospect_id}/{fp.name}" for fp in sorted(pdir.iterdir())
-                                 if fp.is_file() and fp.suffix.lower() in _MEDIA_EXT]
+                                 if fp.is_file() and fp.suffix.lower() in _MEDIA_EXT
+                                 and not (incomplete and is_result_bearing_artifact(fp.name))]
                         # Structured diagnostic evidence files: only listed when they genuinely
                         # exist on disk, so the operator UI never links to an artifact that isn't
                         # there.
                         # Labels are human-readable; the rel path is exact-run/exact-prospect
                         # confined and servable via the SAME safe /scout/artifact route as media.
                         for _name, _label in _STRUCTURED_EVIDENCE_ARTIFACTS:
+                            if incomplete and is_result_bearing_artifact(_name):
+                                continue
                             if (pdir / _name).is_file():
                                 evidence_files.append({
                                     "name": _name, "label": _label,

@@ -906,6 +906,22 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._json(403, {"error": "path not allowed"})
             if not target.exists() or not target.is_file():
                 return self._json(404, {"error": "not found"})
+            # A result-bearing artifact (finding records, the scorecard derived from them, the
+            # reproduction record and its video clip) belongs to a COMPLETED analysis only. This URL
+            # is user-facing and guessable, so the same completeness predicate the read model and
+            # /api/prospect apply must gate it here too — withholding it from the page alone would
+            # leave the result one hand-typed URL away. Page-level capture (screenshots, observation,
+            # trace, the stop-reason record) stays available: it explains why the run stopped.
+            from core.scout.campaign_service import analysis_incomplete, is_result_bearing_artifact
+            if len(parts) >= 3 and parts[0] == "prospects" and is_result_bearing_artifact(parts[-1]):
+                try:
+                    pstate = ((st.load_state() or {}).get("prospects", {}) or {}).get(parts[1], {})
+                except StoreError:
+                    pstate = {}
+                if analysis_incomplete(str((pstate or {}).get("status", "") or "")):
+                    return self._json(409, {"error": "analysis incomplete",
+                                            "detail": "this artifact carries a QA result and is "
+                                                      "available only for a completed analysis"})
             if target.stat().st_size > _MAX_ARTIFACT_BYTES:
                 return self._json(413, {"error": "artifact too large to serve"})
             name = target.name.lower()
@@ -2674,9 +2690,14 @@ function startCampaign(){{
                              f'<details class="card advanced"><summary>Advanced diagnostics</summary>'
                              f'<p><b>Resolved run:</b> <code>{_esc(run_id or "unavailable")}</code> · '
                              f'<b>Evidence status:</b> <code>prospect_not_found</code></p></details>')
-            # A run-pinned incomplete target (manual action / failed): honest incomplete-analysis view,
-            # never a healthy "0 defects" conclusion.
-            if run and prospect_status and prospect_status != "DONE":
+            # An incomplete target gets the honest incomplete-analysis view, never a healthy
+            # "0 defects" conclusion. The renderer is chosen by the SAME completeness predicate every
+            # other surface uses — NOT by whether the caller happened to pin ?run=. History links here
+            # without a run (see the Target column of the history table), and every promoted domain is
+            # registered as analyzed regardless of its per-target outcome, so routing on the parameter
+            # certified interrupted, skipped and failed targets as "Analysis complete".
+            from core.scout.campaign_service import analysis_incomplete
+            if analysis_incomplete(prospect_status):
                 return self._scout_incomplete_target_html(domain, det, nav)
             if not entry and not brain and not prospect_id:
                 return _page("AI QA Factory — Target", "/scout",

@@ -124,6 +124,11 @@ def test_unpinned_target_page_does_not_render_a_pending_targets_findings(tmp_pat
 
     assert status == 200
     assert "delta.example: delta (high)" not in html
+    # Withholding the rows is not enough: before the renderer was routed by the shared completeness
+    # predicate, this same page still certified the interrupted target as "Analysis complete" with a
+    # healthy "no actionable defect" conclusion — a leak replaced by an affirmative clean bill.
+    assert "Analysis complete" not in html
+    assert "No actionable defect was confirmed" not in html
 
 
 def test_a_prospect_absent_from_state_never_borrows_its_own_artifacts(tmp_path, monkeypatch):
