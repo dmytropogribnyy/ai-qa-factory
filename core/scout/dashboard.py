@@ -3237,10 +3237,22 @@ function startCampaign(){{
             media = det.get("media") or []
             evidence_files = det.get("evidence_files") or []
             raw_reason = str(ma.get("reason") or "")
-            human_reason = {
-                "captcha_detected": "The site requested a human verification check.",
-                "access_prohibited": "The site blocked automated access.",
-            }.get(raw_reason, "The browser could not complete this target automatically.")
+            prospect_status = str(det.get("prospect_status") or "")
+            # A challenge is not the only way an analysis ends early. Describe what actually
+            # happened: a blocked/CAPTCHA target has a persisted reason and a session an operator can
+            # take over; an interrupted or skipped target has neither, and offering to "open a manual
+            # check" for one would be a false story about the run.
+            challenge = bool(raw_reason) or prospect_status == "MANUAL_ACTION_REQUIRED"
+            if prospect_status == "SKIPPED":
+                human_reason = "This target was skipped, so it was never analyzed."
+            elif prospect_status == "PENDING":
+                human_reason = ("The analysis did not finish for this target — the run stopped "
+                                "before its result was recorded.")
+            else:
+                human_reason = {
+                    "captcha_detected": "The site requested a human verification check.",
+                    "access_prohibited": "The site blocked automated access.",
+                }.get(raw_reason, "The browser could not complete this target automatically.")
 
             def _art_url(rel: str) -> str:
                 return f'/scout/artifact?run={_esc(run_id)}&rel={_esc(rel)}'
@@ -3256,6 +3268,25 @@ function startCampaign(){{
             evidence_links = "".join(
                 f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
                 f'{_esc(e["label"])}</a></li>' for e in evidence_files)
+            if challenge:
+                actions_html = (
+                    '<div class="row"><button class="btn primary" id="opencheck" '
+                    'onclick="openCheck()">Open manual check</button>'
+                    '<button class="chip" id="continuecheck" onclick="challengeAction(\'continue\')" '
+                    'disabled>Continue check</button>'
+                    '<button class="chip" id="defercheck" onclick="challengeAction(\'defer\')" '
+                    'disabled>Defer</button>'
+                    '<button class="chip danger" id="skipcheck" onclick="challengeAction(\'skip\')" '
+                    'disabled>Skip target</button></div>'
+                    '<p id="challengemsg" class="muted" aria-live="polite">Open a visible Chromium '
+                    'window, complete the human check there, then choose Continue. The same browser '
+                    'session stays open for up to 15 minutes.</p>')
+            else:
+                actions_html = (
+                    '<div class="row"><a class="btn primary" href="/scout">'
+                    'Scan this target again</a></div>'
+                    '<p class="muted">No human check is pending for this target — rescanning is the '
+                    'way to get a result.</p>')
             body = (
                 f'<h1>{_esc(domain)}</h1><div class="row">{nav}'
                 f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
@@ -3264,17 +3295,7 @@ function startCampaign(){{
                 f'<span>{_esc(human_reason)}</span></div>'
                 '<p><b>0 confirmed findings — analysis incomplete.</b> No conclusion about the site and no outreach '
                 'draft were created.</p>'
-                '<div class="row"><button class="btn primary" id="opencheck" '
-                'onclick="openCheck()">Open manual check</button>'
-                '<button class="chip" id="continuecheck" onclick="challengeAction(\'continue\')" '
-                'disabled>Continue check</button>'
-                '<button class="chip" id="defercheck" onclick="challengeAction(\'defer\')" '
-                'disabled>Defer</button>'
-                '<button class="chip danger" id="skipcheck" onclick="challengeAction(\'skip\')" '
-                'disabled>Skip target</button></div>'
-                '<p id="challengemsg" class="muted" aria-live="polite">Open a visible Chromium '
-                'window, complete the human check there, then choose Continue. The same browser '
-                'session stays open for up to 15 minutes.</p></div>'
+                f'{actions_html}</div>'
                 '<div class="card"><h2>Partial evidence</h2>'
                 f'<div class="media-grid">{img_html}</div>'
                 f'<p><b>Landing response:</b> HTTP {_esc(network.get("status") or "unavailable")} · '
