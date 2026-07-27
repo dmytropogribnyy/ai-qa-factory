@@ -89,15 +89,15 @@ class SiteResult:
                 "can_draft_outreach": self.can_draft_outreach}
 
 
-def _is_actionable(finding: Dict[str, Any]) -> bool:
-    return str(finding.get("severity") or "").strip().lower() not in ("info", "informational", "")
-
-
 def site_result(detail: Dict[str, Any]) -> SiteResult:
     """Turn one ``target_detail`` read model into the verdict shown wherever the site appears."""
     detail = detail or {}
-    findings = list(detail.get("findings") or [])
-    actionable = [f for f in findings if _is_actionable(f)]
+    # ONE canonical split, shared with the fix offer and the outreach draft. Counting here with a
+    # private rule is exactly how "1 confirmed issue" came to sit above "we can fix 2".
+    from core.scout.actionable import actionable_set
+    canonical = actionable_set(detail.get("findings") or [])
+    findings = canonical.actionable + canonical.informational
+    actionable = canonical.actionable
     media = [str(m) for m in (detail.get("media") or [])]
     screenshots = sum(1 for m in media if m.lower().endswith(_IMAGE_SUFFIXES))
     has_video = any(m.lower().endswith(_VIDEO_SUFFIXES) for m in media)

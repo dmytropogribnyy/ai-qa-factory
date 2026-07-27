@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 
+from core.atomic_io import atomic_replace
 # The purpose vocabulary is shared with History, Overview and Needs attention — one definition of
 # what a run was for, so a site cannot be disposable on one screen and production on the next.
 from core.scout.run_purpose import (KNOWN_PURPOSES, PURPOSE_ACCEPTANCE,  # noqa: F401 (re-exported)
@@ -534,4 +535,4 @@ class DataManagementStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_name(self._path.name + ".tmp")
         tmp.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, self._path)
+        atomic_replace(tmp, self._path)

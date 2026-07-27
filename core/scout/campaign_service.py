@@ -718,12 +718,18 @@ class CampaignService:
                                    understanding=understanding, findings=findings,
                                    contact=(contacts[0] if contacts else ""),
                                    router=None)
+        from core.scout.actionable import actionable_set
         from core.scout.outreach.fixability import classify_fixability
         # Cold prospect: no repo/staging access yet, so nothing is 'fix_ready' (honest scoping).
+        # Scoped to the SAME canonical actionable set the verdict counts: offering to fix an
+        # informational observation is how the page came to promise more repairs than it found
+        # problems.
+        canonical = actionable_set(findings)
         fixability = classify_fixability(
             [{"severity": f.get("severity"), "category": f.get("category"),
-              "title": f.get("title"), "business_impact": f.get("business_impact")}
-             for f in findings], access_available=False)
+              "title": f.get("title"), "business_impact": f.get("business_impact"),
+              "signature": f.get("signature")}
+             for f in canonical.actionable], access_available=False)
         return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
                 "scout_run": scout_run, "run": scout_run, "prospect_id": prospect_id,
                 "prospect_status": prospect_status, "analysis_complete": analysis_complete,
@@ -733,6 +739,9 @@ class CampaignService:
                 "evidence_status": evidence_status, "media": media, "network": network,
                 "reproduction": reproduction, "interaction": interaction,
                 "scorecard": scorecard,
+                # The counts every surface must agree with, computed once and carried with the
+                # findings they describe.
+                "actionable_summary": canonical.to_dict(),
                 "findings": [_project_target_finding(f) for f in findings],
                 "contacts": contacts, "contact_records": contact_records,
                 "draft": draft, "fixability": fixability}

@@ -213,7 +213,12 @@ jobs:
       - name: Agent readiness audit
         run: python tools/agent_readiness_audit.py
       - name: Whitespace check
-        run: git diff --check
+        # git diff --check on a clean checkout compares the working tree against the index,
+        # both clean, so it inspected nothing and could not go red. This reads the branch's own
+        # added lines, and proves the detector detects before trusting it.
+        run: |
+          python tools/whitespace_check.py --self-check
+          python tools/whitespace_check.py --base origin/${{ github.base_ref || 'main' }}
       - name: Tests — full on the gate; affected on a code PR; none on a docs-only PR
         env:
           FULL: ${{ needs.meta.outputs.full }}

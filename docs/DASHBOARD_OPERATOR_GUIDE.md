@@ -157,7 +157,49 @@ and `Total = Actionable + Informational`, which equals the number of findings th
 for that target. The run row reads the compact prospect counters and the Target card reads the
 findings artifact, so this is a direct number-to-number agreement between two independent sources.
 
+### The six site results, and why there are six
+
+A site's result is one of six values. The first five were the original vocabulary; **Not analyzed**
+is a deliberate sixth, because a target that was discovered and never scanned did not *fail* —
+nothing was attempted — and reporting a failure that never happened is worse than reporting nothing.
+
+| Result | Means | Never used for |
+|---|---|---|
+| **Ready to contact** | Analysis completed with at least one actionable finding and a public contact | A site with no confirmed actionable finding |
+| **Needs review** | Analysis ran, but its evidence could not be resolved or a human must look | A run that failed |
+| **No actionable findings** | Analysis completed and confirmed nothing worth acting on | "The site is defect-free" — it is a bounded pass, not a clean bill of health |
+| **Blocked** | A challenge, login wall or access control stopped the scan | A crash or an internal error |
+| **Failed** | A run that genuinely failed, proven by its own recorded state | A target that was never attempted |
+| **Not analyzed** | Discovered, queued, interrupted or skipped — never scanned | Anything that produced a result |
+
+Three rules keep them apart:
+
+- **Never scanned → Not analyzed.** Not *Failed*, whatever the surrounding run did.
+- **Analyzed but evidence unresolved → Needs review.** Not *Failed*: the analysis happened.
+- **A proven failed run → Failed**, and only then.
+
+The same value appears in Overview, History, Details and the read API, from one computation
+(`core.scout.site_result`), so the four cannot disagree. Registry statuses are persisted lowercase
+(`analyzed`) and prospect statuses uppercase (`DONE`); both are normalised before comparison —
+comparing the two vocabularies directly is what once made an analysed site read as *Failed*.
+
 ## Data & retention
+
+### What a run was for
+
+Every run records a **purpose** when it starts, and nothing infers one afterwards from a name:
+
+- **Production** — ordinary operator work. The default: the daily form does not ask, and what it
+  does not ask for is real work.
+- **Acceptance / Diagnostic / Manual test** — deliberately disposable. Created only through a
+  harness, the CLI, or a server started with `AIQA_SCOUT_TEST_PURPOSE=1`; a request cannot label its
+  own data disposable by adding a field.
+- **Unclassified** — written before the field existed. Treated conservatively as real work and never
+  swept automatically.
+
+History and the campaign counts show production by default; the purpose filter reveals the rest
+without changing anything. Only a disposable purpose can be permanently deleted, and deleting one
+never touches a production run of the same site.
 
 Settings explains the three cleanup classes before the operator acts:
 

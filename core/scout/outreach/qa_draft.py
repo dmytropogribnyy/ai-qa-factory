@@ -84,7 +84,10 @@ def extract_public_contact_records(
 
 def problem_bullets(findings: List[Dict[str, Any]], *, limit: int = 8) -> List[str]:
     """Concise, highest-impact-first problem bullets from verified findings (no secrets/PII)."""
-    items = [f for f in (findings or []) if f.get("severity") in ("high", "medium", "low")]
+    # The same canonical set the verdict counts and the fix offer scopes. An informational
+    # observation, an interaction trace and a duplicate are all absent from every one of them.
+    from core.scout.actionable import actionable_set
+    items = list(actionable_set(findings or []).actionable)
     items.sort(key=lambda f: _SEVERITY_ORDER.get(f.get("severity"), 9))
     bullets: List[str] = []
     for f in items[:limit]:
@@ -168,7 +171,8 @@ def _offer_line(archetype: str = "") -> str:
 
 def _fix_offer(findings: List[Dict[str, Any]]) -> tuple[str, Dict[str, Any]]:
     from core.scout.outreach.fixability import classify_fixability
-    fixability = classify_fixability(findings, access_available=False)
+    from core.scout.actionable import actionable_set
+    fixability = classify_fixability(actionable_set(findings).actionable, access_available=False)
     count = int(fixability.get("offerable") or 0)
     if count:
         noun = "issue" if count == 1 else "issues"

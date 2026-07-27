@@ -31,7 +31,6 @@ only start the existing bounded read-only Scout engine.
 from __future__ import annotations
 
 import json
-import os
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -42,6 +41,7 @@ from core.scout.config import BROWSER_MODES, MAX_SEEDS, ScoutConfigError, ScoutR
 from core.scout.coverage import OPERATOR_COVERAGE
 from core.scout.run_purpose import PurposeNotPermitted, resolve_requested_purpose, test_purposes_enabled
 from core.scout.url_safety import Resolver, UrlPolicy, dedupe_eligible
+from core.atomic_io import atomic_replace
 
 _REGISTRY_DIRNAME = "_campaigns"
 _MAX_SEED_STRLEN = 2048
@@ -131,7 +131,7 @@ class CampaignLauncher:
         path = self._record_path(key)
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
 
     # --- start -----------------------------------------------------------------------------------
     def start(self, request: Dict[str, Any]) -> CampaignStartResult:

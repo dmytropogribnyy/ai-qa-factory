@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.atomic_io import atomic_replace
 from core.scout.discovery.domain_intel import canonical_domain
 
 # analysis_status values
@@ -101,7 +102,7 @@ class AnalyzedSiteRegistry:
                    "sites": [e.to_dict() for e in self._entries.values()]}
         tmp = self._path.with_name(self._path.name + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, self._path)
+        atomic_replace(tmp, self._path)
 
     # -- observation / dedup -----------------------------------------------------------------------
     def observe(self, url: str, *, campaign_id: str, provider: str) -> Tuple[SiteEntry, bool]:

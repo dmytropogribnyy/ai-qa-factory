@@ -12,7 +12,6 @@ import hashlib
 import html
 import io
 import json
-import os
 import re
 import tempfile
 import zipfile
@@ -24,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 from core.orchestration.content_safety import ContentSecretScanner
 from core.scout.discovery.domain_intel import canonical_domain
 from core.scout.store import RunStore, StoreError
+from core.atomic_io import atomic_replace
 
 _MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
 _MAX_MEMBER_BYTES = 12 * 1024 * 1024
@@ -674,7 +674,7 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                 raise ClientEvidenceError(
                     "client evidence manifest blocked by content secret scan")
             archive.writestr(f"{root}/manifest.json", manifest_text.encode("utf-8"))
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
     except Exception:
         try:
             tmp.unlink()
