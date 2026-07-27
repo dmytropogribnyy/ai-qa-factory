@@ -199,6 +199,39 @@ class DataManagementStore:
         self._save(state)
         return {"ok": True, "moved": moved, "refused": refused}
 
+    def classify(self, run_ids: Iterable[str], *, purpose: str) -> Dict[str, Any]:
+        """Record what an unclassified run actually was — the explicit choice it demands.
+
+        Requiring a human decision only works if there is a way to make one. Two limits keep it from
+        becoming a loophole: a run may only be labelled with a *removable* purpose, so this cannot
+        hand out production's sweep-protection; and a run that already declared its purpose keeps it,
+        because re-labelling something to make it deletable is not a cleanup step, it is a way to
+        delete the thing you were told not to.
+        """
+        wanted = normalise_purpose(purpose)
+        classified, refused = [], []
+        for raw in run_ids or []:
+            run_id = self._safe_run(str(raw or ""))
+            if not run_id or not self.run_dir(run_id).is_dir():
+                continue
+            if wanted not in REMOVABLE_PURPOSES:
+                refused.append({"run_id": run_id,
+                                "reason": f"a run cannot be labelled {purpose!r} here"})
+                continue
+            current = self._purpose(run_id)
+            if current != PURPOSE_UNCLASSIFIED:
+                refused.append({"run_id": run_id,
+                                "reason": f"the run already declared its purpose ({current})"})
+                continue
+            # config.json is immutable by design, so the operator's decision is recorded as an
+            # OVERLAY beside it rather than by rewriting what the run itself claimed at launch.
+            state = self._state()
+            state.setdefault("classified", {})[run_id] = {
+                "purpose": wanted, "decided_at": _now()}
+            self._save(state)
+            classified.append(run_id)
+        return {"ok": True, "classified": classified, "refused": refused}
+
     def restore(self, run_ids: Iterable[str]) -> Dict[str, Any]:
         """Put a run back whole — the record, its evidence and its visibility."""
         state = self._state()
@@ -277,11 +310,16 @@ class DataManagementStore:
         return ""
 
     def _purpose(self, run_id: str) -> str:
+        """What the run declared at launch, or what the operator later decided it had been."""
         try:
             raw = json.loads((self.run_dir(run_id) / "config.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return PURPOSE_UNCLASSIFIED
-        return normalise_purpose((raw or {}).get("run_purpose"))
+            raw = {}
+        declared = normalise_purpose((raw or {}).get("run_purpose"))
+        if declared != PURPOSE_UNCLASSIFIED:
+            return declared
+        decided = (self._state().get("classified") or {}).get(run_id) or {}
+        return normalise_purpose(decided.get("purpose"))
 
     def _client_linked(self, run_id: str) -> bool:
         """Has a human already carried this run's result into client work?"""
@@ -388,7 +426,9 @@ class DataManagementStore:
         return {"schema": "scout-data-management/v1",
                 "trash": [i for i in (raw.get("trash") or []) if isinstance(i, dict)
                           and i.get("run_id")],
-                "tombstones": [t for t in (raw.get("tombstones") or []) if isinstance(t, dict)]}
+                "tombstones": [t for t in (raw.get("tombstones") or []) if isinstance(t, dict)],
+                "classified": {k: v for k, v in (raw.get("classified") or {}).items()
+                               if isinstance(v, dict)}}
 
     def _save(self, state: Dict[str, Any]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

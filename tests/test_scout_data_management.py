@@ -301,3 +301,35 @@ class _FakeService:
 
     def start(self, *_args, **_kwargs):
         raise AssertionError("these tests build a config; they never start a run")
+
+
+# --- the explicit choice an unclassified run demands ---------------------------------------------
+
+def test_an_unclassified_run_can_be_told_what_it_was(store):
+    """Requiring an explicit choice only works if the operator can actually make one."""
+    result = store.classify(["legacy-run"], purpose=PURPOSE_ACCEPTANCE)
+
+    assert result["classified"] == ["legacy-run"]
+    runs = {r.run_id: r for r in store.inventory().runs}
+    assert runs["legacy-run"].purpose == PURPOSE_ACCEPTANCE
+    assert [r.run_id for r in store.preview(["legacy-run"]).runs] == ["legacy-run"]
+
+
+def test_classifying_cannot_promote_a_run_to_production(store):
+    """That would let a sweep-protection label be handed out by the thing being swept."""
+    result = store.classify(["legacy-run"], purpose=PURPOSE_PRODUCTION)
+
+    assert result["classified"] == []
+    assert {r.run_id: r for r in store.inventory().runs}["legacy-run"].purpose == (
+        PURPOSE_UNCLASSIFIED)
+
+
+def test_a_declared_purpose_is_not_silently_overwritten(store):
+    """A run that already said what it was keeps saying it; re-labelling is not a cleanup step."""
+    result = store.classify(["campaign-real-20260720t100000z-abc123"],
+                            purpose=PURPOSE_ACCEPTANCE)
+
+    assert result["classified"] == []
+    assert "already" in result["refused"][0]["reason"]
+    assert {r.run_id: r for r in store.inventory().runs}[
+        "campaign-real-20260720t100000z-abc123"].purpose == PURPOSE_PRODUCTION

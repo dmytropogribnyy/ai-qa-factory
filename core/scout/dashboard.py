@@ -390,7 +390,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if parsed.path == "/api/scout/intake/preview":
                 return self._scout_intake_preview()
             if parsed.path in ("/api/scout/data/preview", "/api/scout/data/trash",
-                               "/api/scout/data/restore", "/api/scout/data/delete"):
+                               "/api/scout/data/restore", "/api/scout/data/delete",
+                               "/api/scout/data/classify"):
                 return self._scout_data_action(parsed.path.rsplit("/", 1)[-1])
             if parsed.path == "/api/scout/control":
                 return self._scout_control(parsed)
@@ -557,6 +558,9 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._json(200, {"ok": True, **store.move_to_trash(run_ids)})
             if action == "restore":
                 return self._json(200, {"ok": True, **store.restore(run_ids)})
+            if action == "classify":
+                return self._json(200, {"ok": True, **store.classify(
+                    run_ids, purpose=str(body.get("purpose") or ""))})
             return self._json(200, {"ok": True, **store.permanently_delete(
                 run_ids, confirm=body.get("confirm") is True)})
 
@@ -603,6 +607,15 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 '<button class="chip danger" onclick="destroy()">Delete permanently…</button>'
                 if in_trash else
                 '<button class="chip" onclick="preview()">Preview what would be removed</button>'
+                # An Unclassified run is required to demand an explicit choice, so the operator has
+                # to be able to make one. Production is deliberately not offered: a label that buys
+                # sweep-protection must not be handed out from the sweep screen.
+                '<label class="sr-only" for="setpurpose">Record what these runs were</label>'
+                '<select id="setpurpose"><option value="">Record what these were&hellip;</option>'
+                '<option value="acceptance">Acceptance</option>'
+                '<option value="diagnostic">Diagnostic</option>'
+                '<option value="manual_test">Manual test</option></select>'
+                '<button class="chip" onclick="classify()">Save purpose</button>'
                 '<button class="chip" onclick="act(\'trash\')" id="tobin" disabled>'
                 'Move selected to Trash</button>')
             tabs = (('<a class="chip" href="/data">Stored runs</a>'
@@ -659,6 +672,12 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 "'</li>';}).join('')+'</ul>';}"
                 "o.innerHTML=h;var t=document.getElementById('tobin');"
                 "if(t)t.disabled=!(p.runs||[]).length;});}"
+                "function classify(){var d=picks(),s=document.getElementById('setpurpose');"
+                "if(!d.length||!s||!s.value)return;"
+                "J('/api/scout/data/classify',{run_ids:d,purpose:s.value}).then(function(j){"
+                "if((j.classified||[]).length)location.reload();"
+                "else document.getElementById('datamsg').textContent="
+                "(((j.refused||[])[0]||{}).reason||'Nothing was changed.');});}"
                 "function act(a){var d=picks();if(!d.length)return;"
                 "J('/api/scout/data/'+a,{run_ids:d}).then(function(j){"
                 "if(j.ok)location.reload();else document.getElementById('datamsg').textContent="
