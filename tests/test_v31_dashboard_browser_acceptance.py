@@ -620,7 +620,9 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             assert response.ok
             desktop.get_by_text("No analyzed sites yet.", exact=True).wait_for()
             desktop.get_by_role("link", name="Archived").click()
-            assert desktop.get_by_role("link", name="alpha.example").is_visible()
+            # exact=True: History now also carries a Contact column, whose mailto link
+            # (hello@alpha.example) matches a substring locator for the domain.
+            assert desktop.get_by_role("link", name="alpha.example", exact=True).is_visible()
             desktop.goto(url + "/scout/campaigns", wait_until="load")
             desktop.screenshot(
                 path=screenshot_dir / "08-scout-campaigns-desktop.png", full_page=True)
