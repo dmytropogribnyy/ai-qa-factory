@@ -111,6 +111,32 @@ class _Evidence:
         self.prospects: Dict[str, Dict[str, Any]] = {
             pid: rec for pid, rec in (self.state.get("prospects") or {}).items()
             if isinstance(rec, dict)}
+        # Where each target's artifacts live. A discovery campaign analyses nothing itself: it
+        # promotes candidates into their own Scout runs, so validating only the campaign directory
+        # finds no targets and honestly reports UNKNOWN for work that was in fact done one level
+        # down. Following the promotion link is what makes the answer useful as well as honest.
+        self._homes: Dict[str, Path] = {pid: self.root for pid in self.prospects}
+        self.promoted: List[str] = []
+        for record in self.state.get("candidates") or []:
+            child = str((record or {}).get("promoted_scout_run") or "")
+            if not child:
+                continue
+            self.promoted.append(child)
+            child_root = Path(output_dir) / "scout" / child
+            try:
+                child_state = json.loads((child_root / "state.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            for pid, rec in (child_state.get("prospects") or {}).items():
+                if isinstance(rec, dict):
+                    key = f"{child}/{pid}"
+                    self.prospects[key] = rec
+                    self._homes[key] = child_root
+
+    @property
+    def is_discovery(self) -> bool:
+        """A campaign that searched for targets rather than being given them."""
+        return "candidates" in self.state
 
     def _json(self, *parts: str) -> Optional[Dict[str, Any]]:
         try:
@@ -138,10 +164,22 @@ class _Evidence:
         return bool(self.state) or bool(self.config)
 
     def artifact(self, pid: str, name: str) -> Optional[Dict[str, Any]]:
-        return self._json("prospects", pid, name)
+        path = self.prospect_dir(pid) / name
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
 
     def prospect_dir(self, pid: str) -> Path:
-        return self.root / "prospects" / pid
+        """Resolve a target to its own run's directory — this run's, or a promoted child's."""
+        home = self._homes.get(pid, self.root)
+        return home / "prospects" / pid.rsplit("/", 1)[-1]
+
+    def evidence_ref(self, pid: str, name: str) -> str:
+        if "/" in pid:
+            run, inner = pid.split("/", 1)
+            return f"{run}/prospects/{inner}/{name}"
+        return f"prospects/{pid}/{name}"
 
 
 def validate_run(output_dir: str, run_id: str, *, write: bool = False,
@@ -262,7 +300,15 @@ def _observed_modules(ev: _Evidence) -> Dict[str, Any]:
         out.setdefault("screenshot",
                        f"captured:{shots.get('captured')}" if shots else "not_executed")
         scenario = ev.artifact(pid, "interaction_scenario.json") or {}
-        out.setdefault("interaction", scenario.get("outcome") or "not_executed")
+        if scenario:
+            out.setdefault("interaction", scenario.get("outcome"))
+        else:
+            # "Not requested" and "not executed" are different facts. A run whose video policy is
+            # manual never asked for an interaction recording, and reporting that as a missing
+            # receipt makes a deliberate setting look like a gap.
+            mode = str(ev.config.get("video_mode") or "")
+            out.setdefault("interaction",
+                           "not_executed" if mode == "qualified_auto" else "not_requested")
     return out or UNKNOWN
 
 
@@ -291,6 +337,29 @@ def _check_lifecycle(ev: _Evidence) -> Check:
 
 
 def _check_target_arithmetic(ev: _Evidence) -> Check:
+    if ev.is_discovery:
+        counts = ev.state.get("counts") or {}
+        discovered = int(counts.get("discovered") or 0)
+        accounted = sum(int(counts.get(k) or 0)
+                        for k in ("promoted", "rejected", "duplicates", "already_analyzed"))
+        promoted, analysed = int(counts.get("promoted") or 0), len(ev.prospects)
+        if not counts:
+            return Check("target_count_arithmetic", UNKNOWN, expected="discovery counters",
+                         observed=None, explanation="the campaign recorded no counters")
+        if accounted > discovered:
+            return Check("target_count_arithmetic", FAIL, expected=discovered, observed=accounted,
+                         explanation="more candidates were dispositioned than were discovered")
+        if promoted != analysed:
+            return Check("target_count_arithmetic", FAIL,
+                         expected={"promoted": promoted}, observed={"analysed_runs": analysed},
+                         explanation="a promoted candidate has no analysed run behind it")
+        return Check("target_count_arithmetic", PASS,
+                     expected={"discovered": discovered},
+                     observed={k: counts.get(k) for k in
+                               ("discovered", "eligible", "promoted", "rejected", "qa_analyzed",
+                                "failed")},
+                     explanation=("every discovered candidate has a recorded disposition, and each "
+                                  "promotion has an analysed run"))
     total = len(ev.prospects)
     by_status: Dict[str, int] = {}
     for record in ev.prospects.values():
@@ -312,6 +381,15 @@ def _check_target_arithmetic(ev: _Evidence) -> Check:
 
 
 def _check_intake(ev: _Evidence) -> Check:
+    if ev.is_discovery:
+        domains = sorted({str((c or {}).get("registrable_domain") or "")
+                          for c in (ev.state.get("candidates") or [])} - {""})
+        return Check("source_intake_consistency", PASS if domains else UNKNOWN,
+                     expected="targets found by search rather than supplied",
+                     observed={"candidates": domains,
+                               "promoted": ev.promoted},
+                     explanation=("a discovery campaign is given a query, not a target list, so "
+                                  "its intake is the candidate set it recorded"))
     seeds = list(ev.config.get("seeds") or [])
     if not seeds:
         return Check("source_intake_consistency", UNKNOWN, expected="the requested targets",
@@ -375,11 +453,11 @@ def _check_execution_mode(ev: _Evidence) -> Check:
     if missing:
         return Check("browser_receipt", PARTIAL, expected=len(ev.prospects), observed=len(receipts),
                      explanation="some targets have browser evidence and some do not",
-                     evidence_refs=[f"prospects/{p}/browser_trace.json" for p in receipts])
+                     evidence_refs=[ev.evidence_ref(p, "browser_trace.json") for p in receipts])
     return Check("browser_receipt", PASS, expected="a browser receipt for every target",
                  observed=receipts,
                  explanation="every target has a browser trace and a captured screenshot",
-                 evidence_refs=[f"prospects/{p}/browser_trace.json" for p in receipts])
+                 evidence_refs=[ev.evidence_ref(p, "browser_trace.json") for p in receipts])
 
 
 def _check_modules(ev: _Evidence) -> Check:
@@ -387,7 +465,7 @@ def _check_modules(ev: _Evidence) -> Check:
     if observed == UNKNOWN:
         return Check("module_receipts", UNKNOWN, expected="a receipt per QA module", observed=None,
                      explanation="no target recorded any module outcome")
-    unexecuted = sorted(k for k, v in observed.items() if str(v).startswith("not_executed"))
+    unexecuted = sorted(k for k, v in observed.items() if str(v) == "not_executed")
     if unexecuted:
         return Check("module_receipts", PARTIAL, expected="every module leaves a receipt",
                      observed=observed,
@@ -487,7 +565,7 @@ def _check_video(ev: _Evidence) -> Check:
                                   "policy outcome, not a failed capture"))
     return Check("video_playback", PASS, expected="every kept clip decodes and plays",
                  observed=clips, explanation="each kept recording has a duration and moving frames",
-                 evidence_refs=[f"prospects/{c['prospect']}/{c['ref']}" for c in clips])
+                 evidence_refs=[ev.evidence_ref(c["prospect"], c["ref"]) for c in clips])
 
 
 def _check_contacts(ev: _Evidence) -> Check:
@@ -497,7 +575,11 @@ def _check_contacts(ev: _Evidence) -> Check:
         contacts = ev.artifact(pid, "contacts.json")
         if contacts is None:
             continue
-        records = contacts.get("records") or contacts.get("contacts") or []
+        # The engine writes ``public``. Reading a key it does not use reported two real addresses
+        # as "a contact file that holds no address" -- the same shape as the failure this check
+        # exists to catch, produced by the check itself.
+        records = (contacts.get("public") or contacts.get("records")
+                   or contacts.get("contacts") or [])
         if records:
             found.append({"prospect": pid, "count": len(records)})
         else:
@@ -512,7 +594,7 @@ def _check_contacts(ev: _Evidence) -> Check:
                      explanation="a contact file exists but holds no address")
     return Check("contact_persistence", PASS, expected="a persisted contact", observed=found,
                  explanation="the contacts a reader would see are the ones written to disk",
-                 evidence_refs=[f"prospects/{c['prospect']}/contacts.json" for c in found])
+                 evidence_refs=[ev.evidence_ref(c["prospect"], "contacts.json") for c in found])
 
 
 def _check_activity(ev: _Evidence) -> Check:
@@ -558,7 +640,7 @@ def _check_purpose(ev: _Evidence) -> Check:
 
 def _check_cleanup(ev: _Evidence) -> Check:
     """No temporary recording directory may survive a finished run."""
-    leftovers = [f"prospects/{pid}/{name}"
+    leftovers = [ev.evidence_ref(pid, name)
                  for pid in ev.prospects
                  for name in ("_vidtmp", "_reprotmp", "_scenariotmp")
                  if (ev.prospect_dir(pid) / name).exists()]
@@ -617,8 +699,12 @@ def _check_surface_agreement(ev: _Evidence, read_model: Any) -> Check:
         domain = canonical_domain(str(record.get("url") or ""))
         if not domain:
             continue
+        # Pin the run the target's evidence ACTUALLY lives in. A discovery campaign holds no
+        # prospects of its own, so pinning the campaign id asks for evidence that was never there
+        # and gets the correct refusal -- which then reads as a disagreement between surfaces.
+        home_run = pid.split("/", 1)[0] if "/" in pid else ev.run_id
         try:
-            detail = read_model.target_detail(domain, run=ev.run_id)
+            detail = read_model.target_detail(domain, run=home_run)
         except Exception as exc:  # noqa: BLE001
             disagreements.append({"domain": domain, "error": type(exc).__name__})
             continue

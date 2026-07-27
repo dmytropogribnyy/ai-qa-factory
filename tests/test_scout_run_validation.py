@@ -323,6 +323,141 @@ def test_the_read_model_is_compared_against_the_store_not_trusted_as_it(tmp_path
     assert check.observed[0]["store"] == 1 and check.observed[0]["shown"] == 2
 
 
+# --- what the first live discovery run exposed ----------------------------------------------------
+
+def _discovery(tmp_path, *, promoted="camp-1-promo-01"):
+    """A discovery campaign holds no targets itself; it promotes them into their own runs."""
+    campaign = RunStore(str(tmp_path), "camp-1")
+    campaign.write_config({"campaign_name": "acc", "run_purpose": "acceptance",
+                           "browser_mode": "playwright", "video_mode": "manual"})
+    campaign.save_state({
+        "status": "COMPLETED", "started_at": "2026-07-27T10:00:00+00:00",
+        "finished_at": "2026-07-27T10:20:00+00:00",
+        "config": {"campaign_name": "acc", "run_purpose": "acceptance",
+                   "browser_mode": "playwright", "video_mode": "manual"},
+        "counts": {"discovered": 6, "eligible": 1, "promoted": 1, "rejected": 4,
+                   "duplicates": 0, "already_analyzed": 0, "qa_analyzed": 1, "failed": 0},
+        "candidates": [{"registrable_domain": "found.example",
+                        "promotion_decision": "promoted", "promoted_scout_run": promoted}],
+        "prospects": {}})
+    campaign.append_event({"event": "run_started"})
+    campaign.append_event({"event": "run_finished"})
+    child = RunStore(str(tmp_path), promoted)
+    child.write_config({"campaign_name": "camp-1", "run_purpose": "acceptance",
+                        "browser_mode": "playwright", "video_mode": "manual",
+                        "seeds": ["https://found.example/"]})
+    child.save_state({"status": "COMPLETED", "prospects": {
+        "01": {"status": "DONE", "url": "https://found.example/", "verified_findings": 1,
+               "verified_defects": 1}}})
+    child.save_prospect_artifact("01", "findings.json", {"verified": [
+        {"title": "Issue", "severity": "high", "signature": "s0"}]})
+    child.save_prospect_artifact("01", "browser_trace.json", {"backend": "playwright"})
+    child.save_prospect_artifact("01", "observation.json", {"axe_status": "ok",
+                                                            "perf": {"load_ms": 800}})
+    child.save_prospect_artifact("01", "screenshots.json", {"captured": 2})
+    from core.scout.media_probe import sha256_of
+    entries = []
+    for name in ("landing.png", "verification.png"):
+        shot = child.prospect_dir("01") / name
+        shot.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(64))
+        entries.append({"ref": name, "sha256": sha256_of(shot)})
+    child.save_prospect_artifact("01", "evidence_manifest.json", {"entries": entries})
+    return campaign, child
+
+
+def test_a_discovery_campaign_is_validated_through_the_runs_it_promoted(tmp_path):
+    """Validating only the campaign directory found no targets and reported UNKNOWN for work that
+    had in fact been done one level down."""
+    _discovery(tmp_path)
+
+    report = validate_run(str(tmp_path), "camp-1")
+
+    assert _check(report, "browser_receipt").status == PASS
+    assert _check(report, "evidence_existence_hashes").status == PASS
+    assert _check(report, "target_count_arithmetic").status == PASS
+    assert report.validated is True
+
+
+def test_a_discovery_campaign_counts_its_candidates_not_its_seeds(tmp_path):
+    _discovery(tmp_path)
+
+    intake = _check(validate_run(str(tmp_path), "camp-1"), "source_intake_consistency")
+
+    assert intake.status == PASS
+    assert intake.observed["candidates"] == ["found.example"]
+    assert "given a query, not a target list" in intake.explanation
+
+
+def test_more_dispositions_than_discoveries_is_caught(tmp_path):
+    campaign, _child = _discovery(tmp_path)
+    state = campaign.load_state()
+    state["counts"]["rejected"] = 99
+    campaign.save_state(state)
+
+    assert _check(validate_run(str(tmp_path), "camp-1"),
+                  "target_count_arithmetic").status == FAIL
+
+
+def test_the_read_model_is_asked_about_the_run_the_evidence_lives_in(tmp_path):
+    """Pinning the campaign id asks for evidence that was never there, gets the correct refusal,
+    and then reads as the surfaces disagreeing."""
+    seen = []
+
+    class _Recording:
+        def target_detail(self, domain, run=""):
+            seen.append(run)
+            return {"domain": domain, "findings": [{"severity": "high", "title": "Issue"}]}
+
+    _discovery(tmp_path)
+
+    report = validate_run(str(tmp_path), "camp-1", read_model=_Recording())
+
+    assert seen == ["camp-1-promo-01"]
+    assert _check(report, "surface_agreement").status == PASS
+
+
+def test_a_contact_the_engine_wrote_is_not_reported_as_missing(tmp_path):
+    """contacts.json is written under "public". Reading a key the engine does not use reported two
+    real addresses as an empty contact file — the very failure this check exists to catch."""
+    _campaign, child = _discovery(tmp_path)
+    child.save_prospect_artifact("01", "contacts.json", {"schema": "scout-contacts/v1", "public": [
+        {"email": "sales@found.example", "source_url": "https://found.example/contact"}]})
+
+    check = _check(validate_run(str(tmp_path), "camp-1"), "contact_persistence")
+
+    assert check.status == PASS
+    assert check.observed[0]["count"] == 1
+
+
+def test_a_module_the_policy_switched_off_is_not_reported_as_a_missing_receipt(tmp_path):
+    """"Not requested" and "not executed" are different facts."""
+    _discovery(tmp_path)                       # video_mode=manual: no interaction was ever asked for
+
+    report = validate_run(str(tmp_path), "camp-1")
+    modules = _check(report, "module_receipts")
+
+    assert modules.status == PASS
+    assert modules.observed["interaction"] == "not_requested"
+
+
+def test_an_automatic_policy_that_produced_nothing_is_still_a_missing_receipt(tmp_path):
+    campaign, child = _discovery(tmp_path)
+    config = json.loads((child.root / "config.json").read_text(encoding="utf-8"))
+    (child.root / "config.json").unlink()
+    child.write_config({**config, "video_mode": "qualified_auto"})
+    state = campaign.load_state()
+    state["config"]["video_mode"] = "qualified_auto"
+    campaign.save_state(state)
+    campaign_config = json.loads((campaign.root / "config.json").read_text(encoding="utf-8"))
+    (campaign.root / "config.json").unlink()
+    campaign.write_config({**campaign_config, "video_mode": "qualified_auto"})
+
+    modules = _check(validate_run(str(tmp_path), "camp-1"), "module_receipts")
+
+    assert modules.status == PARTIAL
+    assert modules.observed["interaction"] == "not_executed"
+
+
 @pytest.mark.parametrize("status", ["COMPLETED", "FAILED", "STOPPED"])
 def test_every_terminal_status_is_checked_the_same_way(tmp_path, status):
     store = _run(tmp_path)

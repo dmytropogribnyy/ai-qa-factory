@@ -28,8 +28,17 @@ _SKIP_PARTS = {".git", "outputs", "node_modules", "__pycache__", ".venv"}
 
 
 def _git(*args: str) -> str:
-    result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
-    return result.stdout if result.returncode == 0 else ""
+    """Run git and decode its output as UTF-8, never as the console's codepage.
+
+    ``text=True`` decodes with the locale encoding, so a diff containing Cyrillic — this repo's
+    specification, for one — raised UnicodeDecodeError inside subprocess and left the gate with
+    ``None`` to parse. A whitespace check that crashes is better than one that passes silently, but
+    only just.
+    """
+    result = subprocess.run(["git", *args], capture_output=True, check=False)
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or b"").decode("utf-8", "replace")
 
 
 def _merge_base(base_ref: str) -> str:

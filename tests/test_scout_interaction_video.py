@@ -385,3 +385,53 @@ def test_the_client_package_names_a_recording_for_what_it_is(tmp_path):
     # The offline report plays it where it was unpacked, by relative path.
     assert '<video src="Evidence/Videos/interaction-01.webm" controls' in report
     assert "Recorded interaction 1" in report
+
+
+# --- the surface an operator actually opens -------------------------------------------------------
+
+def test_the_recorded_interaction_is_shown_on_the_target_page(tmp_path):
+    """It was first added to the LEGACY target renderer, which is off unless an environment
+    variable turns it on — so the card existed in the code and never on anyone's screen."""
+    from core.scout.dashboard import _interaction_card
+
+    record = {"scenario": SCENARIO_FILTER, "outcome": OUTCOME_TRACE,
+              "reason": "the filter narrowed the results, which is correct behaviour",
+              "control_label": "Apple", "run_id": "run-1", "prospect_id": "01",
+              "video_ref": "interaction.webm", "cleanup_ok": True,
+              "baseline": {"result_count": 25, "item_signature": ["25", "iPhone"]},
+              "observed": {"result_count": 9, "item_signature": ["9", "iPhone"]},
+              "after_cleanup": {"result_count": 25, "item_signature": ["25", "iPhone"]},
+              "steps": ["open", "select the Apple filter", "observe"],
+              "video": {"bytes": 216680, "duration_s": 7.48, "width": 800, "height": 450,
+                        "mime": "video/webm", "sha256": "a" * 64}}
+
+    html = _interaction_card(record, lambda rel: f"/scout/artifact?rel={rel}")
+
+    assert "<h2>Recorded interaction</h2>" in html
+    assert '<video src="/scout/artifact?rel=prospects/01/interaction.webm" controls' in html
+    # The headline must not read as a defect, and the reason must survive to the page.
+    assert "the control behaved correctly" in html
+    assert "correct behaviour" in html
+    for label in ("Before", "After the action", "After cleanup", "Recording"):
+        assert label in html
+    assert "7.48" in html and "800" in html and "450" in html
+
+
+def test_the_card_says_nothing_when_no_interaction_was_recorded():
+    from core.scout.dashboard import _interaction_card
+
+    assert _interaction_card(None, lambda rel: rel) == ""
+    assert _interaction_card({}, lambda rel: rel) == ""
+
+
+def test_a_state_description_reports_the_collection_size_not_the_sample(tmp_path):
+    """The signature's first element is the size; the rest is a bounded sample of it. Reporting the
+    sample length said "13 listed item(s)" for a page showing 25."""
+    from core.scout.backends import PlaywrightBackend
+
+    described = PlaywrightBackend._describe_state(
+        SCENARIO_FILTER, {"result_count": 25,
+                          "item_signature": ["25"] + [f"item {i}" for i in range(12)]})
+
+    assert "25 listed item(s)" in described
+    assert "13 listed" not in described

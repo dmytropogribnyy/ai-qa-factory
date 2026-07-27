@@ -887,7 +887,10 @@ class PlaywrightBackend:
         if scenario == SCENARIO_ADD_REMOVE:
             return f"{state.get('removable_count', 0)} removable element(s)"
         count = state.get("result_count")
-        listed = len(state.get("item_signature") or [])
+        # The signature's FIRST element is the size of the collection; the rest is a bounded sample
+        # of it. Reporting the sample length said "13 listed" for a page showing 25.
+        signature = state.get("item_signature") or []
+        listed = signature[0] if signature else "no"
         return (f"{count if count is not None else 'no'} results stated, {listed} listed item(s), "
                 f"control engaged={bool(state.get('control_engaged'))}")
 

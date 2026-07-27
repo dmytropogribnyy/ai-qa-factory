@@ -3329,10 +3329,6 @@ function startCampaign(){{
                 "qualified_auto": "No qualifying interaction finding triggered an automatic "
                                   "reproduction video for this target.",
             }
-            # What the recording actually shows, next to the recording. A clip on its own invites
-            # the reader to supply the conclusion; these four lines state it — including when the
-            # conclusion is "the control worked, and this proves only that we can record it".
-            body += _interaction_card(det.get("interaction"), _art_url)
             if not vids:
                 note = _VIDEO_POLICY_NOTE.get(video_mode,
                     "No reproduction video was captured for this target.")
@@ -3586,7 +3582,11 @@ function startCampaign(){{
                 f'<p class="muted">This trace is a redacted structured event record, not a native '
                 f'Playwright <code>trace.zip</code>. Playwright Inspector is a live developer tool '
                 f'and is intentionally not exposed in the operator UI.</p></div>'
-                f'<div class="card"><h2>Coverage</h2>{_coverage_card_html(coverage)}</div>')
+                f'<div class="card"><h2>Coverage</h2>{_coverage_card_html(coverage)}</div>'
+                # What the recording actually shows, beside the recording. A clip on its own invites
+                # the reader to supply the conclusion; this states it — including when the conclusion
+                # is "the control worked, and this proves only that we can record it".
+                + _interaction_card(det.get("interaction"), _art_url))
 
             if actionable:
                 contact_rows = "".join(
