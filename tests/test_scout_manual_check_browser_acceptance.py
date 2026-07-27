@@ -15,6 +15,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Skip the MODULE where playwright is absent (the light CI gate). Importing it at module level
+# without this turns "not installed" into a collection error that fails the whole run.
+pytest.importorskip("playwright", reason="playwright not installed")
+
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from core.scout.backends import PageObservation  # noqa: E402

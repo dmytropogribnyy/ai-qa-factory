@@ -18,7 +18,10 @@ from pathlib import Path
 
 import pytest
 
-from core.scout.backends import PlaywrightBackend
+# Same guard as the other browser-acceptance modules: absent playwright must skip, never error.
+pytest.importorskip("playwright", reason="playwright not installed")
+
+from core.scout.backends import PlaywrightBackend  # noqa: E402
 from core.scout.config import ScoutRunConfig
 from core.scout.engine import ScoutEngine, P_DONE
 from core.scout.store import RunStore
