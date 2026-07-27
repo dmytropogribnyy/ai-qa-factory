@@ -187,3 +187,79 @@ def test_prioritising_contact_pages_does_not_widen_the_page_budget(tmp_path):
 
     coverage = store.load_prospect_artifact(_pid(store), "coverage.json") or {}
     assert coverage["meaningful_pages_tested"] <= coverage["page_ceiling"]
+
+
+# --- and the reason it STILL found nothing: the address is body text ------------------------------
+#
+# All three live targets publish their mailbox as visible text on the contact page and none of them
+# uses a mailto: href. Extraction read links, title, meta and headings only, so "find public
+# contacts" — a stated step of the pipeline — could not succeed on any of them.
+#
+# Page text is deliberately NOT operator evidence (sanitize_observation exists to keep raw free text
+# out of what we store). So the sample is available in memory for extraction and dropped at the
+# persistence boundary: we keep the address, never the page it was written on.
+
+class _AddressInBodyText:
+    """A contact page that prints its mailbox instead of linking it, as the real sites do."""
+    name = "static"
+    screenshot_dir = None
+
+    def observe(self, url, _timeout_s, _max_bytes, *, record_video=False, deep_qa=False):
+        if url.rstrip("/").endswith("/contact"):
+            return PageObservation(
+                url=url, final_url=url, status=200, ok=True, backend="static", title="Contact",
+                has_viewport_meta=True, headings=[{"level": 1, "text": "Contact"}],
+                landmarks={"main": 1}, links=[],
+                text_sample=("Talk to us. Email hello@" + DOMAIN + " and we usually reply "
+                             "within a day. Our office is in Estonia."))
+        return PageObservation(
+            url=url, final_url=f"https://{DOMAIN}/", status=200, ok=True, backend="static",
+            title=DOMAIN, has_viewport_meta=True, headings=[{"level": 1, "text": "Analytics"}],
+            landmarks={"main": 1}, links=[f"https://{DOMAIN}/contact"])
+
+
+def _body_text_run(tmp_path, run_id="body-text", backend=None):
+    store = RunStore(str(tmp_path), run_id)
+    cfg = ScoutRunConfig(campaign_name="adhoc", seeds=[f"https://{DOMAIN}/"], max_sites=1,
+                         output_dir=str(tmp_path), run_id=run_id, resolve_dns=False)
+    ScoutEngine(cfg, store, backend=backend or _AddressInBodyText()).run()
+    return store
+
+
+def test_an_address_printed_as_text_on_the_contact_page_is_found(tmp_path):
+    store = _body_text_run(tmp_path)
+
+    contacts = store.load_prospect_artifact(_pid(store), "contacts.json") or {}
+
+    assert [c["email"] for c in contacts.get("public", [])] == [f"hello@{DOMAIN}"]
+    assert contacts["public"][0]["source_url"] == f"https://{DOMAIN}/contact"
+
+
+def test_the_page_text_itself_is_never_written_to_evidence(tmp_path):
+    """We keep the address. We do not keep the page it was written on."""
+    import json as _json
+    store = _body_text_run(tmp_path)
+
+    stored = _json.dumps(store.load_prospect_artifact(_pid(store), "observation.json") or {})
+
+    assert "text_sample" not in stored
+    assert "Our office is in Estonia" not in stored
+
+
+def test_body_text_is_only_read_on_a_contact_page(tmp_path):
+    """A feature page's prose is not a contact source, and scanning it invites false positives."""
+    class _AddressOnAFeaturePage(_AddressInBodyText):
+        def observe(self, url, _timeout_s, _max_bytes, *, record_video=False, deep_qa=False):
+            if url.rstrip("/").endswith("/contact"):
+                return PageObservation(url=url, final_url=url, status=200, ok=True,
+                                       backend="static", title="Contact", has_viewport_meta=True,
+                                       headings=[{"level": 1, "text": "Contact"}],
+                                       landmarks={"main": 1}, links=[], text_sample="No address.")
+            observation = super().observe(url, _timeout_s, _max_bytes)
+            observation.text_sample = f"A customer quote from someone@{DOMAIN} about the product."
+            return observation
+
+    store = _body_text_run(tmp_path, "feature-text", _AddressOnAFeaturePage())
+
+    contacts = store.load_prospect_artifact(_pid(store), "contacts.json") or {}
+    assert [c["email"] for c in contacts.get("public", [])] == []

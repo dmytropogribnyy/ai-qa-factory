@@ -120,6 +120,7 @@ _FLOW_HINTS = ("book", "buy", "cart", "checkout", "signup", "sign-up", "subscrib
 # Paths that plainly ARE the page a company puts its public address on. Matched on the final path
 # segment only, so /contact and /en/kontakt qualify while /contact-center-software (a product page)
 # does not — a substring match here would spend the page budget on marketing pages.
+_CONTACT_TEXT_LIMIT = 40_000     # bounded: enough for a contact page, never a whole site's prose
 _CONTACT_PATH_NAMES = frozenset({
     "contact", "contacts", "contact-us", "contactus", "kontakt", "contacto", "contatti",
     "support", "help", "impressum", "about", "about-us", "team",
@@ -688,10 +689,16 @@ class ScoutEngine:
 
         page_url = probe.final_url or probe.url
         domain = canonical_domain(page_url)
+        # Visible text is read ONLY on a page that plainly is the contact page. A feature page's
+        # prose is not a contact source — it quotes customers, shows example addresses and embeds
+        # support snippets, and scanning it would invent contacts out of marketing copy.
+        text = (probe.text_sample or "")[:_CONTACT_TEXT_LIMIT] if self._looks_like_contact_page(
+            page_url) else ""
         for record in extract_public_contact_records(
                 {"links": list(probe.links or []), "title": probe.title or "",
                  "meta_description": probe.meta_description or "",
                  "headings": list(probe.headings or []),
+                 "text": text,
                  "final_url": page_url, "url": probe.url},
                 domain=domain):
             email = str(record.get("email") or "").strip().lower()

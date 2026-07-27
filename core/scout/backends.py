@@ -56,6 +56,10 @@ class FormObservation:
         }
 
 
+# Bounded so a huge page cannot hold an unbounded string in memory during a run.
+_TEXT_SAMPLE_LIMIT = 60_000
+
+
 @dataclass
 class PageObservation:
     """A bounded, sanitized snapshot of one public page."""
@@ -79,6 +83,13 @@ class PageObservation:
     headers: Dict[str, str] = field(default_factory=dict)
     headings: List[Dict[str, Any]] = field(default_factory=list)   # {level:int, text:str}
     links: List[str] = field(default_factory=list)                 # absolute hrefs
+    # A bounded slice of the page's visible text, held IN MEMORY ONLY and dropped at the persistence
+    # boundary (Sanitizer.sanitize_observation). It exists for one reason: companies publish their
+    # public mailbox as printed text far more often than as a mailto: href — all three live
+    # acceptance targets do — so without it the pipeline's "find public contacts" step cannot work.
+    # Nothing else reads it, and the page text is never operator evidence: we keep the address, not
+    # the prose it was written in.
+    text_sample: str = ""
     images: List[Dict[str, str]] = field(default_factory=list)     # {src, alt}
     forms: List[FormObservation] = field(default_factory=list)
     structured_data: List[Dict[str, Any]] = field(default_factory=list)
@@ -268,10 +279,14 @@ def _parse_html(base_url: str, html: str, obs: PageObservation) -> None:
             obs.structured_data.append({"valid": True, "data": json.loads(block)})
         except Exception as exc:
             obs.structured_data.append({"valid": False, "error": str(exc)[:120]})
+    visible_text = " ".join(ex.visible_text)
+    # In-memory only; Sanitizer.sanitize_observation drops it before anything is written. The
+    # extractor already excludes script/style/template/noscript payloads, so this is page prose.
+    obs.text_sample = visible_text[:_TEXT_SAMPLE_LIMIT]
     # Was the page served, or withheld? Structure and visible text decide — never a substring
     # search over the raw HTML, which cannot tell a site's own signup widget from a wall.
     verdict = classify(status=obs.status, title=obs.title,
-                       visible_text=" ".join(ex.visible_text), headings=obs.headings,
+                       visible_text=visible_text, headings=obs.headings,
                        links=obs.links, forms=obs.forms,
                        widgets=widgets_to_dicts(ex.widgets))
     obs.challenge_kind = verdict.kind
