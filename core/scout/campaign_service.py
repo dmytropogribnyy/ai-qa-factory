@@ -408,6 +408,14 @@ class CampaignService:
         archived = set(OperatorStateStore(self.output_dir).snapshot()["archived_targets"])
         for row in rows:
             row["archived"] = row.get("domain") in archived
+        # A site whose every run is in Trash is not part of daily work any more. It is not deleted —
+        # restoring the run brings the row straight back — but leaving it in History would make the
+        # operator's own cleanup look as though it had done nothing.
+        trashed_runs = self._trashed_runs()
+        if trashed_runs:
+            rows = [r for r in rows
+                    if not (set(r.get("campaign_ids") or [])
+                            and set(r.get("campaign_ids") or []) <= trashed_runs)]
         archived_filter = (f.get("archived") or "").strip().lower()
         if archived_filter in ("1", "true", "yes", "only"):
             rows = [r for r in rows if r.get("archived")]
@@ -426,6 +434,15 @@ class CampaignService:
         if until:
             rows = [r for r in rows if str(r.get("last_analysis_at") or "") <= until]
         return rows
+
+    def _trashed_runs(self) -> set:
+        """Run ids the operator has moved to Trash — hidden from daily views, still on disk."""
+        try:
+            from core.scout.data_management import DataManagementStore
+            return {r.run_id for r in DataManagementStore(self.output_dir).inventory().runs
+                    if r.trashed}
+        except Exception:      # noqa: BLE001 - an unreadable overlay must never empty History
+            return set()
 
     def history_results(self, *, filters: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         """History rows carrying the verdict, computed from each target's own read model.

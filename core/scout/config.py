@@ -56,6 +56,11 @@ class ScoutRunConfig:
     # so a NEW run is automatic by default. "manual"/"off" remain accepted for an explicit opt-out
     # and for reading back runs made before this was automatic.
     video_mode: str = VIDEO_QUALIFIED_AUTO
+    # Why this run exists: production work, or acceptance/diagnostic/manual-test data that must not
+    # distort production counters and may later be cleaned up. NOT an operator-facing scan mode --
+    # it is set by the harness or internal launch context. Absent means genuinely unrecorded, and
+    # Data management treats that as "unclassified" rather than guessing from the run id.
+    run_purpose: str = ""
     output_dir: str = "outputs"
     resume: bool = False
     run_id: str = ""
@@ -125,6 +130,7 @@ class ScoutRunConfig:
             "browser_mode": self.browser_mode,
             "coverage": self.coverage,
             "video_mode": self.video_mode,
+            "run_purpose": self.run_purpose,
             "allowed_local_hosts": sorted(self.allowed_local_hosts),
             "resolve_dns": self.resolve_dns,
         }
@@ -143,6 +149,7 @@ class ScoutRunConfig:
             "browser_mode": self.browser_mode,
             "coverage": self.coverage,
             "video_mode": self.video_mode,
+            "run_purpose": self.run_purpose,
             "output_dir": self.output_dir,
             "resume": self.resume,
             "run_id": self.run_id,
@@ -155,7 +162,7 @@ class ScoutRunConfig:
         known = {
             "campaign_name", "seeds", "max_sites", "max_pages_per_site", "request_timeout_s",
             "max_response_bytes", "concurrency", "check_families", "browser_mode", "coverage",
-            "video_mode", "output_dir", "resume", "run_id", "resolve_dns",
+            "video_mode", "run_purpose", "output_dir", "resume", "run_id", "resolve_dns",
         }
         kwargs = {k: v for k, v in data.items() if k in known}
         if "allowed_local_hosts" in data:

@@ -253,6 +253,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/activity":
                 return self._json(200, self._activity_json((q.get("project") or [""])[0],
                                                            self._want_diagnostics(q)))
+            if path == "/data":
+                return self._html(200, self._data_page(q))
             if path == "/settings":
                 if (q.get("refresh") or [""])[0]:
                     cached_access_snapshot(refresh=True)   # explicit operator refresh
@@ -387,6 +389,9 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._scout_import()
             if parsed.path == "/api/scout/intake/preview":
                 return self._scout_intake_preview()
+            if parsed.path in ("/api/scout/data/preview", "/api/scout/data/trash",
+                               "/api/scout/data/restore", "/api/scout/data/delete"):
+                return self._scout_data_action(parsed.path.rsplit("/", 1)[-1])
             if parsed.path == "/api/scout/control":
                 return self._scout_control(parsed)
             if parsed.path == "/api/scout/export":
@@ -525,6 +530,148 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             else:
                 result = parse_text(text, **common)
             return self._json(200, {"ok": True, **result.to_dict()})
+
+        def _data_store(self):
+            from core.scout.data_management import DataManagementStore
+            return DataManagementStore(service.output_dir,
+                                       active_run_id=str(getattr(service, "run_id", "") or ""))
+
+        def _scout_data_action(self, action: str):
+            """Preview / Trash / Restore / permanent delete, each behind the shared mutation guard.
+
+            The four are separate endpoints rather than one with a mode, so an accidental replay of
+            a preview request can never turn into a deletion.
+            """
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            raw = body.get("run_ids")
+            # Exact ids only, bounded. A selection that could expand after it was previewed is not
+            # the selection that was previewed.
+            run_ids = [str(item) for item in raw[:500]] if isinstance(raw, list) else []
+            store = self._data_store()
+            if action == "preview":
+                return self._json(200, {"ok": True, "preview": store.preview(run_ids).to_dict()})
+            if action == "trash":
+                return self._json(200, {"ok": True, **store.move_to_trash(run_ids)})
+            if action == "restore":
+                return self._json(200, {"ok": True, **store.restore(run_ids)})
+            return self._json(200, {"ok": True, **store.permanently_delete(
+                run_ids, confirm=body.get("confirm") is True)})
+
+        def _data_page(self, q=None) -> str:
+            """Everything that takes up space, what it is for, and a staged way to let it go."""
+            view = ((q or {}).get("view") or [""])[0].strip().lower()
+            in_trash = view == "trash"
+            inv = self._data_store().inventory()
+            rows_source = [r for r in inv.runs if r.trashed == in_trash]
+            from core.scout.data_management import (PURPOSE_ACCEPTANCE, PURPOSE_DIAGNOSTIC,
+                                                    PURPOSE_LABELS, PURPOSE_MANUAL_TEST,
+                                                    PURPOSE_PRODUCTION, PURPOSE_UNCLASSIFIED)
+            tiles = "".join(
+                f'<div class="summary-item"><span class="muted">{_esc(PURPOSE_LABELS[key])}</span>'
+                f'<strong>{inv.counts.get(key, 0)}</strong></div>'
+                for key in (PURPOSE_PRODUCTION, PURPOSE_ACCEPTANCE, PURPOSE_DIAGNOSTIC,
+                            PURPOSE_MANUAL_TEST, PURPOSE_UNCLASSIFIED))
+            tiles += (f'<div class="summary-item"><span class="muted">Storage</span>'
+                      f'<strong>{_esc(_human_bytes(inv.bytes_total))}</strong></div>'
+                      f'<div class="summary-item"><span class="muted">In Trash</span>'
+                      f'<strong>{inv.counts.get("in_trash", 0)}</strong></div>')
+            rows = "".join(
+                f'<tr><td class="select-cell"><input type="checkbox" class="pick" '
+                f'value="{_esc(r.run_id)}" aria-label="Select {_esc(r.run_id)}"></td>'
+                f'<td data-label="Run"><code>{_esc(r.run_id)}</code></td>'
+                f'<td data-label="Purpose">{_badge(r.purpose_label)}</td>'
+                f'<td data-label="Sites" class="muted">'
+                f'{_esc(", ".join(r.domains) or "none recorded")}</td>'
+                f'<td data-label="Evidence" class="muted">{r.screenshots} screenshot(s) · '
+                f'{r.videos} video(s) · {r.findings} finding(s)</td>'
+                f'<td data-label="Size" class="muted">{_esc(_human_bytes(r.bytes))}</td>'
+                f'<td data-label="When" class="muted">{_fmt_ts(r.trashed_at or r.created_at)}</td>'
+                f'</tr>' for r in rows_source)
+            table = (f'<table class="responsive-table"><thead><tr>'
+                     f'<th><input type="checkbox" id="pickall" aria-label="Select all"></th>'
+                     f'<th>Run</th><th>Purpose</th><th>Sites</th><th>Evidence</th><th>Size</th>'
+                     f'<th>{"Moved to Trash" if in_trash else "Recorded"}</th></tr></thead>'
+                     f'<tbody>{rows}</tbody></table>'
+                     if rows else
+                     f'<div class="card empty muted">'
+                     f'{"Trash is empty." if in_trash else "No Scout runs are stored yet."}</div>')
+            actions = (
+                '<button class="chip" onclick="act(\'restore\')">Restore selected</button>'
+                '<button class="chip danger" onclick="destroy()">Delete permanently…</button>'
+                if in_trash else
+                '<button class="chip" onclick="preview()">Preview what would be removed</button>'
+                '<button class="chip" onclick="act(\'trash\')" id="tobin" disabled>'
+                'Move selected to Trash</button>')
+            tabs = (('<a class="chip" href="/data">Stored runs</a>'
+                     '<span class="chip active">Trash</span>') if in_trash else
+                    ('<span class="chip active">Stored runs</span>'
+                     '<a class="chip" href="/data?view=trash">Trash</a>'))
+            body = (
+                '<h1>Data management</h1>'
+                '<p class="page-intro muted">What Scout has stored, what each run was for, and a '
+                'staged way to let test data go. Production runs and runs whose purpose was never '
+                'recorded are never swept automatically.</p>'
+                f'<div class="row">{tabs}</div>'
+                f'<div class="summary-grid">{tiles}</div>'
+                f'<div class="scrollx">{table}</div>'
+                '<div class="card" id="previewout" role="status" aria-live="polite" hidden></div>'
+                f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
+                f'selected</b><div class="row">{actions}'
+                '<span id="datamsg" class="muted" aria-live="polite"></span></div></div>'
+                '<p class="muted">Moving to Trash removes nothing from disk. Permanent deletion is '
+                'available only from Trash, only for the runs you select there, and only after a '
+                'separate confirmation naming the exact counts.</p>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";"
+                "function picks(){return Array.from(document.querySelectorAll('.pick:checked'))"
+                ".map(function(x){return x.value;});}"
+                "function refreshBulk(){var n=picks().length;"
+                "document.getElementById('selected').textContent=n;"
+                "document.getElementById('bulkbar').hidden=!n;"
+                "var t=document.getElementById('tobin');if(t)t.disabled=true;}"
+                "document.querySelectorAll('.pick').forEach(function(x){x.onchange=refreshBulk;});"
+                "var pa=document.getElementById('pickall');if(pa)pa.onchange=function(){"
+                "document.querySelectorAll('.pick').forEach(function(x){x.checked=pa.checked;});"
+                "refreshBulk();};"
+                "function J(u,b){return fetch(u,{method:'POST',headers:{'X-Scout-CSRF':CSRF,"
+                "'Content-Type':'application/json'},body:JSON.stringify(b)})"
+                ".then(function(r){return r.json();});}"
+                "function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){"
+                "return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}"
+                "function preview(){var d=picks();if(!d.length)return;"
+                "J('/api/scout/data/preview',{run_ids:d}).then(function(j){"
+                "var p=j.preview||{},o=document.getElementById('previewout');o.hidden=false;"
+                "var h='<h2>This would be removed</h2><ul>'+"
+                "'<li>'+(p.runs||[]).length+' run(s)</li>'+"
+                "'<li>'+(p.unique_domains||[]).length+' site(s): '+esc((p.unique_domains||[])"
+                ".join(', '))+'</li>'+"
+                "'<li>'+p.screenshots+' screenshot(s), '+p.videos+' video(s), '+p.findings+"
+                "' finding(s)</li>'+"
+                "'<li>'+Math.round((p.bytes_to_reclaim||0)/1024)+' KiB reclaimed</li></ul>';"
+                "if((p.shared_with_production||[]).length){h+='<p class=\"banner warn\">These '+"
+                "'sites are also part of production runs and keep their history: '+"
+                "esc(p.shared_with_production.join(', '))+'</p>';}"
+                "if((p.protected||[]).length){h+='<h3>Not included</h3><ul>'+p.protected.map("
+                "function(x){return '<li><code>'+esc(x.run_id)+'</code> — '+esc(x.reason)+"
+                "'</li>';}).join('')+'</ul>';}"
+                "o.innerHTML=h;var t=document.getElementById('tobin');"
+                "if(t)t.disabled=!(p.runs||[]).length;});}"
+                "function act(a){var d=picks();if(!d.length)return;"
+                "J('/api/scout/data/'+a,{run_ids:d}).then(function(j){"
+                "if(j.ok)location.reload();else document.getElementById('datamsg').textContent="
+                "(j.error||'Action failed');});}"
+                "function destroy(){var d=picks();if(!d.length)return;"
+                "J('/api/scout/data/preview',{run_ids:d}).then(function(j){var p=j.preview||{};"
+                "return qaConfirm('Permanently delete '+d.length+' run(s) and '+"
+                "Math.round((p.bytes_to_reclaim||0)/1024)+' KiB of evidence? This cannot be undone.',"
+                "'Delete permanently','DELETE');}).then(function(ok){if(!ok)return;"
+                "J('/api/scout/data/delete',{run_ids:d,confirm:true}).then(function(j){"
+                "if((j.deleted||[]).length)location.reload();"
+                "else document.getElementById('datamsg').textContent='Nothing was deleted.';});});}")
+            return _page("AI QA Factory — Data management", "/data", body, script)
 
         # --- guarded client-work mutations (v3.1) — NEVER a command/argv over HTTP -------------
         def _work_action(self, action: str):
@@ -5127,8 +5274,8 @@ def _theme_legacy(html: str) -> str:
 # "Scout" is the adaptive Discover Prospects workflow; the legacy seed scanner stays at /scout
 # (relabelled "Manual URL Scan"). The nav highlights Scout for any /scout* page.
 _NAV = (("Overview", "/"), ("Scout", "/scout/new"), ("Work", "/work"))
-_MORE = (("Activity", "/activity"), ("Collaboration", "/collab"),
-         ("Settings", "/settings"), ("Help", "/docs"))
+_MORE = (("Activity", "/activity"), ("Data management", "/data"),
+         ("Collaboration", "/collab"), ("Settings", "/settings"), ("Help", "/docs"))
 
 
 def _nav_html(active: str) -> str:
