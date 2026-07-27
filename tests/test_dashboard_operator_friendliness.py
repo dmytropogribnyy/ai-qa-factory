@@ -165,65 +165,28 @@ def test_legacy_projects_route_redirects_to_canonical_work(tmp_path):
     assert response.getheader("Location") == "/work"
 
 
-def test_scout_form_hides_diagnostic_presets_by_default(tmp_path):
-    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
-    try:
-        production = _get(url + "/scout/new")
-        diagnostics = _get(url + "/scout/new?diagnostics=1")
-    finally:
-        server.shutdown()
-    assert "(diagnostic)" not in production
-    assert "Show diagnostic campaign presets" in production
-    assert "(diagnostic)" in diagnostics
-    assert "Capture screenshots and browser evidence" in production
+def test_scout_form_speaks_about_the_work_not_about_the_engine(tmp_path):
+    """The daily form is now one Start Scout over three sources (Unified Scout spec, §6).
 
-
-def test_scout_form_uses_operator_language_and_accessible_choices(tmp_path):
+    The campaign-preset picker, session presets, coverage profiles, run limits and the manual
+    readiness probe this test used to pin are deliberately gone: they described the engine, and
+    answering them wrongly changed what evidence came back. What survives is the intent — operator
+    language, accessible choices, a live-region status and no engine jargon. The form's structure is
+    pinned in tests/test_scout_unified_start.py; this keeps the tone honest.
+    """
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
     try:
         html = _get(url + "/scout/new")
     finally:
         server.shutdown()
-    assert "Find public business websites worth reviewing" in html
-    assert "Campaign setup" in html
-    assert "comma-separated" not in html
-    assert 'name="industry"' in html
+    assert "Where should the websites come from?" in html
     assert 'class="option-grid"' in html
-    assert "Safe, read-only discovery" in html
-    assert "Approve live discovery for this campaign" in html
     assert 'role="status" aria-live="polite"' in html
-    assert "alert('approve the bounded live run" not in html
-    assert "Playwright/Chromium" not in html
-    assert "Advanced campaign controls" in html
-    assert "Campaign preset" in html
-    assert "Campaign goal" not in html
-    assert "starts one bounded run now" in html
-    assert "Scheduled Daily Scout" not in html
-    assert "Leave blank to use the selected preset" in html
-
-
-def test_scout_advanced_controls_are_operator_friendly(tmp_path):
-    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
-    try:
-        html = _get(url + "/scout/new")
-    finally:
-        server.shutdown()
-    assert "Advanced campaign controls" in html
-    assert "Targeting refinements" in html
-    assert "Run limits" in html
-    assert "System readiness" in html
-    assert 'name="sitetype"' in html
-    assert 'select id="sitetypes" multiple' not in html
-    assert "Check system readiness" in html
-    assert "Readiness details appear here." not in html
-    assert "JSON.stringify(j.preflight" not in html
-    assert 'role="status" aria-live="polite" hidden' in html
-    assert "visible page signals" in html
-    assert "session_preset:document.getElementById('session').value||null,overrides:ov()" in html
-    assert "probe_browser:document.getElementById('deepcapture').checked" in html
-    assert "Cannot check this setup" in html
-    assert "document.querySelectorAll('.campaign-card input,.campaign-card select')" in html
-    assert ".option-field .field-help{margin:8px 0 0}" in html
+    assert "Read-only scan" in html
+    # Words that describe the host rather than the work.
+    for jargon in ("Playwright/Chromium", "Campaign preset", "session_preset", "probe_browser",
+                   "Coverage profile", "Page cap per site", "Discovery cap"):
+        assert jargon not in html, jargon
 
 
 def test_activity_uses_campaign_name_not_internal_id(tmp_path):
@@ -303,27 +266,43 @@ def test_overview_uses_operator_language_and_progressive_disclosure(tmp_path):
     assert 'href="/work?view=active"' in html
     assert "Projects 0" not in html
     assert "Nothing needs your attention" in html
-    assert "No active client work" in html
-    assert "Paste a client brief to create a reviewable work plan." in html
+    # Empty states are lines now, not panels — four cards each saying "nothing here" pushed the one
+    # block that starts work below the fold (Unified Scout spec, §5).
+    assert "No client work is running." in html
     assert 'href="/work?create=1#client-brief">Analyze a client brief</a>' in html
     assert "Give Claude Code a client brief" not in html
-    assert "Scout is ready" in html
-    assert "Start a Scout campaign" in html
+    assert "No campaign is running." in html
+    assert "Start Scout</a>" in html
+    assert "Start a Scout campaign" not in html
     assert "Refresh now" in html
     assert ">Refresh</button>" not in html
 
 
-def test_overview_hides_diagnostics_under_advanced_options(tmp_path):
+def test_the_diagnostics_switch_moved_to_settings(tmp_path):
+    """It is a view preference, not a status, so it belongs with the other diagnostics under More."""
     _register_campaign(tmp_path, "smoke-campaign", "Acceptance smoke")
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
     try:
-        html = _get(url + "/")
+        overview = _get(url + "/")
+        settings = _get(url + "/settings")
     finally:
         server.shutdown()
-    assert "<summary>Advanced view options</summary>" in html
-    assert "Show diagnostics (1)" in html
-    assert "1 test, replay, or diagnostic record is hidden from production counts." in html
-    assert html.index("<summary>Advanced view options</summary>") < html.index("Show diagnostics (1)")
+    assert "Advanced view options" not in overview
+    assert "Show diagnostics (1)" not in overview
+    assert "1 test, replay or diagnostic record(s) are kept out of production counts." in settings
+    assert 'href="/?diagnostics=1"' in settings
+
+
+def test_a_diagnostics_filtered_overview_still_says_so(tmp_path):
+    """Counts that mean something different must never look like the ordinary ones."""
+    _register_campaign(tmp_path, "smoke-campaign", "Acceptance smoke")
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        html = _get(url + "/?diagnostics=1")
+    finally:
+        server.shutdown()
+    assert "Showing diagnostic data" in html
+    assert "Show production only" in html
 
 
 def test_theme_control_names_the_theme_it_will_switch_to(tmp_path):

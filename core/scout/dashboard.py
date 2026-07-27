@@ -1675,10 +1675,12 @@ function startCampaign(){{
                         f'<span class="muted">{_esc(a["reason"])}</span></div>'
                         f'<a class="btn primary" href="{_esc(a["href"])}">'
                         f'Open<span class="sr-only"> {project}</span></a></div></div>')
+            # Nothing to do is one line. As a full-height card it competed for attention with the
+            # blocks that DID have something in them, and three such cards on one screen taught the
+            # operator to skim past the region where real blockers appear.
             att = "".join(_att(a) for a in ov.attention) or (
-                '<div class="card empty compact status-hero"><strong>Nothing needs your attention'
-                '</strong><div class="muted">Blocked or review-ready work will appear here.</div>'
-                '</div>')
+                '<p class="quiet-state attention-clear">Nothing needs your attention. '
+                '<span class="muted">Blocked or review-ready work appears here.</span></p>')
             def _wrow(p):
                 return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></td>'
                         f'<td>{_badge(p["stage"])}</td><td>{_badge(health_label(p["health"]), p["health"])}</td>'
@@ -1703,13 +1705,9 @@ function startCampaign(){{
                         f'{"".join(_wcard(p) for p in ov.active_work)}</ul>'
                         f'{more_open}'
                         if work else
-                        '<div class="card empty compact"><strong>No active client work</strong>'
-                        '<div class="muted">Paste a client brief to create a reviewable work plan.'
-                        '</div><p class="row empty-actions">'
-                        '<a class="btn primary" href="/work?create=1#client-brief">'
-                        'Analyze a client brief</a>'
-                        '<a class="btn" href="/docs">How client work operates</a></p>'
-                        '</div>')
+                        '<p class="quiet-state">No client work is running. '
+                        '<a href="/work?create=1#client-brief">Analyze a client brief</a> to create '
+                        'a reviewable plan.</p>')
             def _crow(c):
                 return (f'<tr><td>{_esc(c["title"])}</td><td>{_badge(c["status"])}</td>'
                         f'<td>{_esc(c["next_action"])}</td></tr>')
@@ -1726,31 +1724,24 @@ function startCampaign(){{
                 f'<p><a class="btn" href="/scout/campaigns">Review Scout campaigns</a></p></div>'
                 if failed_scout else '')
             camps = "".join(_crow(c) for c in ov.active_campaigns)
-            camp_tbl = (f'<table><caption>Active Scout campaigns</caption><tr><th>Campaign</th>'
-                        f'<th>Status</th><th>Next action</th></tr>{camps}</table>'
+            camp_tbl = (f'<div class="scrollx"><table><caption>Active Scout campaigns</caption>'
+                        f'<tr><th>Campaign</th><th>Status</th><th>Next action</th></tr>{camps}'
+                        f'</table></div>'
                         if camps else
-                        '<div class="card empty compact"><strong>Scout is ready</strong>'
-                        '<div class="muted">Start a bounded campaign when you want to discover new '
-                        'prospects.</div><p><a class="btn primary" href="/scout/new">Start a Scout '
-                        'campaign</a></p></div>')
+                        '<p class="quiet-state">No campaign is running.</p>')
+            # Scout is the primary thing this page starts, so its two actions are always offered —
+            # not only when the campaign list happens to be empty.
+            scout_actions = ('<div class="row scout-actions">'
+                             '<a class="btn primary" href="/scout/new">Start Scout</a>'
+                             '<a class="btn" href="/results">View Scout results</a>'
+                             '<a class="btn" href="/scout/attention">Needs attention</a></div>')
             hidden = ov.counts.get("diagnostics_hidden", 0)
-            diag_toggle = (
-                '<a class="chip" href="/">&#10003; Production only — hide diagnostics</a>' if diag else
-                (f'<a class="chip" href="/?diagnostics=1">Show diagnostics ({hidden})</a>'
-                 if hidden else ''))
+            # The diagnostics switch is a view preference, not a status, so it belongs with the rest
+            # of the diagnostics under More. Only the banner stays here — while the view IS filtered
+            # the operator has to be told, or the counts silently mean something else.
             diag_banner = ('<div class="banner warn">Showing diagnostic data (smoke/acceptance/'
-                           'replay/demo). These are not production work.</div>' if diag else '')
-            hidden_description = (
-                'Diagnostic records are visible in this view; production counts remain separate.'
-                if diag else
-                ('1 test, replay, or diagnostic record is hidden from production counts.'
-                 if hidden == 1 else
-                 f'{hidden} test, replay, or diagnostic records are hidden from production counts.'))
-            diag_options = (
-                f'<details class="advanced compact-details"><summary>Advanced view options</summary>'
-                f'<p class="muted">{hidden_description}</p>'
-                f'<div class="row">{diag_toggle}</div></details>'
-                if diag_toggle else '')
+                           'replay/demo). These are not production work. '
+                           '<a href="/">Show production only</a></div>' if diag else '')
             body = (f'<h1>Overview</h1>{diag_banner}'
                     f'<div class="summary-grid overview-summary">'
                     f'<a class="summary-item" href="/work?view=active">'
@@ -1764,14 +1755,13 @@ function startCampaign(){{
                     f'<span class="muted">Active Scout campaigns</span>'
                     f'<strong>{ov.counts.get("active_campaigns", 0)}</strong></a></div>'
                     f'{self._poll_html()}'
+                    f'<h2>Scout</h2>{scout_actions}{scout_failed_block}{camp_tbl}'
                     f'<h2>Needs your attention</h2>{att}'
-                    f'<h2>Active work</h2>'
+                    f'<h2>Client work</h2>'
                     f'<p class="muted">Approved projects that are ready to run, running, or being '
                     f'validated. Everything not yet finished lives in Open work.</p>'
                     f'{work_tbl}'
-                    f'<h2>Scout</h2>{scout_failed_block}'
-                    f'<div class="scrollx">{camp_tbl}</div>{diag_options}'
-                    f'{_runtime_block_html()}')
+                    f'{_system_ready_html(service.output_dir, hidden)}')
             script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
                       + self._poll_script(
                           "/api/overview",
@@ -4021,8 +4011,26 @@ function startCampaign(){{
                 + '</p><p class="muted">The running commit is captured at process start; a difference '
                 'from repository HEAD means the server is serving older code and should be restarted. '
                 'No secrets or absolute paths are shown.</p></div>')
+            # Runtime and diagnostics moved here from Overview. They are things an operator looks up
+            # when something seems wrong, not things they need while deciding what to scan — and on
+            # Overview the full table pushed the one block that starts work below the fold.
+            diag_hidden = self._read_model().overview().counts.get("diagnostics_hidden", 0)
+            diag_line = (
+                f'<p>{diag_hidden} test, replay or diagnostic record(s) are kept out of production '
+                f'counts. <a href="/?diagnostics=1">Show them on Overview</a> · '
+                f'<a href="/activity?diagnostics=1">Show them in Activity</a></p>'
+                if diag_hidden else
+                '<p class="muted">No diagnostic or acceptance records are currently hidden.</p>')
+            runtime_card = (
+                '<div class="card" id="runtime"><h2>Runtime</h2>'
+                '<p class="muted">What code this process is actually serving. A Dashboard started '
+                'from a working tree can outlive the code it loaded, and a commit SHA cannot reveal '
+                'it — an uncommitted edit never moves HEAD.</p>'
+                f'{_runtime_block_html(force_open=True)}'
+                f'<h3>Diagnostic data</h3>{diag_line}</div>')
             body = (
                 '<h1>Settings</h1>'
+                f'{runtime_card}'
                 '<div class="card"><h2>Appearance</h2>'
                 '<p class="muted">Theme is changed from the header. Choose how much information fits '
                 'on each page.</p>'
@@ -4769,6 +4777,18 @@ header.top .brand{color:var(--text)} header.top .brand::before{content:"";displa
 main{max-width:var(--maxw);margin:0 auto;padding:var(--pad)}
 html,body{max-width:100%;overflow-x:hidden}
 header.top .wrap{flex-wrap:wrap} header.top nav{flex-wrap:wrap}
+/* A flex item will not shrink below its content width unless told to, so a wide nav pushed the
+   theme button past the header's right padding and body overflow-x:hidden then clipped it. */
+header.top nav{flex:1 1 auto;min-width:0}
+header.top .theme-toggle{flex:0 0 auto}
+/* "Nothing is happening" is a line, not a panel: as a card it competed with the blocks that DID
+   have something in them, and several of them on one screen taught the eye to skip that region. */
+.quiet-state{margin:.2rem 0 1rem;color:var(--muted);padding:10px 12px;border:1px solid var(--border);
+border-radius:var(--radius);background:var(--surface)}
+.quiet-state strong{color:var(--text)}
+.quiet-state.attention{border-color:var(--attention)}
+.scout-actions{margin:.2rem 0 .8rem;flex-wrap:wrap}
+.attempt-history{margin:.4rem 0 0;padding-left:1.1rem;font-size:13px}
 .scrollx{overflow-x:auto;max-width:100%;margin-bottom:var(--gap)}
 h1{font-size:22px;margin:.2rem 0 1rem} h2{font-size:16px;margin:1.4rem 0 .6rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);margin-bottom:var(--gap)}
@@ -5092,8 +5112,43 @@ _PAGE_UI_JS = (
     "d.showModal();if(expected)i.focus();});}")
 
 
-def _runtime_block_html() -> str:
-    """Compact Runtime block for Overview — what code this process is actually serving.
+def _system_ready_html(output_dir: str, diagnostics_hidden: int = 0) -> str:
+    """One line on Overview: is anything about this installation stopping work right now?
+
+    Deliberately built only from facts that are already cached or cost a single stat call. Overview
+    is the page an operator lands on constantly, so a readiness check that launched Chromium or
+    shelled out to git would tax every visit for information that is almost always "fine".
+
+    When everything is fine it stays a line. When something is wrong it says which thing and links
+    to the detail — the operator should never have to open a fold to discover they must restart.
+    """
+    problems = []
+    try:
+        from core.build_identity import current_identity
+        if current_identity().get("restart_required"):
+            problems.append("executable code changed since this process started")
+    except Exception:      # noqa: BLE001 - a readiness line must never be the thing that 500s
+        pass
+    try:
+        probe = Path(output_dir) / ".write-probe"
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError:
+        problems.append("the evidence directory is not writable")
+    note = (f' <span class="muted">{diagnostics_hidden} diagnostic record(s) are hidden from '
+            f'production counts.</span>' if diagnostics_hidden else '')
+    if problems:
+        return (f'<p id="system-ready" class="quiet-state attention">'
+                f'<strong>System needs attention</strong> &mdash; {_esc("; ".join(problems))}. '
+                f'<a href="/settings#runtime">Open system details</a>.{note}</p>')
+    return (f'<p id="system-ready" class="quiet-state"><strong>System ready</strong> '
+            f'<span class="muted">&mdash; runtime up to date, evidence directory writable.</span> '
+            f'<a href="/settings#runtime">System details</a>{note}</p>')
+
+
+def _runtime_block_html(force_open: bool = False) -> str:
+    """Runtime detail — what code this process is actually serving.
 
     A Dashboard started from a working tree can quietly outlive the code it loaded, and a commit SHA
     cannot reveal it: an uncommitted edit never moves HEAD. So this reports the fingerprint verdict
@@ -5126,7 +5181,8 @@ def _runtime_block_html() -> str:
         ))
     # The verdict rides in the summary and the block opens itself when a restart is due: a fact the
     # operator must act on cannot live behind a fold they have to know to open.
-    return (f'<details class="advanced compact-details"{" open" if restart else ""}>'
+    return (f'<details class="advanced compact-details"'
+            f'{" open" if (restart or force_open) else ""}>'
             f'<summary>Runtime — {"restart required" if restart else "up to date"}</summary>'
             f'<div class="scrollx"><table class="runtime-table">{rows}</table></div>'
             f'{hint}</details>')
