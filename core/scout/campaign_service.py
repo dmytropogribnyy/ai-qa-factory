@@ -765,6 +765,32 @@ class CampaignService:
             "omitted": bundle.omitted,
         }
 
+    def client_package_status(self, domain: str, *, run: str) -> Dict[str, Any]:
+        """Has a client package already been built for this exact target, and how big is it?
+
+        Read-only: it stats what exists rather than building, so opening a target never generates a
+        deliverable as a side effect. "Ready for review" is the highest state it can report —
+        approval to send stays a human decision.
+        """
+        from core.scout.client_evidence import client_export_dir
+
+        if not run:
+            return {"state": "not_generated"}
+        try:
+            from core.scout.client_evidence import _safe_slug
+            from core.scout.discovery.domain_intel import canonical_domain
+
+            dom = canonical_domain(domain) or domain
+            path = client_export_dir(self.output_dir, run) / f"{_safe_slug(dom)}-qa-evidence.zip"
+            if not path.is_file():
+                return {"state": "not_generated"}
+            stat = path.stat()
+            return {"state": "ready", "filename": path.name, "bytes": stat.st_size,
+                    "generated_at": datetime.fromtimestamp(
+                        stat.st_mtime, tz=timezone.utc).isoformat()}
+        except Exception as exc:      # noqa: BLE001 - a status read must never break the page
+            return {"state": "blocked", "reason": f"could not read the package ({type(exc).__name__})"}
+
     def export_bundle(self, campaign_id: str) -> str:
         rc = CampaignRunControl(campaign_id, self.output_dir)
         manifest = {

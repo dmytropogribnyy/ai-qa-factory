@@ -7,8 +7,10 @@ commercial scorecards, and operator-only IDs are excluded.
 """
 from __future__ import annotations
 
+import csv
 import hashlib
 import html
+import io
 import json
 import os
 import re
@@ -110,6 +112,97 @@ def _unique_role(role: str, taken: Dict[str, Dict[str, str]]) -> str:
     while unique in used:
         unique, suffix = f"{base}-{suffix}", suffix + 1
     return unique
+
+
+_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+         ".webm": "video/webm", ".mp4": "video/mp4", ".html": "text/html", ".json": "application/json",
+         ".csv": "text/csv", ".txt": "text/plain"}
+
+
+def _mime_for(name: str) -> str:
+    return _MIME.get("." + name.rsplit(".", 1)[-1].lower(), "application/octet-stream")
+
+
+def _build_identity() -> str:
+    """Which build produced this package, so a disputed finding can be traced to the code that made it."""
+    try:
+        from core.build_identity import current_identity
+        ident = current_identity()
+        return str(ident.get("running_build") or ident.get("product_version") or "unknown")
+    except Exception:      # noqa: BLE001 - never let provenance break the deliverable
+        return "unknown"
+
+
+def _findings_csv(findings: List[Dict[str, Any]]) -> str:
+    """The finding list as a spreadsheet, because that is what a client forwards to their developer.
+
+    Written with CRLF and a UTF-8 BOM: Excel on Windows opens a BOM-less UTF-8 CSV in the system
+    codepage and turns every accented character into mojibake, which makes the package look broken
+    before anyone reads a word of it.
+    """
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\r\n")
+    writer.writerow(["Severity", "Category", "Title", "Impact", "Page", "How to reproduce",
+                     "Evidence", "Confidence"])
+    for finding in findings:
+        writer.writerow([
+            str(finding.get("severity") or ""),
+            str(finding.get("category") or ""),
+            str(finding.get("title") or ""),
+            str(finding.get("business_impact") or ""),
+            str(finding.get("url") or ""),
+            " → ".join(str(step) for step in (finding.get("reproduction_steps") or [])),
+            ", ".join(str(ref).rsplit("/", 1)[-1]
+                      for ref in (finding.get("evidence_refs") or [])),
+            str(finding.get("confidence") or ""),
+        ])
+    return "﻿" + buffer.getvalue()
+
+
+def _readme_html(domain: str, *, findings: int, screenshots: int, videos: int,
+                 omitted: List[Dict[str, Any]]) -> str:
+    """The first thing the client opens: what is in here and which file to read first."""
+    dropped = "".join(
+        f"<li>{html.escape(str(item.get('name') or 'a file'))} — "
+        f"{html.escape(str(item.get('reason') or 'omitted'))}</li>" for item in omitted)
+    dropped_block = (f"<h2>Not included</h2><ul>{dropped}</ul>" if dropped else "")
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Start here — QA evidence for {html.escape(domain)}</title>
+<style>
+body{{font:15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#172033;background:#f6f8fb;margin:0}}
+main{{max-width:820px;margin:36px auto;padding:0 20px}}
+.card{{background:#fff;border:1px solid #dfe5ee;border-radius:14px;padding:22px;margin:0 0 16px}}
+h1{{margin:0 0 6px;font-size:26px}}h2{{font-size:17px;margin:20px 0 8px}}
+code{{background:#eef2f8;padding:1px 5px;border-radius:4px}}a{{color:#1557c0}}
+.muted{{color:#607086}}
+</style></head><body><main>
+<div class="card"><p class="muted">QA evidence package</p><h1>{html.escape(domain)}</h1>
+<p>Everything here opens offline. Nothing needs to be installed and nothing connects to the
+internet.</p>
+<h2>Start with</h2>
+<ul>
+<li><a href="QA-Report.html">QA-Report.html</a> — the findings, with the screenshots that show
+them.</li>
+<li><a href="Findings.csv">Findings.csv</a> — the same list as a spreadsheet, for your tracker.</li>
+</ul>
+<h2>What is in the package</h2>
+<ul>
+<li><strong>{findings}</strong> confirmed finding(s)</li>
+<li><strong>{screenshots}</strong> screenshot(s) in <code>Evidence/Screenshots/</code></li>
+<li><strong>{videos}</strong> reproduction video(s) in <code>Evidence/Videos/</code></li>
+<li>Accessibility, performance, console and network summaries in
+<code>Evidence/Technical/</code></li>
+<li><code>manifest.json</code> — a SHA-256 for every file, so either side can prove nothing was
+altered.</li>
+</ul>
+<h2>How this was produced</h2>
+<p>A bounded, read-only check of public pages. No form was submitted, no account was created, no
+order was placed and no login was attempted. Findings describe what was observed on the pages
+listed; they are not a claim that the site has no other issues.</p>
+{dropped_block}
+</div></main></body></html>"""
 
 
 def _video_absence_note(detail: Dict[str, Any]) -> str:
@@ -345,29 +438,49 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
         raise ClientEvidenceError("target evidence directory not found")
 
     public_findings = [_public_finding(f) for f in list(detail.get("findings") or [])]
+    # Split by what a reader is looking for rather than by which artifact we happened to store it
+    # in. "network-console-accessibility.json" required knowing our internals to guess what was in
+    # it; a client hunting a slow page opens performance-summary.json.
+    raw_network = detail.get("network") or {}
     structured: Dict[str, str] = {
-        "technical/findings.json": json.dumps(
+        "Evidence/Technical/findings.json": json.dumps(
             {"schema": "scout-client-findings/v1", "domain": dom,
              "findings": public_findings},
             indent=2, ensure_ascii=False, sort_keys=True),
+        "Evidence/Technical/accessibility-summary.json": json.dumps(
+            {"schema": "scout-client-accessibility/v1", "domain": dom,
+             "tool": "axe-core",
+             "status": str(raw_network.get("axe_status") or "not_attempted"),
+             "violation_groups": list(raw_network.get("axe_violations") or [])},
+            indent=2, ensure_ascii=False, sort_keys=True),
+        "Evidence/Technical/performance-summary.json": json.dumps(
+            {"schema": "scout-client-performance/v1", "domain": dom,
+             "page_timings_ms": dict(raw_network.get("timing_ms") or {}),
+             "metrics": dict(raw_network.get("perf") or {})},
+            indent=2, ensure_ascii=False, sort_keys=True),
+        "Evidence/Technical/network-summary.json": json.dumps(
+            {"schema": "scout-client-network/v1", "domain": dom,
+             "http_status": raw_network.get("status"),
+             "failed_resources": list(raw_network.get("failed_resources") or []),
+             "blocked_requests": list(raw_network.get("blocked_requests") or [])},
+            indent=2, ensure_ascii=False, sort_keys=True),
+        "Evidence/Technical/console-summary.txt": (
+            "\n".join(str(line) for line in (raw_network.get("console_errors") or []))
+            or "No console error was recorded for the pages checked."),
     }
     coverage = detail.get("coverage")
     if isinstance(coverage, dict):
-        structured["technical/coverage.json"] = json.dumps(
+        structured["Evidence/Technical/coverage.json"] = json.dumps(
             _project_fields(coverage, _COVERAGE_FIELDS),
             indent=2, ensure_ascii=False, sort_keys=True)
-    network = _project_fields(detail.get("network"), _NETWORK_FIELDS)
-    if network:
-        structured["technical/network-console-accessibility.json"] = json.dumps(
-            network, indent=2, ensure_ascii=False, sort_keys=True)
     reproduction = detail.get("reproduction")
     if isinstance(reproduction, dict) and reproduction:
-        structured["technical/reproduction.json"] = json.dumps(
+        structured["Evidence/Technical/reproduction.json"] = json.dumps(
             _project_fields(reproduction, _REPRODUCTION_FIELDS),
             indent=2, ensure_ascii=False, sort_keys=True)
     client_trace = _client_trace(pdir)
     if client_trace:
-        structured["technical/browser-event-trace.json"] = json.dumps(
+        structured["Evidence/Technical/browser-event-trace.json"] = json.dumps(
             client_trace, indent=2, ensure_ascii=False, sort_keys=True)
 
     binary: List[Tuple[str, Path]] = []
@@ -412,32 +525,34 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                 continue
             meta = roles.get(path.name) or {}
             role = _unique_role(str(meta.get("role") or path.stem), image_meta)
-            name = f"evidence/screenshots/{role}{suffix}"
+            name = f"Evidence/Screenshots/{role}{suffix}"
             seen_digests[digest] = f"{role}{suffix}"
             image_meta[name] = {"role": role, "url": str(meta.get("url") or "")}
         else:
             video_count += 1
-            name = f"evidence/reproduction/reproduction-{video_count:02d}{suffix}"
+            name = f"Evidence/Videos/reproduction-{video_count:02d}{suffix}"
         binary.append((name, path))
         total += size
 
-    trace_available = "technical/browser-event-trace.json" in structured
-    # The attachment ceiling covers every uncompressed member, including both human summaries.
-    # If summaries push a nearly-full package over the cap, omit the last media item and rebuild the
-    # summaries so their counts and omitted-file note remain exact.
+    trace_available = "Evidence/Technical/browser-event-trace.json" in structured
+    # The attachment ceiling covers every uncompressed member, including the human summaries. If
+    # they push a nearly-full package over the cap, omit the last media item and rebuild them so
+    # their counts and their not-included note stay exact.
     base_structured = structured
     while True:
-        image_names = [name for name, _path in binary if "/screenshots/" in name]
-        video_names = [name for name, _path in binary if "/reproduction/" in name]
+        image_names = [name for name, _path in binary if "/Screenshots/" in name]
+        video_names = [name for name, _path in binary if "/Videos/" in name]
         images = [{"name": name, **image_meta.get(name, {})} for name in image_names]
         summary = _summary(
             dom, detail, images=images, videos=len(video_names),
             trace_available=trace_available, omitted=omitted)
-        html_summary = _html_summary(
-            dom, detail, images=images, videos=video_names)
         candidate = {
-            "QA_Evidence_Summary.html": html_summary,
-            "QA_Evidence_Summary.md": summary,
+            "00-README.html": _readme_html(dom, findings=len(public_findings),
+                                           screenshots=len(image_names),
+                                           videos=len(video_names), omitted=omitted),
+            "QA-Report.html": _html_summary(dom, detail, images=images, videos=video_names),
+            "Findings.csv": _findings_csv(public_findings),
+            "Evidence/Technical/scan-summary.md": summary,
             **base_structured,
         }
         package_bytes = sum(len(text.encode("utf-8")) for text in candidate.values())
@@ -461,7 +576,13 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
     entries: List[Dict[str, Any]] = []
     out_dir = client_export_dir(output_dir, run_id)
     out_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{_safe_slug(dom)}-qa-evidence.zip"
+    # Dated, and rooted in one folder. Two packages for the same client a month apart used to be the
+    # same filename twice in a downloads folder, and extracting a flat ZIP scattered a dozen loose
+    # files across whatever directory the client happened to be in.
+    generated_at = _now()
+    stamp = generated_at[:10].replace("-", "")
+    root = f"{_safe_slug(dom)}-qa-evidence-{stamp}"
+    filename = f"{root}.zip"
     path = out_dir / filename
     with tempfile.NamedTemporaryFile(
         prefix=f".{filename}.", suffix=".tmp", dir=out_dir, delete=False
@@ -472,37 +593,58 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                              compresslevel=6) as archive:
             for name, text in structured.items():
                 data = text.encode("utf-8")
-                archive.writestr(name, data)
-                entries.append({"path": name, "bytes": len(data), "sha256": _sha256_bytes(data)})
+                archive.writestr(f"{root}/{name}", data)
+                entries.append({"path": name, "bytes": len(data), "mime": _mime_for(name),
+                                "sha256": _sha256_bytes(data)})
             for name, source in binary:
-                archive.write(source, name)
+                archive.write(source, f"{root}/{name}")
+                meta = image_meta.get(name, {})
                 entry = {
                     "path": name,
                     "bytes": source.stat().st_size,
+                    "mime": _mime_for(name),
                     "sha256": _sha256_file(source),
+                    # Bind each frame to the page it shows. Without it a screenshot is an image the
+                    # client cannot place, and nothing records which walked page was captured.
+                    "role": meta.get("role", ""),
+                    "page_url": meta.get("url", ""),
+                    "captured_at": datetime.fromtimestamp(
+                        source.stat().st_mtime, tz=timezone.utc).isoformat(),
                 }
-                # Bind each frame to the page it shows. Without it a screenshot is an image the
-                # client cannot place, and nothing records which of the walked pages was captured.
-                entry.update(image_meta.get(name, {}))
                 entries.append(entry)
             manifest = {
-                "schema": "scout-client-evidence/v1",
+                "schema": "scout-client-evidence/v2",
+                # Provenance a disputed finding can be traced through: which site, which run, which
+                # build. The internal prospect id is deliberately NOT here — it identifies our
+                # numbering rather than the client's site, and this file leaves the building.
                 "domain": dom,
-                "generated_at": _now(),
+                "target_id": dom,
+                "run_id": run_id,
+                "build": _build_identity(),
+                "generated_at": generated_at,
+                "root": root,
                 "client_oriented_scope": True,
                 "structured_content_secret_scanned": True,
                 "visual_review_required": True,
                 "review_before_sending": True,
+                # Building a package is not deciding it may be sent. This stays false in the
+                # artifact itself so a forwarded ZIP cannot imply an approval nobody gave.
+                "approved_for_client_delivery": False,
+                "findings": [{"title": f.get("title"), "severity": f.get("severity"),
+                              "url": f.get("url"),
+                              "evidence": [str(ref).rsplit("/", 1)[-1]
+                                           for ref in (f.get("evidence_refs") or [])]}
+                             for f in public_findings],
                 "entries": entries,
                 "omitted": omitted,
             }
             manifest_text = json.dumps(
                 manifest, indent=2, ensure_ascii=False, sort_keys=True)
-            findings = ContentSecretScanner().scan_text("MANIFEST.json", manifest_text)
+            findings = ContentSecretScanner().scan_text("manifest.json", manifest_text)
             if findings:
                 raise ClientEvidenceError(
                     "client evidence manifest blocked by content secret scan")
-            archive.writestr("MANIFEST.json", manifest_text.encode("utf-8"))
+            archive.writestr(f"{root}/manifest.json", manifest_text.encode("utf-8"))
         os.replace(tmp, path)
     except Exception:
         try:

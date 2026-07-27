@@ -57,7 +57,7 @@ path that surfaces per-target findings in the Dashboard — see §3.)
 - The browser trace shown in the Dashboard is a redacted structured event record. It is not a native
   Playwright `trace.zip`; Playwright Inspector is a live developer tool and is intentionally not part
   of the operator evidence UI.
-- After a target reaches **Analysis complete**, select **Download client-ready evidence (.zip)**.
+- After a target reaches **Analysis complete**, select **Download client evidence (.zip)**.
   The exact-target attachment is capped at 20 MiB and contains an offline HTML summary, Markdown,
   client-facing findings, coverage, screenshots, an optional qualifying reproduction video,
   sanitized console/network/accessibility data, a structured event trace when recorded, and a

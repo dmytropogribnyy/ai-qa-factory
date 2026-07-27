@@ -313,10 +313,15 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/scout/artifact":
-                return self._scout_artifact((q.get("run") or [""])[0], (q.get("rel") or [""])[0])
+                return self._scout_artifact(
+                    (q.get("run") or [""])[0], (q.get("rel") or [""])[0],
+                    download=(q.get("download") or [""])[0] in ("1", "true", "yes"))
             if path == "/scout/client-evidence":
                 return self._scout_client_evidence(
                     (q.get("domain") or [""])[0], (q.get("run") or [""])[0])
+            if path == "/scout/client-report":
+                return self._html(200, self._scout_client_report_page(
+                    (q.get("domain") or [""])[0], (q.get("run") or [""])[0]))
             if path == "/work-evidence":
                 return self._work_evidence((q.get("project") or [""])[0], (q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
@@ -924,7 +929,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if self.command != "HEAD":
                 self.wfile.write(data)
 
-        def _scout_artifact(self, run_id: str, rel: str):
+        def _scout_artifact(self, run_id: str, rel: str, *, download: bool = False):
             """Serve one captured evidence file from a specific Scout run, path-confined.
 
             The RunStore constructor rejects an unsafe run_id; `_confine` blocks traversal out of the
@@ -969,9 +974,76 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("X-Content-Type-Options", "nosniff")
+            if download:
+                # The filename is the store's own already-validated component, never caller text, so
+                # it cannot carry a quote, a path separator or a header-splitting newline.
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="{target.name}"')
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(data)
+
+        def _scout_client_report_page(self, domain: str, run_id: str) -> str:
+            """A preview of what the client would receive, rendered by us rather than served as HTML.
+
+            The package's own report is a standalone HTML file built partly from text captured on a
+            third-party site. Serving those bytes inline would run untrusted markup on the
+            Dashboard's own origin, so this renders the SAME content through the app's escaping
+            instead. What the operator checks here is the content; the packaged file is the same
+            content in a portable wrapper.
+            """
+            det = self._campaign_service().target_detail(domain, run=run_id)
+            if det.get("analysis_complete") is not True:
+                return _page("AI QA Factory — Client report", "/scout",
+                             f'<h1>{_esc(domain)}</h1><div class="card"><p>No client report can be '
+                             f'previewed: this target has no completed analysis.</p>'
+                             f'<p><a class="btn" href="/scout/target?domain={_esc(domain)}">'
+                             f'Back to the target</a></p></div>')
+            findings = [f for f in (det.get("findings") or [])
+                        if str(f.get("severity") or "").strip().lower() != "info"]
+            run = det.get("run") or run_id
+
+            def _art(rel: str) -> str:
+                return f'/scout/artifact?run={_esc(run)}&rel={_esc(rel)}'
+
+            media = [str(m) for m in (det.get("media") or [])]
+            frames = {str(s.get("file") or ""): s for s in (det.get("screenshots") or [])
+                      if isinstance(s, dict)}
+            shots = "".join(
+                f'<figure class="report-shot"><a href="{_art(m)}" target="_blank" rel="noopener">'
+                f'<img src="{_art(m)}" alt="{_esc(frames.get(m.rsplit("/", 1)[-1], {}).get("role") or domain)}">'
+                f'</a><figcaption class="muted">'
+                f'{_esc(frames.get(m.rsplit("/", 1)[-1], {}).get("role") or m.rsplit("/", 1)[-1])}'
+                f'</figcaption></figure>'
+                for m in media if m.lower().rsplit(".", 1)[-1] in ("png", "jpg", "jpeg", "webp"))
+            vids = "".join(
+                f'<video src="{_art(m)}" controls preload="metadata" style="max-width:420px"></video>'
+                for m in media if m.lower().rsplit(".", 1)[-1] in ("webm", "mp4"))
+            rows = "".join(
+                f'<tr><td>{_badge(str(f.get("severity") or "unknown").upper())}</td>'
+                f'<td><strong>{_esc(f.get("title") or "Untitled finding")}</strong>'
+                f'<div class="muted">{_esc(f.get("business_impact") or "Impact not recorded.")}</div>'
+                f'</td><td class="muted">{_esc(f.get("url") or "")}</td></tr>'
+                for f in findings)
+            body = (
+                f'<h1>Client report preview — {_esc(domain)}</h1>'
+                f'<div class="row"><a class="chip" href="/scout/target?domain={_esc(domain)}'
+                f'&amp;run={_esc(run)}">Back to the target</a>'
+                f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run)}'
+                f'&amp;domain={_esc(domain)}">Download client evidence (.zip)</a></div>'
+                f'<div class="banner">This is exactly what the packaged report covers. Your talking '
+                f'points, the email draft and the contact\'s provenance are deliberately not here — '
+                f'they are operator notes, not client deliverables.</div>'
+                f'<div class="card"><h2>Findings the client will see</h2><div class="scrollx">'
+                f'<table class="responsive-table"><thead><tr><th>Severity</th>'
+                f'<th>Issue and impact</th><th>Page</th></tr></thead><tbody>'
+                f'{rows or "<tr><td colspan=3>No confirmed issue was recorded.</td></tr>"}'
+                f'</tbody></table></div></div>'
+                f'<div class="card"><h2>Screenshots</h2><div class="media-grid">'
+                f'{shots or "<p class=muted>No screenshot was captured for this target.</p>"}'
+                f'</div></div>'
+                + (f'<div class="card"><h2>Reproduction video</h2>{vids}</div>' if vids else ''))
+            return _page("AI QA Factory — Client report", "/scout", body)
 
         def _scout_client_evidence(self, domain: str, run_id: str):
             """Generate and download one exact-target, bounded, client-ready evidence ZIP."""
@@ -3134,7 +3206,6 @@ function startCampaign(){{
 
             imgs = [m for m in media if _ext(m) in ("png", "jpg", "jpeg", "webp", "gif")]
             vids = [m for m in media if _ext(m) in ("webm", "mp4")]
-            trace = next((e for e in evidence_files if e.get("name") == "browser_trace.json"), None)
             obs_file = next((e for e in evidence_files if e.get("name") == "observation.json"), None)
             evidence_count = len(media) + len(evidence_files)
             # Name each frame by the page it shows. A row of anonymous thumbnails makes the operator
@@ -3174,21 +3245,10 @@ function startCampaign(){{
                               'Use Deep capture for screenshots; video is kept only for a qualifying '
                               'reproduced interaction.</p>')
 
-            trace_html = (
-                f'<a href="{_art_url(trace["rel"])}" target="_blank" rel="noopener">Open event trace</a>'
-                if trace else
-                '<span class="muted">Not recorded for this scan mode or no browser sequence ran.</span>')
-            axe_status = str(network.get("axe_status") or "")
-            if axe_status == "ok":
-                axe_text = f'Ran · {len(network.get("axe_violations") or [])} violation group(s)'
-            elif axe_status == "unavailable":
-                axe_text = "Attempted, but axe-core evidence was unavailable"
-            else:
-                axe_text = "Not attempted in this scan mode"
-            network_available = bool(network.get("status") or network.get("console_errors")
-                                     or network.get("failed_resources") or network.get("timing_ms"))
-
-            status_note = ("Completed with confirmed actionable findings."
+            # Evidence presence/absence is decided once, in core.scout.evidence_state, so the page,
+            # the History row and anything else asking "was there a screenshot?" cannot answer it
+            # three slightly different ways. See _evidence_state_grid_html below.
+            status_note =("Completed with confirmed actionable findings."
                            if actionable else
                            "Completed. No actionable defect was confirmed in this bounded scan.")
             body = (
@@ -3204,27 +3264,12 @@ function startCampaign(){{
                 f'<strong>{_esc(pages if pages is not None else "—")}</strong></div>'
                 f'<div class="summary-item"><span class="muted">Evidence files</span>'
                 f'<strong>{evidence_count}</strong></div></div>'
-                f'<div class="row" style="margin-top:16px">'
-                f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run_id)}'
-                f'&amp;domain={_esc(domain)}">Download client-ready evidence (.zip)</a>'
-                f'<span class="muted">One target · client-oriented · review required · '
-                f'up to 20 MiB</span></div>'
-                f'<p class="muted">The ZIP includes an offline HTML summary, findings, coverage, '
-                f'screenshots, optional reproduced-interaction video, sanitized console/network '
-                f'evidence, and integrity hashes. Review it before attaching it to email.</p></div>'
+                f'</div>'
                 f'<div class="card"><h2>Findings</h2><div class="scrollx">'
                 f'{_problems_table_html(findings)}</div></div>'
                 f'<div class="card"><h2>Evidence</h2><div class="media-grid">{media_html}</div>'
-                f'<div class="evidence-grid" style="margin-top:12px">'
-                f'<div class="evidence-item"><h3>Screenshots</h3>'
-                f'<span>{len(imgs)} captured</span></div>'
-                f'<div class="evidence-item"><h3>Reproduction video</h3>'
-                f'<span>{len(vids)} captured</span></div>'
-                f'<div class="evidence-item"><h3>Browser trace</h3>{trace_html}</div>'
-                f'<div class="evidence-item"><h3>Network / console</h3>'
-                f'<span>{"Captured" if network_available else "Not available"}</span></div>'
-                f'<div class="evidence-item"><h3>Accessibility (axe)</h3>'
-                f'<span>{_esc(axe_text)}</span></div></div>'
+                f'{_evidence_state_grid_html(det)}'
+                f'{_evidence_files_html(evidence_files, _art_url)}'
                 f'<p class="muted">This trace is a redacted structured event record, not a native '
                 f'Playwright <code>trace.zip</code>. Playwright Inspector is a live developer tool '
                 f'and is intentionally not exposed in the operator UI.</p></div>'
@@ -3248,14 +3293,29 @@ function startCampaign(){{
                     contact_rows = '<span class="muted">No public contact found.</span>'
                 eng = entry.get("engagement_status", "prospect")
                 work_id = entry.get("work_id", "")
+                # The talking points are the deterministic bullets the draft is built from. Showing
+                # them beside the letter lets the operator check that the prose claims nothing the
+                # findings do not support — the draft is prose, these are the facts.
+                points = "".join(f'<li>{_esc(point)}</li>'
+                                 for point in (draft.get("problem_bullets") or []))
                 body += (
-                    '<div class="card"><h2>Next actions</h2>'
+                    '<div class="card"><h2>Contact &amp; outreach</h2>'
                     '<div class="evidence-grid">'
                     f'<div class="evidence-item"><h3>Public contact</h3>{contact_rows}</div>'
                     f'<div class="evidence-item"><h3>What we can offer</h3>'
                     f'<p>{_esc(fixability.get("summary") or "Review scope before promising a fix.")}</p>'
                     '<p class="muted">Implementation is offered only after scope agreement and '
                     'repo/staging access. Nothing is promised automatically.</p></div></div>'
+                    f'<h3>Talking points</h3><ul class="talking-points">{points}</ul>'
+                    f'<h3>Suggested subject</h3><p><code>{_esc(draft.get("subject",""))}</code></p>'
+                    f'<h3>Email draft {_badge("Draft — not sent", "attention")}</h3>'
+                    '<label for="draftbody" class="sr-only">Outreach draft body</label>'
+                    f'<textarea id="draftbody" aria-label="Outreach draft body" readonly rows="9">'
+                    f'{_esc(draft.get("body",""))}</textarea>'
+                    '<div class="row"><button class="chip" type="button" '
+                    'onclick="copyDraft()">Copy draft</button></div>'
+                    '<p class="muted">Nothing is sent automatically, and the draft is not part of '
+                    'the client package — it is your text, not theirs.</p>'
                     f'<p><b>Prospect stage:</b> {_badge(eng)}</p>'
                     '<div class="row"><button class="btn primary" type="button" '
                     'onclick="startCW()">Prepare client work</button>'
@@ -3264,20 +3324,15 @@ function startCampaign(){{
                     '<button class="chip" type="button" onclick="setEng(\'lost\')">Lost</button>'
                     + (f'<a class="chip" href="/work/{_esc(work_id)}">Open linked work</a>'
                        if work_id else '')
-                    + '<span id="actionmsg" class="muted" aria-live="polite"></span></div>'
-                    '<details><summary>Copy-only outreach draft</summary>'
-                    f'<p><b>Subject:</b> {_esc(draft.get("subject",""))}</p>'
-                    '<label for="draftbody"><b>Draft body</b></label>'
-                    f'<textarea id="draftbody" aria-label="Outreach draft body" readonly rows="9">'
-                    f'{_esc(draft.get("body",""))}</textarea>'
-                    '<button class="chip" type="button" onclick="copyDraft()">Copy draft</button>'
-                    '</details><p class="muted">Nothing is sent automatically. Client work is a '
-                    'proposal/preparation step and does not mark the prospect Won.</p></div>')
+                    + '<span id="actionmsg" class="muted" aria-live="polite"></span></div></div>')
             else:
-                body += ('<div class="card"><h2>Next actions</h2><p class="muted">Outreach draft and '
-                         'client-work actions are disabled because this run has no confirmed '
-                         'actionable finding. Run a deeper bounded check if more coverage is needed.'
+                body += ('<div class="card"><h2>Contact &amp; outreach</h2>'
+                         '<p class="muted">No outreach draft is written because this run confirmed '
+                         'no actionable finding. That is not a conclusion that the site is '
+                         'defect-free — run a deeper bounded check if more coverage is needed.'
                          '</p></div>')
+
+            body += _client_package_html(self._campaign_service(), domain, run_id, det)
 
             source_kind = det.get("source_kind") or ""
             source_note = {
@@ -5256,6 +5311,93 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
 
 def _badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{_esc(text)}</span>'
+
+
+def _evidence_state_grid_html(detail: dict) -> str:
+    """Every evidence kind with its state and, when it is missing, the reason it is missing.
+
+    Four states, never a blank: Available / Not applicable / Not captured: reason / Capture failed:
+    reason. The distinction is what tells the operator whether to re-run — only a capture failure is
+    a fault of ours.
+    """
+    from core.scout.evidence_state import AVAILABLE, CAPTURE_FAILED, evidence_states
+
+    tone = {AVAILABLE: "ok", CAPTURE_FAILED: "danger"}
+    cells = []
+    for state in evidence_states(detail):
+        count = (f' <span class="muted">&middot; {state.count}</span>'
+                 if state.is_available and state.count else "")
+        cells.append(f'<div class="evidence-item"><h3>{_esc(state.title)}</h3>'
+                     f'<span>{_badge(state.label, tone.get(state.state, ""))}{count}</span></div>')
+    return f'<div class="evidence-grid" style="margin-top:12px">{"".join(cells)}</div>'
+
+
+def _evidence_files_html(evidence_files: list, art_url) -> str:
+    """Open/Download for each captured file. A file you cannot fetch is not evidence you can send."""
+    if not evidence_files:
+        return ""
+    rows = "".join(
+        f'<tr><td>{_esc(e.get("label") or e.get("name") or "")}</td>'
+        f'<td><code>{_esc(e.get("name") or "")}</code></td>'
+        f'<td><a href="{art_url(e["rel"])}" target="_blank" rel="noopener">Open</a> &middot; '
+        f'<a href="{art_url(e["rel"])}&amp;download=1" download>Download</a></td></tr>'
+        for e in evidence_files if e.get("rel"))
+    return (f'<h3>Captured files</h3><div class="scrollx"><table class="responsive-table">'
+            f'<thead><tr><th>What it is</th><th>File</th><th>Actions</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table></div>')
+
+
+def _client_package_html(service, domain: str, run_id: str, detail: dict) -> str:
+    """The client deliverable, kept visibly separate from the operator's own outreach text.
+
+    Generating a package is not approving it. ``approved_for_client_delivery`` stays a human
+    decision, so the status tops out at "Ready for review" however clean the build was.
+    """
+    findings = list(detail.get("findings") or [])
+    actionable = [f for f in findings
+                  if str(f.get("severity") or "").strip().lower() != "info"]
+    media = [str(m) for m in (detail.get("media") or [])]
+    shots = sum(1 for m in media if m.lower().rsplit(".", 1)[-1]
+                in ("png", "jpg", "jpeg", "webp", "gif"))
+    videos = sum(1 for m in media if m.lower().rsplit(".", 1)[-1] in ("webm", "mp4"))
+    status = service.client_package_status(domain, run=run_id)
+    state = status.get("state") or "not_generated"
+    labels = {"not_generated": ("Not generated", ""), "ready": ("Ready for review", "ok"),
+              "blocked": ("Blocked", "danger")}
+    label, tone = labels.get(state, ("Not generated", ""))
+    meta = ""
+    if state == "ready":
+        meta = (f'<p class="muted">Generated {_fmt_ts(status.get("generated_at", ""))} &middot; '
+                f'{_esc(_human_bytes(status.get("bytes", 0)))} &middot; '
+                f'<code>{_esc(status.get("filename", ""))}</code></p>')
+    elif state == "blocked":
+        meta = f'<p class="muted">{_esc(status.get("reason", "Package could not be built."))}</p>'
+    action = "Regenerate and download" if state == "ready" else "Download client evidence (.zip)"
+    return (
+        f'<div class="card"><h2>Client package</h2>'
+        f'<div class="row">{_badge(label, tone)}'
+        f'<span class="muted">{len(actionable)} actionable finding(s) &middot; {shots} screenshot(s)'
+        f' &middot; {videos} video(s)</span></div>{meta}'
+        f'<div class="row" style="margin-top:12px">'
+        f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run_id)}'
+        f'&amp;domain={_esc(domain)}">{action}</a>'
+        f'<a class="btn" href="/scout/client-report?run={_esc(run_id)}'
+        f'&amp;domain={_esc(domain)}">Preview report</a></div>'
+        f'<p class="muted">One target only — no other company\'s evidence, findings or contacts are '
+        f'included. Your talking points, the email draft and where the contact came from stay out of '
+        f'it. Building the package is not approval to send it: review the contents first.</p></div>')
+
+
+def _human_bytes(size) -> str:
+    try:
+        value = float(size)
+    except (TypeError, ValueError):
+        return "unknown size"
+    for unit in ("B", "KiB", "MiB"):
+        if value < 1024 or unit == "MiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} MiB"
 
 
 def _result_options(selected: str = "") -> str:
