@@ -202,12 +202,19 @@ class CampaignService:
         `transport` (test) or the live Tavily key (production) drive the provider. Pause/stop are
         honoured cooperatively at engine event boundaries. Live discovery requires
         approve_live_discovery=True AND a Tavily key."""
-        # browser_mode is operator-selectable: "static" (default, no browser) or "playwright"
-        # (Deep capture — real screenshots/evidence). Unknown values fail closed to static.
+        # Depth is Scout's decision, not the operator's, and it must be the SAME decision whichever
+        # source filled the queue. Discovery used to default to static and silently return no visual
+        # evidence, so one company yielded screenshots when pasted and none when found — the three
+        # sources are meant to differ only in how the queue is filled.
+        #
+        # An explicit value still wins, so the API and CLI keep their contract; only the unset
+        # default changes. Unknown values fail closed to static.
         _ov = dict(overrides or {})
-        bmode = str(_ov.pop("browser_mode", "static")).lower()
-        if bmode not in ("static", "playwright"):
-            bmode = "static"
+        requested = str(_ov.pop("browser_mode", "") or "").lower()
+        if requested in ("static", "playwright"):
+            bmode = requested
+        else:
+            bmode = "playwright" if self._browser_available() else "static"
         cfg = build_config(campaign_preset, session_preset, provider_allowlist=["tavily"],
                            output_dir=self.output_dir, approve_live_discovery=approve_live_discovery,
                            overrides={**_ov, "resolve_dns": resolve_dns},
@@ -434,6 +441,15 @@ class CampaignService:
         if until:
             rows = [r for r in rows if str(r.get("last_analysis_at") or "") <= until]
         return rows
+
+    @staticmethod
+    def _browser_available() -> bool:
+        """Real Chromium readiness — the same probe the pasted/uploaded path faces, not a guess."""
+        try:
+            from core.scout.preflight import probe_browser
+            return probe_browser().status == "ready"
+        except Exception:      # noqa: BLE001 - an unavailable probe means static, never a crash
+            return False
 
     def _trashed_runs(self) -> set:
         """Run ids the operator has moved to Trash — hidden from daily views, still on disk."""

@@ -92,3 +92,69 @@ def test_the_resolved_depth_is_what_actually_runs(tmp_path, ready, expected):
     _start(launcher)
 
     assert service.started[0].browser_mode == expected
+
+
+# --- the discovery source must decide depth the same way ------------------------------------------
+
+def test_discovery_resolves_depth_by_probe_like_every_other_source(tmp_path, monkeypatch):
+    """Live-run finding: Find websites produced no screenshots at all.
+
+    The three sources are meant to differ only in how the queue is filled. Pasted and uploaded
+    targets asked a real Chromium probe and got deep capture; discovery defaulted to static and
+    silently returned no visual evidence, which made the same site yield different evidence
+    depending on which door it came through.
+    """
+    from core.scout import campaign_service as cs
+
+    seen = {}
+
+    def _capture(*_args, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop before launching a real campaign")
+
+    monkeypatch.setattr(cs, "build_config", _capture)
+    monkeypatch.setattr(cs.CampaignService, "_browser_available", staticmethod(lambda: True))
+
+    service = cs.CampaignService(str(tmp_path))
+    with pytest.raises(RuntimeError):
+        service.launch(approve_live_discovery=False)
+
+    assert seen["browser_mode"] == "playwright"
+
+
+def test_discovery_falls_back_to_static_when_no_browser_is_installed(tmp_path, monkeypatch):
+    """Reported, never assumed: without Chromium the run is static and says so."""
+    from core.scout import campaign_service as cs
+
+    seen = {}
+
+    def _capture(*_args, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop before launching a real campaign")
+
+    monkeypatch.setattr(cs, "build_config", _capture)
+    monkeypatch.setattr(cs.CampaignService, "_browser_available", staticmethod(lambda: False))
+
+    with pytest.raises(RuntimeError):
+        cs.CampaignService(str(tmp_path)).launch(approve_live_discovery=False)
+
+    assert seen["browser_mode"] == "static"
+
+
+def test_an_explicit_browser_mode_still_wins(tmp_path, monkeypatch):
+    """The API and CLI keep their existing contract; only the unset default changes."""
+    from core.scout import campaign_service as cs
+
+    seen = {}
+
+    def _capture(*_args, **kwargs):
+        seen.update(kwargs)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(cs, "build_config", _capture)
+    monkeypatch.setattr(cs.CampaignService, "_browser_available", staticmethod(lambda: True))
+
+    with pytest.raises(RuntimeError):
+        cs.CampaignService(str(tmp_path)).launch(overrides={"browser_mode": "static"})
+
+    assert seen["browser_mode"] == "static"
