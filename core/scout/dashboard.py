@@ -380,6 +380,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._scout_launch()
             if parsed.path == "/api/scout/import":
                 return self._scout_import()
+            if parsed.path == "/api/scout/intake/preview":
+                return self._scout_intake_preview()
             if parsed.path == "/api/scout/control":
                 return self._scout_control(parsed)
             if parsed.path == "/api/scout/export":
@@ -483,6 +485,41 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 manifest_saved = False                     # reported honestly, never a false success
             return self._json(200, {"ok": True, "result": res.to_dict(),
                                     "manifest_saved": manifest_saved})
+
+        def _scout_intake_preview(self):
+            """What the queue will actually contain, computed by the code that will build it.
+
+            The operator presses Start on the strength of these numbers, so they must not come from a
+            second, friendlier parser: this calls the same ``core.scout.intake`` the launch path uses.
+            It is read-only — nothing is queued, fetched or persisted — but it still sits behind the
+            shared mutation guard because it accepts an operator-supplied body.
+            """
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry
+            from core.scout.intake import parse_rows, parse_text
+            text = str(body.get("text") or "")[:200_000]
+            rows = body.get("rows")
+            try:
+                known = frozenset(e.domain for e in AnalyzedSiteRegistry(service.output_dir).all()
+                                  if getattr(e, "domain", ""))
+            except Exception:  # noqa: BLE001 - history is advisory here; never block a preview
+                known = frozenset()
+            # DNS is deliberately not consulted here: a preview must be instant and deterministic,
+            # and skipping resolution is safe because the LAUNCHER re-validates every seed with
+            # resolution (the anti-rebinding guard) before anything is queued. The structural and
+            # private/reserved checks still run, so localhost and 0.1 are refused in the preview.
+            from core.scout.url_safety import UrlPolicy
+            common = {"known_domains": known, "pinned": True,
+                      "policy": UrlPolicy(resolve_dns=False)}
+            if isinstance(rows, list):
+                result = parse_rows([r if isinstance(r, list) else [r] for r in rows[:5000]],
+                                    **common)
+            else:
+                result = parse_text(text, **common)
+            return self._json(200, {"ok": True, **result.to_dict()})
 
         # --- guarded client-work mutations (v3.1) — NEVER a command/argv over HTTP -------------
         def _work_action(self, action: str):
@@ -2388,191 +2425,97 @@ function startCampaign(){{
                 return self._json(400, {"ok": False, "error": str(exc)})
 
         def _scout_new_page(self, q=None) -> str:
+            """One Start Scout for all three ways of naming sites.
+
+            The operator chooses WHERE the sites come from — found, pasted, uploaded — and nothing
+            else. Depth, coverage, capture and page caps are decisions Scout makes from the same
+            tested policy every time; asking the operator to pick them before each run made the
+            outcome depend on knowledge of the host rather than on the work.
+
+            The three panels differ only in how the queue is filled. After that they post into the
+            same pipeline, and the counts shown before Start come from the same intake code that
+            builds the queue afterwards.
+            """
             cat = self._campaign_service().catalog()
-            show_diagnostics = self._want_diagnostics(q or {})
-            presets = [p for p in cat["campaign_presets"]
-                       if show_diagnostics or not p.get("is_smoke")]
-            opts = "".join(
-                f'<option value="{_esc(p["key"])}"{" selected" if p["key"]==cat["default_campaign_preset"] else ""}>'
-                f'{_esc(p["label"])}{" (diagnostic)" if p.get("is_smoke") else ""}</option>'
-                for p in presets)
-            sess = "".join(f'<option value="{_esc(s["key"])}">{_esc(s["label"])} '
-                           f'({s["max_discovered"]} discovered / {s["max_qa_analyzed"]} QA / '
-                           f'{s["max_duration_min"]}m)</option>' for s in cat["session_presets"])
-            strategy_labels = {
-                "conservative": "Conservative — strongest commercial fit",
-                "balanced": "Balanced — recommended",
-                "opportunity": "Wider discovery — more opportunities",
-            }
-            strat = "".join(
-                f'<option value="{_esc(s)}">{_esc(strategy_labels.get(s, s.title()))}</option>'
-                for s in cat["strategies"])
-            ind_opts = "".join(
-                f'<label class="option-tile"><input type="checkbox" name="industry" '
-                f'value="{_esc(i)}"><span>{_esc(i)}</span></label>'
-                for i in cat["industries"])
             site_type_labels = {
-                "commercial_product_company": "Commercial product",
                 "b2b_saas": "B2B SaaS",
+                "commercial_product_company": "Commercial product",
                 "ecommerce": "E-commerce",
                 "booking_travel": "Travel and booking",
                 "professional_services": "Professional services",
                 "marketplace": "Marketplace",
-                "personal_portfolio": "Personal portfolio",
             }
-            site_opts = "".join(
-                f'<label class="option-tile"><input type="checkbox" name="sitetype" '
+            biz = "".join(
+                f'<label class="option-tile"><input type="checkbox" name="biztype" '
                 f'value="{_esc(s)}"><span>{_esc(site_type_labels.get(s, s.replace("_", " ").title()))}'
                 '</span></label>'
-                for s in cat["site_types"])
+                for s in cat["site_types"] if s in site_type_labels)
             body = (
-                '<h1>New Scout campaign</h1>'
-                '<p class="page-intro muted">Find public business websites worth reviewing for '
-                'QA opportunities. Scout analyzes them safely and never contacts anyone.</p>'
-                '<div class="row"><a class="chip" href="/scout/history">Campaign history</a>'
+                '<h1>Start Scout</h1>'
+                '<p class="page-intro muted">Tell Scout where to get the websites. It scans them the '
+                'same safe way whichever source you pick.</p>'
+                '<div class="row"><a class="chip" href="/scout/history">History</a>'
                 '<a class="chip" href="/scout/attention">Needs attention</a>'
-                '<a class="chip" href="/scout">Scan a known URL</a></div>'
-                '<div class="card formstack campaign-card"><h2>Campaign setup</h2>'
-                '<label>Campaign preset<select id="preset">' + opts + '</select></label>'
-                '<p class="field-help">Each preset on this page starts one bounded run now; '
-                'it does not create a recurring schedule.</p>'
-                '<label>Run size<select id="session">'
-                '<option value="">Use campaign default</option>'
-                + sess + '</select></label>'
-                '<label>Countries<input id="countries" placeholder="US, DE"></label>'
-                '<p class="field-help">Enter country codes separated by commas. Leave blank to use '
-                'the selected preset: global presets stay unrestricted, while regional presets '
-                'keep their preset countries.</p>'
-                '<fieldset class="option-field"><legend>Industries</legend>'
-                '<div class="option-grid">' + ind_opts + '</div>'
-                '<p class="field-help">Choose any that matter. With none selected, Scout uses the '
-                'campaign default.</p></fieldset>'
+                '<a class="chip" href="/results">Companies &amp; outreach</a></div>'
+                '<div class="card formstack campaign-card">'
+                '<fieldset class="option-field"><legend>Where should the websites come from?</legend>'
+                '<div class="option-grid" id="sources">'
+                '<label class="option-tile"><input type="radio" name="source" value="find" checked>'
+                '<span>Find websites</span></label>'
+                '<label class="option-tile"><input type="radio" name="source" value="paste">'
+                '<span>Paste URLs</span></label>'
+                '<label class="option-tile"><input type="radio" name="source" value="file">'
+                '<span>Upload file</span></label>'
+                '</div></fieldset>'
+
+                '<section id="p-find" class="source-panel">'
+                '<label>Countries<input id="countries" placeholder="CA, CH"></label>'
+                '<p class="field-help">Country codes, separated by commas. Leave blank to search '
+                'without a country restriction.</p>'
+                '<fieldset class="option-field"><legend>Business types</legend>'
+                '<div class="option-grid">' + biz + '</div>'
+                '<p class="field-help">Leave all unchecked and Scout looks for small and mid-size '
+                'B2B SaaS companies, the profile it is tuned for.</p></fieldset>'
                 '<label>Signals to look for<input id="keywords" '
-                'placeholder="pricing, free trial, book demo"></label>'
-                '<p class="field-help">Optional keywords, separated by commas.</p>'
-                '<label class="feature-choice"><input type="checkbox" id="deepcapture"> '
-                '<span><strong>Capture screenshots and browser evidence</strong>'
-                '<small>Slower, but creates stronger proof for client-ready findings.</small>'
-                '</span></label>'
-                '<details class="advanced campaign-advanced">'
-                '<summary>Advanced campaign controls</summary>'
-                '<p class="field-help advanced-intro">Optional refinements for unusual campaigns. '
-                'Leave them unchanged to use the tested campaign defaults.</p>'
-                '<section class="advanced-section" aria-labelledby="targeting-heading">'
-                '<h3 id="targeting-heading">Targeting refinements</h3>'
-                '<label>Site selection approach<select id="strategy">'
-                '<option value="">Use campaign default</option>' + strat + '</select></label>'
-                '<label>Website languages<input id="languages" placeholder="en, de"></label>'
-                '<p class="field-help">Optional language codes, separated by commas.</p>'
-                '<fieldset class="option-field compact-options"><legend>Website types</legend>'
-                '<div class="option-grid">' + site_opts + '</div>'
-                '<p class="field-help">Choose only when you need to narrow the campaign. With none '
-                'selected, Scout uses the campaign default.</p></fieldset>'
-                '<label>Words to exclude<input id="excludekw" '
-                'placeholder="jobs, investor relations"></label>'
-                '<p class="field-help">Sites containing these words in visible page signals are '
-                'filtered out before QA analysis.</p>'
+                'placeholder="user feedback, roadmap, changelog"></label>'
+                '<p class="field-help">Optional words that should appear on the site.</p>'
                 '</section>'
-                '<section class="advanced-section" aria-labelledby="limits-heading">'
-                '<h3 id="limits-heading">Run limits</h3>'
-                '<p class="field-help section-help">Blank fields inherit the selected campaign preset '
-                'and run size.</p><div class="limit-grid">'
-                '<label>Minimum commercial fit <span class="label-note">0–100</span>'
-                '<input id="minscore" type="number" min="0" max="100" '
-                'placeholder="Campaign default"><small>Higher values keep only stronger prospects.'
-                '</small></label>'
-                '<label>Discovery cap<input id="maxdisc" type="number" min="1" '
-                'placeholder="Campaign default"><small>Maximum candidate websites discovered.'
-                '</small></label>'
-                '<label>Page cap per site<input id="maxpages" type="number" min="1" max="50" '
-                'placeholder="Campaign default"><small>Maximum pages reviewed on each website.'
-                '</small></label></div></section>'
-                '<section class="advanced-section readiness-section" '
-                'aria-labelledby="readiness-heading">'
-                '<h3 id="readiness-heading">System readiness</h3>'
-                '<p class="field-help section-help">Checks search access, browser capture, evidence '
-                'storage and safety limits. It does not start a campaign.</p>'
-                '<div class="row"><button type="button" id="pf" class="chip">'
-                'Check system readiness</button></div>'
-                '<div id="pfout" class="readiness-output" role="status" aria-live="polite" '
-                'hidden></div></section>'
-                + ('<p class="muted">Diagnostic campaign presets are visible in this view. '
-                   '<a href="/scout/new">Return to production presets</a>.</p>'
-                   if show_diagnostics else
-                   '<p class="muted"><a href="/scout/new?diagnostics=1">'
-                   'Show diagnostic campaign presets</a></p>') +
-                '</details>'
-                '<div class="banner safety-note"><strong>Safe, read-only discovery</strong>'
-                '<p>Every campaign has a fixed time and size limit. Scout may visit real public '
-                'websites, but it will not submit forms, make purchases or send messages.</p></div>'
+
+                '<section id="p-paste" class="source-panel" hidden>'
+                '<label for="seeds">Website addresses</label>'
+                '<textarea id="seeds" rows="6" placeholder="https://example.com&#10;'
+                'another-company.com"></textarea>'
+                '<p class="field-help">One per line. Addresses you enter yourself are always '
+                'scanned — Scout will not drop them for scoring reasons.</p>'
+                '</section>'
+
+                '<section id="p-file" class="source-panel" hidden>'
+                '<label for="listfile">CSV or XLSX file</label>'
+                '<input type="file" id="listfile" accept=".csv,.xlsx">'
+                '<p class="field-help">Scout reads the column that holds website addresses and '
+                'ignores the rest.</p>'
+                '</section>'
+
+                '<div id="intake" class="readiness-output" role="status" aria-live="polite" hidden>'
+                '</div>'
+
+                '<label>Maximum sites<input id="maxsites" type="number" min="1" max="50" value="10">'
+                '</label>'
+                '<p class="field-help">An upper bound for this run. Scout stops earlier when there is '
+                'nothing more worth checking.</p>'
+
+                '<div class="banner safety-note"><strong>Read-only scan</strong>'
+                '<p id="safetysummary">Read-only scan · up to 10 sites · evidence saved '
+                'automatically · no forms, purchases or messages.</p></div>'
                 '<label class="approval-choice"><input type="checkbox" id="approve"> '
-                '<span><strong>Approve live discovery for this campaign</strong>'
-                '<small>This approval applies only to this one bounded run.</small></span></label>'
+                '<span><strong>Start this bounded read-only run</strong>'
+                '<small>Applies to this run only.</small></span></label>'
                 '<div class="row campaign-actions"><button type="button" id="run" '
-                'class="chip primary">Run campaign</button>'
+                'class="chip primary">Start Scout</button>'
                 '<span id="msg" class="muted" role="status" aria-live="polite"></span></div></div>')
-            script = (
-                "const CSRF=" + json.dumps(csrf_token) + ";\n"
-                "function J(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json',"
-                "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json());}\n"
-                "function v(id){var e=document.getElementById(id);return e?e.value.trim():'';}\n"
-                "function csv(s){return s.split(',').map(x=>x.trim()).filter(Boolean);}\n"
-                "function checks(name){return Array.from(document.querySelectorAll("
-                "'input[name=\"'+name+'\"]:checked')).map(e=>e.value);}\n"
-                "function readinessText(j){if(j&&j.ok===false)return 'Cannot check this setup — '+"
-                "(j.error||'review the campaign values.');var p=j.preflight||j;"
-                "if(!p||!Array.isArray(p.checks))return 'Readiness check finished.';"
-                "var names={tavily_key:'Search provider',browser:'Browser evidence',"
-                "network:'Internet connection',evidence_dir:'Evidence storage',"
-                "runtime:'Scout runtime',safety_policy:'Campaign limits and safety',"
-                "auth_dependency:'Public-site access',scheduling:'Scheduling (optional)'};"
-                "var states={ready:'Ready',configured:'Configured',skipped:'Not needed',"
-                "not_ready:'Needs setup',blocked:'Blocked',error:'Error'};"
-                "var lines=[p.ok?'Ready to run':'Action needed before launch'];"
-                "p.checks.forEach(function(c){var line=(names[c.key]||c.label||c.key)+': '+"
-                "(states[c.status]||c.status);if(c.required&&c.status!=='ready'&&"
-                "c.status!=='configured'&&c.status!=='skipped'&&c.detail)line+=' — '+c.detail;"
-                "lines.push(line);});return lines.join('\\n');}\n"
-                "function ov(){var o={};"
-                "var c=v('countries');if(c)o.countries=csv(c);"
-                "var lg=v('languages');if(lg)o.languages=csv(lg);"
-                "var st=document.getElementById('strategy').value;if(st)o.strategy=st;"
-                "var ind=checks('industry');if(ind.length)o.industries=ind;"
-                "var sty=checks('sitetype');if(sty.length)o.site_types=sty;"
-                "var kw=v('keywords');if(kw)o.keywords=csv(kw);"
-                "var ex=v('excludekw');if(ex)o.exclude_keywords=csv(ex);"
-                "var ms=v('minscore');if(ms)o.min_commercial_threshold=parseInt(ms,10);"
-                "var md=v('maxdisc');if(md)o.max_candidates=parseInt(md,10);"
-                "var mp=v('maxpages');if(mp)o.max_pages_per_site=parseInt(mp,10);"
-                "var dc=document.getElementById('deepcapture');"
-                "if(dc&&dc.checked)o.browser_mode='playwright';"
-                "return o;}\n"
-                "document.getElementById('pf').onclick=function(){"
-                "var out=document.getElementById('pfout');var button=this;"
-                "out.hidden=false;out.textContent='Checking system readiness…';button.disabled=true;"
-                "J('/api/scout/preflight',{campaign_preset:document.getElementById('preset').value,"
-                "session_preset:document.getElementById('session').value||null,overrides:ov(),"
-                "probe_browser:document.getElementById('deepcapture').checked})"
-                ".then(function(j){out.textContent=readinessText(j);button.disabled=false;})"
-                ".catch(function(e){out.textContent='Readiness check failed: '+e;"
-                "button.disabled=false;});};\n"
-                "document.querySelectorAll('.campaign-card input,.campaign-card select')"
-                ".forEach(function(control){control.addEventListener('change',function(){"
-                "var out=document.getElementById('pfout');if(!out.hidden){out.hidden=true;"
-                "out.textContent='';}});});\n"
-                "document.getElementById('run').onclick=function(){"
-                "var approve=document.getElementById('approve');var msg=document.getElementById('msg');"
-                "var run=document.getElementById('run');"
-                "if(!approve.checked){msg.textContent='Approve live discovery before starting.';"
-                "approve.focus();return;}msg.textContent='Starting campaign…';run.disabled=true;"
-                "J('/api/scout/launch',{campaign_preset:document.getElementById('preset').value,"
-                "session_preset:document.getElementById('session').value||null,"
-                "approve_live_discovery:true,overrides:ov()}).then(function(j){"
-                "if(j.ok){location.href='/scout/progress?id='+encodeURIComponent(j.campaign_id);}"
-                "else{run.disabled=false;msg.textContent='Campaign could not start: '+"
-                "(j.error||'unknown error');}})"
-                ".catch(e=>{run.disabled=false;msg.textContent='Campaign could not start: '+e;});};\n")
-            return _page("AI QA Factory — New Scout campaign", "/scout", body, script)
+            script = _START_SCOUT_JS.replace("__CSRF__", json.dumps(csrf_token))
+            return _page("AI QA Factory — Start Scout", "/scout", body, script)
+
 
         def _scout_progress_page(self, cid: str) -> str:
             body = ('<h1>Campaign progress</h1><div class="row">'
@@ -3552,23 +3495,62 @@ function startCampaign(){{
             return _page(page_title, "/scout", body, script)
 
         def _scout_attention_page(self) -> str:
+            """One row per site that needs a human — not one per attempt, and no non-sites.
+
+            Both numbers in the headline come from the same inventory that builds the table, so the
+            sentence and the rows can never disagree: the count of companies waiting and the count
+            of times Scout was blocked are different facts and are named as different facts.
+            """
+            from core.scout.needs_attention import attention_inventory
+
+            inv = attention_inventory(service.output_dir)
             data = challenge_manager.snapshot()
-            blocked = data.get("blocked_targets") or []
             sessions = data.get("sessions") or []
+
+            def _attempts_cell(site) -> str:
+                # Earlier tries are this site's history. Naming them keeps the row honest about how
+                # much has already been spent on it without adding another row to the queue.
+                if site.attempt_count <= 1:
+                    return '<span class="muted">1 attempt</span>'
+                older = "".join(
+                    f'<li>{_fmt_ts(a.get("updated_at", ""))} &mdash; '
+                    f'<a href="/scout/target?run={_esc(a.get("run_id", ""))}'
+                    f'&domain={_esc(site.domain)}">{_esc(a.get("run_id", ""))}</a></li>'
+                    for a in site.attempts[1:])
+                return (f'<details><summary>{site.attempt_count} attempts</summary>'
+                        f'<ul class="attempt-history">{older}</ul></details>')
+
             rows = "".join(
                 '<tr>'
-                f'<td data-label="Target"><a href="/scout/target?run={_esc(r.get("run_id",""))}'
-                f'&domain={_esc(r.get("domain",""))}">{_esc(r.get("domain") or "unknown")}</a></td>'
-                f'<td data-label="Reason">{_esc(_manual_reason_label(r.get("reason","")))}</td>'
-                f'<td data-label="When" class="muted">{_fmt_ts(r.get("updated_at",""))}</td>'
+                f'<td data-label="Site"><a href="/scout/target?run={_esc(site.run_id)}'
+                f'&domain={_esc(site.domain)}">{_esc(site.domain)}</a></td>'
+                f'<td data-label="Reason">{_esc(_manual_reason_label(site.reason))}</td>'
+                f'<td data-label="Last blocked" class="muted">{_fmt_ts(site.updated_at)}</td>'
+                f'<td data-label="Attempts">{_attempts_cell(site)}</td>'
                 f'<td data-label="Action"><a class="chip" href="/scout/target?run='
-                f'{_esc(r.get("run_id",""))}&domain={_esc(r.get("domain",""))}">Resolve</a></td>'
-                '</tr>' for r in blocked)
+                f'{_esc(site.run_id)}&domain={_esc(site.domain)}">Open manual check</a></td>'
+                '</tr>' for site in inv.sites)
             table = (
-                '<table class="responsive-table"><thead><tr><th>Target</th><th>Reason</th>'
-                f'<th>Detected</th><th>Action</th></tr></thead><tbody>{rows}</tbody></table>'
+                '<table class="responsive-table"><thead><tr><th>Site</th><th>Reason</th>'
+                '<th>Last blocked</th><th>Attempts</th><th>Action</th></tr></thead>'
+                f'<tbody>{rows}</tbody></table>'
                 if rows else
-                '<div class="empty muted">No blocked targets need manual attention.</div>')
+                '<div class="empty muted">No sites need manual attention.</div>')
+            # Values that were recorded as targets but are not public websites. They are shown so a
+            # bad line in a pasted list or a file is visible rather than silently vanishing — but
+            # never as a company, and never with a link that pretends there is a site to open.
+            invalid_rows = "".join(
+                f'<tr><td data-label="Value"><code>{_esc(bad.value or "(empty)")}</code></td>'
+                f'<td data-label="Why">{_esc(bad.reason)}</td>'
+                f'<td data-label="From" class="muted">{_esc(bad.run_id)}</td></tr>'
+                for bad in inv.invalid)
+            invalid_html = (
+                f'<details class="card advanced"><summary>{len(inv.invalid)} recorded target(s) '
+                f'were not public websites</summary>'
+                '<p class="muted">These were never scanned and are not counted as sites.</p>'
+                '<table class="responsive-table"><thead><tr><th>Value</th><th>Why</th>'
+                f'<th>Recorded in</th></tr></thead><tbody>{invalid_rows}</tbody></table></details>'
+                if invalid_rows else '')
             session_rows = "".join(
                 '<tr>'
                 f'<td data-label="Target">{_esc(s.get("domain",""))}</td>'
@@ -3584,17 +3566,16 @@ function startCampaign(){{
                 f'<th>Message</th><th>Result</th></tr></thead><tbody>{session_rows}</tbody></table>'
                 if session_rows else
                 '<div class="empty muted">No manual browser sessions yet.</div>')
-            target_word = "target" if len(blocked) == 1 else "targets"
-            blocked_verb = "was" if len(blocked) == 1 else "were"
+            hero_class = "status-hero attention" if inv.sites else "status-hero"
             body = (
                 '<h1>Needs attention</h1><div class="row">'
                 '<a class="chip" href="/scout/history">History</a>'
                 '<button class="chip" onclick="location.reload()">Refresh</button></div>'
-                f'<div class="card status-hero attention"><p><b>{len(blocked)} {target_word}</b> '
-                f'{blocked_verb} '
-                'blocked before a full analysis. Open a target to complete its human check, defer '
-                'it, or skip it. No CAPTCHA is bypassed automatically.</p></div>'
-                f'<div class="card"><h2>Blocked targets</h2>{table}</div>'
+                f'<div class="card {hero_class}"><p><b>{_esc(inv.headline())}</b></p>'
+                '<p>Open a site to complete its human check, defer it, or skip it. '
+                'No CAPTCHA is bypassed automatically.</p></div>'
+                f'<div class="card"><h2>Sites blocked before a full analysis</h2>{table}</div>'
+                f'{invalid_html}'
                 f'<details class="card advanced"><summary>Manual-check session history</summary>'
                 f'{sessions_html}</details>')
             return _page("AI QA Factory — Needs attention", "/scout", body,
@@ -4309,6 +4290,86 @@ function startCampaign(){{
 # The campaign form uses the shared design-system classes/tokens (a themed .card, tokenised
 # textarea/inputs/checkbox, and a .btn primary) so nothing is a default-white control in Dark mode.
 # Layout (max-width, field widths) and every safety statement are preserved (no redesign).
+_START_SCOUT_JS = r"""const CSRF=__CSRF__;
+function $(id){return document.getElementById(id);}
+function J(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json',
+'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(function(r){return r.json();});}
+function source(){var e=document.querySelector('input[name="source"]:checked');
+return e?e.value:'find';}
+function checks(name){return Array.from(document.querySelectorAll(
+'input[name="'+name+'"]:checked')).map(function(e){return e.value;});}
+function csv(s){return String(s||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){
+return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+var PENDING={targets:[],counts:null};
+function showPanels(){var s=source();
+['find','paste','file'].forEach(function(k){$('p-'+k).hidden=(k!==s);});
+$('intake').hidden=(s==='find');
+if(s==='find'){PENDING={targets:[],counts:null};}
+summary();}
+function summary(){var n=parseInt($('maxsites').value,10)||10;
+var s=source();var what=(s==='find')?('up to '+n+' sites'):
+((PENDING.counts?PENDING.counts.unique_sites:0)+' site(s)');
+$('safetysummary').textContent='Read-only scan · '+what+
+' · evidence saved automatically · no forms, purchases or messages.';}
+function renderIntake(j){PENDING={targets:(j.targets||[]),counts:(j.counts||null)};
+var c=j.counts||{};var out=$('intake');out.hidden=false;
+var lines=[c.unique_sites+' site(s) will be scanned'];
+if(c.duplicates)lines.push(c.duplicates+' duplicate line(s) ignored');
+if(c.already_analyzed)lines.push(c.already_analyzed+' already in history (will be re-scanned)');
+if(c.rejected)lines.push(c.rejected+' line(s) rejected');
+var html='<p>'+esc(lines.join(' · '))+'</p>';
+if((j.rejected||[]).length){html+='<ul>'+j.rejected.map(function(r){
+return '<li><code>'+esc(r.value)+'</code> — '+esc(r.reason)+'</li>';}).join('')+'</ul>';}
+out.innerHTML=html;summary();}
+function previewText(){J('/api/scout/intake/preview',{text:$('seeds').value||''})
+.then(renderIntake).catch(function(e){$('intake').hidden=false;
+$('intake').textContent='Could not read those addresses: '+e;});}
+function previewFile(){var f=$('listfile').files[0];if(!f)return;
+var reader=new FileReader();reader.onload=function(){
+var b64=String(reader.result||'').split(',')[1]||'';
+J('/api/scout/import',{filename:f.name,content_b64:b64}).then(function(j){
+if(!j.ok){$('intake').hidden=false;$('intake').textContent='Could not read that file: '+
+(j.error||'unknown error');return;}
+var rows=((j.result||{}).rows||[]).map(function(r){return [r.original];});
+return J('/api/scout/intake/preview',{rows:rows}).then(renderIntake);})
+.catch(function(e){$('intake').hidden=false;
+$('intake').textContent='Could not read that file: '+e;});};
+reader.readAsDataURL(f);}
+function start(){var msg=$('msg');var btn=$('run');
+if(!$('approve').checked){msg.textContent='Confirm the bounded read-only run first.';
+$('approve').focus();return;}
+var n=parseInt($('maxsites').value,10)||10;var s=source();
+btn.disabled=true;msg.textContent='Starting Scout…';
+if(s==='find'){var o={max_candidates:n};
+var c=csv($('countries').value);if(c.length)o.countries=c;
+var b=checks('biztype');if(b.length)o.site_types=b;
+var k=csv($('keywords').value);if(k.length)o.keywords=k;
+J('/api/scout/launch',{approve_live_discovery:true,overrides:o}).then(function(j){
+if(j.ok){location.href='/scout/progress?id='+encodeURIComponent(j.campaign_id);}
+else{btn.disabled=false;msg.textContent='Scout could not start: '+(j.error||'unknown error');}})
+.catch(function(e){btn.disabled=false;msg.textContent='Scout could not start: '+e;});return;}
+var seeds=PENDING.targets.map(function(t){return t.url;});
+if(!seeds.length){btn.disabled=false;
+msg.textContent='No valid website addresses yet — add some and check the preview.';return;}
+var key=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();
+J('/api/campaign/start',{confirm:true,idempotency_key:key,seeds:seeds.slice(0,n),
+campaign:'operator-scan',browser_mode:'auto',coverage:'adaptive',max_sites:n})
+.then(function(j){if(j.ok||j.run_id){location.href='/scout/run?id='+encodeURIComponent(j.run_id);}
+else{btn.disabled=false;msg.textContent='Scout could not start: '+
+(j.message||j.error||'unknown error');}})
+.catch(function(e){btn.disabled=false;msg.textContent='Scout could not start: '+e;});}
+document.querySelectorAll('input[name="source"]').forEach(function(r){
+r.addEventListener('change',showPanels);});
+$('seeds').addEventListener('change',previewText);
+$('seeds').addEventListener('blur',previewText);
+$('listfile').addEventListener('change',previewFile);
+$('maxsites').addEventListener('change',summary);
+$('run').onclick=start;
+showPanels();
+"""
+
+
 _START_PANEL_HTML = """<h2>Start a bounded read-only campaign</h2>
 <div class="card formstack" style="max-width:640px">
 <p>Runs the existing bounded, read-only Scout engine over 1&ndash;10 <strong>public https</strong>
