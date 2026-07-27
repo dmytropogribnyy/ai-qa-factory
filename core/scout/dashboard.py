@@ -5030,6 +5030,12 @@ header.top .wrap{flex-wrap:wrap} header.top nav{flex-wrap:wrap}
    theme button past the header's right padding and body overflow-x:hidden then clipped it. */
 header.top nav{flex:1 1 auto;min-width:0}
 header.top .theme-toggle{flex:0 0 auto}
+/* A dropdown is a list. Its links are inline by default and had no rule to stack them, so the
+   items flowed as a paragraph and wrapped mid-list once there were five of them. */
+.nav-menu{display:flex;flex-direction:column;gap:2px;padding:6px}
+.nav-menu a{display:block;padding:7px 10px;border-radius:6px;color:var(--text);white-space:nowrap}
+.nav-menu a:hover{background:var(--surface-2)}
+.nav-menu a[aria-current="page"]{background:var(--surface-2);font-weight:600}
 /* "Nothing is happening" is a line, not a panel: as a card it competed with the blocks that DID
    have something in them, and several of them on one screen taught the eye to skip that region. */
 .quiet-state{margin:.2rem 0 1rem;color:var(--muted);padding:10px 12px;border:1px solid var(--border);
@@ -5169,7 +5175,9 @@ dialog::backdrop{background:#000a}dialog h2{margin-top:0}
 @media (max-width:640px){ .only-desktop{display:none} .only-mobile{display:block} }
 /* Campaign form: stack each field (label above a full-width control); checkboxes stay inline. */
 .formstack label{display:block;margin:0 0 14px;color:var(--text);font-weight:600;font-size:13px}
-.formstack label>select,.formstack label>input:not([type=checkbox]){display:block;width:100%;
+/* Full width is right for a text field and wrong for a radio: inside an option tile the radio
+   filled the whole tile and pushed its label out past the border into the next choice. */
+.formstack label>select,.formstack label>input:not([type=checkbox]):not([type=radio]){display:block;width:100%;
   max-width:440px;margin-top:5px;font-weight:400}
 .formstack label>select[multiple]{max-width:100%}
 .formstack>label:has(>input[type=checkbox]){font-weight:400;color:var(--muted)}
@@ -5188,7 +5196,8 @@ dialog::backdrop{background:#000a}dialog h2{margin-top:0}
  font-size:13px;cursor:pointer}
 .formstack .option-tile:has(input:checked){border-color:var(--accent);
  background:var(--surface-2);color:var(--text)}
-.formstack .option-tile input{margin:0;flex:0 0 auto}
+.formstack .option-tile input{margin:0;flex:0 0 auto;width:auto;display:inline-block}
+.formstack .option-tile>span{flex:1 1 auto;min-width:0}
 .campaign-advanced{max-width:720px;margin:6px 0 16px}
 .advanced-intro{margin:0 0 14px}
 .advanced-section{padding:14px 0;border-top:1px solid var(--border)}

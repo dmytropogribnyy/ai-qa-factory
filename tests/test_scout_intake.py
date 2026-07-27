@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from core.scout.intake import (KIND_MALFORMED, KIND_NON_PUBLIC, canonical_entry_url, parse_rows,
                                parse_targets, parse_text)
+from core.scout.url_safety import UrlPolicy
 
 
 def _domains(result):
@@ -97,7 +98,10 @@ def test_a_site_already_in_history_is_flagged_but_still_scannable():
 
     assert _domains(result) == ["plausible.io"]              # still queued
     assert result.counts()["already_analyzed"] == 1
-    assert result.duplicates[0].already_analyzed is True
+    # The flag rides on the TARGET, not on a duplicate entry: the line was not dropped, so counting
+    # it among the ignored duplicates would contradict the fact that it is about to be scanned.
+    assert result.targets[0].already_analyzed is True
+    assert result.duplicates == []
 
 
 # --- pinned semantics ---------------------------------------------------------------------------
@@ -130,3 +134,31 @@ def test_blank_input_reads_as_nothing_rather_than_an_error():
     assert result.counts() == {"lines_read": 0, "unique_sites": 0, "duplicates": 0,
                                "rejected": 0, "already_analyzed": 0}
     assert result.seeds() == []
+
+
+# --- a line that is queued was not "ignored" -----------------------------------------------------
+
+def test_a_site_already_in_history_is_not_counted_as_an_ignored_line():
+    """Seen in the live preview: three lines produced "2 duplicate line(s) ignored" when one was.
+
+    An already-analyzed site IS queued — re-scanning is the point of pasting it again. Counting it
+    among the ignored duplicates told the operator a line had been dropped while it was about to be
+    scanned, and the two numbers then contradicted each other in the same sentence.
+    """
+    result = parse_text("https://plausible.io/\nhttps://www.plausible.io/\n0.1",
+                        known_domains=frozenset({"plausible.io"}),
+                        policy=UrlPolicy(resolve_dns=False))
+
+    assert result.counts() == {"lines_read": 3, "unique_sites": 1, "duplicates": 1,
+                               "rejected": 1, "already_analyzed": 1}
+    assert [d.value for d in result.duplicates] == ["https://www.plausible.io/"]
+    assert [t.domain for t in result.targets] == ["plausible.io"]
+
+
+def test_already_analyzed_is_reported_on_the_target_that_will_be_rescanned():
+    result = parse_text("https://nolt.io/", known_domains=frozenset({"nolt.io"}),
+                        policy=UrlPolicy(resolve_dns=False))
+
+    assert result.counts()["duplicates"] == 0        # nothing was dropped
+    assert result.counts()["already_analyzed"] == 1
+    assert result.targets[0].already_analyzed is True
