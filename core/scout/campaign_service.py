@@ -52,6 +52,36 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def analysis_incomplete(prospect_status: str) -> bool:
+    """True when a persisted prospect status means the analysis did NOT complete.
+
+    Fail closed for EVERY non-empty status other than DONE — MANUAL_ACTION_REQUIRED and FAILED, but
+    also PENDING/SKIPPED (a run interrupted between the findings write and the compact-state update)
+    and any status a future engine adds. An empty/unknown legacy status keeps the historical
+    artifact-loading behaviour deliberately (the sole exemption).
+
+    This is the ONE shared definition of "did the analysis complete", used by both the read model
+    (``target_detail`` below) and the raw-JSON diagnostic endpoint (``dashboard._prospect`` /
+    ``/api/prospect``) so the two surfaces cannot drift apart.
+    """
+    return bool(prospect_status) and prospect_status != "DONE"
+
+
+# Per-prospect artifacts that carry a QA RESULT rather than a page-level observation: the confirmed
+# finding records, the priority scorecard derived from them, and the reproduction record plus its
+# video clip. They may only be reached for a COMPLETED analysis — a screen that reports 0 confirmed
+# findings must not offer the result one click away, and the user-facing /scout/artifact URL is
+# guessable, so the rule cannot live in the page alone.
+_RESULT_BEARING_NAMES = frozenset({"findings.json", "scorecard.json", "reproduction.json"})
+_RESULT_BEARING_PREFIXES = ("reproduction.",)   # reproduction.webm / .mp4 and any future container
+
+
+def is_result_bearing_artifact(name: str) -> bool:
+    """True when this per-prospect file carries the QA result itself, not page-level diagnostics."""
+    low = str(name or "").strip().lower()
+    return low in _RESULT_BEARING_NAMES or low.startswith(_RESULT_BEARING_PREFIXES)
+
+
 # Known per-prospect structured evidence artifacts the engine may persist, with readable labels.
 # target_detail() only exposes an entry when the file genuinely exists on disk (never a dead link).
 _STRUCTURED_EVIDENCE_ARTIFACTS: tuple = (
@@ -495,9 +525,11 @@ class CampaignService:
                     evidence_status = "ok"
                     pstate = (state.get("prospects", {}) or {}).get(prospect_id, {}) or {}
                     prospect_status = pstate.get("status", "")
-                    # An EXPLICIT terminal non-DONE status means the analysis did not complete; an
-                    # empty/unknown status (legacy seed data) keeps the prior "load findings" behaviour.
-                    incomplete = prospect_status in ("MANUAL_ACTION_REQUIRED", "FAILED")
+                    # Confirmed findings and a finding reproduction exist only for a COMPLETED
+                    # analysis, and this must hold in the read model so the UI, the read API and the
+                    # unpinned page all inherit it. See analysis_incomplete() above — the ONE shared
+                    # definition, so this surface and /api/prospect cannot drift apart.
+                    incomplete = analysis_incomplete(prospect_status)
                     analysis_complete = (prospect_status == "DONE") if prospect_status else None
                     if incomplete:
                         analysis_complete = False
@@ -530,22 +562,32 @@ class CampaignService:
                                "axe_status": obs.get("axe_status", ""),
                                "axe_violations": (obs.get("axe_violations") or [])[:20],
                                "perf": obs.get("perf", {})}
-                    # Confirmed findings exist only for a completed analysis. A manual/failed target
-                    # has 0 confirmed findings — never surface a healthy conclusion for it.
+                    # Confirmed findings exist only for a completed analysis. Any incomplete
+                    # target — manual action, failed, interrupted, skipped, unknown — has 0
+                    # confirmed findings; never surface a healthy conclusion for it.
                     if not incomplete:
                         fdata = st.load_prospect_artifact(prospect_id, "findings.json") or {}
                         findings = list(fdata.get("verified", []))
                         reproduction = st.load_prospect_artifact(prospect_id, "reproduction.json") or None
                     try:
                         pdir = st.prospect_dir(prospect_id)
+                        # A page that reports 0 confirmed findings must not hand the operator the
+                        # result itself one click away. For an incomplete analysis the RESULT-BEARING
+                        # artifacts stay on disk but are not offered: the finding records, the
+                        # priority scorecard derived from them, the reproduction record, and the
+                        # reproduction video. Page-level capture (screenshots, observation, trace,
+                        # the stop-reason record) stays — it is what explains why the run stopped.
                         media = [f"prospects/{prospect_id}/{fp.name}" for fp in sorted(pdir.iterdir())
-                                 if fp.is_file() and fp.suffix.lower() in _MEDIA_EXT]
+                                 if fp.is_file() and fp.suffix.lower() in _MEDIA_EXT
+                                 and not (incomplete and is_result_bearing_artifact(fp.name))]
                         # Structured diagnostic evidence files: only listed when they genuinely
                         # exist on disk, so the operator UI never links to an artifact that isn't
                         # there.
                         # Labels are human-readable; the rel path is exact-run/exact-prospect
                         # confined and servable via the SAME safe /scout/artifact route as media.
                         for _name, _label in _STRUCTURED_EVIDENCE_ARTIFACTS:
+                            if incomplete and is_result_bearing_artifact(_name):
+                                continue
                             if (pdir / _name).is_file():
                                 evidence_files.append({
                                     "name": _name, "label": _label,

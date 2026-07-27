@@ -78,6 +78,85 @@ blocking)". An approved project is therefore never described as both *Ready to e
 *blocked on missing information*. The Work list and the project detail read one shared next-action
 rule, so a project states the same next step on every screen.
 
+### A run's summary accounts for every target in it
+
+The run-results tiles are not a selection of interesting numbers — they partition the run. `Targets`
+is the total, and the remaining tiles are one per outcome actually present, so their counts always
+sum to the total: a failed, an interrupted or an operator-skipped target can never sit in no category
+and disappear from the summary while the operator reads "3 completed, 1 needs attention" and
+concludes nothing else needs them.
+
+The tiles and the rows they count read the same status vocabulary (`_run_status_label`), so a state
+is called the same thing in both places: *Completed*, *Needs your help*, *Could not complete*,
+*Queued*, *Skipped*. A status this build has never seen is titled and counted rather than dropped.
+
+### A queued skip is visible, and "requested" is not "applied"
+
+Skipping queued targets writes a request that the engine reads before it starts each new target — so
+at the moment of the click nothing has happened yet to the target itself. The page therefore shows
+the request where it was made: a banner stating how many targets are queued to be skipped and that
+they will not start, plus a *Skip requested* marker on each affected row.
+
+The marker means the request is pending, not that the target was skipped. It appears only while the
+target is still `Queued`; once the engine acts, the target's own status becomes *Skipped* and the
+marker is gone. A request left behind in the file for a target that has since finished can never
+apply and is never advertised.
+
+A target that cannot be skipped is refused with its real status, and that refusal keeps the operator
+on the page instead of being erased by a reload, because a refusal is not persisted anywhere else. A
+target cannot be skipped once it has completed, failed or been blocked — **and also once the engine
+has started it**: the request is read immediately before each target begins and never interrupts one
+mid-analysis, so such a target is refused as *already started*.
+
+That last case needs one fact the status cannot carry. A target the engine is analyzing stays
+`PENDING` in the compact state until it finishes, so the engine records `started_at` the moment it
+begins one. Every surface reads that: a started target reads *In progress* rather than *Queued*, it
+carries no skip marker, and the banner never promises that it will not start.
+
+### Incomplete Scout targets never show confirmed findings
+
+A target's confirmed findings come from a completed analysis only. Any prospect whose persisted
+status is non-empty and not `DONE` — a challenge (`MANUAL_ACTION_REQUIRED`), a failure (`FAILED`), a
+run interrupted before its result was recorded (`PENDING`), an operator skip (`SKIPPED`), or a status
+a future engine adds — reads as 0 confirmed findings on **every** surface: the Target page, the run
+results, `/api/scout/target`, and the raw-JSON `/api/prospect` diagnostic.
+
+The rule lives in one place, `analysis_incomplete()` in `core/scout/campaign_service.py`, and every
+read path calls it, so a new surface inherits the rule instead of re-deriving it. A historical record
+with no status at all keeps its previous artifact-loading behaviour; that is the single deliberate
+exemption.
+
+**Which screen you get does not depend on how you arrived.** The Target page picks the truthful
+renderer from that same predicate, never from whether a `run` was pinned in the link. This matters
+because History links to a target without a run, and a domain is registered as analyzed once it is
+promoted — regardless of how its individual QA run ended. A target whose latest run was interrupted
+therefore reads as *Not analyzed* whether it was opened from a run page or from History.
+
+**Result-bearing artifacts follow the result.** The finding records, the priority scorecard derived
+from them, the reproduction record and its video clip are reachable only for a completed analysis —
+withheld from the page and refused by `/scout/artifact` with `409` otherwise, because that URL is
+user-facing and guessable. Nothing is deleted from disk. Page-level capture stays available for an
+incomplete target — screenshots, the page observation, the browser trace and the stop-reason record —
+because that is what explains why the run stopped.
+
+`/api/prospect` stays useful for diagnosing an interrupted run: it still returns the page-level
+`observation` and `evidence`, and it always states `prospect_status` and `analysis_complete`. What it
+withholds it says plainly — `{"withheld": "analysis_incomplete", "artifact_present": true|false}` —
+so "we are not showing this because the analysis never finished" is never confused with "there is
+nothing on disk".
+
+**Each incomplete state is described by what actually happened to it.** The Target screen derives its
+badge, its page title and its available action from the real status: a challenge says *Needs your
+help* and offers the manual check; a skipped target says *Skipped*; an interrupted one says *Not
+analyzed*; anything else says *Could not complete*. Only a real challenge links to
+`/scout/attention`, because only a challenge appears there.
+
+**Counts on a completed target.** For a `DONE` target the numbers satisfy
+`Actionable = findings with severity != "info"`, `Informational = findings with severity == "info"`,
+and `Total = Actionable + Informational`, which equals the number of findings the read API returns
+for that target. The run row reads the compact prospect counters and the Target card reads the
+findings artifact, so this is a direct number-to-number agreement between two independent sources.
+
 ## Data & retention
 
 Settings explains the three cleanup classes before the operator acts:

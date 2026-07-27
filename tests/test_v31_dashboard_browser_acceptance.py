@@ -588,7 +588,11 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             mobile.goto(url + f"/scout/run?id={run_id}", wait_until="load")
             assert mobile.evaluate(
                 "()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
-            assert mobile.get_by_text("Needs your help", exact=True).is_visible()
+            # Scope to the table body: the run summary now carries a tile per outcome using the SAME
+            # vocabulary as the rows, so this label legitimately appears twice on the page. The check
+            # here is about the ROW badge surviving the mobile card layout.
+            assert mobile.locator("tbody").get_by_text(
+                "Needs your help", exact=True).first.is_visible()
             assert mobile.get_by_role("link", name="Details").first.is_visible()
             mobile.screenshot(
                 path=screenshot_dir / "05-scout-run-results-mobile.png", full_page=True)

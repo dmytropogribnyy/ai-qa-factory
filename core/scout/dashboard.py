@@ -827,9 +827,23 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     return {"error": "prospect not found in run", "run": run, "prospect_id": pid}
             else:
                 store = service.store
+                # No run-membership check on this legacy unpinned path, so the persisted status is
+                # resolved the SAME way: load this store's state if one is attached. Any failure or
+                # absence leaves it genuinely unknown (the legacy exemption below then applies).
+                try:
+                    state = (store.load_state() or {}) if store is not None else {}
+                except StoreError:
+                    state = {}
             if store is None or not pid:
                 return {"error": "no prospect"}
-            out = {"prospect_id": pid}
+            # Same completeness predicate the read model (target_detail) applies, so this diagnostic
+            # endpoint cannot drift from it — see campaign_service.analysis_incomplete.
+            from core.scout.campaign_service import analysis_incomplete
+            pstate = (state.get("prospects", {}) or {}).get(pid, {}) or {}
+            prospect_status = str(pstate.get("status", "") or "")
+            analysis_complete = (prospect_status == "DONE") if prospect_status else None
+            out = {"prospect_id": pid, "prospect_status": prospect_status,
+                   "analysis_complete": analysis_complete}
             if run:
                 out["run"] = run
             for name in ("observation.json", "findings.json", "evidence.json", "scorecard.json"):
@@ -837,6 +851,16 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     out[name.split(".")[0]] = store.load_prospect_artifact(pid, name)
                 except StoreError:
                     out[name.split(".")[0]] = None
+            if analysis_incomplete(prospect_status):
+                # Confirmed findings and their derived scorecard exist only for a completed analysis
+                # (core/scout/engine.py writes scorecard.json only on the DONE path). Withhold both
+                # by name -- no `verified` key anywhere in this payload -- while distinguishing
+                # "withheld because incomplete" from "artifact genuinely absent on disk". observation
+                # and evidence stay: they are page-level diagnostics, not confirmed findings.
+                out["findings"] = {"withheld": "analysis_incomplete",
+                                   "artifact_present": out.get("findings") is not None}
+                out["scorecard"] = {"withheld": "analysis_incomplete",
+                                    "artifact_present": out.get("scorecard") is not None}
             return out
 
         def _artifact(self, rel: str):
@@ -882,6 +906,22 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._json(403, {"error": "path not allowed"})
             if not target.exists() or not target.is_file():
                 return self._json(404, {"error": "not found"})
+            # A result-bearing artifact (finding records, the scorecard derived from them, the
+            # reproduction record and its video clip) belongs to a COMPLETED analysis only. This URL
+            # is user-facing and guessable, so the same completeness predicate the read model and
+            # /api/prospect apply must gate it here too — withholding it from the page alone would
+            # leave the result one hand-typed URL away. Page-level capture (screenshots, observation,
+            # trace, the stop-reason record) stays available: it explains why the run stopped.
+            from core.scout.campaign_service import analysis_incomplete, is_result_bearing_artifact
+            if len(parts) >= 3 and parts[0] == "prospects" and is_result_bearing_artifact(parts[-1]):
+                try:
+                    pstate = ((st.load_state() or {}).get("prospects", {}) or {}).get(parts[1], {})
+                except StoreError:
+                    pstate = {}
+                if analysis_incomplete(str((pstate or {}).get("status", "") or "")):
+                    return self._json(409, {"error": "analysis incomplete",
+                                            "detail": "this artifact carries a QA result and is "
+                                                      "available only for a completed analysis"})
             if target.stat().st_size > _MAX_ARTIFACT_BYTES:
                 return self._json(413, {"error": "artifact too large to serve"})
             name = target.name.lower()
@@ -1572,7 +1612,7 @@ function startCampaign(){{
             # - the operator clicks Refresh. Pauses when the tab is hidden.
             return (
                 "(function(){var base=null;var url=" + json.dumps(endpoint) + ";"
-                "function sig(j){try{return JSON.stringify((" + sig_keys + ")(j));}catch(e){return '';}}"
+                "function sig(j){try{return JSON.stringify((" + sig_keys + ")(j));}catch(e){return 'sig-error:'+String(e);}}"
                 "function tick(){if(document.hidden)return;"
                 "fetch(url,{headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(function(j){"
                 "var s=sig(j);if(base===null)base=s;"
@@ -2064,15 +2104,67 @@ function startCampaign(){{
             from core.scout.discovery.domain_intel import canonical_domain
             prows = "".join(
                 f'<tr><td data-label="Target">{_esc(canonical_domain(p.get("url","")) or p.get("url",""))}</td>'
-                f'<td data-label="Status">{_badge(_prospect_status_label(p.get("status", "")))}</td>'
+                f'<td data-label="Status">{_badge(_run_prospect_label(p))}</td>'
                 f'<td data-label="Priority">{_esc(p.get("priority", "") or "—")}</td>'
                 f'<td data-label="Actionable">{_esc(p.get("verified_defects", 0))}</td>'
                 f'<td data-label="Open">{_scout_details_primary(run_id, p)}</td></tr>'
                 for pid, p in sorted(prospects.items()))
-            table = (f'<table class="responsive-table"><caption>Targets in this run</caption>'
-                     f'<thead><tr><th>Target</th><th>Status</th><th>Priority</th>'
-                     f'<th>Actionable</th><th>Open</th></tr></thead><tbody>{prows}</tbody></table>'
-                     if prows else '<div class="card empty muted">No prospects in this run.</div>')
+            if prows:
+                table = (f'<table class="responsive-table"><caption>Targets in this run</caption>'
+                         f'<thead><tr><th>Target</th><th>Status</th><th>Priority</th>'
+                         f'<th>Actionable</th><th>Open</th></tr></thead><tbody>{prows}</tbody></table>')
+            elif running:
+                # An ACTIVE run whose prospect map is still empty is NOT an empty run: the engine
+                # persists the run and its config before it populates that map, and the populated map
+                # only reaches disk once the first target finishes. Saying "no prospects" here while
+                # a browser is working on one contradicts the ACTIVE badge next to it. The run's own
+                # config carries the seeds, so the queued targets can be named from persisted data —
+                # and when no config is readable we say what is happening without inventing a list.
+                seeds = []
+                try:
+                    cfg = service.store.load_config() if service.store is not None else {}
+                    seeds = list((cfg or {}).get("seeds") or [])
+                except (StoreError, AttributeError, TypeError):
+                    seeds = []
+                # These are the SEEDS as submitted, not the targets the engine will end up with: it
+                # drops policy-rejected ones, collapses duplicates by normalized URL and truncates to
+                # the campaign's site limit. Call them seeds, collapse the obvious repeats so one
+                # domain is not printed twice, and cap the list so a large import cannot fill the
+                # card.
+                shown, seen = [], set()
+                for raw in seeds:
+                    dom = canonical_domain(raw) or str(raw)
+                    if dom not in seen:
+                        seen.add(dom)
+                        shown.append(dom)
+                extra = max(len(shown) - 10, 0)
+                listed = ", ".join(shown[:10]) + (f" and {extra} more" if extra else "")
+                queued_html = (f'<b>{len(shown)} '
+                               f'{"seed" if len(shown) == 1 else "seeds"} submitted:</b> '
+                               f'{_esc(listed)}. ' if shown else '')
+                # Say the same thing the status badge above says. The engine persists the run as
+                # PENDING first and only flips it to RUNNING once it actually begins, so while the
+                # worker is starting and the browser is launching the badge reads "Queued" — claiming
+                # "analysis in progress" beside it would be the contradiction this notice exists to
+                # remove, in the other direction.
+                # A paused or stopping run writes no status of its own — the engine blocks inside its
+                # control gate and the persisted status stays RUNNING — so reading the status alone
+                # would announce analysis that is not happening. The control flags are on this very
+                # page; consult them first.
+                control = status.get("control") or {}
+                if control.get("paused"):
+                    phase, tail = "Paused", "no target will start until you resume"
+                elif control.get("cancelled") or control.get("killed"):
+                    phase, tail = "Stopping", "the current target finishes and no new target starts"
+                elif str(st.get("status", "") or "").strip().upper() == "RUNNING":
+                    phase, tail = ("Analysis in progress",
+                                   "no target has finished yet. Each one appears here as it completes")
+                else:
+                    phase, tail = ("The run is starting",
+                                   "no target has finished yet. Each one appears here as it completes")
+                table = (f'<div class="card empty muted">{queued_html}{phase} — {tail}.</div>')
+            else:
+                table = '<div class="card empty muted">No prospects in this run.</div>'
             start_panel = "" if running else _START_PANEL_HTML
             results_link = (f'<a class="chip" href="/scout/run?id={_esc(run_id)}">Run results</a>'
                             if run_id else '')
@@ -2085,7 +2177,13 @@ function startCampaign(){{
                     f'<a class="chip" href="/results">Companies &amp; outreach</a></div>'
                     f'<div class="card"><p>Scan mode {_badge(mode)} · status '
                     f'{_badge(_prospect_status_label(st.get("status", "n/a")))}</p>'
-                    f'<div class="row">{controls}</div></div>'
+                    # This card states what a live process is doing, so it must also say whether the
+                    # statement is still current. Without it the page froze at the moment it was
+                    # opened and a finished run kept reading as a starting one. Same freshness row
+                    # and same polling helper the sibling operator screens already use; it never
+                    # auto-reloads, so a confirm dialog or a half-typed URL is never interrupted.
+                    + (self._poll_html() if running else '')
+                    + f'<div class="row">{controls}</div></div>'
                     f'<div class="row"><a class="chip" href="/scout/campaigns">Campaigns</a>'
                     f'{results_link}</div>'
                     f'<div class="scrollx">{table}</div>'
@@ -2166,7 +2264,17 @@ function startCampaign(){{
                 "coverage:(document.getElementById('impcoverage')||{}).value||'adaptive'})})"
                 ".then(r=>r.json()).then(function(j){if(j.ok){location.reload();}else{"
                 "alert('start refused: '+(j.message||j.error));}}).catch(function(e){"
-                "alert('start failed: '+e);});}\n")
+                "alert('start failed: '+e);});}\n"
+                # Watch exactly what this page renders: whether a run is live, the run's own status,
+                # and every target's status. A signature blind to those would leave the stale claim
+                # standing. Only a bound run is polled — an idle page has nothing to watch.
+                + (self._poll_script(
+                    "/api/status",
+                    "function(j){var p=(j.state||{}).prospects||{};"
+                    "var ks=Object.keys(p).sort();"
+                    "return [j.running,j.mode,(j.state||{}).status,j.control||{},ks,"
+                    "ks.map(function(k){var e=p[k]||{};return [e.status,!!e.started_at];})]}")
+                   if running else ""))
             return _page("AI QA Factory — Scout", "/scout", body, script)
 
         def _scout_campaigns_page(self, q=None) -> str:
@@ -2650,9 +2758,14 @@ function startCampaign(){{
                              f'<details class="card advanced"><summary>Advanced diagnostics</summary>'
                              f'<p><b>Resolved run:</b> <code>{_esc(run_id or "unavailable")}</code> · '
                              f'<b>Evidence status:</b> <code>prospect_not_found</code></p></details>')
-            # A run-pinned incomplete target (manual action / failed): honest incomplete-analysis view,
-            # never a healthy "0 defects" conclusion.
-            if run and prospect_status and prospect_status != "DONE":
+            # An incomplete target gets the honest incomplete-analysis view, never a healthy
+            # "0 defects" conclusion. The renderer is chosen by the SAME completeness predicate every
+            # other surface uses — NOT by whether the caller happened to pin ?run=. History links here
+            # without a run (see the Target column of the history table), and every promoted domain is
+            # registered as analyzed regardless of its per-target outcome, so routing on the parameter
+            # certified interrupted, skipped and failed targets as "Analysis complete".
+            from core.scout.campaign_service import analysis_incomplete
+            if analysis_incomplete(prospect_status):
                 return self._scout_incomplete_target_html(domain, det, nav)
             if not entry and not brain and not prospect_id:
                 return _page("AI QA Factory — Target", "/scout",
@@ -3237,10 +3350,44 @@ function startCampaign(){{
             media = det.get("media") or []
             evidence_files = det.get("evidence_files") or []
             raw_reason = str(ma.get("reason") or "")
-            human_reason = {
-                "captcha_detected": "The site requested a human verification check.",
-                "access_prohibited": "The site blocked automated access.",
-            }.get(raw_reason, "The browser could not complete this target automatically.")
+            prospect_status = str(det.get("prospect_status") or "")
+            # A challenge is not the only way an analysis ends early. Describe what actually
+            # happened: a blocked/CAPTCHA target has a persisted reason and a session an operator can
+            # take over; an interrupted or skipped target has neither, and offering to "open a manual
+            # check" for one would be a false story about the run.
+            challenge = bool(raw_reason) or prospect_status == "MANUAL_ACTION_REQUIRED"
+            if prospect_status == "SKIPPED":
+                human_reason = "This target was skipped, so it was never analyzed."
+            elif prospect_status == "PENDING":
+                human_reason = ("The analysis did not finish for this target — the run stopped "
+                                "before its result was recorded.")
+            else:
+                human_reason = {
+                    "captcha_detected": "The site requested a human verification check.",
+                    "access_prohibited": "The site blocked automated access.",
+                }.get(raw_reason, "The browser could not complete this target automatically.")
+            # The badge/chip/title must tell the SAME story as human_reason above, using only
+            # statuses that really exist. /scout/attention's blocked list is filtered to
+            # MANUAL_ACTION_REQUIRED only (core/scout/challenge_session.py's _blocked_targets), so
+            # the "Needs attention" chip and the alarmed hero styling are honest ONLY for a real
+            # challenge — offering them to a PENDING/SKIPPED/FAILED target promises a destination it
+            # can never reach. Reuse the wording already used elsewhere in this file for the same
+            # statuses (the run-results table maps FAILED -> "Could not complete", SKIPPED ->
+            # "Skipped") instead of inventing new vocabulary.
+            if challenge:
+                status_label = "Needs your help"
+            elif prospect_status == "SKIPPED":
+                status_label = "Skipped"
+            elif prospect_status == "PENDING":
+                status_label = "Not analyzed"
+            else:
+                status_label = "Could not complete"
+            hero_class = "status-hero attention" if challenge else "status-hero"
+            badge_kind = "attention" if challenge else ""
+            attention_chip = ('<a class="chip" href="/scout/attention">Needs attention</a>'
+                               if challenge else '')
+            page_title = ("AI QA Factory — Needs attention" if challenge
+                          else f"AI QA Factory — {status_label}")
 
             def _art_url(rel: str) -> str:
                 return f'/scout/artifact?run={_esc(run_id)}&rel={_esc(rel)}'
@@ -3256,25 +3403,34 @@ function startCampaign(){{
             evidence_links = "".join(
                 f'<li><a href="{_art_url(e["rel"])}" target="_blank" rel="noopener">'
                 f'{_esc(e["label"])}</a></li>' for e in evidence_files)
+            if challenge:
+                actions_html = (
+                    '<div class="row"><button class="btn primary" id="opencheck" '
+                    'onclick="openCheck()">Open manual check</button>'
+                    '<button class="chip" id="continuecheck" onclick="challengeAction(\'continue\')" '
+                    'disabled>Continue check</button>'
+                    '<button class="chip" id="defercheck" onclick="challengeAction(\'defer\')" '
+                    'disabled>Defer</button>'
+                    '<button class="chip danger" id="skipcheck" onclick="challengeAction(\'skip\')" '
+                    'disabled>Skip target</button></div>'
+                    '<p id="challengemsg" class="muted" aria-live="polite">Open a visible Chromium '
+                    'window, complete the human check there, then choose Continue. The same browser '
+                    'session stays open for up to 15 minutes.</p>')
+            else:
+                actions_html = (
+                    '<div class="row"><a class="btn primary" href="/scout">'
+                    'Scan this target again</a></div>'
+                    '<p class="muted">No human check is pending for this target — rescanning is the '
+                    'way to get a result.</p>')
             body = (
                 f'<h1>{_esc(domain)}</h1><div class="row">{nav}'
-                f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
-                '<div class="card status-hero attention">'
-                f'<div class="row">{_badge("Needs your help", "attention")}'
+                f'{attention_chip}</div>'
+                f'<div class="card {hero_class}">'
+                f'<div class="row">{_badge(status_label, badge_kind)}'
                 f'<span>{_esc(human_reason)}</span></div>'
                 '<p><b>0 confirmed findings — analysis incomplete.</b> No conclusion about the site and no outreach '
                 'draft were created.</p>'
-                '<div class="row"><button class="btn primary" id="opencheck" '
-                'onclick="openCheck()">Open manual check</button>'
-                '<button class="chip" id="continuecheck" onclick="challengeAction(\'continue\')" '
-                'disabled>Continue check</button>'
-                '<button class="chip" id="defercheck" onclick="challengeAction(\'defer\')" '
-                'disabled>Defer</button>'
-                '<button class="chip danger" id="skipcheck" onclick="challengeAction(\'skip\')" '
-                'disabled>Skip target</button></div>'
-                '<p id="challengemsg" class="muted" aria-live="polite">Open a visible Chromium '
-                'window, complete the human check there, then choose Continue. The same browser '
-                'session stays open for up to 15 minutes.</p></div>'
+                f'{actions_html}</div>'
                 '<div class="card"><h2>Partial evidence</h2>'
                 f'<div class="media-grid">{img_html}</div>'
                 f'<p><b>Landing response:</b> HTTP {_esc(network.get("status") or "unavailable")} · '
@@ -3318,7 +3474,7 @@ function startCampaign(){{
                 "clearInterval(POLL);if(s.state==='completed')setTimeout(function(){location.href="
                 "'/scout/target?run='+encodeURIComponent(s.result_run)+'&domain='+encodeURIComponent(DOM);"
                 "},900);}}")
-            return _page("AI QA Factory — Needs attention", "/scout", body, script)
+            return _page(page_title, "/scout", body, script)
 
         def _scout_attention_page(self) -> str:
             data = challenge_manager.snapshot()
@@ -3391,6 +3547,27 @@ function startCampaign(){{
             from core.scout.discovery.domain_intel import canonical_domain
             from core.scout.operator_state import OperatorStateStore
             archived = OperatorStateStore(service.output_dir).run_archived(run_id)
+            # A skip the operator requested is persisted separately from state.json and applied by
+            # the engine before it starts each new target. The request is therefore a real, pending
+            # fact the page must show — otherwise a successful click leaves no trace and the operator
+            # cannot tell it worked. "Requested" and "applied" are different facts: the request only
+            # counts while the target is still queued; once the engine acts, the target's own status
+            # becomes SKIPPED and speaks for itself. An entry left behind for a target that has since
+            # finished can never apply and is not advertised.
+            try:
+                skip_requested = {
+                    str(pid) for pid in
+                    ((store.load_artifact("operator_actions.json") or {}).get("skip_prospects") or [])
+                } if store is not None else set()
+            except StoreError:
+                skip_requested = set()
+            # Only a target that has NOT started can still be stopped: the engine checks the request
+            # immediately before it begins each target and never interrupts one mid-operation. A
+            # started target stays PENDING until it finishes, so started_at — not the status — is
+            # what keeps this marker from promising something that cannot happen.
+            queued_skips = [pid for pid in sorted(skip_requested)
+                            if str((prospects.get(pid) or {}).get("status", "")) == "PENDING"
+                            and not (prospects.get(pid) or {}).get("started_at")]
             rows = []
             for pid, p in sorted(prospects.items()):
                 dom = canonical_domain(p.get("url", "") or p.get("final_url", "")) or ""
@@ -3398,13 +3575,7 @@ function startCampaign(){{
                 total = int(p.get("verified_findings", 0) or 0)
                 actionable = int(p.get("verified_defects", 0) or 0)
                 info = max(total - actionable, 0)
-                status_label = {
-                    "DONE": "Completed",
-                    "MANUAL_ACTION_REQUIRED": "Needs your help",
-                    "FAILED": "Could not complete",
-                    "PENDING": "Queued",
-                    "SKIPPED": "Skipped",
-                }.get(status, str(status or "Unknown").replace("_", " ").title())
+                status_label = _run_prospect_label(p)
                 complete = "Complete" if status == "DONE" else (
                     "Not analyzed" if status in ("PENDING", "SKIPPED") else "Incomplete")
                 details = (f'<a href="/scout/target?run={_esc(run_id)}&domain={_esc(dom)}">Details</a>'
@@ -3428,7 +3599,11 @@ function startCampaign(){{
                     f'value="{_esc(pid)}" data-domain="{_esc(dom)}" '
                     f'aria-label="Select {_esc(dom or pid)}"></td>'
                     f'<td data-label="Target">{_esc(dom)}</td>'
-                    f'<td data-label="Status">{_badge(status_label, "attention" if status == "MANUAL_ACTION_REQUIRED" else "")}</td>'
+                    f'<td data-label="Status">'
+                    f'{_badge(status_label, "attention" if status == "MANUAL_ACTION_REQUIRED" else "")}'
+                    + (' <span class="badge attention">Skip requested</span>'
+                       if pid in queued_skips else '')
+                    + '</td>'
                     f'<td data-label="Actionable">{actionable}</td>'
                     f'<td data-label="Informational">{info}</td>'
                     f'<td data-label="Analysis">{_esc(complete)}</td>'
@@ -3453,14 +3628,21 @@ function startCampaign(){{
                     '<a class="chip" href="/scout/attention">Needs attention</a></div>'
                     + ('<div class="banner warn">This run is archived and hidden from normal '
                        'operator lists.</div>' if archived else '')
+                    + (f'<div class="banner">{len(queued_skips)} '
+                       f'{"target is" if len(queued_skips) == 1 else "targets are"} queued to be '
+                       f'skipped — {"it" if len(queued_skips) == 1 else "they"} will not start.'
+                       f'</div>' if queued_skips else '')
                     + f'<div class="card"><div class="summary-grid">'
                     f'<div class="summary-item"><span class="muted">Targets</span>'
                     f'<strong>{len(prospects)}</strong></div>'
-                    f'<div class="summary-item"><span class="muted">Completed</span>'
-                    f'<strong>{sum(1 for p in prospects.values() if p.get("status") == "DONE")}</strong></div>'
-                    f'<div class="summary-item"><span class="muted">Need attention</span>'
-                    f'<strong>{sum(1 for p in prospects.values() if p.get("status") == "MANUAL_ACTION_REQUIRED")}</strong></div>'
-                    f'</div><div class="scrollx" style="margin-top:12px">{table}</div></div>'
+                    # One tile per outcome actually present, from the same labels the rows use, so
+                    # the tiles account for every target instead of leaving failed, interrupted and
+                    # skipped ones in no category at all.
+                    + "".join(
+                        f'<div class="summary-item"><span class="muted">{_esc(label)}</span>'
+                        f'<strong>{count}</strong></div>'
+                        for label, count in _run_status_summary(prospects))
+                    + f'</div><div class="scrollx" style="margin-top:12px">{table}</div></div>'
                     f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
                     f'selected</b><div class="row">'
                     f'<button class="chip" onclick="selectedAction(\'skip_queued\')">Skip queued</button>'
@@ -3491,11 +3673,29 @@ function startCampaign(){{
                 "function post(b){return fetch('/api/scout/operator',{method:'POST',headers:{"
                 "'X-Scout-CSRF':CSRF,'Content-Type':'application/json'},body:JSON.stringify(b)})"
                 ".then(r=>r.json());}"
+                # The server already reports exactly what it did and what it refused; reloading
+                # without reading it threw that away and left a successful action looking identical
+                # to a dead button. A clean success reloads, because the reloaded page carries the
+                # persistent banner and per-row marker. A partial result keeps the operator on the
+                # page with the reason, since a refusal is not persisted anywhere and a reload would
+                # erase the only account of it.
+                "function bulkSummary(j){var out=[];"
+                "if(j.requested&&j.requested.length)out.push(j.requested.length+' queued to skip');"
+                "if(j.refused&&j.refused.length)out.push(j.refused.length+' refused ('+"
+                "j.refused.map(function(r){return (r.prospect_id||'?')+': '+(r.status||'unknown');})"
+                ".join(', ')+')');"
+                "if(j.removed&&j.removed.length)out.push(j.removed.length+' file(s) removed');"
+                "if(j.forgotten&&j.forgotten.length)out.push(j.forgotten.length+' removed from history');"
+                "if(j.message)out.push(j.message);"
+                "return out.join(' · ');}"
                 "function selectedAction(action,confirmFlag){var ps=picks();if(!ps.length)return;"
                 "post({action:action,run_id:RUN,prospect_ids:ps.map(x=>x.value),"
                 "domains:ps.map(x=>x.dataset.domain).filter(Boolean),confirm:!!confirmFlag})"
-                ".then(j=>{if(j.ok)location.reload();else document.getElementById('bulkmsg').textContent="
-                "j.error||'Action failed';});}"
+                ".then(j=>{var m=document.getElementById('bulkmsg');"
+                "if(!j.ok){m.textContent=j.error||'Action failed';return;}"
+                "var partial=(j.refused&&j.refused.length)?true:false;"
+                "m.textContent=bulkSummary(j)||'Done';"
+                "if(!partial)location.reload();});}"
                 "function deleteEvidence(){qaConfirm('Delete screenshots, videos and browser traces "
                 "for selected targets? Findings and summary history will remain.','Delete evidence')"
                 ".then(function(ok){if(ok)selectedAction('delete_evidence',true);});}"
@@ -4123,6 +4323,59 @@ def _finding_qa_value(f: dict) -> int:
 
 # Human-readable within-site coverage profile label (PR-B). "explicit" is the internal/back-compat
 # mode (never offered as an operator choice) — shown honestly as "Legacy explicit" rather than hidden.
+# One vocabulary for a prospect's outcome on the run-results page. The rows and the summary tiles
+# BOTH read it, so a tile and the rows it counts can never call the same state different things, and
+# the tiles partition the run by construction — every prospect lands in exactly one category, which
+# is what makes the summary exhaustive rather than merely true.
+_RUN_STATUS_LABELS = (
+    ("DONE", "Completed"),
+    ("MANUAL_ACTION_REQUIRED", "Needs your help"),
+    ("FAILED", "Could not complete"),
+    ("PENDING", "Queued"),
+    ("SKIPPED", "Skipped"),
+)
+
+
+def _run_status_label(status: str) -> str:
+    """Human label for a persisted prospect status. An unknown status is titled, never dropped —
+    a target must never fall out of the summary just because its status is new."""
+    for known, label in _RUN_STATUS_LABELS:
+        if status == known:
+            return label
+    return str(status or "Unknown").replace("_", " ").title()
+
+
+def _run_prospect_label(prospect: dict) -> str:
+    """Human label for one prospect ROW, which needs one fact the bare status cannot carry.
+
+    A target the engine has started stays PENDING in the compact state until it finishes, so status
+    alone cannot tell "waiting its turn" from "being analyzed right now" — and calling the second one
+    "Queued" is false while a browser is loading it. The engine persists ``started_at`` the moment it
+    begins a target, and that is what separates the two.
+    """
+    p = prospect or {}
+    status = str(p.get("status", "") or "")
+    if status == "PENDING" and p.get("started_at"):
+        return "In progress"
+    return _run_status_label(status)
+
+
+def _run_status_summary(prospects: dict) -> list:
+    """(label, count) per outcome present in the run, in the canonical order above, with "In progress"
+    kept next to "Queued" and any unknown status appended. The counts sum to len(prospects) — the page
+    asserts nothing the data cannot support."""
+    counts: dict = {}
+    for p in prospects.values():
+        counts[_run_prospect_label(p)] = counts.get(_run_prospect_label(p), 0) + 1
+    order = []
+    for _, label in _RUN_STATUS_LABELS:
+        if label == "Queued":
+            order.append("In progress")
+        order.append(label)
+    ordered = [(label, counts.pop(label)) for label in order if label in counts]
+    return ordered + sorted(counts.items())
+
+
 _COVERAGE_PROFILE_LABEL = {"adaptive": "Adaptive", "deep": "Deep", "explicit": "Legacy explicit"}
 
 # Honest, human-readable page-coverage stop reasons (core/scout/coverage.py CoveragePlanner).
