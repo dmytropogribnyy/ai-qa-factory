@@ -258,6 +258,17 @@ class CampaignLauncher:
             kwargs["max_pages_per_site"] = request["max_pages"]
         if isinstance(families, list) and families and all(isinstance(f, str) for f in families):
             kwargs["check_families"] = families
+        # Why this run exists, for Data management. NOT an operator-facing scan mode: the daily form
+        # never sends it, so an ordinary run stays unclassified and is therefore never swept as test
+        # data. An acceptance harness sets it explicitly. Only the removable purposes are accepted —
+        # a request cannot label itself "production" and gain protection it was not given.
+        purpose = request.get("run_purpose")
+        if isinstance(purpose, str) and purpose:
+            from core.scout.data_management import REMOVABLE_PURPOSES
+            if purpose not in REMOVABLE_PURPOSES:
+                raise ScoutConfigError(
+                    "run_purpose must be one of: " + ", ".join(sorted(REMOVABLE_PURPOSES)))
+            kwargs["run_purpose"] = purpose
         return ScoutRunConfig(**kwargs)
 
 

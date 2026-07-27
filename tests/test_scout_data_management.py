@@ -256,3 +256,48 @@ def test_moving_to_trash_twice_does_not_double_count(store):
     store.move_to_trash(["acceptance-1"])
 
     assert store.inventory().counts["in_trash"] == 1
+
+
+# --- how a run gets its purpose in the first place ----------------------------------------------
+
+def test_the_launcher_records_an_acceptance_purpose_when_the_harness_asks(tmp_path):
+    """The tag comes from the launch context, never from a control on the daily form."""
+    from core.scout.campaign_start import CampaignLauncher
+
+    launcher = CampaignLauncher(_FakeService(str(tmp_path)))
+    cfg = launcher._build_config({"campaign": "acceptance", "run_purpose": PURPOSE_ACCEPTANCE},
+                                 ["https://plausible.io/"])
+
+    assert cfg.run_purpose == PURPOSE_ACCEPTANCE
+    assert cfg.to_dict()["run_purpose"] == PURPOSE_ACCEPTANCE
+
+
+def test_an_ordinary_run_stays_unclassified_and_is_therefore_never_swept(tmp_path):
+    from core.scout.campaign_start import CampaignLauncher
+
+    cfg = CampaignLauncher(_FakeService(str(tmp_path)))._build_config(
+        {"campaign": "operator-scan"}, ["https://plausible.io/"])
+
+    assert cfg.run_purpose == ""
+
+
+def test_a_request_cannot_label_itself_production(tmp_path):
+    """Otherwise an untrusted request could buy itself protection it was never granted."""
+    from core.scout.campaign_start import CampaignLauncher
+    from core.scout.config import ScoutConfigError
+
+    launcher = CampaignLauncher(_FakeService(str(tmp_path)))
+    with pytest.raises(ScoutConfigError):
+        launcher._build_config({"campaign": "x", "run_purpose": PURPOSE_PRODUCTION},
+                               ["https://plausible.io/"])
+
+
+class _FakeService:
+    """Enough of ScoutService for the launcher to build a config without starting anything."""
+
+    def __init__(self, output_dir: str) -> None:
+        self.output_dir = output_dir
+        self.run_id = ""
+
+    def start(self, *_args, **_kwargs):
+        raise AssertionError("these tests build a config; they never start a run")
