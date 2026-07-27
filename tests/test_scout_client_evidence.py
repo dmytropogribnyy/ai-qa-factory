@@ -133,7 +133,9 @@ def test_client_bundle_is_target_scoped_and_excludes_operator_raw_data(tmp_path)
         "technical/network-console-accessibility.json",
         "technical/reproduction.json",
         "technical/browser-event-trace.json",
-        "evidence/screenshots/screenshot-01.png",
+        # Frames are named for the page they show; this legacy run has no screenshots record, so the
+        # file stem is the label rather than an invented page role.
+        "evidence/screenshots/landing.png",
         "evidence/reproduction/reproduction-01.webm",
     } <= set(files)
     blob = b"\n".join(files.values())

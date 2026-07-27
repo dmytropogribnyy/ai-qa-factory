@@ -43,8 +43,15 @@ def _cfg(**kw):
     return ScoutRunConfig(**base)
 
 
-def test_video_mode_defaults_to_manual():
-    assert _cfg().video_mode == "manual"
+def test_a_new_run_decides_about_video_by_itself():
+    """Scout judges each finding against the evidence policy; the operator sets no switch.
+
+    "manual" stays a valid explicit opt-out and is what a pre-automatic run reads back as (see
+    test_historical_run_config_without_video_mode_defaults_to_manual), but it is no longer what a
+    fresh run silently gets -- that made the whole capability unreachable in normal operation.
+    """
+    assert _cfg().video_mode == "qualified_auto"
+    assert _cfg(video_mode="off").video_mode == "off"        # opting out stays possible
 
 
 def test_video_mode_accepts_known_modes_and_rejects_unknown():
@@ -163,6 +170,50 @@ def test_manual_mode_never_reproduces(tmp_path):
     eng = _repro_engine(tmp_path, backend, video_mode="manual")
     kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
     assert kept == "" and backend.calls == []              # opt-in only
+
+
+def test_the_keep_decision_and_its_reason_are_recorded(tmp_path):
+    """Scout decides for itself, so it must write down WHY -- an absent clip has to be explainable."""
+    eng = _repro_engine(tmp_path, _FakeReproBackend(actual_status=404))
+    eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    rec = json.loads((Path(eng.store.prospect_dir("01-x")) / "reproduction.json").read_text(
+        encoding="utf-8"))
+
+    assert rec["video_ref"] == "reproduction.webm"
+    assert "qualified" in rec["video_decision"]
+
+
+def test_a_replay_that_behaved_records_why_no_clip_was_kept(tmp_path):
+    eng = _repro_engine(tmp_path, _FakeReproBackend(actual_status=200))
+    eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()], _FLOW)
+    rec = json.loads((Path(eng.store.prospect_dir("01-x")) / "reproduction.json").read_text(
+        encoding="utf-8"))
+
+    assert rec["video_ref"] == ""
+    assert "not reproduced" in rec["video_decision"]
+
+
+def test_the_campaign_video_cap_is_enforced_and_explained(tmp_path):
+    """Deciding for itself must not mean recording without bound."""
+    eng = _repro_engine(tmp_path, _FakeReproBackend(actual_status=404))
+    eng._videos_recorded = eng._evidence.max_videos_per_campaign
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()],
+                                            _FLOW)
+
+    assert kept == ""
+    assert not (Path(eng.store.prospect_dir("01-x")) / "reproduction.webm").exists()
+
+
+def test_a_weakly_evidenced_finding_does_not_earn_a_video(tmp_path):
+    """The quality floor is part of the decision: a shaky finding is not worth a clip."""
+    eng = _repro_engine(tmp_path, _FakeReproBackend(actual_status=404))
+    kept = eng._reproduce_prospect_findings("01-x", "https://ex.com", [_broken_flow_finding()],
+                                            _FLOW, qa_score=10)
+    rec = json.loads((Path(eng.store.prospect_dir("01-x")) / "reproduction.json").read_text(
+        encoding="utf-8"))
+
+    assert kept == "" and rec["video_ref"] == ""
+    assert "qa_score" in rec["video_decision"]
 
 
 def test_reproduction_without_verified_cleanup_keeps_no_video(tmp_path):

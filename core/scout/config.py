@@ -12,7 +12,7 @@ from typing import Any, Dict, FrozenSet, List
 
 from core.scout import SCOUT_VERSION
 from core.scout.coverage import COVERAGE_MODES, OPERATOR_COVERAGE, derive_page_ceiling
-from core.scout.evidence_policy import VIDEO_MANUAL, VIDEO_MODES
+from core.scout.evidence_policy import VIDEO_MANUAL, VIDEO_MODES, VIDEO_QUALIFIED_AUTO
 from core.scout.url_safety import UrlPolicy
 
 MAX_SEEDS = 10
@@ -52,7 +52,10 @@ class ScoutRunConfig:
     coverage: str = "explicit"
     # Reproduction-video policy. Default "manual" = behaviour unchanged (never auto-records);
     # "qualified_auto" opts into a short clip for a reproduced visual/interaction defect.
-    video_mode: str = VIDEO_MANUAL
+    # Scout decides for itself whether a clip is worth keeping (evidence_policy.video_qualified),
+    # so a NEW run is automatic by default. "manual"/"off" remain accepted for an explicit opt-out
+    # and for reading back runs made before this was automatic.
+    video_mode: str = VIDEO_QUALIFIED_AUTO
     output_dir: str = "outputs"
     resume: bool = False
     run_id: str = ""
@@ -157,6 +160,10 @@ class ScoutRunConfig:
         kwargs = {k: v for k, v in data.items() if k in known}
         if "allowed_local_hosts" in data:
             kwargs["allowed_local_hosts"] = frozenset(data["allowed_local_hosts"])
+        # A config written before video capture became automatic recorded no video, whatever the
+        # current default is. Reading it back as "automatic" would re-describe a finished run as
+        # something it never was, so a missing key keeps the historical behaviour.
+        kwargs.setdefault("video_mode", VIDEO_MANUAL)
         return cls(**kwargs)
 
 

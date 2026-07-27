@@ -56,6 +56,17 @@ benchmark, and the v2.0 release — those are roadmap, not backlog._
 - **Controlled real Gmail acceptance** — a single harmless self-test send is optional and only
   performed with explicit human confirmation; not part of automated acceptance.
 
+## Client evidence — deferred depth (2026-07-27)
+
+- **Element-level crops for visual findings.** A client currently reads "insufficient colour
+  contrast" as text next to a full-page screenshot and has to find the element themselves. Cropping
+  and highlighting the offending element for the top visual axe findings is the largest remaining
+  gain in the evidence package — and a report-design change, not an evidence-collection one, so it
+  is deliberately a separate slice. Shipped in the same area already: up to three UNIQUE frames of
+  pages actually visited, byte-identical captures dropped by digest, frames named for their page and
+  bound to its URL in `MANIFEST.json`, and an explicit statement of why a reproduction video is
+  absent (see `core/scout/client_evidence.py`, `tests/test_scout_evidence_screenshot_policy.py`).
+
 _Final Independent Acceptance (v2.0.1) owns the CI fix, complete provenance, real gate records,
 reviewed-content proof, state machines/attempts/control-race, provider-event trust, the exact-payload
 boundary, the Gmail provider + OAuth, daily limits, and the review/Gmail CLI — those are done, not

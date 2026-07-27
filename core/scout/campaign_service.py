@@ -445,6 +445,7 @@ class CampaignService:
         manual_action: Optional[Dict[str, Any]] = None  # persisted fail-closed record, if any
         prospect_id = ""                      # the exact prospect this card is bound to
         prospect_status = ""                  # DONE | MANUAL_ACTION_REQUIRED | FAILED | ...
+        resolved_by_run = ""                  # the manual-check run that later completed this target
         analysis_complete: Optional[bool] = None
         evidence_status = "not_scanned"       # ok | prospect_not_found | error | not_scanned
         # Truthful provenance + capture-policy fields (never invented — "" means genuinely unknown).
@@ -453,6 +454,7 @@ class CampaignService:
         # This prospect's persisted within-site coverage record (coverage.json), or None when a
         # historical/legacy run never wrote one — never fabricated (see coverage.py / engine.py).
         coverage: Optional[Dict[str, Any]] = None
+        screenshots: List[Dict[str, Any]] = []      # captured frames: {file, url, role, sha256}
         # Raw evidence files that ACTUALLY exist on disk for this prospect, so the UI never links to
         # an artifact that isn't there. Each entry is safely servable via /scout/artifact.
         evidence_files: List[Dict[str, str]] = []
@@ -525,6 +527,10 @@ class CampaignService:
                     evidence_status = "ok"
                     pstate = (state.get("prospects", {}) or {}).get(prospect_id, {}) or {}
                     prospect_status = pstate.get("status", "")
+                    # A later manual check may have carried this target to a result in its OWN run.
+                    # This run still holds no findings for it, so the pointer is what makes the
+                    # difference between "still needs you" and "already handled, look there".
+                    resolved_by_run = str(pstate.get("resolved_by_run") or "")
                     # Confirmed findings and a finding reproduction exist only for a COMPLETED
                     # analysis, and this must hold in the read model so the UI, the read API and the
                     # unpinned page all inherit it. See analysis_incomplete() above — the ONE shared
@@ -549,6 +555,11 @@ class CampaignService:
                     # string) is also treated as unavailable rather than crashing the read model.
                     _raw_coverage = st.load_prospect_artifact(prospect_id, "coverage.json")
                     coverage = _raw_coverage if isinstance(_raw_coverage, dict) else None
+                    # Which captured frame shows which page. Without it the operator sees a row of
+                    # anonymous thumbnails and cannot tell the pricing page from the landing one.
+                    _raw_shots = st.load_prospect_artifact(prospect_id, "screenshots.json")
+                    if isinstance(_raw_shots, dict) and isinstance(_raw_shots.get("frames"), list):
+                        screenshots = [f for f in _raw_shots["frames"] if isinstance(f, dict)]
                     obs = st.load_prospect_artifact(prospect_id, "observation.json") or {}
                     contact_records = extract_public_contact_records(obs, domain=domain)
                     contacts = [row["email"] for row in contact_records]
@@ -619,6 +630,7 @@ class CampaignService:
         return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
                 "scout_run": scout_run, "run": scout_run, "prospect_id": prospect_id,
                 "prospect_status": prospect_status, "analysis_complete": analysis_complete,
+                "resolved_by_run": resolved_by_run, "screenshots": screenshots,
                 "manual_action": manual_action, "source_kind": source_kind,
                 "video_mode": video_mode, "evidence_files": evidence_files, "coverage": coverage,
                 "evidence_status": evidence_status, "media": media, "network": network,
