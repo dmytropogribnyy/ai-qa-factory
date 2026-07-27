@@ -221,3 +221,43 @@ def test_history_offers_one_date_filter_not_three(history_page):
 def test_history_keeps_search_and_a_status_filter(history_page):
     assert 'name="text"' in history_page
     assert 'name="result"' in history_page
+
+
+# --- an unreachable evidence store is not a failed scan ------------------------------------------
+
+def test_a_target_whose_evidence_cannot_be_located_is_not_called_failed(tmp_path):
+    """Found by auditing the live History: five sites read "Failed" that had been analyzed.
+
+    Their registry entry says ANALYZED, but run resolution landed on a store holding no prospect for
+    them, so the read model reports evidence_status=prospect_not_found and an empty prospect status.
+    Falling through to "Failed" asserts a scan failure that never happened — the scan completed; what
+    we cannot do is locate its evidence. PR #51 established the honest wording for this on the card;
+    the History verdict has to inherit it.
+    """
+    out = str(tmp_path)
+    # A run that exists but holds a DIFFERENT company, exactly as v33-skip-proof did.
+    _analyzed_run(out, "some-other-run", "elsewhere.example")
+    AnalyzedSiteRegistry(out).record_analysis(
+        "orphaned.example", status=ANALYZED, evidence_ref="scout/some-other-run",
+        campaign_id="some-other-run")
+
+    result = _result(out, "orphaned.example")
+
+    assert result.result != FAILED
+    assert result.result == NEEDS_REVIEW
+    assert "evidence" in result.reason.lower()
+
+
+def test_a_registry_failure_is_still_reported_as_failed(tmp_path):
+    """The honest Failed must survive: a run that really did fail still says so."""
+    out = str(tmp_path)
+    AnalyzedSiteRegistry(out).record_analysis("broken.example", status="FAILED")
+
+    assert _result(out, "broken.example").result == FAILED
+
+
+def test_a_never_scanned_target_is_still_not_analyzed(tmp_path):
+    out = str(tmp_path)
+    AnalyzedSiteRegistry(out).record_analysis("fresh.example", status="DISCOVERED")
+
+    assert _result(out, "fresh.example").result == NOT_ANALYZED

@@ -5014,6 +5014,11 @@ _TOKENS_CSS = """
 *{box-sizing:border-box}
 body{font-family:var(--font);margin:0;background:var(--bg);color:var(--text);line-height:1.5}
 a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+/* A link sitting inside a sentence must be distinguishable without colour (WCAG 1.4.1) — our own
+   axe run flags exactly this, and we sell those findings. Links that are already distinguishable by
+   shape (nav, chips, buttons, tabs) are excluded: underlining them would be noise, not information. */
+main p a,main li a,main td a,.quiet-state a,.muted a,figcaption a{text-decoration:underline;text-underline-offset:2px}
+main p a.btn,main p a.chip,main li a.btn,main li a.chip,main td a.chip,main td a.btn{text-decoration:none}
 /* An in-page action that should read as a link but behave (and be announced) as a button. */
 .linklike{background:none;border:0;padding:0;font:inherit;color:var(--link);cursor:pointer}
 .linklike:hover{text-decoration:underline}

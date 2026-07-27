@@ -105,7 +105,9 @@ def site_result(detail: Dict[str, Any]) -> SiteResult:
     first = records[0] if records else {}
     prospect_status = str(detail.get("prospect_status") or "")
     entry = detail.get("entry") or {}
-    registry_status = str(entry.get("analysis_status") or "")
+    # The registry persists these lower-cased ("analyzed"/"failed"); prospect statuses are upper.
+    # Comparing the two vocabularies without normalising is how "analyzed" fell through to Failed.
+    registry_status = str(entry.get("analysis_status") or "").strip().upper()
     manual = detail.get("manual_action") or {}
     reason = str(manual.get("reason") or entry.get("reason") or "")
 
@@ -122,6 +124,13 @@ def site_result(detail: Dict[str, Any]) -> SiteResult:
             verdict = READY_TO_CONTACT if first.get("email") else NEEDS_REVIEW
         else:
             verdict = NO_ACTIONABLE
+    elif detail.get("evidence_status") in ("prospect_not_found", "error"):
+        # The scan happened — the registry records it — but the run we resolved holds no prospect
+        # for this domain, so its evidence cannot be reached. Calling that "Failed" would assert a
+        # scan failure that never occurred. It is a human's problem to look at, not a bad outcome.
+        verdict = NEEDS_REVIEW if registry_status == "ANALYZED" else FAILED
+        reason = reason or ("the analysis is recorded, but its evidence could not be located in "
+                            "the run resolved for this site")
     elif prospect_status in ("PENDING", "") and not detail.get("scout_run"):
         verdict = NOT_ANALYZED
     elif prospect_status in ("PENDING", "SKIPPED"):
