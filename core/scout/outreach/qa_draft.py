@@ -29,6 +29,11 @@ def extract_public_emails(observation: Dict[str, Any], *, domain: str = "") -> L
     parts = [str(obs.get("title", "")), str(obs.get("meta_description", ""))] + links
     for h in obs.get("headings", []):
         parts.append(str(h.get("text", "")) if isinstance(h, dict) else str(h))
+    # Visible page text, when the caller supplies it. Companies print their public mailbox far more
+    # often than they link it — none of the three live acceptance targets used a mailto: href — so
+    # without this the "find public contacts" step cannot succeed on a normal contact page.
+    if obs.get("text"):
+        parts.append(str(obs["text"]))
     found |= set(_EMAIL_RE.findall(" ".join(parts)))
     emails = sorted(e for e in found if _EMAIL_RE.fullmatch(e))
     if domain:

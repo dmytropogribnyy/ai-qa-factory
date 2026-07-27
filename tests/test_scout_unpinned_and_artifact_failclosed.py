@@ -109,7 +109,7 @@ def test_unpinned_page_for_an_interrupted_rescan_is_not_a_healthy_conclusion(tmp
     assert "No actionable defect was confirmed" not in html
     assert "Completed with confirmed actionable findings" not in html
     assert "0 confirmed findings" in html
-    assert "Download client-ready evidence" not in html
+    assert "Download client evidence (.zip)" not in html
 
 
 def test_unpinned_page_for_an_interrupted_rescan_names_the_real_state(tmp_path, monkeypatch):
@@ -139,7 +139,7 @@ def test_pinned_non_done_still_renders_the_incomplete_screen(tmp_path, monkeypat
 
     assert "0 confirmed findings" in html
     assert "Analysis complete" not in html
-    assert "Download client-ready evidence" not in html
+    assert "Download client evidence (.zip)" not in html
 
 
 def test_a_done_target_keeps_its_completed_card_pinned_and_unpinned(tmp_path, monkeypatch):
@@ -155,7 +155,7 @@ def test_a_done_target_keeps_its_completed_card_pinned_and_unpinned(tmp_path, mo
 
     for html in (pinned, unpinned):
         assert "Analysis complete" in html
-        assert "Download client-ready evidence" in html
+        assert "Download client evidence (.zip)" in html
         assert "alpha.example: alpha (high)" in html    # confirmed findings stay available
 
 

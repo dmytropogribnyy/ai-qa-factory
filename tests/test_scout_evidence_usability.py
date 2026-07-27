@@ -302,7 +302,10 @@ def test_axe_evidence_is_surfaced_with_honest_status(tmp_path):
     finally:
         server.shutdown()
     assert "color-contrast" in html_alpha
-    assert "axe-core evidence was unavailable" in html_gamma.lower()
+    # A browser that ran but could not inject axe-core is a CAPTURE FAILURE, not simply absent
+    # evidence — it is the one evidence state that is a fault of ours (Unified Scout spec, §9.1).
+    assert "capture failed" in html_gamma.lower()
+    assert "axe-core could not be injected" in html_gamma.lower()
 
 
 # -- 12: PR-A1 exact-run + MANUAL_ACTION regression guarantees remain intact ----------------------

@@ -79,7 +79,7 @@ Under **Advanced run diagnostics** on the progress page click
 `outputs/scout/_bundles/<campaign_id>/EVIDENCE_BUNDLE.json` (run state, stop reason, discovery
 state, brain decision trail) and shows the path. This is an operator/reviewer diagnostic, not a
 client attachment. For a client, open a completed exact target and select
-**Download client-ready evidence (.zip)**.
+**Download client evidence (.zip)**.
 
 ## L. CLI fallback (diagnostics only — not the primary path)
 

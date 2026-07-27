@@ -253,6 +253,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/api/activity":
                 return self._json(200, self._activity_json((q.get("project") or [""])[0],
                                                            self._want_diagnostics(q)))
+            if path == "/data":
+                return self._html(200, self._data_page(q))
             if path == "/settings":
                 if (q.get("refresh") or [""])[0]:
                     cached_access_snapshot(refresh=True)   # explicit operator refresh
@@ -313,10 +315,15 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if path == "/artifact":
                 return self._artifact((q.get("path") or [""])[0])
             if path == "/scout/artifact":
-                return self._scout_artifact((q.get("run") or [""])[0], (q.get("rel") or [""])[0])
+                return self._scout_artifact(
+                    (q.get("run") or [""])[0], (q.get("rel") or [""])[0],
+                    download=(q.get("download") or [""])[0] in ("1", "true", "yes"))
             if path == "/scout/client-evidence":
                 return self._scout_client_evidence(
                     (q.get("domain") or [""])[0], (q.get("run") or [""])[0])
+            if path == "/scout/client-report":
+                return self._html(200, self._scout_client_report_page(
+                    (q.get("domain") or [""])[0], (q.get("run") or [""])[0]))
             if path == "/work-evidence":
                 return self._work_evidence((q.get("project") or [""])[0], (q.get("path") or [""])[0])
             if path == "/" or path == "/index.html":
@@ -380,6 +387,12 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._scout_launch()
             if parsed.path == "/api/scout/import":
                 return self._scout_import()
+            if parsed.path == "/api/scout/intake/preview":
+                return self._scout_intake_preview()
+            if parsed.path in ("/api/scout/data/preview", "/api/scout/data/trash",
+                               "/api/scout/data/restore", "/api/scout/data/delete",
+                               "/api/scout/data/classify"):
+                return self._scout_data_action(parsed.path.rsplit("/", 1)[-1])
             if parsed.path == "/api/scout/control":
                 return self._scout_control(parsed)
             if parsed.path == "/api/scout/export":
@@ -483,6 +496,201 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 manifest_saved = False                     # reported honestly, never a false success
             return self._json(200, {"ok": True, "result": res.to_dict(),
                                     "manifest_saved": manifest_saved})
+
+        def _scout_intake_preview(self):
+            """What the queue will actually contain, computed by the code that will build it.
+
+            The operator presses Start on the strength of these numbers, so they must not come from a
+            second, friendlier parser: this calls the same ``core.scout.intake`` the launch path uses.
+            It is read-only — nothing is queued, fetched or persisted — but it still sits behind the
+            shared mutation guard because it accepts an operator-supplied body.
+            """
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry
+            from core.scout.intake import parse_rows, parse_text
+            text = str(body.get("text") or "")[:200_000]
+            rows = body.get("rows")
+            try:
+                known = frozenset(e.domain for e in AnalyzedSiteRegistry(service.output_dir).all()
+                                  if getattr(e, "domain", ""))
+            except Exception:  # noqa: BLE001 - history is advisory here; never block a preview
+                known = frozenset()
+            # DNS is deliberately not consulted here: a preview must be instant and deterministic,
+            # and skipping resolution is safe because the LAUNCHER re-validates every seed with
+            # resolution (the anti-rebinding guard) before anything is queued. The structural and
+            # private/reserved checks still run, so localhost and 0.1 are refused in the preview.
+            from core.scout.url_safety import UrlPolicy
+            common = {"known_domains": known, "pinned": True,
+                      "policy": UrlPolicy(resolve_dns=False)}
+            if isinstance(rows, list):
+                result = parse_rows([r if isinstance(r, list) else [r] for r in rows[:5000]],
+                                    **common)
+            else:
+                result = parse_text(text, **common)
+            return self._json(200, {"ok": True, **result.to_dict()})
+
+        def _data_store(self):
+            from core.scout.data_management import DataManagementStore
+            return DataManagementStore(service.output_dir,
+                                       active_run_id=str(getattr(service, "run_id", "") or ""))
+
+        def _scout_data_action(self, action: str):
+            """Preview / Trash / Restore / permanent delete, each behind the shared mutation guard.
+
+            The four are separate endpoints rather than one with a mode, so an accidental replay of
+            a preview request can never turn into a deletion.
+            """
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            raw = body.get("run_ids")
+            # Exact ids only, bounded. A selection that could expand after it was previewed is not
+            # the selection that was previewed.
+            run_ids = [str(item) for item in raw[:500]] if isinstance(raw, list) else []
+            store = self._data_store()
+            if action == "preview":
+                return self._json(200, {"ok": True, "preview": store.preview(run_ids).to_dict()})
+            if action == "trash":
+                return self._json(200, {"ok": True, **store.move_to_trash(run_ids)})
+            if action == "restore":
+                return self._json(200, {"ok": True, **store.restore(run_ids)})
+            if action == "classify":
+                return self._json(200, {"ok": True, **store.classify(
+                    run_ids, purpose=str(body.get("purpose") or ""))})
+            return self._json(200, {"ok": True, **store.permanently_delete(
+                run_ids, confirm=body.get("confirm") is True)})
+
+        def _data_page(self, q=None) -> str:
+            """Everything that takes up space, what it is for, and a staged way to let it go."""
+            view = ((q or {}).get("view") or [""])[0].strip().lower()
+            in_trash = view == "trash"
+            inv = self._data_store().inventory()
+            rows_source = [r for r in inv.runs if r.trashed == in_trash]
+            from core.scout.data_management import (PURPOSE_ACCEPTANCE, PURPOSE_DIAGNOSTIC,
+                                                    PURPOSE_LABELS, PURPOSE_MANUAL_TEST,
+                                                    PURPOSE_PRODUCTION, PURPOSE_UNCLASSIFIED)
+            tiles = "".join(
+                f'<div class="summary-item"><span class="muted">{_esc(PURPOSE_LABELS[key])}</span>'
+                f'<strong>{inv.counts.get(key, 0)}</strong></div>'
+                for key in (PURPOSE_PRODUCTION, PURPOSE_ACCEPTANCE, PURPOSE_DIAGNOSTIC,
+                            PURPOSE_MANUAL_TEST, PURPOSE_UNCLASSIFIED))
+            tiles += (f'<div class="summary-item"><span class="muted">Storage</span>'
+                      f'<strong>{_esc(_human_bytes(inv.bytes_total))}</strong></div>'
+                      f'<div class="summary-item"><span class="muted">In Trash</span>'
+                      f'<strong>{inv.counts.get("in_trash", 0)}</strong></div>')
+            rows = "".join(
+                f'<tr><td class="select-cell"><input type="checkbox" class="pick" '
+                f'value="{_esc(r.run_id)}" aria-label="Select {_esc(r.run_id)}"></td>'
+                f'<td data-label="Run"><code>{_esc(r.run_id)}</code></td>'
+                f'<td data-label="Purpose">{_badge(r.purpose_label)}</td>'
+                f'<td data-label="Sites" class="muted">'
+                f'{_esc(", ".join(r.domains) or "none recorded")}</td>'
+                f'<td data-label="Evidence" class="muted">{r.screenshots} screenshot(s) · '
+                f'{r.videos} video(s) · {r.findings} finding(s)</td>'
+                f'<td data-label="Size" class="muted">{_esc(_human_bytes(r.bytes))}</td>'
+                f'<td data-label="When" class="muted">{_fmt_ts(r.trashed_at or r.created_at)}</td>'
+                f'</tr>' for r in rows_source)
+            table = (f'<table class="responsive-table"><thead><tr>'
+                     f'<th><input type="checkbox" id="pickall" aria-label="Select all"></th>'
+                     f'<th>Run</th><th>Purpose</th><th>Sites</th><th>Evidence</th><th>Size</th>'
+                     f'<th>{"Moved to Trash" if in_trash else "Recorded"}</th></tr></thead>'
+                     f'<tbody>{rows}</tbody></table>'
+                     if rows else
+                     f'<div class="card empty muted">'
+                     f'{"Trash is empty." if in_trash else "No Scout runs are stored yet."}</div>')
+            actions = (
+                '<button class="chip" onclick="act(\'restore\')">Restore selected</button>'
+                '<button class="chip danger" onclick="destroy()">Delete permanently…</button>'
+                if in_trash else
+                '<button class="chip" onclick="preview()">Preview what would be removed</button>'
+                # An Unclassified run is required to demand an explicit choice, so the operator has
+                # to be able to make one. Production is deliberately not offered: a label that buys
+                # sweep-protection must not be handed out from the sweep screen.
+                '<label class="sr-only" for="setpurpose">Record what these runs were</label>'
+                '<select id="setpurpose"><option value="">Record what these were&hellip;</option>'
+                '<option value="acceptance">Acceptance</option>'
+                '<option value="diagnostic">Diagnostic</option>'
+                '<option value="manual_test">Manual test</option></select>'
+                '<button class="chip" onclick="classify()">Save purpose</button>'
+                '<button class="chip" onclick="act(\'trash\')" id="tobin" disabled>'
+                'Move selected to Trash</button>')
+            tabs = (('<a class="chip" href="/data">Stored runs</a>'
+                     '<span class="chip active">Trash</span>') if in_trash else
+                    ('<span class="chip active">Stored runs</span>'
+                     '<a class="chip" href="/data?view=trash">Trash</a>'))
+            body = (
+                '<h1>Data management</h1>'
+                '<p class="page-intro muted">What Scout has stored, what each run was for, and a '
+                'staged way to let test data go. Production runs and runs whose purpose was never '
+                'recorded are never swept automatically.</p>'
+                f'<div class="row">{tabs}</div>'
+                f'<div class="summary-grid">{tiles}</div>'
+                f'<div class="scrollx">{table}</div>'
+                '<div class="card" id="previewout" role="status" aria-live="polite" hidden></div>'
+                f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
+                f'selected</b><div class="row">{actions}'
+                '<span id="datamsg" class="muted" aria-live="polite"></span></div></div>'
+                '<p class="muted">Moving to Trash removes nothing from disk. Permanent deletion is '
+                'available only from Trash, only for the runs you select there, and only after a '
+                'separate confirmation naming the exact counts.</p>')
+            script = (
+                "const CSRF=" + json.dumps(csrf_token) + ";"
+                "function picks(){return Array.from(document.querySelectorAll('.pick:checked'))"
+                ".map(function(x){return x.value;});}"
+                "function refreshBulk(){var n=picks().length;"
+                "document.getElementById('selected').textContent=n;"
+                "document.getElementById('bulkbar').hidden=!n;"
+                "var t=document.getElementById('tobin');if(t)t.disabled=true;}"
+                "document.querySelectorAll('.pick').forEach(function(x){x.onchange=refreshBulk;});"
+                "var pa=document.getElementById('pickall');if(pa)pa.onchange=function(){"
+                "document.querySelectorAll('.pick').forEach(function(x){x.checked=pa.checked;});"
+                "refreshBulk();};"
+                "function J(u,b){return fetch(u,{method:'POST',headers:{'X-Scout-CSRF':CSRF,"
+                "'Content-Type':'application/json'},body:JSON.stringify(b)})"
+                ".then(function(r){return r.json();});}"
+                "function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){"
+                "return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}"
+                "function preview(){var d=picks();if(!d.length)return;"
+                "J('/api/scout/data/preview',{run_ids:d}).then(function(j){"
+                "var p=j.preview||{},o=document.getElementById('previewout');o.hidden=false;"
+                "var h='<h2>This would be removed</h2><ul>'+"
+                "'<li>'+(p.runs||[]).length+' run(s)</li>'+"
+                "'<li>'+(p.unique_domains||[]).length+' site(s): '+esc((p.unique_domains||[])"
+                ".join(', '))+'</li>'+"
+                "'<li>'+p.screenshots+' screenshot(s), '+p.videos+' video(s), '+p.findings+"
+                "' finding(s)</li>'+"
+                "'<li>'+Math.round((p.bytes_to_reclaim||0)/1024)+' KiB reclaimed</li></ul>';"
+                "if((p.shared_with_production||[]).length){h+='<p class=\"banner warn\">These '+"
+                "'sites are also part of production runs and keep their history: '+"
+                "esc(p.shared_with_production.join(', '))+'</p>';}"
+                "if((p.protected||[]).length){h+='<h3>Not included</h3><ul>'+p.protected.map("
+                "function(x){return '<li><code>'+esc(x.run_id)+'</code> — '+esc(x.reason)+"
+                "'</li>';}).join('')+'</ul>';}"
+                "o.innerHTML=h;var t=document.getElementById('tobin');"
+                "if(t)t.disabled=!(p.runs||[]).length;});}"
+                "function classify(){var d=picks(),s=document.getElementById('setpurpose');"
+                "if(!d.length||!s||!s.value)return;"
+                "J('/api/scout/data/classify',{run_ids:d,purpose:s.value}).then(function(j){"
+                "if((j.classified||[]).length)location.reload();"
+                "else document.getElementById('datamsg').textContent="
+                "(((j.refused||[])[0]||{}).reason||'Nothing was changed.');});}"
+                "function act(a){var d=picks();if(!d.length)return;"
+                "J('/api/scout/data/'+a,{run_ids:d}).then(function(j){"
+                "if(j.ok)location.reload();else document.getElementById('datamsg').textContent="
+                "(j.error||'Action failed');});}"
+                "function destroy(){var d=picks();if(!d.length)return;"
+                "J('/api/scout/data/preview',{run_ids:d}).then(function(j){var p=j.preview||{};"
+                "return qaConfirm('Permanently delete '+d.length+' run(s) and '+"
+                "Math.round((p.bytes_to_reclaim||0)/1024)+' KiB of evidence? This cannot be undone.',"
+                "'Delete permanently','DELETE');}).then(function(ok){if(!ok)return;"
+                "J('/api/scout/data/delete',{run_ids:d,confirm:true}).then(function(j){"
+                "if((j.deleted||[]).length)location.reload();"
+                "else document.getElementById('datamsg').textContent='Nothing was deleted.';});});}")
+            return _page("AI QA Factory — Data management", "/data", body, script)
 
         # --- guarded client-work mutations (v3.1) — NEVER a command/argv over HTTP -------------
         def _work_action(self, action: str):
@@ -887,7 +1095,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             if self.command != "HEAD":
                 self.wfile.write(data)
 
-        def _scout_artifact(self, run_id: str, rel: str):
+        def _scout_artifact(self, run_id: str, rel: str, *, download: bool = False):
             """Serve one captured evidence file from a specific Scout run, path-confined.
 
             The RunStore constructor rejects an unsafe run_id; `_confine` blocks traversal out of the
@@ -932,9 +1140,76 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("X-Content-Type-Options", "nosniff")
+            if download:
+                # The filename is the store's own already-validated component, never caller text, so
+                # it cannot carry a quote, a path separator or a header-splitting newline.
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="{target.name}"')
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(data)
+
+        def _scout_client_report_page(self, domain: str, run_id: str) -> str:
+            """A preview of what the client would receive, rendered by us rather than served as HTML.
+
+            The package's own report is a standalone HTML file built partly from text captured on a
+            third-party site. Serving those bytes inline would run untrusted markup on the
+            Dashboard's own origin, so this renders the SAME content through the app's escaping
+            instead. What the operator checks here is the content; the packaged file is the same
+            content in a portable wrapper.
+            """
+            det = self._campaign_service().target_detail(domain, run=run_id)
+            if det.get("analysis_complete") is not True:
+                return _page("AI QA Factory — Client report", "/scout",
+                             f'<h1>{_esc(domain)}</h1><div class="card"><p>No client report can be '
+                             f'previewed: this target has no completed analysis.</p>'
+                             f'<p><a class="btn" href="/scout/target?domain={_esc(domain)}">'
+                             f'Back to the target</a></p></div>')
+            findings = [f for f in (det.get("findings") or [])
+                        if str(f.get("severity") or "").strip().lower() != "info"]
+            run = det.get("run") or run_id
+
+            def _art(rel: str) -> str:
+                return f'/scout/artifact?run={_esc(run)}&rel={_esc(rel)}'
+
+            media = [str(m) for m in (det.get("media") or [])]
+            frames = {str(s.get("file") or ""): s for s in (det.get("screenshots") or [])
+                      if isinstance(s, dict)}
+            shots = "".join(
+                f'<figure class="report-shot"><a href="{_art(m)}" target="_blank" rel="noopener">'
+                f'<img src="{_art(m)}" alt="{_esc(frames.get(m.rsplit("/", 1)[-1], {}).get("role") or domain)}">'
+                f'</a><figcaption class="muted">'
+                f'{_esc(frames.get(m.rsplit("/", 1)[-1], {}).get("role") or m.rsplit("/", 1)[-1])}'
+                f'</figcaption></figure>'
+                for m in media if m.lower().rsplit(".", 1)[-1] in ("png", "jpg", "jpeg", "webp"))
+            vids = "".join(
+                f'<video src="{_art(m)}" controls preload="metadata" style="max-width:420px"></video>'
+                for m in media if m.lower().rsplit(".", 1)[-1] in ("webm", "mp4"))
+            rows = "".join(
+                f'<tr><td>{_badge(str(f.get("severity") or "unknown").upper())}</td>'
+                f'<td><strong>{_esc(f.get("title") or "Untitled finding")}</strong>'
+                f'<div class="muted">{_esc(f.get("business_impact") or "Impact not recorded.")}</div>'
+                f'</td><td class="muted">{_esc(f.get("url") or "")}</td></tr>'
+                for f in findings)
+            body = (
+                f'<h1>Client report preview — {_esc(domain)}</h1>'
+                f'<div class="row"><a class="chip" href="/scout/target?domain={_esc(domain)}'
+                f'&amp;run={_esc(run)}">Back to the target</a>'
+                f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run)}'
+                f'&amp;domain={_esc(domain)}">Download client evidence (.zip)</a></div>'
+                f'<div class="banner">This is exactly what the packaged report covers. Your talking '
+                f'points, the email draft and the contact\'s provenance are deliberately not here — '
+                f'they are operator notes, not client deliverables.</div>'
+                f'<div class="card"><h2>Findings the client will see</h2><div class="scrollx">'
+                f'<table class="responsive-table"><thead><tr><th>Severity</th>'
+                f'<th>Issue and impact</th><th>Page</th></tr></thead><tbody>'
+                f'{rows or "<tr><td colspan=3>No confirmed issue was recorded.</td></tr>"}'
+                f'</tbody></table></div></div>'
+                f'<div class="card"><h2>Screenshots</h2><div class="media-grid">'
+                f'{shots or "<p class=muted>No screenshot was captured for this target.</p>"}'
+                f'</div></div>'
+                + (f'<div class="card"><h2>Reproduction video</h2>{vids}</div>' if vids else ''))
+            return _page("AI QA Factory — Client report", "/scout", body)
 
         def _scout_client_evidence(self, domain: str, run_id: str):
             """Generate and download one exact-target, bounded, client-ready evidence ZIP."""
@@ -1638,10 +1913,12 @@ function startCampaign(){{
                         f'<span class="muted">{_esc(a["reason"])}</span></div>'
                         f'<a class="btn primary" href="{_esc(a["href"])}">'
                         f'Open<span class="sr-only"> {project}</span></a></div></div>')
+            # Nothing to do is one line. As a full-height card it competed for attention with the
+            # blocks that DID have something in them, and three such cards on one screen taught the
+            # operator to skim past the region where real blockers appear.
             att = "".join(_att(a) for a in ov.attention) or (
-                '<div class="card empty compact status-hero"><strong>Nothing needs your attention'
-                '</strong><div class="muted">Blocked or review-ready work will appear here.</div>'
-                '</div>')
+                '<p class="quiet-state attention-clear">Nothing needs your attention. '
+                '<span class="muted">Blocked or review-ready work appears here.</span></p>')
             def _wrow(p):
                 return (f'<tr><td><a href="{_esc(p["href"])}">{_esc(p["title"])}</a></td>'
                         f'<td>{_badge(p["stage"])}</td><td>{_badge(health_label(p["health"]), p["health"])}</td>'
@@ -1666,13 +1943,9 @@ function startCampaign(){{
                         f'{"".join(_wcard(p) for p in ov.active_work)}</ul>'
                         f'{more_open}'
                         if work else
-                        '<div class="card empty compact"><strong>No active client work</strong>'
-                        '<div class="muted">Paste a client brief to create a reviewable work plan.'
-                        '</div><p class="row empty-actions">'
-                        '<a class="btn primary" href="/work?create=1#client-brief">'
-                        'Analyze a client brief</a>'
-                        '<a class="btn" href="/docs">How client work operates</a></p>'
-                        '</div>')
+                        '<p class="quiet-state">No client work is running. '
+                        '<a href="/work?create=1#client-brief">Analyze a client brief</a> to create '
+                        'a reviewable plan.</p>')
             def _crow(c):
                 return (f'<tr><td>{_esc(c["title"])}</td><td>{_badge(c["status"])}</td>'
                         f'<td>{_esc(c["next_action"])}</td></tr>')
@@ -1689,31 +1962,24 @@ function startCampaign(){{
                 f'<p><a class="btn" href="/scout/campaigns">Review Scout campaigns</a></p></div>'
                 if failed_scout else '')
             camps = "".join(_crow(c) for c in ov.active_campaigns)
-            camp_tbl = (f'<table><caption>Active Scout campaigns</caption><tr><th>Campaign</th>'
-                        f'<th>Status</th><th>Next action</th></tr>{camps}</table>'
+            camp_tbl = (f'<div class="scrollx"><table><caption>Active Scout campaigns</caption>'
+                        f'<tr><th>Campaign</th><th>Status</th><th>Next action</th></tr>{camps}'
+                        f'</table></div>'
                         if camps else
-                        '<div class="card empty compact"><strong>Scout is ready</strong>'
-                        '<div class="muted">Start a bounded campaign when you want to discover new '
-                        'prospects.</div><p><a class="btn primary" href="/scout/new">Start a Scout '
-                        'campaign</a></p></div>')
+                        '<p class="quiet-state">No campaign is running.</p>')
+            # Scout is the primary thing this page starts, so its two actions are always offered —
+            # not only when the campaign list happens to be empty.
+            scout_actions = ('<div class="row scout-actions">'
+                             '<a class="btn primary" href="/scout/new">Start Scout</a>'
+                             '<a class="btn" href="/results">View Scout results</a>'
+                             '<a class="btn" href="/scout/attention">Needs attention</a></div>')
             hidden = ov.counts.get("diagnostics_hidden", 0)
-            diag_toggle = (
-                '<a class="chip" href="/">&#10003; Production only — hide diagnostics</a>' if diag else
-                (f'<a class="chip" href="/?diagnostics=1">Show diagnostics ({hidden})</a>'
-                 if hidden else ''))
+            # The diagnostics switch is a view preference, not a status, so it belongs with the rest
+            # of the diagnostics under More. Only the banner stays here — while the view IS filtered
+            # the operator has to be told, or the counts silently mean something else.
             diag_banner = ('<div class="banner warn">Showing diagnostic data (smoke/acceptance/'
-                           'replay/demo). These are not production work.</div>' if diag else '')
-            hidden_description = (
-                'Diagnostic records are visible in this view; production counts remain separate.'
-                if diag else
-                ('1 test, replay, or diagnostic record is hidden from production counts.'
-                 if hidden == 1 else
-                 f'{hidden} test, replay, or diagnostic records are hidden from production counts.'))
-            diag_options = (
-                f'<details class="advanced compact-details"><summary>Advanced view options</summary>'
-                f'<p class="muted">{hidden_description}</p>'
-                f'<div class="row">{diag_toggle}</div></details>'
-                if diag_toggle else '')
+                           'replay/demo). These are not production work. '
+                           '<a href="/">Show production only</a></div>' if diag else '')
             body = (f'<h1>Overview</h1>{diag_banner}'
                     f'<div class="summary-grid overview-summary">'
                     f'<a class="summary-item" href="/work?view=active">'
@@ -1727,14 +1993,13 @@ function startCampaign(){{
                     f'<span class="muted">Active Scout campaigns</span>'
                     f'<strong>{ov.counts.get("active_campaigns", 0)}</strong></a></div>'
                     f'{self._poll_html()}'
+                    f'<h2>Scout</h2>{scout_actions}{scout_failed_block}{camp_tbl}'
                     f'<h2>Needs your attention</h2>{att}'
-                    f'<h2>Active work</h2>'
+                    f'<h2>Client work</h2>'
                     f'<p class="muted">Approved projects that are ready to run, running, or being '
                     f'validated. Everything not yet finished lives in Open work.</p>'
                     f'{work_tbl}'
-                    f'<h2>Scout</h2>{scout_failed_block}'
-                    f'<div class="scrollx">{camp_tbl}</div>{diag_options}'
-                    f'{_runtime_block_html()}')
+                    f'{_system_ready_html(service.output_dir, hidden)}')
             script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
                       + self._poll_script(
                           "/api/overview",
@@ -2388,191 +2653,97 @@ function startCampaign(){{
                 return self._json(400, {"ok": False, "error": str(exc)})
 
         def _scout_new_page(self, q=None) -> str:
+            """One Start Scout for all three ways of naming sites.
+
+            The operator chooses WHERE the sites come from — found, pasted, uploaded — and nothing
+            else. Depth, coverage, capture and page caps are decisions Scout makes from the same
+            tested policy every time; asking the operator to pick them before each run made the
+            outcome depend on knowledge of the host rather than on the work.
+
+            The three panels differ only in how the queue is filled. After that they post into the
+            same pipeline, and the counts shown before Start come from the same intake code that
+            builds the queue afterwards.
+            """
             cat = self._campaign_service().catalog()
-            show_diagnostics = self._want_diagnostics(q or {})
-            presets = [p for p in cat["campaign_presets"]
-                       if show_diagnostics or not p.get("is_smoke")]
-            opts = "".join(
-                f'<option value="{_esc(p["key"])}"{" selected" if p["key"]==cat["default_campaign_preset"] else ""}>'
-                f'{_esc(p["label"])}{" (diagnostic)" if p.get("is_smoke") else ""}</option>'
-                for p in presets)
-            sess = "".join(f'<option value="{_esc(s["key"])}">{_esc(s["label"])} '
-                           f'({s["max_discovered"]} discovered / {s["max_qa_analyzed"]} QA / '
-                           f'{s["max_duration_min"]}m)</option>' for s in cat["session_presets"])
-            strategy_labels = {
-                "conservative": "Conservative — strongest commercial fit",
-                "balanced": "Balanced — recommended",
-                "opportunity": "Wider discovery — more opportunities",
-            }
-            strat = "".join(
-                f'<option value="{_esc(s)}">{_esc(strategy_labels.get(s, s.title()))}</option>'
-                for s in cat["strategies"])
-            ind_opts = "".join(
-                f'<label class="option-tile"><input type="checkbox" name="industry" '
-                f'value="{_esc(i)}"><span>{_esc(i)}</span></label>'
-                for i in cat["industries"])
             site_type_labels = {
-                "commercial_product_company": "Commercial product",
                 "b2b_saas": "B2B SaaS",
+                "commercial_product_company": "Commercial product",
                 "ecommerce": "E-commerce",
                 "booking_travel": "Travel and booking",
                 "professional_services": "Professional services",
                 "marketplace": "Marketplace",
-                "personal_portfolio": "Personal portfolio",
             }
-            site_opts = "".join(
-                f'<label class="option-tile"><input type="checkbox" name="sitetype" '
+            biz = "".join(
+                f'<label class="option-tile"><input type="checkbox" name="biztype" '
                 f'value="{_esc(s)}"><span>{_esc(site_type_labels.get(s, s.replace("_", " ").title()))}'
                 '</span></label>'
-                for s in cat["site_types"])
+                for s in cat["site_types"] if s in site_type_labels)
             body = (
-                '<h1>New Scout campaign</h1>'
-                '<p class="page-intro muted">Find public business websites worth reviewing for '
-                'QA opportunities. Scout analyzes them safely and never contacts anyone.</p>'
-                '<div class="row"><a class="chip" href="/scout/history">Campaign history</a>'
+                '<h1>Start Scout</h1>'
+                '<p class="page-intro muted">Tell Scout where to get the websites. It scans them the '
+                'same safe way whichever source you pick.</p>'
+                '<div class="row"><a class="chip" href="/scout/history">History</a>'
                 '<a class="chip" href="/scout/attention">Needs attention</a>'
-                '<a class="chip" href="/scout">Scan a known URL</a></div>'
-                '<div class="card formstack campaign-card"><h2>Campaign setup</h2>'
-                '<label>Campaign preset<select id="preset">' + opts + '</select></label>'
-                '<p class="field-help">Each preset on this page starts one bounded run now; '
-                'it does not create a recurring schedule.</p>'
-                '<label>Run size<select id="session">'
-                '<option value="">Use campaign default</option>'
-                + sess + '</select></label>'
-                '<label>Countries<input id="countries" placeholder="US, DE"></label>'
-                '<p class="field-help">Enter country codes separated by commas. Leave blank to use '
-                'the selected preset: global presets stay unrestricted, while regional presets '
-                'keep their preset countries.</p>'
-                '<fieldset class="option-field"><legend>Industries</legend>'
-                '<div class="option-grid">' + ind_opts + '</div>'
-                '<p class="field-help">Choose any that matter. With none selected, Scout uses the '
-                'campaign default.</p></fieldset>'
+                '<a class="chip" href="/results">Companies &amp; outreach</a></div>'
+                '<div class="card formstack campaign-card">'
+                '<fieldset class="option-field"><legend>Where should the websites come from?</legend>'
+                '<div class="option-grid" id="sources">'
+                '<label class="option-tile"><input type="radio" name="source" value="find" checked>'
+                '<span>Find websites</span></label>'
+                '<label class="option-tile"><input type="radio" name="source" value="paste">'
+                '<span>Paste URLs</span></label>'
+                '<label class="option-tile"><input type="radio" name="source" value="file">'
+                '<span>Upload file</span></label>'
+                '</div></fieldset>'
+
+                '<section id="p-find" class="source-panel">'
+                '<label>Countries<input id="countries" placeholder="CA, CH"></label>'
+                '<p class="field-help">Country codes, separated by commas. Leave blank to search '
+                'without a country restriction.</p>'
+                '<fieldset class="option-field"><legend>Business types</legend>'
+                '<div class="option-grid">' + biz + '</div>'
+                '<p class="field-help">Leave all unchecked and Scout looks for small and mid-size '
+                'B2B SaaS companies, the profile it is tuned for.</p></fieldset>'
                 '<label>Signals to look for<input id="keywords" '
-                'placeholder="pricing, free trial, book demo"></label>'
-                '<p class="field-help">Optional keywords, separated by commas.</p>'
-                '<label class="feature-choice"><input type="checkbox" id="deepcapture"> '
-                '<span><strong>Capture screenshots and browser evidence</strong>'
-                '<small>Slower, but creates stronger proof for client-ready findings.</small>'
-                '</span></label>'
-                '<details class="advanced campaign-advanced">'
-                '<summary>Advanced campaign controls</summary>'
-                '<p class="field-help advanced-intro">Optional refinements for unusual campaigns. '
-                'Leave them unchanged to use the tested campaign defaults.</p>'
-                '<section class="advanced-section" aria-labelledby="targeting-heading">'
-                '<h3 id="targeting-heading">Targeting refinements</h3>'
-                '<label>Site selection approach<select id="strategy">'
-                '<option value="">Use campaign default</option>' + strat + '</select></label>'
-                '<label>Website languages<input id="languages" placeholder="en, de"></label>'
-                '<p class="field-help">Optional language codes, separated by commas.</p>'
-                '<fieldset class="option-field compact-options"><legend>Website types</legend>'
-                '<div class="option-grid">' + site_opts + '</div>'
-                '<p class="field-help">Choose only when you need to narrow the campaign. With none '
-                'selected, Scout uses the campaign default.</p></fieldset>'
-                '<label>Words to exclude<input id="excludekw" '
-                'placeholder="jobs, investor relations"></label>'
-                '<p class="field-help">Sites containing these words in visible page signals are '
-                'filtered out before QA analysis.</p>'
+                'placeholder="user feedback, roadmap, changelog"></label>'
+                '<p class="field-help">Optional words that should appear on the site.</p>'
                 '</section>'
-                '<section class="advanced-section" aria-labelledby="limits-heading">'
-                '<h3 id="limits-heading">Run limits</h3>'
-                '<p class="field-help section-help">Blank fields inherit the selected campaign preset '
-                'and run size.</p><div class="limit-grid">'
-                '<label>Minimum commercial fit <span class="label-note">0–100</span>'
-                '<input id="minscore" type="number" min="0" max="100" '
-                'placeholder="Campaign default"><small>Higher values keep only stronger prospects.'
-                '</small></label>'
-                '<label>Discovery cap<input id="maxdisc" type="number" min="1" '
-                'placeholder="Campaign default"><small>Maximum candidate websites discovered.'
-                '</small></label>'
-                '<label>Page cap per site<input id="maxpages" type="number" min="1" max="50" '
-                'placeholder="Campaign default"><small>Maximum pages reviewed on each website.'
-                '</small></label></div></section>'
-                '<section class="advanced-section readiness-section" '
-                'aria-labelledby="readiness-heading">'
-                '<h3 id="readiness-heading">System readiness</h3>'
-                '<p class="field-help section-help">Checks search access, browser capture, evidence '
-                'storage and safety limits. It does not start a campaign.</p>'
-                '<div class="row"><button type="button" id="pf" class="chip">'
-                'Check system readiness</button></div>'
-                '<div id="pfout" class="readiness-output" role="status" aria-live="polite" '
-                'hidden></div></section>'
-                + ('<p class="muted">Diagnostic campaign presets are visible in this view. '
-                   '<a href="/scout/new">Return to production presets</a>.</p>'
-                   if show_diagnostics else
-                   '<p class="muted"><a href="/scout/new?diagnostics=1">'
-                   'Show diagnostic campaign presets</a></p>') +
-                '</details>'
-                '<div class="banner safety-note"><strong>Safe, read-only discovery</strong>'
-                '<p>Every campaign has a fixed time and size limit. Scout may visit real public '
-                'websites, but it will not submit forms, make purchases or send messages.</p></div>'
+
+                '<section id="p-paste" class="source-panel" hidden>'
+                '<label for="seeds">Website addresses</label>'
+                '<textarea id="seeds" rows="6" placeholder="https://example.com&#10;'
+                'another-company.com"></textarea>'
+                '<p class="field-help">One per line. Addresses you enter yourself are always '
+                'scanned — Scout will not drop them for scoring reasons.</p>'
+                '</section>'
+
+                '<section id="p-file" class="source-panel" hidden>'
+                '<label for="listfile">CSV or XLSX file</label>'
+                '<input type="file" id="listfile" accept=".csv,.xlsx">'
+                '<p class="field-help">Scout reads the column that holds website addresses and '
+                'ignores the rest.</p>'
+                '</section>'
+
+                '<div id="intake" class="readiness-output" role="status" aria-live="polite" hidden>'
+                '</div>'
+
+                '<label>Maximum sites<input id="maxsites" type="number" min="1" max="50" value="10">'
+                '</label>'
+                '<p class="field-help">An upper bound for this run. Scout stops earlier when there is '
+                'nothing more worth checking.</p>'
+
+                '<div class="banner safety-note"><strong>Read-only scan</strong>'
+                '<p id="safetysummary">Read-only scan · up to 10 sites · evidence saved '
+                'automatically · no forms, purchases or messages.</p></div>'
                 '<label class="approval-choice"><input type="checkbox" id="approve"> '
-                '<span><strong>Approve live discovery for this campaign</strong>'
-                '<small>This approval applies only to this one bounded run.</small></span></label>'
+                '<span><strong>Start this bounded read-only run</strong>'
+                '<small>Applies to this run only.</small></span></label>'
                 '<div class="row campaign-actions"><button type="button" id="run" '
-                'class="chip primary">Run campaign</button>'
+                'class="chip primary">Start Scout</button>'
                 '<span id="msg" class="muted" role="status" aria-live="polite"></span></div></div>')
-            script = (
-                "const CSRF=" + json.dumps(csrf_token) + ";\n"
-                "function J(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json',"
-                "'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(r=>r.json());}\n"
-                "function v(id){var e=document.getElementById(id);return e?e.value.trim():'';}\n"
-                "function csv(s){return s.split(',').map(x=>x.trim()).filter(Boolean);}\n"
-                "function checks(name){return Array.from(document.querySelectorAll("
-                "'input[name=\"'+name+'\"]:checked')).map(e=>e.value);}\n"
-                "function readinessText(j){if(j&&j.ok===false)return 'Cannot check this setup — '+"
-                "(j.error||'review the campaign values.');var p=j.preflight||j;"
-                "if(!p||!Array.isArray(p.checks))return 'Readiness check finished.';"
-                "var names={tavily_key:'Search provider',browser:'Browser evidence',"
-                "network:'Internet connection',evidence_dir:'Evidence storage',"
-                "runtime:'Scout runtime',safety_policy:'Campaign limits and safety',"
-                "auth_dependency:'Public-site access',scheduling:'Scheduling (optional)'};"
-                "var states={ready:'Ready',configured:'Configured',skipped:'Not needed',"
-                "not_ready:'Needs setup',blocked:'Blocked',error:'Error'};"
-                "var lines=[p.ok?'Ready to run':'Action needed before launch'];"
-                "p.checks.forEach(function(c){var line=(names[c.key]||c.label||c.key)+': '+"
-                "(states[c.status]||c.status);if(c.required&&c.status!=='ready'&&"
-                "c.status!=='configured'&&c.status!=='skipped'&&c.detail)line+=' — '+c.detail;"
-                "lines.push(line);});return lines.join('\\n');}\n"
-                "function ov(){var o={};"
-                "var c=v('countries');if(c)o.countries=csv(c);"
-                "var lg=v('languages');if(lg)o.languages=csv(lg);"
-                "var st=document.getElementById('strategy').value;if(st)o.strategy=st;"
-                "var ind=checks('industry');if(ind.length)o.industries=ind;"
-                "var sty=checks('sitetype');if(sty.length)o.site_types=sty;"
-                "var kw=v('keywords');if(kw)o.keywords=csv(kw);"
-                "var ex=v('excludekw');if(ex)o.exclude_keywords=csv(ex);"
-                "var ms=v('minscore');if(ms)o.min_commercial_threshold=parseInt(ms,10);"
-                "var md=v('maxdisc');if(md)o.max_candidates=parseInt(md,10);"
-                "var mp=v('maxpages');if(mp)o.max_pages_per_site=parseInt(mp,10);"
-                "var dc=document.getElementById('deepcapture');"
-                "if(dc&&dc.checked)o.browser_mode='playwright';"
-                "return o;}\n"
-                "document.getElementById('pf').onclick=function(){"
-                "var out=document.getElementById('pfout');var button=this;"
-                "out.hidden=false;out.textContent='Checking system readiness…';button.disabled=true;"
-                "J('/api/scout/preflight',{campaign_preset:document.getElementById('preset').value,"
-                "session_preset:document.getElementById('session').value||null,overrides:ov(),"
-                "probe_browser:document.getElementById('deepcapture').checked})"
-                ".then(function(j){out.textContent=readinessText(j);button.disabled=false;})"
-                ".catch(function(e){out.textContent='Readiness check failed: '+e;"
-                "button.disabled=false;});};\n"
-                "document.querySelectorAll('.campaign-card input,.campaign-card select')"
-                ".forEach(function(control){control.addEventListener('change',function(){"
-                "var out=document.getElementById('pfout');if(!out.hidden){out.hidden=true;"
-                "out.textContent='';}});});\n"
-                "document.getElementById('run').onclick=function(){"
-                "var approve=document.getElementById('approve');var msg=document.getElementById('msg');"
-                "var run=document.getElementById('run');"
-                "if(!approve.checked){msg.textContent='Approve live discovery before starting.';"
-                "approve.focus();return;}msg.textContent='Starting campaign…';run.disabled=true;"
-                "J('/api/scout/launch',{campaign_preset:document.getElementById('preset').value,"
-                "session_preset:document.getElementById('session').value||null,"
-                "approve_live_discovery:true,overrides:ov()}).then(function(j){"
-                "if(j.ok){location.href='/scout/progress?id='+encodeURIComponent(j.campaign_id);}"
-                "else{run.disabled=false;msg.textContent='Campaign could not start: '+"
-                "(j.error||'unknown error');}})"
-                ".catch(e=>{run.disabled=false;msg.textContent='Campaign could not start: '+e;});};\n")
-            return _page("AI QA Factory — New Scout campaign", "/scout", body, script)
+            script = _START_SCOUT_JS.replace("__CSRF__", json.dumps(csrf_token))
+            return _page("AI QA Factory — Start Scout", "/scout", body, script)
+
 
         def _scout_progress_page(self, cid: str) -> str:
             body = ('<h1>Campaign progress</h1><div class="row">'
@@ -2644,41 +2815,61 @@ function startCampaign(){{
                 until = (to + "T23:59:59+00:00") if to else ""
             elif days > 0:
                 since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-            rows = self._campaign_service().history(filters={
-                "text": qtext, "since": since, "until": until,
+            result_filter = (q.get("result") or [""])[0].strip()
+            rows = self._campaign_service().history_results(filters={
+                "text": qtext, "since": since, "until": until, "result": result_filter,
                 "archived": "only" if show_archived else "",
             })
             active_days = days if (days > 0 and not (frm or to)) else 0
-            filtered = bool(qtext or since or until)
+            filtered = bool(qtext or since or until or result_filter)
             total = len(self._campaign_service().history(filters={
                 "archived": "only" if show_archived else ""}))
             count_label = (f"{len(rows)} shown of {total} total"
                            if filtered and len(rows) != total else f"{total} total")
-            range_chips = "".join(
-                f'<a class="chip{" active" if active_days == val else ""}" '
-                f'href="/scout/history?days={val}'
-                f'{"&archived=1" if show_archived else ""}'
-                f'{("&text=" + _esc(qtext)) if qtext else ""}">{lbl}</a>'
-                for val, lbl in ((1, "Today"), (7, "7 days"), (30, "30 days"), (0, "All")))
-            trs = "".join(
-                f'<tr><td class="select-cell"><input type="checkbox" class="pick" '
-                f'value="{_esc(r.get("domain",""))}" aria-label="Select {_esc(r.get("domain",""))}"></td>'
-                f'<td data-label="Target"><a href="/scout/target?domain={_esc(r.get("domain",""))}">'
-                f'{_esc(r.get("domain",""))}</a></td>'
-                f'<td data-label="Analysis">{_badge(_analysis_status_label(r.get("analysis_status","")))}</td>'
-                f'<td data-label="Prospect stage">{_badge(r.get("engagement_status","prospect").title())}</td>'
-                f'<td data-label="Analyzed" class="muted">{_fmt_ts(r.get("last_analysis_at",""))}</td>'
-                f'<td data-label="Note" class="muted">'
-                f'{_esc(_manual_reason_label(r.get("reason",""))) if r.get("reason") else "&mdash;"}</td></tr>'
-                for r in rows)
+
+            def _row(r) -> str:
+                # Every cell states a fact about the outcome. "Not found" and "None captured" are
+                # said in words rather than left blank, because an empty cell reads as "still
+                # working" and this analysis has finished.
+                res = r.get("result") or {}
+                domain = r.get("domain", "")
+                run = r.get("run", "")
+                href = (f'/scout/target?domain={_esc(domain)}'
+                        + (f'&run={_esc(run)}' if run else ''))
+                email = res.get("contact_email") or ""
+                contact = (f'<a href="mailto:{_esc(email)}">{_esc(email)}</a>' if email
+                           else '<span class="muted">Not found</span>')
+                priority = res.get("priority") or ""
+                # Why, under the what. A blocked or rejected row without its reason forces the
+                # operator to open the target just to learn the run refused it as a social network.
+                raw_reason = res.get("reason") or r.get("reason") or ""
+                why = (f'<div class="muted result-why">'
+                       f'{_esc(_manual_reason_label(raw_reason))}</div>' if raw_reason else '')
+                return (
+                    f'<tr><td class="select-cell"><input type="checkbox" class="pick" '
+                    f'value="{_esc(domain)}" aria-label="Select {_esc(domain)}"></td>'
+                    f'<td data-label="Site"><a href="{href}">{_esc(domain)}</a></td>'
+                    f'<td data-label="Result">'
+                    f'{_badge(res.get("label", "Unknown"), res.get("kind", ""))}{why}</td>'
+                    f'<td data-label="Priority">'
+                    f'{_badge(priority) if priority else "<span class=\'muted\'>&mdash;</span>"}</td>'
+                    f'<td data-label="Evidence" class="muted">'
+                    f'{_esc(res.get("evidence_label", "None captured"))}</td>'
+                    f'<td data-label="Contact">{contact}</td>'
+                    f'<td data-label="Analyzed" class="muted">'
+                    f'{_fmt_ts(r.get("last_analysis_at", ""))}</td>'
+                    f'<td data-label="Open"><a class="chip" href="{href}">Open</a></td></tr>')
+
+            trs = "".join(_row(r) for r in rows)
             empty_msg = (f'0 shown of {total} total &mdash; no sites match this filter.'
                          if filtered and total > 0 else
                          ('No archived targets.' if show_archived else 'No analyzed sites yet.'))
             table = (f'<table class="responsive-table"><caption>'
                      f'{"Archived" if show_archived else "Active"} targets &mdash; {count_label}</caption>'
                      f'<thead><tr><th><input type="checkbox" id="pickall" aria-label="Select all"></th>'
-                     f'<th>Target</th><th>Analysis</th><th>Prospect stage</th><th>Analyzed</th>'
-                     f'<th>Note</th></tr></thead><tbody>{trs}</tbody></table>'
+                     f'<th>Site</th><th>Result</th><th>Priority</th><th>Evidence</th>'
+                     f'<th>Contact</th><th>Analyzed</th><th>Open</th></tr></thead>'
+                     f'<tbody>{trs}</tbody></table>'
                      if rows else f'<div class="card empty muted">{empty_msg}</div>')
             active_tab = ('<a class="chip" href="/scout/history">Active</a>'
                           if show_archived else '<span class="chip active">Active</span>')
@@ -2693,17 +2884,25 @@ function startCampaign(){{
                     f'<a class="chip" href="/scout/new">New campaign</a>'
                     f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
                     f'<div class="row">{active_tab}{archived_tab}</div>'
-                    f'<div class="row" style="margin-bottom:6px">{range_chips}</div>'
+                    # Search, one result filter and ONE date disclosure. Range chips, a last-N-days
+                    # box and a from/to pair used to sit side by side — three controls for one
+                    # question, each silently overriding the others.
                     f'<form method="get" class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
                     f'<input type="hidden" name="archived" value="{"1" if show_archived else ""}">'
+                    f'<label class="sr-only" for="history_text">Filter by domain or text</label>'
+                    f'<input id="history_text" name="text" placeholder="filter domain/text" '
+                    f'value="{_esc(qtext)}">'
+                    f'<label class="sr-only" for="history_result">Filter by result</label>'
+                    f'<select id="history_result" name="result">'
+                    f'{_result_options(result_filter)}</select>'
+                    f'<details class="inline-filter"><summary>Date range</summary>'
+                    f'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
                     f'<label class="muted">Last <input name="days" type="number" min="1" max="3650" '
                     f'style="width:64px" value="{active_days or ""}"> days</label>'
                     f'<span class="muted">or</span>'
                     f'<label class="muted">from <input name="from" type="date" value="{_esc(frm)}"></label>'
                     f'<label class="muted">to <input name="to" type="date" value="{_esc(to)}"></label>'
-                    f'<label class="sr-only" for="history_text">Filter by domain or text</label>'
-                    f'<input id="history_text" name="text" placeholder="filter domain/text" '
-                    f'value="{_esc(qtext)}">'
+                    f'</div></details>'
                     f'<button class="chip">Filter</button>'
                     f'<a class="chip" href="/scout/history">Reset</a></form>'
                     f'<div class="scrollx">{table}</div>'
@@ -3173,7 +3372,6 @@ function startCampaign(){{
 
             imgs = [m for m in media if _ext(m) in ("png", "jpg", "jpeg", "webp", "gif")]
             vids = [m for m in media if _ext(m) in ("webm", "mp4")]
-            trace = next((e for e in evidence_files if e.get("name") == "browser_trace.json"), None)
             obs_file = next((e for e in evidence_files if e.get("name") == "observation.json"), None)
             evidence_count = len(media) + len(evidence_files)
             # Name each frame by the page it shows. A row of anonymous thumbnails makes the operator
@@ -3213,21 +3411,10 @@ function startCampaign(){{
                               'Use Deep capture for screenshots; video is kept only for a qualifying '
                               'reproduced interaction.</p>')
 
-            trace_html = (
-                f'<a href="{_art_url(trace["rel"])}" target="_blank" rel="noopener">Open event trace</a>'
-                if trace else
-                '<span class="muted">Not recorded for this scan mode or no browser sequence ran.</span>')
-            axe_status = str(network.get("axe_status") or "")
-            if axe_status == "ok":
-                axe_text = f'Ran · {len(network.get("axe_violations") or [])} violation group(s)'
-            elif axe_status == "unavailable":
-                axe_text = "Attempted, but axe-core evidence was unavailable"
-            else:
-                axe_text = "Not attempted in this scan mode"
-            network_available = bool(network.get("status") or network.get("console_errors")
-                                     or network.get("failed_resources") or network.get("timing_ms"))
-
-            status_note = ("Completed with confirmed actionable findings."
+            # Evidence presence/absence is decided once, in core.scout.evidence_state, so the page,
+            # the History row and anything else asking "was there a screenshot?" cannot answer it
+            # three slightly different ways. See _evidence_state_grid_html below.
+            status_note =("Completed with confirmed actionable findings."
                            if actionable else
                            "Completed. No actionable defect was confirmed in this bounded scan.")
             body = (
@@ -3243,27 +3430,12 @@ function startCampaign(){{
                 f'<strong>{_esc(pages if pages is not None else "—")}</strong></div>'
                 f'<div class="summary-item"><span class="muted">Evidence files</span>'
                 f'<strong>{evidence_count}</strong></div></div>'
-                f'<div class="row" style="margin-top:16px">'
-                f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run_id)}'
-                f'&amp;domain={_esc(domain)}">Download client-ready evidence (.zip)</a>'
-                f'<span class="muted">One target · client-oriented · review required · '
-                f'up to 20 MiB</span></div>'
-                f'<p class="muted">The ZIP includes an offline HTML summary, findings, coverage, '
-                f'screenshots, optional reproduced-interaction video, sanitized console/network '
-                f'evidence, and integrity hashes. Review it before attaching it to email.</p></div>'
+                f'</div>'
                 f'<div class="card"><h2>Findings</h2><div class="scrollx">'
                 f'{_problems_table_html(findings)}</div></div>'
                 f'<div class="card"><h2>Evidence</h2><div class="media-grid">{media_html}</div>'
-                f'<div class="evidence-grid" style="margin-top:12px">'
-                f'<div class="evidence-item"><h3>Screenshots</h3>'
-                f'<span>{len(imgs)} captured</span></div>'
-                f'<div class="evidence-item"><h3>Reproduction video</h3>'
-                f'<span>{len(vids)} captured</span></div>'
-                f'<div class="evidence-item"><h3>Browser trace</h3>{trace_html}</div>'
-                f'<div class="evidence-item"><h3>Network / console</h3>'
-                f'<span>{"Captured" if network_available else "Not available"}</span></div>'
-                f'<div class="evidence-item"><h3>Accessibility (axe)</h3>'
-                f'<span>{_esc(axe_text)}</span></div></div>'
+                f'{_evidence_state_grid_html(det)}'
+                f'{_evidence_files_html(evidence_files, _art_url)}'
                 f'<p class="muted">This trace is a redacted structured event record, not a native '
                 f'Playwright <code>trace.zip</code>. Playwright Inspector is a live developer tool '
                 f'and is intentionally not exposed in the operator UI.</p></div>'
@@ -3287,14 +3459,29 @@ function startCampaign(){{
                     contact_rows = '<span class="muted">No public contact found.</span>'
                 eng = entry.get("engagement_status", "prospect")
                 work_id = entry.get("work_id", "")
+                # The talking points are the deterministic bullets the draft is built from. Showing
+                # them beside the letter lets the operator check that the prose claims nothing the
+                # findings do not support — the draft is prose, these are the facts.
+                points = "".join(f'<li>{_esc(point)}</li>'
+                                 for point in (draft.get("problem_bullets") or []))
                 body += (
-                    '<div class="card"><h2>Next actions</h2>'
+                    '<div class="card"><h2>Contact &amp; outreach</h2>'
                     '<div class="evidence-grid">'
                     f'<div class="evidence-item"><h3>Public contact</h3>{contact_rows}</div>'
                     f'<div class="evidence-item"><h3>What we can offer</h3>'
                     f'<p>{_esc(fixability.get("summary") or "Review scope before promising a fix.")}</p>'
                     '<p class="muted">Implementation is offered only after scope agreement and '
                     'repo/staging access. Nothing is promised automatically.</p></div></div>'
+                    f'<h3>Talking points</h3><ul class="talking-points">{points}</ul>'
+                    f'<h3>Suggested subject</h3><p><code>{_esc(draft.get("subject",""))}</code></p>'
+                    f'<h3>Email draft {_badge("Draft — not sent", "attention")}</h3>'
+                    '<label for="draftbody" class="sr-only">Outreach draft body</label>'
+                    f'<textarea id="draftbody" aria-label="Outreach draft body" readonly rows="9">'
+                    f'{_esc(draft.get("body",""))}</textarea>'
+                    '<div class="row"><button class="chip" type="button" '
+                    'onclick="copyDraft()">Copy draft</button></div>'
+                    '<p class="muted">Nothing is sent automatically, and the draft is not part of '
+                    'the client package — it is your text, not theirs.</p>'
                     f'<p><b>Prospect stage:</b> {_badge(eng)}</p>'
                     '<div class="row"><button class="btn primary" type="button" '
                     'onclick="startCW()">Prepare client work</button>'
@@ -3303,20 +3490,15 @@ function startCampaign(){{
                     '<button class="chip" type="button" onclick="setEng(\'lost\')">Lost</button>'
                     + (f'<a class="chip" href="/work/{_esc(work_id)}">Open linked work</a>'
                        if work_id else '')
-                    + '<span id="actionmsg" class="muted" aria-live="polite"></span></div>'
-                    '<details><summary>Copy-only outreach draft</summary>'
-                    f'<p><b>Subject:</b> {_esc(draft.get("subject",""))}</p>'
-                    '<label for="draftbody"><b>Draft body</b></label>'
-                    f'<textarea id="draftbody" aria-label="Outreach draft body" readonly rows="9">'
-                    f'{_esc(draft.get("body",""))}</textarea>'
-                    '<button class="chip" type="button" onclick="copyDraft()">Copy draft</button>'
-                    '</details><p class="muted">Nothing is sent automatically. Client work is a '
-                    'proposal/preparation step and does not mark the prospect Won.</p></div>')
+                    + '<span id="actionmsg" class="muted" aria-live="polite"></span></div></div>')
             else:
-                body += ('<div class="card"><h2>Next actions</h2><p class="muted">Outreach draft and '
-                         'client-work actions are disabled because this run has no confirmed '
-                         'actionable finding. Run a deeper bounded check if more coverage is needed.'
+                body += ('<div class="card"><h2>Contact &amp; outreach</h2>'
+                         '<p class="muted">No outreach draft is written because this run confirmed '
+                         'no actionable finding. That is not a conclusion that the site is '
+                         'defect-free — run a deeper bounded check if more coverage is needed.'
                          '</p></div>')
+
+            body += _client_package_html(self._campaign_service(), domain, run_id, det)
 
             source_kind = det.get("source_kind") or ""
             source_note = {
@@ -3552,23 +3734,62 @@ function startCampaign(){{
             return _page(page_title, "/scout", body, script)
 
         def _scout_attention_page(self) -> str:
+            """One row per site that needs a human — not one per attempt, and no non-sites.
+
+            Both numbers in the headline come from the same inventory that builds the table, so the
+            sentence and the rows can never disagree: the count of companies waiting and the count
+            of times Scout was blocked are different facts and are named as different facts.
+            """
+            from core.scout.needs_attention import attention_inventory
+
+            inv = attention_inventory(service.output_dir)
             data = challenge_manager.snapshot()
-            blocked = data.get("blocked_targets") or []
             sessions = data.get("sessions") or []
+
+            def _attempts_cell(site) -> str:
+                # Earlier tries are this site's history. Naming them keeps the row honest about how
+                # much has already been spent on it without adding another row to the queue.
+                if site.attempt_count <= 1:
+                    return '<span class="muted">1 attempt</span>'
+                older = "".join(
+                    f'<li>{_fmt_ts(a.get("updated_at", ""))} &mdash; '
+                    f'<a href="/scout/target?run={_esc(a.get("run_id", ""))}'
+                    f'&domain={_esc(site.domain)}">{_esc(a.get("run_id", ""))}</a></li>'
+                    for a in site.attempts[1:])
+                return (f'<details><summary>{site.attempt_count} attempts</summary>'
+                        f'<ul class="attempt-history">{older}</ul></details>')
+
             rows = "".join(
                 '<tr>'
-                f'<td data-label="Target"><a href="/scout/target?run={_esc(r.get("run_id",""))}'
-                f'&domain={_esc(r.get("domain",""))}">{_esc(r.get("domain") or "unknown")}</a></td>'
-                f'<td data-label="Reason">{_esc(_manual_reason_label(r.get("reason","")))}</td>'
-                f'<td data-label="When" class="muted">{_fmt_ts(r.get("updated_at",""))}</td>'
+                f'<td data-label="Site"><a href="/scout/target?run={_esc(site.run_id)}'
+                f'&domain={_esc(site.domain)}">{_esc(site.domain)}</a></td>'
+                f'<td data-label="Reason">{_esc(_manual_reason_label(site.reason))}</td>'
+                f'<td data-label="Last blocked" class="muted">{_fmt_ts(site.updated_at)}</td>'
+                f'<td data-label="Attempts">{_attempts_cell(site)}</td>'
                 f'<td data-label="Action"><a class="chip" href="/scout/target?run='
-                f'{_esc(r.get("run_id",""))}&domain={_esc(r.get("domain",""))}">Resolve</a></td>'
-                '</tr>' for r in blocked)
+                f'{_esc(site.run_id)}&domain={_esc(site.domain)}">Open manual check</a></td>'
+                '</tr>' for site in inv.sites)
             table = (
-                '<table class="responsive-table"><thead><tr><th>Target</th><th>Reason</th>'
-                f'<th>Detected</th><th>Action</th></tr></thead><tbody>{rows}</tbody></table>'
+                '<table class="responsive-table"><thead><tr><th>Site</th><th>Reason</th>'
+                '<th>Last blocked</th><th>Attempts</th><th>Action</th></tr></thead>'
+                f'<tbody>{rows}</tbody></table>'
                 if rows else
-                '<div class="empty muted">No blocked targets need manual attention.</div>')
+                '<div class="empty muted">No sites need manual attention.</div>')
+            # Values that were recorded as targets but are not public websites. They are shown so a
+            # bad line in a pasted list or a file is visible rather than silently vanishing — but
+            # never as a company, and never with a link that pretends there is a site to open.
+            invalid_rows = "".join(
+                f'<tr><td data-label="Value"><code>{_esc(bad.value or "(empty)")}</code></td>'
+                f'<td data-label="Why">{_esc(bad.reason)}</td>'
+                f'<td data-label="From" class="muted">{_esc(bad.run_id)}</td></tr>'
+                for bad in inv.invalid)
+            invalid_html = (
+                f'<details class="card advanced"><summary>{len(inv.invalid)} recorded target(s) '
+                f'were not public websites</summary>'
+                '<p class="muted">These were never scanned and are not counted as sites.</p>'
+                '<table class="responsive-table"><thead><tr><th>Value</th><th>Why</th>'
+                f'<th>Recorded in</th></tr></thead><tbody>{invalid_rows}</tbody></table></details>'
+                if invalid_rows else '')
             session_rows = "".join(
                 '<tr>'
                 f'<td data-label="Target">{_esc(s.get("domain",""))}</td>'
@@ -3584,17 +3805,16 @@ function startCampaign(){{
                 f'<th>Message</th><th>Result</th></tr></thead><tbody>{session_rows}</tbody></table>'
                 if session_rows else
                 '<div class="empty muted">No manual browser sessions yet.</div>')
-            target_word = "target" if len(blocked) == 1 else "targets"
-            blocked_verb = "was" if len(blocked) == 1 else "were"
+            hero_class = "status-hero attention" if inv.sites else "status-hero"
             body = (
                 '<h1>Needs attention</h1><div class="row">'
                 '<a class="chip" href="/scout/history">History</a>'
                 '<button class="chip" onclick="location.reload()">Refresh</button></div>'
-                f'<div class="card status-hero attention"><p><b>{len(blocked)} {target_word}</b> '
-                f'{blocked_verb} '
-                'blocked before a full analysis. Open a target to complete its human check, defer '
-                'it, or skip it. No CAPTCHA is bypassed automatically.</p></div>'
-                f'<div class="card"><h2>Blocked targets</h2>{table}</div>'
+                f'<div class="card {hero_class}"><p><b>{_esc(inv.headline())}</b></p>'
+                '<p>Open a site to complete its human check, defer it, or skip it. '
+                'No CAPTCHA is bypassed automatically.</p></div>'
+                f'<div class="card"><h2>Sites blocked before a full analysis</h2>{table}</div>'
+                f'{invalid_html}'
                 f'<details class="card advanced"><summary>Manual-check session history</summary>'
                 f'{sessions_html}</details>')
             return _page("AI QA Factory — Needs attention", "/scout", body,
@@ -4040,8 +4260,26 @@ function startCampaign(){{
                 + '</p><p class="muted">The running commit is captured at process start; a difference '
                 'from repository HEAD means the server is serving older code and should be restarted. '
                 'No secrets or absolute paths are shown.</p></div>')
+            # Runtime and diagnostics moved here from Overview. They are things an operator looks up
+            # when something seems wrong, not things they need while deciding what to scan — and on
+            # Overview the full table pushed the one block that starts work below the fold.
+            diag_hidden = self._read_model().overview().counts.get("diagnostics_hidden", 0)
+            diag_line = (
+                f'<p>{diag_hidden} test, replay or diagnostic record(s) are kept out of production '
+                f'counts. <a href="/?diagnostics=1">Show them on Overview</a> · '
+                f'<a href="/activity?diagnostics=1">Show them in Activity</a></p>'
+                if diag_hidden else
+                '<p class="muted">No diagnostic or acceptance records are currently hidden.</p>')
+            runtime_card = (
+                '<div class="card" id="runtime"><h2>Runtime</h2>'
+                '<p class="muted">What code this process is actually serving. A Dashboard started '
+                'from a working tree can outlive the code it loaded, and a commit SHA cannot reveal '
+                'it — an uncommitted edit never moves HEAD.</p>'
+                f'{_runtime_block_html(force_open=True)}'
+                f'<h3>Diagnostic data</h3>{diag_line}</div>')
             body = (
                 '<h1>Settings</h1>'
+                f'{runtime_card}'
                 '<div class="card"><h2>Appearance</h2>'
                 '<p class="muted">Theme is changed from the header. Choose how much information fits '
                 'on each page.</p>'
@@ -4309,6 +4547,86 @@ function startCampaign(){{
 # The campaign form uses the shared design-system classes/tokens (a themed .card, tokenised
 # textarea/inputs/checkbox, and a .btn primary) so nothing is a default-white control in Dark mode.
 # Layout (max-width, field widths) and every safety statement are preserved (no redesign).
+_START_SCOUT_JS = r"""const CSRF=__CSRF__;
+function $(id){return document.getElementById(id);}
+function J(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json',
+'X-Scout-CSRF':CSRF},body:JSON.stringify(b)}).then(function(r){return r.json();});}
+function source(){var e=document.querySelector('input[name="source"]:checked');
+return e?e.value:'find';}
+function checks(name){return Array.from(document.querySelectorAll(
+'input[name="'+name+'"]:checked')).map(function(e){return e.value;});}
+function csv(s){return String(s||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){
+return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+var PENDING={targets:[],counts:null};
+function showPanels(){var s=source();
+['find','paste','file'].forEach(function(k){$('p-'+k).hidden=(k!==s);});
+$('intake').hidden=(s==='find');
+if(s==='find'){PENDING={targets:[],counts:null};}
+summary();}
+function summary(){var n=parseInt($('maxsites').value,10)||10;
+var s=source();var what=(s==='find')?('up to '+n+' sites'):
+((PENDING.counts?PENDING.counts.unique_sites:0)+' site(s)');
+$('safetysummary').textContent='Read-only scan · '+what+
+' · evidence saved automatically · no forms, purchases or messages.';}
+function renderIntake(j){PENDING={targets:(j.targets||[]),counts:(j.counts||null)};
+var c=j.counts||{};var out=$('intake');out.hidden=false;
+var lines=[c.unique_sites+' site(s) will be scanned'];
+if(c.duplicates)lines.push(c.duplicates+' duplicate line(s) ignored');
+if(c.already_analyzed)lines.push(c.already_analyzed+' already in history (will be re-scanned)');
+if(c.rejected)lines.push(c.rejected+' line(s) rejected');
+var html='<p>'+esc(lines.join(' · '))+'</p>';
+if((j.rejected||[]).length){html+='<ul>'+j.rejected.map(function(r){
+return '<li><code>'+esc(r.value)+'</code> — '+esc(r.reason)+'</li>';}).join('')+'</ul>';}
+out.innerHTML=html;summary();}
+function previewText(){J('/api/scout/intake/preview',{text:$('seeds').value||''})
+.then(renderIntake).catch(function(e){$('intake').hidden=false;
+$('intake').textContent='Could not read those addresses: '+e;});}
+function previewFile(){var f=$('listfile').files[0];if(!f)return;
+var reader=new FileReader();reader.onload=function(){
+var b64=String(reader.result||'').split(',')[1]||'';
+J('/api/scout/import',{filename:f.name,content_b64:b64}).then(function(j){
+if(!j.ok){$('intake').hidden=false;$('intake').textContent='Could not read that file: '+
+(j.error||'unknown error');return;}
+var rows=((j.result||{}).rows||[]).map(function(r){return [r.original];});
+return J('/api/scout/intake/preview',{rows:rows}).then(renderIntake);})
+.catch(function(e){$('intake').hidden=false;
+$('intake').textContent='Could not read that file: '+e;});};
+reader.readAsDataURL(f);}
+function start(){var msg=$('msg');var btn=$('run');
+if(!$('approve').checked){msg.textContent='Confirm the bounded read-only run first.';
+$('approve').focus();return;}
+var n=parseInt($('maxsites').value,10)||10;var s=source();
+btn.disabled=true;msg.textContent='Starting Scout…';
+if(s==='find'){var o={max_candidates:n};
+var c=csv($('countries').value);if(c.length)o.countries=c;
+var b=checks('biztype');if(b.length)o.site_types=b;
+var k=csv($('keywords').value);if(k.length)o.keywords=k;
+J('/api/scout/launch',{approve_live_discovery:true,overrides:o}).then(function(j){
+if(j.ok){location.href='/scout/progress?id='+encodeURIComponent(j.campaign_id);}
+else{btn.disabled=false;msg.textContent='Scout could not start: '+(j.error||'unknown error');}})
+.catch(function(e){btn.disabled=false;msg.textContent='Scout could not start: '+e;});return;}
+var seeds=PENDING.targets.map(function(t){return t.url;});
+if(!seeds.length){btn.disabled=false;
+msg.textContent='No valid website addresses yet — add some and check the preview.';return;}
+var key=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();
+J('/api/campaign/start',{confirm:true,idempotency_key:key,seeds:seeds.slice(0,n),
+campaign:'operator-scan',browser_mode:'auto',coverage:'adaptive',max_sites:n})
+.then(function(j){if(j.ok||j.run_id){location.href='/scout/run?id='+encodeURIComponent(j.run_id);}
+else{btn.disabled=false;msg.textContent='Scout could not start: '+
+(j.message||j.error||'unknown error');}})
+.catch(function(e){btn.disabled=false;msg.textContent='Scout could not start: '+e;});}
+document.querySelectorAll('input[name="source"]').forEach(function(r){
+r.addEventListener('change',showPanels);});
+$('seeds').addEventListener('change',previewText);
+$('seeds').addEventListener('blur',previewText);
+$('listfile').addEventListener('change',previewFile);
+$('maxsites').addEventListener('change',summary);
+$('run').onclick=start;
+showPanels();
+"""
+
+
 _START_PANEL_HTML = """<h2>Start a bounded read-only campaign</h2>
 <div class="card formstack" style="max-width:640px">
 <p>Runs the existing bounded, read-only Scout engine over 1&ndash;10 <strong>public https</strong>
@@ -4708,6 +5026,27 @@ header.top .brand{color:var(--text)} header.top .brand::before{content:"";displa
 main{max-width:var(--maxw);margin:0 auto;padding:var(--pad)}
 html,body{max-width:100%;overflow-x:hidden}
 header.top .wrap{flex-wrap:wrap} header.top nav{flex-wrap:wrap}
+/* A flex item will not shrink below its content width unless told to, so a wide nav pushed the
+   theme button past the header's right padding and body overflow-x:hidden then clipped it. */
+header.top nav{flex:1 1 auto;min-width:0}
+header.top .theme-toggle{flex:0 0 auto}
+/* "Nothing is happening" is a line, not a panel: as a card it competed with the blocks that DID
+   have something in them, and several of them on one screen taught the eye to skip that region. */
+.quiet-state{margin:.2rem 0 1rem;color:var(--muted);padding:10px 12px;border:1px solid var(--border);
+border-radius:var(--radius);background:var(--surface)}
+.quiet-state strong{color:var(--text)}
+.quiet-state.attention{border-color:var(--attention)}
+.scout-actions{margin:.2rem 0 .8rem;flex-wrap:wrap}
+.attempt-history{margin:.4rem 0 0;padding-left:1.1rem;font-size:13px}
+.inline-filter>summary{cursor:pointer;color:var(--muted);padding:6px 10px;border:1px solid var(--border);border-radius:6px;list-style:none}
+.inline-filter[open]>summary{color:var(--text)}
+.inline-filter[open]{flex-basis:100%}
+.result-why{font-size:12px;margin-top:3px;max-width:34ch}
+/* An evidence state carries its reason ("Not captured: no safe interaction reproduced cleanly"),
+   which is a sentence, not a word. Badges are nowrap by default, so these overflowed their cell and
+   collided with the next one — visible only in a screenshot, never in an HTTP assertion. */
+.evidence-item .badge{white-space:normal;display:inline-block;max-width:100%;line-height:1.35}
+.evidence-item{min-width:0;overflow-wrap:anywhere}
 .scrollx{overflow-x:auto;max-width:100%;margin-bottom:var(--gap)}
 h1{font-size:22px;margin:.2rem 0 1rem} h2{font-size:16px;margin:1.4rem 0 .6rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);margin-bottom:var(--gap)}
@@ -4959,8 +5298,8 @@ def _theme_legacy(html: str) -> str:
 # "Scout" is the adaptive Discover Prospects workflow; the legacy seed scanner stays at /scout
 # (relabelled "Manual URL Scan"). The nav highlights Scout for any /scout* page.
 _NAV = (("Overview", "/"), ("Scout", "/scout/new"), ("Work", "/work"))
-_MORE = (("Activity", "/activity"), ("Collaboration", "/collab"),
-         ("Settings", "/settings"), ("Help", "/docs"))
+_MORE = (("Activity", "/activity"), ("Data management", "/data"),
+         ("Collaboration", "/collab"), ("Settings", "/settings"), ("Help", "/docs"))
 
 
 def _nav_html(active: str) -> str:
@@ -5031,8 +5370,43 @@ _PAGE_UI_JS = (
     "d.showModal();if(expected)i.focus();});}")
 
 
-def _runtime_block_html() -> str:
-    """Compact Runtime block for Overview — what code this process is actually serving.
+def _system_ready_html(output_dir: str, diagnostics_hidden: int = 0) -> str:
+    """One line on Overview: is anything about this installation stopping work right now?
+
+    Deliberately built only from facts that are already cached or cost a single stat call. Overview
+    is the page an operator lands on constantly, so a readiness check that launched Chromium or
+    shelled out to git would tax every visit for information that is almost always "fine".
+
+    When everything is fine it stays a line. When something is wrong it says which thing and links
+    to the detail — the operator should never have to open a fold to discover they must restart.
+    """
+    problems = []
+    try:
+        from core.build_identity import current_identity
+        if current_identity().get("restart_required"):
+            problems.append("executable code changed since this process started")
+    except Exception:      # noqa: BLE001 - a readiness line must never be the thing that 500s
+        pass
+    try:
+        probe = Path(output_dir) / ".write-probe"
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError:
+        problems.append("the evidence directory is not writable")
+    note = (f' &middot; <span class="muted">{diagnostics_hidden} diagnostic record(s) are hidden '
+            f'from production counts.</span>' if diagnostics_hidden else '')
+    if problems:
+        return (f'<p id="system-ready" class="quiet-state attention">'
+                f'<strong>System needs attention</strong> &mdash; {_esc("; ".join(problems))}. '
+                f'<a href="/settings#runtime">Open system details</a>.{note}</p>')
+    return (f'<p id="system-ready" class="quiet-state"><strong>System ready</strong> '
+            f'<span class="muted">&mdash; runtime up to date, evidence directory writable.</span> '
+            f'<a href="/settings#runtime">System details</a>{note}</p>')
+
+
+def _runtime_block_html(force_open: bool = False) -> str:
+    """Runtime detail — what code this process is actually serving.
 
     A Dashboard started from a working tree can quietly outlive the code it loaded, and a commit SHA
     cannot reveal it: an uncommitted edit never moves HEAD. So this reports the fingerprint verdict
@@ -5065,7 +5439,8 @@ def _runtime_block_html() -> str:
         ))
     # The verdict rides in the summary and the block opens itself when a restart is due: a fact the
     # operator must act on cannot live behind a fold they have to know to open.
-    return (f'<details class="advanced compact-details"{" open" if restart else ""}>'
+    return (f'<details class="advanced compact-details"'
+            f'{" open" if (restart or force_open) else ""}>'
             f'<summary>Runtime — {"restart required" if restart else "up to date"}</summary>'
             f'<div class="scrollx"><table class="runtime-table">{rows}</table></div>'
             f'{hint}</details>')
@@ -5107,6 +5482,112 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
 
 def _badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{_esc(text)}</span>'
+
+
+def _evidence_state_grid_html(detail: dict) -> str:
+    """Every evidence kind with its state and, when it is missing, the reason it is missing.
+
+    Four states, never a blank: Available / Not applicable / Not captured: reason / Capture failed:
+    reason. The distinction is what tells the operator whether to re-run — only a capture failure is
+    a fault of ours.
+    """
+    from core.scout.evidence_state import AVAILABLE, CAPTURE_FAILED, evidence_states
+
+    tone = {AVAILABLE: "ok", CAPTURE_FAILED: "danger"}
+    cells = []
+    for state in evidence_states(detail):
+        count = (f' <span class="muted">&middot; {state.count}</span>'
+                 if state.is_available and state.count else "")
+        cells.append(f'<div class="evidence-item"><h3>{_esc(state.title)}</h3>'
+                     f'<span>{_badge(state.label, tone.get(state.state, ""))}{count}</span></div>')
+    return f'<div class="evidence-grid" style="margin-top:12px">{"".join(cells)}</div>'
+
+
+def _evidence_files_html(evidence_files: list, art_url) -> str:
+    """Open/Download for each captured file. A file you cannot fetch is not evidence you can send."""
+    if not evidence_files:
+        return ""
+    rows = "".join(
+        f'<tr><td>{_esc(e.get("label") or e.get("name") or "")}</td>'
+        f'<td><code>{_esc(e.get("name") or "")}</code></td>'
+        f'<td><a href="{art_url(e["rel"])}" target="_blank" rel="noopener">Open</a> &middot; '
+        f'<a href="{art_url(e["rel"])}&amp;download=1" download>Download</a></td></tr>'
+        for e in evidence_files if e.get("rel"))
+    return (f'<h3>Captured files</h3><div class="scrollx"><table class="responsive-table">'
+            f'<thead><tr><th>What it is</th><th>File</th><th>Actions</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table></div>')
+
+
+def _client_package_html(service, domain: str, run_id: str, detail: dict) -> str:
+    """The client deliverable, kept visibly separate from the operator's own outreach text.
+
+    Generating a package is not approving it. ``approved_for_client_delivery`` stays a human
+    decision, so the status tops out at "Ready for review" however clean the build was.
+    """
+    findings = list(detail.get("findings") or [])
+    actionable = [f for f in findings
+                  if str(f.get("severity") or "").strip().lower() != "info"]
+    media = [str(m) for m in (detail.get("media") or [])]
+    shots = sum(1 for m in media if m.lower().rsplit(".", 1)[-1]
+                in ("png", "jpg", "jpeg", "webp", "gif"))
+    videos = sum(1 for m in media if m.lower().rsplit(".", 1)[-1] in ("webm", "mp4"))
+    status = service.client_package_status(domain, run=run_id)
+    state = status.get("state") or "not_generated"
+    labels = {"not_generated": ("Not generated", ""), "ready": ("Ready for review", "ok"),
+              "blocked": ("Blocked", "danger")}
+    label, tone = labels.get(state, ("Not generated", ""))
+    meta = ""
+    if state == "ready":
+        meta = (f'<p class="muted">Generated {_fmt_ts(status.get("generated_at", ""))} &middot; '
+                f'{_esc(_human_bytes(status.get("bytes", 0)))} &middot; '
+                f'<code>{_esc(status.get("filename", ""))}</code></p>')
+    elif state == "blocked":
+        meta = f'<p class="muted">{_esc(status.get("reason", "Package could not be built."))}</p>'
+    # One name, always. Renaming the primary action to "Regenerate and download" once a ZIP existed
+    # made the button the operator reaches for change under them after every download.
+    #
+    # There is deliberately no separate Regenerate control either: this route rebuilds the package
+    # from current evidence on every request, so a second button would advertise a distinction the
+    # system does not have. The card says that instead.
+    rebuild_note = ('Downloading rebuilds the package from the evidence as it stands now. '
+                    if state == "ready" else '')
+    return (
+        f'<div class="card"><h2>Client package</h2>'
+        f'<div class="row">{_badge(label, tone)}'
+        f'<span class="muted">{len(actionable)} actionable finding(s) &middot; {shots} screenshot(s)'
+        f' &middot; {videos} video(s)</span></div>{meta}'
+        f'<div class="row" style="margin-top:12px">'
+        f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run_id)}'
+        f'&amp;domain={_esc(domain)}">Download client evidence (.zip)</a>'
+        f'<a class="btn" href="/scout/client-report?run={_esc(run_id)}'
+        f'&amp;domain={_esc(domain)}">Preview report</a></div>'
+        f'<p class="muted">{rebuild_note}'
+        f'One target only — no other company\'s evidence, findings or contacts are '
+        f'included. Your talking points, the email draft and where the contact came from stay out of '
+        f'it. Building the package is not approval to send it: review the contents first.</p></div>')
+
+
+def _human_bytes(size) -> str:
+    try:
+        value = float(size)
+    except (TypeError, ValueError):
+        return "unknown size"
+    for unit in ("B", "KiB", "MiB"):
+        if value < 1024 or unit == "MiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} MiB"
+
+
+def _result_options(selected: str = "") -> str:
+    """The result filter, offering exactly the verdicts a row can actually hold."""
+    from core.scout.site_result import LABELS
+
+    options = ['<option value="">Any result</option>']
+    options += [f'<option value="{_esc(key)}"'
+                f'{" selected" if key == selected else ""}>{_esc(label)}</option>'
+                for key, label in LABELS.items()]
+    return "".join(options)
 
 
 # Stored source values are lowercase tokens; the operator reads the platform name.

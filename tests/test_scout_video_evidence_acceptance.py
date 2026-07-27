@@ -125,9 +125,9 @@ def test_the_client_package_carries_the_video_and_drops_the_excuse(tmp_path):
 
     with zipfile.ZipFile(bundle.path) as archive:
         names = set(archive.namelist())
-        summary = archive.read("QA_Evidence_Summary.md").decode("utf-8")
+        summary = archive.read(next(n for n in names if n.endswith("/Evidence/Technical/scan-summary.md"))).decode("utf-8")
 
-    assert any(n.startswith("evidence/reproduction/") for n in names)
-    assert "technical/reproduction.json" in names
+    assert any("/Evidence/Videos/" in n for n in names)
+    assert any(n.endswith("/Evidence/Technical/reproduction.json") for n in names)
     assert "Reproduction videos included: **1**" in summary
     assert "No reproduction video" not in summary

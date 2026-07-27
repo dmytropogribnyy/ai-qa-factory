@@ -202,12 +202,19 @@ class CampaignService:
         `transport` (test) or the live Tavily key (production) drive the provider. Pause/stop are
         honoured cooperatively at engine event boundaries. Live discovery requires
         approve_live_discovery=True AND a Tavily key."""
-        # browser_mode is operator-selectable: "static" (default, no browser) or "playwright"
-        # (Deep capture — real screenshots/evidence). Unknown values fail closed to static.
+        # Depth is Scout's decision, not the operator's, and it must be the SAME decision whichever
+        # source filled the queue. Discovery used to default to static and silently return no visual
+        # evidence, so one company yielded screenshots when pasted and none when found — the three
+        # sources are meant to differ only in how the queue is filled.
+        #
+        # An explicit value still wins, so the API and CLI keep their contract; only the unset
+        # default changes. Unknown values fail closed to static.
         _ov = dict(overrides or {})
-        bmode = str(_ov.pop("browser_mode", "static")).lower()
-        if bmode not in ("static", "playwright"):
-            bmode = "static"
+        requested = str(_ov.pop("browser_mode", "") or "").lower()
+        if requested in ("static", "playwright"):
+            bmode = requested
+        else:
+            bmode = "playwright" if self._browser_available() else "static"
         cfg = build_config(campaign_preset, session_preset, provider_allowlist=["tavily"],
                            output_dir=self.output_dir, approve_live_discovery=approve_live_discovery,
                            overrides={**_ov, "resolve_dns": resolve_dns},
@@ -408,6 +415,14 @@ class CampaignService:
         archived = set(OperatorStateStore(self.output_dir).snapshot()["archived_targets"])
         for row in rows:
             row["archived"] = row.get("domain") in archived
+        # A site whose every run is in Trash is not part of daily work any more. It is not deleted —
+        # restoring the run brings the row straight back — but leaving it in History would make the
+        # operator's own cleanup look as though it had done nothing.
+        trashed_runs = self._trashed_runs()
+        if trashed_runs:
+            rows = [r for r in rows
+                    if not (set(r.get("campaign_ids") or [])
+                            and set(r.get("campaign_ids") or []) <= trashed_runs)]
         archived_filter = (f.get("archived") or "").strip().lower()
         if archived_filter in ("1", "true", "yes", "only"):
             rows = [r for r in rows if r.get("archived")]
@@ -427,6 +442,49 @@ class CampaignService:
             rows = [r for r in rows if str(r.get("last_analysis_at") or "") <= until]
         return rows
 
+    @staticmethod
+    def _browser_available() -> bool:
+        """Real Chromium readiness — the same probe the pasted/uploaded path faces, not a guess."""
+        try:
+            from core.scout.preflight import probe_browser
+            return probe_browser().status == "ready"
+        except Exception:      # noqa: BLE001 - an unavailable probe means static, never a crash
+            return False
+
+    def _trashed_runs(self) -> set:
+        """Run ids the operator has moved to Trash — hidden from daily views, still on disk."""
+        try:
+            from core.scout.data_management import DataManagementStore
+            return {r.run_id for r in DataManagementStore(self.output_dir).inventory().runs
+                    if r.trashed}
+        except Exception:      # noqa: BLE001 - an unreadable overlay must never empty History
+            return set()
+
+    def history_results(self, *, filters: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+        """History rows carrying the verdict, computed from each target's own read model.
+
+        Deriving rather than storing costs one run-store read per row, and it is worth it: a stored
+        verdict goes stale the moment evidence is re-walked or a manual check rescues a target, and
+        the row would then contradict the page it links to. Bounded by the number of registered
+        domains, which is the same set the page renders anyway.
+        """
+        from core.scout.site_result import site_result
+
+        wanted = str((filters or {}).get("result") or "").strip()
+        rows: List[Dict[str, Any]] = []
+        for row in self.history(filters=filters):
+            domain = str(row.get("domain") or "")
+            try:
+                detail = self.target_detail(domain)
+            except Exception:      # noqa: BLE001 - one unreadable run must not empty the table
+                detail = {"domain": domain, "entry": row}
+            verdict = site_result(detail)
+            if wanted and verdict.result != wanted:
+                continue
+            rows.append({**row, "result": verdict.to_dict(),
+                         "run": str(detail.get("run") or detail.get("scout_run") or "")})
+        return rows
+
     def target_detail(self, domain: str, run: str = "") -> Dict[str, Any]:
         """Resolve one target's operator detail. When ``run`` is given the EXACT run store is pinned
         (never a newer run, never the first prospect) so a run's Details link opens that run's own
@@ -442,6 +500,7 @@ class CampaignService:
         media: List[str] = []                 # rel paths under the run, servable via /scout/artifact
         network: Dict[str, Any] = {}          # already-captured Chrome/Playwright network evidence
         reproduction: Optional[Dict[str, Any]] = None   # this domain's reproduction record, if any
+        scorecard: Optional[Dict[str, Any]] = None      # the run's own priority ranking, if written
         manual_action: Optional[Dict[str, Any]] = None  # persisted fail-closed record, if any
         prospect_id = ""                      # the exact prospect this card is bound to
         prospect_status = ""                  # DONE | MANUAL_ACTION_REQUIRED | FAILED | ...
@@ -562,6 +621,18 @@ class CampaignService:
                         screenshots = [f for f in _raw_shots["frames"] if isinstance(f, dict)]
                     obs = st.load_prospect_artifact(prospect_id, "observation.json") or {}
                     contact_records = extract_public_contact_records(obs, domain=domain)
+                    # Addresses found on the OTHER pages Scout walked. The landing page rarely
+                    # carries the mailbox — the contact page does — and reading only the landing
+                    # observation reported "Email not found" for sites Scout had just walked past.
+                    walked = st.load_prospect_artifact(prospect_id, "contacts.json") or {}
+                    known = {str(r.get("email") or "").lower() for r in contact_records}
+                    for row in (walked.get("public") or []):
+                        email = str(row.get("email") or "").strip().lower()
+                        if email and email not in known:
+                            known.add(email)
+                            contact_records.append({
+                                "email": email, "source": row.get("source") or "Public page text",
+                                "source_url": row.get("source_url") or "", "public": True})
                     contacts = [row["email"] for row in contact_records]
                     network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),
                                "console_errors": obs.get("console_errors", [])[:10],
@@ -580,6 +651,11 @@ class CampaignService:
                         fdata = st.load_prospect_artifact(prospect_id, "findings.json") or {}
                         findings = list(fdata.get("verified", []))
                         reproduction = st.load_prospect_artifact(prospect_id, "reproduction.json") or None
+                        # The priority the run itself assigned. Gated with the findings it is derived
+                        # from, and left absent when no scorecard was written — an invented "C" would
+                        # say the run ranked this site low when it never ranked it at all.
+                        _card = st.load_prospect_artifact(prospect_id, "scorecard.json")
+                        scorecard = _card if isinstance(_card, dict) else None
                     try:
                         pdir = st.prospect_dir(prospect_id)
                         # A page that reports 0 confirmed findings must not hand the operator the
@@ -634,7 +710,7 @@ class CampaignService:
                 "manual_action": manual_action, "source_kind": source_kind,
                 "video_mode": video_mode, "evidence_files": evidence_files, "coverage": coverage,
                 "evidence_status": evidence_status, "media": media, "network": network,
-                "reproduction": reproduction,
+                "reproduction": reproduction, "scorecard": scorecard,
                 "findings": [_project_target_finding(f) for f in findings],
                 "contacts": contacts, "contact_records": contact_records,
                 "draft": draft, "fixability": fixability}
@@ -733,6 +809,41 @@ class CampaignService:
             "included": bundle.included,
             "omitted": bundle.omitted,
         }
+
+    def client_package_status(self, domain: str, *, run: str) -> Dict[str, Any]:
+        """Has a client package already been built for this exact target, and how big is it?
+
+        Read-only: it stats what exists rather than building, so opening a target never generates a
+        deliverable as a side effect. "Ready for review" is the highest state it can report —
+        approval to send stays a human decision.
+        """
+        from core.scout.client_evidence import client_export_dir
+
+        if not run:
+            return {"state": "not_generated"}
+        try:
+            from core.scout.client_evidence import _safe_slug
+            from core.scout.discovery.domain_intel import canonical_domain
+
+            dom = canonical_domain(domain) or domain
+            # The filename carries the day it was built, so two packages a month apart stop
+            # colliding in a downloads folder. Match the pattern rather than one exact name — and
+            # take the newest, so regenerating never leaves the card describing the older file.
+            slug = _safe_slug(dom)
+            found = sorted(client_export_dir(self.output_dir, run).glob(
+                f"{slug}-qa-evidence-*.zip"))
+            if not found:
+                return {"state": "not_generated"}
+            # By the date the NAME declares, not by mtime: the stamp is the package's own statement
+            # of when it was built, and YYYYMMDD sorts correctly as text. A file touched later says
+            # nothing about which package is the current one.
+            path = found[-1]
+            stat = path.stat()
+            return {"state": "ready", "filename": path.name, "bytes": stat.st_size,
+                    "generated_at": datetime.fromtimestamp(
+                        stat.st_mtime, tz=timezone.utc).isoformat()}
+        except Exception as exc:      # noqa: BLE001 - a status read must never break the page
+            return {"state": "blocked", "reason": f"could not read the package ({type(exc).__name__})"}
 
     def export_bundle(self, campaign_id: str) -> str:
         rc = CampaignRunControl(campaign_id, self.output_dir)

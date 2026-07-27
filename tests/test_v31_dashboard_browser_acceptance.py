@@ -554,22 +554,25 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             desktop.goto(
                 url + f"/scout/target?run={run_id}&domain=alpha.example", wait_until="load")
             assert desktop.get_by_role(
-                "link", name="Download client-ready evidence (.zip)").is_visible()
+                "link", name="Download client evidence (.zip)").is_visible()
             assert desktop.get_by_text("hello@alpha.example", exact=True).is_visible()
             assert desktop.get_by_text("Public mailto link", exact=False).is_visible()
             assert desktop.get_by_text("fixable by us after", exact=False).is_visible()
             with desktop.expect_download() as download_info:
                 desktop.get_by_role(
-                    "link", name="Download client-ready evidence (.zip)").click()
+                    "link", name="Download client evidence (.zip)").click()
             download = download_info.value
-            assert download.suggested_filename == "alpha.example-qa-evidence.zip"
+            assert download.suggested_filename.startswith("alpha.example-qa-evidence-")
+            assert download.suggested_filename.endswith(".zip")
             with zipfile.ZipFile(download.path()) as archive:
                 names = set(archive.namelist())
-                assert {"QA_Evidence_Summary.html", "MANIFEST.json"} <= names
+                stripped = {n.split("/", 1)[1] for n in names if "/" in n}
+                assert {"QA-Report.html", "manifest.json", "00-README.html",
+                        "Findings.csv"} <= stripped
                 # Frames are named for the page they show, and a byte-identical capture is never
                 # packaged twice, so the count is evidence rather than files.
-                shots = [n for n in names if n.startswith("evidence/screenshots/")]
-                assert shots == ["evidence/screenshots/landing.png"]
+                shots = [n for n in stripped if n.startswith("Evidence/Screenshots/")]
+                assert shots == ["Evidence/Screenshots/landing.png"]
             desktop.screenshot(
                 path=screenshot_dir / "02-scout-target-complete-desktop.png", full_page=True)
             desktop.goto(
@@ -600,7 +603,7 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             mobile.goto(
                 url + f"/scout/target?run={run_id}&domain=alpha.example", wait_until="load")
             assert mobile.get_by_role(
-                "link", name="Download client-ready evidence (.zip)").is_visible()
+                "link", name="Download client evidence (.zip)").is_visible()
             assert mobile.evaluate(
                 "()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
             mobile.screenshot(
@@ -617,7 +620,9 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             assert response.ok
             desktop.get_by_text("No analyzed sites yet.", exact=True).wait_for()
             desktop.get_by_role("link", name="Archived").click()
-            assert desktop.get_by_role("link", name="alpha.example").is_visible()
+            # exact=True: History now also carries a Contact column, whose mailto link
+            # (hello@alpha.example) matches a substring locator for the domain.
+            assert desktop.get_by_role("link", name="alpha.example", exact=True).is_visible()
             desktop.goto(url + "/scout/campaigns", wait_until="load")
             desktop.screenshot(
                 path=screenshot_dir / "08-scout-campaigns-desktop.png", full_page=True)

@@ -124,26 +124,35 @@ def test_client_bundle_is_target_scoped_and_excludes_operator_raw_data(tmp_path)
         "alpha.example", run=_RUN)
     files = _zip_files(Path(result["path"]).read_bytes())
 
+    # One dated root folder, named for what each file is (Unified Scout spec, §11.4) — extracting a
+    # flat ZIP scattered loose files, and two packages a month apart shared one filename.
+    root = next(iter(files)).split("/", 1)[0]
+    assert root.startswith("alpha.example-qa-evidence-")
     assert {
-        "QA_Evidence_Summary.html",
-        "QA_Evidence_Summary.md",
-        "MANIFEST.json",
-        "technical/findings.json",
-        "technical/coverage.json",
-        "technical/network-console-accessibility.json",
-        "technical/reproduction.json",
-        "technical/browser-event-trace.json",
+        f"{root}/00-README.html",
+        f"{root}/QA-Report.html",
+        f"{root}/Findings.csv",
+        f"{root}/manifest.json",
+        f"{root}/Evidence/Technical/findings.json",
+        f"{root}/Evidence/Technical/coverage.json",
+        f"{root}/Evidence/Technical/accessibility-summary.json",
+        f"{root}/Evidence/Technical/performance-summary.json",
+        f"{root}/Evidence/Technical/network-summary.json",
+        f"{root}/Evidence/Technical/console-summary.txt",
+        f"{root}/Evidence/Technical/reproduction.json",
+        f"{root}/Evidence/Technical/browser-event-trace.json",
         # Frames are named for the page they show; this legacy run has no screenshots record, so the
         # file stem is the label rather than an invented page role.
-        "evidence/screenshots/landing.png",
-        "evidence/reproduction/reproduction-01.webm",
+        f"{root}/Evidence/Screenshots/landing.png",
+        f"{root}/Evidence/Videos/reproduction-01.webm",
     } <= set(files)
     blob = b"\n".join(files.values())
     assert b"alpha-image" in blob and b"alpha-video" in blob
     assert b"beta-image" not in blob and b"beta.example" not in blob
     for forbidden in (
+        # The internal prospect id identifies our numbering, not the client's site, and this file
+        # leaves the building. The RUN id is now carried in the manifest as provenance (§11.4).
         b"01-alpha-internal",
-        b"client-evidence-run",
         b"private-finding-id",
         b"private-signature",
         b"private-raw-header",
@@ -153,8 +162,10 @@ def test_client_bundle_is_target_scoped_and_excludes_operator_raw_data(tmp_path)
         b"evidence_refs",
     ):
         assert forbidden not in blob
-    manifest = json.loads(files["MANIFEST.json"])
+    manifest = json.loads(files[f"{root}/manifest.json"])
     assert manifest["domain"] == "alpha.example"
+    assert manifest["run_id"] == _RUN and manifest["build"]
+    assert manifest["approved_for_client_delivery"] is False
     assert manifest["client_oriented_scope"] is True
     assert manifest["structured_content_secret_scanned"] is True
     assert manifest["visual_review_required"] is True
@@ -184,15 +195,17 @@ def test_dashboard_download_is_an_attachment_and_target_page_links_it(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
-    assert "Download client-ready evidence (.zip)" in page
-    assert "One target · client-oriented · review required · up to 20 MiB" in page
-    assert '<label for="draftbody"><b>Draft body</b></label>' in page
+    # The download now lives in its own Client package section rather than in the hero, so the
+    # deliverable is visibly separate from the operator's own outreach text (spec §11.1).
+    assert "Download client evidence (.zip)" in page
+    assert "Client package" in page
     assert 'aria-label="Outreach draft body"' in page
     assert content_type == "application/zip"
-    assert 'attachment; filename="alpha.example-qa-evidence.zip"' == disposition
+    assert disposition.startswith('attachment; filename="alpha.example-qa-evidence-')
+    assert disposition.endswith('.zip"')
     assert cache == "no-store"
     files = _zip_files(payload)
-    assert "QA_Evidence_Summary.html" in files
+    assert any(name.endswith("/QA-Report.html") for name in files)
 
 
 def test_incomplete_target_cannot_be_exported_as_client_evidence(tmp_path):

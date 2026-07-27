@@ -50,8 +50,11 @@ def test_scout_pages_render_under_csp(tmp_path):
             assert status == 200 and "<main>" in body, path
             assert "default-src 'self'" in headers.get("Content-Security-Policy", ""), path
         _, newbody, _ = _get(url + "/scout/new")
-        assert "New Scout campaign" in newbody
-        assert "Check system readiness" in newbody
+        # The daily form is now one Start Scout over three sources. The campaign-preset picker and
+        # the manual "Check system readiness" button it used to carry are deliberately gone —
+        # readiness is a preflight Scout runs itself (see tests/test_scout_unified_start.py).
+        assert "Start Scout" in newbody
+        assert "Find websites" in newbody and "Paste URLs" in newbody
     finally:
         server.shutdown()
 

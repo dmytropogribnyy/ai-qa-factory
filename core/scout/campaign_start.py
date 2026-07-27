@@ -45,6 +45,11 @@ from core.scout.url_safety import Resolver, UrlPolicy, dedupe_eligible
 _REGISTRY_DIRNAME = "_campaigns"
 _MAX_SEED_STRLEN = 2048
 
+# The unified operator form does not ask for a scan depth. It sends this, and the launcher resolves
+# it against a real browser probe: deep capture when Chromium is genuinely available, a plain static
+# scan when it is not — reported either way, never silently assumed.
+AUTO_BROWSER_MODE = "auto"
+
 
 def _default_browser_probe() -> bool:
     """Real Chromium readiness for Deep Capture (import lazily so ``static`` never touches Playwright)."""
@@ -193,8 +198,13 @@ class CampaignLauncher:
             record["status"] = "STARTED"
             record["run_id"] = run_id
             self._persist(key, record)
+            # Name the depth that was actually chosen. When the operator let Scout decide, silence
+            # here would leave them unable to tell a deep run from one that quietly went static
+            # because no browser was installed.
+            depth = ("deep evidence capture" if cfg.browser_mode == "playwright"
+                     else "static scan (no browser available, so no screenshots or axe evidence)")
             return CampaignStartResult(ok=True, status=202, run_id=run_id,
-                                       message="bounded read-only campaign started")
+                                       message=f"bounded read-only campaign started — {depth}")
 
     def _fail(self, key: str, record: Dict[str, Any], status: int, message: str
               ) -> CampaignStartResult:
@@ -223,6 +233,12 @@ class CampaignLauncher:
         name = _safe_name(campaign) if isinstance(campaign, str) else "adhoc"
         families = request.get("check_families")
         mode = request.get("browser_mode", "static")
+        # "auto" is what the unified operator form sends: Scout chooses the depth instead of asking
+        # the operator to understand it. The choice is made HERE, in the policy core, by the same
+        # real Chromium probe a "playwright" request would face — never by the browser-side script,
+        # and never silently: a downgrade is reported back in the start result.
+        if mode == AUTO_BROWSER_MODE:
+            mode = "playwright" if self._browser_probe() else "static"
         if not isinstance(mode, str) or mode not in BROWSER_MODES:
             raise ScoutConfigError("browser_mode must be exactly 'static' or 'playwright'")
         coverage = request.get("coverage", "adaptive")
@@ -242,6 +258,17 @@ class CampaignLauncher:
             kwargs["max_pages_per_site"] = request["max_pages"]
         if isinstance(families, list) and families and all(isinstance(f, str) for f in families):
             kwargs["check_families"] = families
+        # Why this run exists, for Data management. NOT an operator-facing scan mode: the daily form
+        # never sends it, so an ordinary run stays unclassified and is therefore never swept as test
+        # data. An acceptance harness sets it explicitly. Only the removable purposes are accepted —
+        # a request cannot label itself "production" and gain protection it was not given.
+        purpose = request.get("run_purpose")
+        if isinstance(purpose, str) and purpose:
+            from core.scout.data_management import REMOVABLE_PURPOSES
+            if purpose not in REMOVABLE_PURPOSES:
+                raise ScoutConfigError(
+                    "run_purpose must be one of: " + ", ".join(sorted(REMOVABLE_PURPOSES)))
+            kwargs["run_purpose"] = purpose
         return ScoutRunConfig(**kwargs)
 
 

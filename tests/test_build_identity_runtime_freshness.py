@@ -140,9 +140,14 @@ def test_unknown_fingerprints_never_raise_a_false_alarm():
     assert ident["local_changes_at_start"] is None
 
 
-# --- what the operator actually reads on Overview -------------------------------------------
+# --- what the operator actually reads ---------------------------------------------------------
+#
+# The runtime TABLE moved from Overview to Settings (the Unified Scout spec, §5): it is something an
+# operator looks up when they suspect a problem, not something they need while deciding what to scan.
+# What Overview keeps is the verdict — one System-ready line that grows only when something is wrong.
+# Both surfaces are pinned here so neither can quietly lose the fact.
 
-def _overview(tmp_path, ident):
+def _rendered(tmp_path, ident, path="/"):
     import core.build_identity as bi
     from core.scout.dashboard import start_dashboard
     from core.scout.service import ScoutService
@@ -152,14 +157,22 @@ def _overview(tmp_path, ident):
     bi.current_identity = lambda *a, **k: ident
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
     try:
-        return get(f"{url}/")[1]
+        return get(f"{url}{path}")[1]
     finally:
         server.shutdown()
         bi.current_identity = original
 
 
-def test_overview_runtime_block_reports_a_fresh_process(tmp_path):
-    html = _overview(tmp_path, _identity(running_code="fp1", current_code="fp1",
+def _overview(tmp_path, ident):
+    return _rendered(tmp_path, ident, "/")
+
+
+def _settings(tmp_path, ident):
+    return _rendered(tmp_path, ident, "/settings")
+
+
+def test_settings_runtime_block_reports_a_fresh_process(tmp_path):
+    html = _settings(tmp_path, _identity(running_code="fp1", current_code="fp1",
                                          local_changes_at_start=False))
 
     assert "Runtime &mdash; up to date" in html or "Runtime — up to date" in html
@@ -170,8 +183,16 @@ def test_overview_runtime_block_reports_a_fresh_process(tmp_path):
     assert "restart_dashboard.ps1" not in html          # nothing to do, so no instruction
 
 
-def test_overview_runtime_block_opens_itself_when_a_restart_is_due(tmp_path):
-    html = _overview(tmp_path, _identity(running_code="fp1", current_code="fp2",
+def test_overview_says_system_ready_when_the_process_is_fresh(tmp_path):
+    html = _overview(tmp_path, _identity(running_code="fp1", current_code="fp1",
+                                         local_changes_at_start=False))
+
+    assert "System ready" in html
+    assert "Local changes at process start" not in html      # the detail lives in Settings now
+
+
+def test_settings_runtime_block_opens_itself_when_a_restart_is_due(tmp_path):
+    html = _settings(tmp_path, _identity(running_code="fp1", current_code="fp2",
                                          local_changes_at_start=True))
 
     assert "restart required" in html                   # visible in the summary, before unfolding
@@ -180,11 +201,22 @@ def test_overview_runtime_block_opens_itself_when_a_restart_is_due(tmp_path):
     assert "+ local changes" in html                    # never presented as a clean commit
 
 
-def test_overview_never_offers_to_restart_over_http(tmp_path):
-    """Process control stays outside the HTTP surface -- the block informs, it does not act."""
+def test_overview_still_raises_a_due_restart_without_being_opened(tmp_path):
+    """A fact the operator must act on cannot depend on them visiting Settings to find it."""
     html = _overview(tmp_path, _identity(running_code="fp1", current_code="fp2",
                                          local_changes_at_start=True))
 
-    assert "/api/restart" not in html
-    assert "restartDashboard(" not in html
-    assert ">Restart<" not in html
+    assert "System needs attention" in html
+    assert "executable code changed since this process started" in html
+    assert 'href="/settings#runtime"' in html
+    assert "System ready</strong>" not in html
+
+
+def test_neither_surface_offers_to_restart_over_http(tmp_path):
+    """Process control stays outside the HTTP surface -- the block informs, it does not act."""
+    ident = _identity(running_code="fp1", current_code="fp2", local_changes_at_start=True)
+
+    for html in (_overview(tmp_path, ident), _settings(tmp_path, ident)):
+        assert "/api/restart" not in html
+        assert "restartDashboard(" not in html
+        assert ">Restart<" not in html

@@ -66,17 +66,22 @@ def _run(tmp_path, *, frames, screenshots_record=True, video=False, video_mode="
 
 
 def _bundle(tmp_path):
+    """Members keyed WITHOUT the dated root folder, so these assertions stay about layout.
+
+    The package is now rooted in one dated directory (Unified Scout spec, §11.4) — extracting a flat
+    ZIP scattered loose files, and two packages a month apart shared one filename.
+    """
     result = CampaignService(str(tmp_path)).export_client_evidence(_DOMAIN, run=_RUN)
     with zipfile.ZipFile(io.BytesIO(Path(result["path"]).read_bytes())) as archive:
-        return {name: archive.read(name) for name in archive.namelist()}
+        return {name.split("/", 1)[1]: archive.read(name) for name in archive.namelist()}
 
 
 def _shots(files):
-    return sorted(n for n in files if n.startswith("evidence/screenshots/"))
+    return sorted(n for n in files if n.startswith("Evidence/Screenshots/"))
 
 
 def _manifest(files):
-    return json.loads(files["MANIFEST.json"].decode("utf-8"))
+    return json.loads(files["manifest.json"].decode("utf-8"))
 
 
 def test_a_byte_identical_verification_frame_is_not_packaged_twice(tmp_path):
@@ -86,7 +91,7 @@ def test_a_byte_identical_verification_frame_is_not_packaged_twice(tmp_path):
     files = _bundle(tmp_path)
 
     assert len(_shots(files)) == 1, "the same picture was packaged as two pieces of evidence"
-    summary = files["QA_Evidence_Summary.md"].decode("utf-8")
+    summary = files["Evidence/Technical/scan-summary.md"].decode("utf-8")
     assert "Unique screenshots included: **1**" in summary
     assert any("identical" in str(row.get("reason", ""))
                for row in _manifest(files)["omitted"])
@@ -104,19 +109,19 @@ def test_distinct_pages_are_packaged_and_named_for_what_they_show(tmp_path):
     _run(tmp_path, frames={"landing.png": b"one", "page-02.png": b"two", "page-03.png": b"three"})
     files = _bundle(tmp_path)
 
-    assert _shots(files) == ["evidence/screenshots/booking-flow.png",
-                            "evidence/screenshots/landing.png",
-                            "evidence/screenshots/pricing.png"]
+    assert _shots(files) == ["Evidence/Screenshots/booking-flow.png",
+                            "Evidence/Screenshots/landing.png",
+                            "Evidence/Screenshots/pricing.png"]
     assert "screenshot-01" not in " ".join(files)
 
 
 def test_the_manifest_binds_every_frame_to_its_page(tmp_path):
     _run(tmp_path, frames={"landing.png": b"one", "page-02.png": b"two"})
     files = _bundle(tmp_path)
-    shots = [e for e in _manifest(files)["entries"] if e["path"].startswith("evidence/screenshots/")]
+    shots = [e for e in _manifest(files)["entries"] if e["path"].startswith("Evidence/Screenshots/")]
 
     assert {e["role"] for e in shots} == {"landing", "pricing"}
-    assert {e["url"] for e in shots} == {f"https://{_DOMAIN}/", f"https://{_DOMAIN}/pricing"}
+    assert {e["page_url"] for e in shots} == {f"https://{_DOMAIN}/", f"https://{_DOMAIN}/pricing"}
     assert all(len(e["sha256"]) == 64 for e in shots)
     assert len({e["sha256"] for e in shots}) == len(shots)      # unique bytes, not just unique names
 
@@ -136,15 +141,15 @@ def test_one_meaningful_page_yields_one_frame_and_says_so(tmp_path):
     files = _bundle(tmp_path)
 
     assert len(_shots(files)) == 1
-    assert "Unique screenshots included: **1**" in files["QA_Evidence_Summary.md"].decode("utf-8")
+    assert "Unique screenshots included: **1**" in files["Evidence/Technical/scan-summary.md"].decode("utf-8")
 
 
 def test_absent_video_is_explained_not_left_as_a_bare_zero(tmp_path):
     """Missing video must read as "not applicable here", never as missing evidence."""
     _run(tmp_path, frames={"landing.png": b"one"})
     files = _bundle(tmp_path)
-    summary = files["QA_Evidence_Summary.md"].decode("utf-8")
-    html = files["QA_Evidence_Summary.html"].decode("utf-8")
+    summary = files["Evidence/Technical/scan-summary.md"].decode("utf-8")
+    html = files["QA-Report.html"].decode("utf-8")
 
     assert "Reproduction videos included: **0**" in summary
     assert "No reproduction video:" in summary
@@ -182,9 +187,9 @@ def test_a_real_reproduction_video_is_still_packaged_without_the_note(tmp_path):
     """The guard on the other side: a genuine reproduction must not be talked away."""
     _run(tmp_path, frames={"landing.png": b"one"}, video=True)
     files = _bundle(tmp_path)
-    summary = files["QA_Evidence_Summary.md"].decode("utf-8")
+    summary = files["Evidence/Technical/scan-summary.md"].decode("utf-8")
 
-    assert "evidence/reproduction/reproduction-01.webm" in files
+    assert "Evidence/Videos/reproduction-01.webm" in files
     assert "Reproduction videos included: **1**" in summary
     assert "No reproduction video:" not in summary
 
@@ -194,9 +199,9 @@ def test_a_legacy_run_without_a_screenshots_record_still_exports(tmp_path):
     _run(tmp_path, frames={"landing.png": b"one"}, screenshots_record=False)
     files = _bundle(tmp_path)
 
-    assert _shots(files) == ["evidence/screenshots/landing.png"]
-    shots = [e for e in _manifest(files)["entries"] if e["path"].startswith("evidence/screenshots/")]
-    assert shots[0].get("url") == ""            # unknown, and honestly empty rather than guessed
+    assert _shots(files) == ["Evidence/Screenshots/landing.png"]
+    shots = [e for e in _manifest(files)["entries"] if e["path"].startswith("Evidence/Screenshots/")]
+    assert shots[0].get("page_url") == ""            # unknown, and honestly empty rather than guessed
 
 
 # --- the operator surface: a frame the operator cannot place is a frame they must open ------
@@ -255,6 +260,7 @@ def test_a_genuinely_different_page_is_recorded_with_its_page_and_digest(tmp_pat
 
     assert still_on_disk
     assert shots[0]["role"] == "pricing"
+    # The ENGINE's own screenshots.json record, not the client manifest — it keeps "url".
     assert shots[0]["url"] == "https://alpha.example/pricing"
     assert len(shots[0]["sha256"]) == 64
 

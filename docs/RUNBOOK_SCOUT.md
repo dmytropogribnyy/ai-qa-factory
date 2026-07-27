@@ -22,11 +22,25 @@ open the URL. Readiness check any time:
 
 ## 2. Run your first analysis
 
-**Recommended — discovery campaign (Dashboard):** open **Scout → Discover Prospects** (`/scout/new`):
-1. Pick a **size**: Quick (≈2 actionable), Standard (≈5), Extended (≈10).
-2. Set **filters**: country, industry, business type, keywords.
-3. Confirm and start. The run is bounded and finite; large/obviously-unsuitable companies are excluded,
-   candidates are **pre-listed**, and already-seen sites are **de-duplicated** across runs.
+Open **Start Scout** (`/scout/new`). The only thing you choose is **where the websites come from**:
+
+| Source | What you give it |
+|---|---|
+| **Find websites** | countries, business types, optional signals/keywords |
+| **Paste URLs** | one address per line |
+| **Upload file** | a CSV/XLSX whose column holds the addresses |
+
+Then set an optional **Maximum sites** and press **Start Scout**. There is no scan mode, coverage
+profile, campaign preset, page cap or capture switch to choose: those describe the engine rather
+than the work, and answering them wrongly changed what evidence came back. Scout resolves depth
+against a real Chromium probe and says which it used ("deep evidence capture", or "static scan (no
+browser available…)") — a downgrade is never silent.
+
+Whichever source you pick, the queue is the same after intake: addresses are canonicalised,
+de-duplicated **by canonical domain** (so `www.nolt.io`, `nolt.io/` and a tracking-tagged pricing URL
+are one site), checked for safety, and anything that is not a public website is refused by name. For
+pasted and uploaded addresses the preview shows those counts **before** you press Start, computed by
+the same code that will build the queue.
 
 Discovery uses the Tavily provider (already configured; to (re)configure: `python tools/tavily_setup.py`).
 
@@ -42,22 +56,42 @@ path that surfaces per-target findings in the Dashboard — see §3.)
 
 ## 3. Where to see results
 
-- **Scout → History** (`/scout/history`): processed sites, filterable by status/period. The default
-  view hides archived results; use the **Archived** tab to restore them.
-- **Scout → Needs attention** (`/scout/attention`): targets whose automated browser was stopped by
-  CAPTCHA, Cloudflare, an access check, or a similar manual gate.
+- **Scout → History** (`/scout/history`): one row per site, columns
+  `Site | Result | Priority | Evidence | Contact | Analyzed | Open`. **Result** is the outcome —
+  *Ready to contact*, *Needs review*, *No actionable findings*, *Blocked*, *Failed*, *Not analyzed* —
+  not the kind of run that touched the site, with the reason underneath it. Empty facts are written
+  out (*Not found*, *None captured*) rather than left blank, because a blank cell reads as "still
+  working". Filter by text, by result, and by one collapsible date range. Archived results are on
+  the **Archived** tab.
+- **Scout → Needs attention** (`/scout/attention`): **one current row per canonical domain** whose
+  automated browser was stopped by CAPTCHA, Cloudflare, an access check or a similar gate. Repeated
+  blockages of the same site are that row's attempt history, not extra rows. The headline counts
+  sites and attempts separately ("5 sites need review. 13 blocked attempts were recorded."), and a
+  recorded value that is not a public website (`0.1`, a private IP) is listed as rejected input
+  rather than beside real companies. The action is **Open manual check** — it opens the target; it
+  does not clear the block.
 - **Scout → Campaigns** (`/scout/campaigns`): campaign progress + counters. Archived runs move out
   of the Current view and remain recoverable from the **Archived** tab.
-- **Target card** (click a domain): an outcome-first summary, findings, evidence, and coverage for
-  the exact selected run. Internal IDs, raw JSON, hashes, policy ceilings, and low-level diagnostics
-  stay collapsed under **Advanced diagnostics**.
+- **Target card** (click a domain): four sections in the order the work happens — **Findings**,
+  **Evidence**, **Contact & outreach**, **Client package** — for the exact selected run. Internal
+  IDs, raw JSON, hashes, policy ceilings and low-level diagnostics stay collapsed under **Advanced
+  diagnostics**.
+- Every evidence kind carries one of four states, never a blank: **Available**, **Not applicable**
+  (a static scan opens no browser, so a screenshot was never in scope), **Not captured: reason** (it
+  was in scope and the policy decided against it — nothing safe reproduced, so no video was kept), or
+  **Capture failed: reason** (the browser ran and axe-core still could not be injected). Only the
+  last of the four is a fault on our side, and it is the only one that warrants a re-run.
+- **Contact & outreach** shows the public address with the exact page it was found on, the
+  deterministic **talking points** the draft is built from, a suggested subject, and the draft itself
+  marked **Draft — not sent**. No draft is written when nothing actionable was confirmed. Nothing is
+  ever sent, and none of this goes into the client package.
 - Findings include **severity**, **confidence**, a **one-line repro hint**, and category; findings
   are ordered by expected commercial value. **Screenshots/evidence** are attached and viewable from
   the card. Absent confidence/repro show a neutral placeholder (never invented).
 - The browser trace shown in the Dashboard is a redacted structured event record. It is not a native
   Playwright `trace.zip`; Playwright Inspector is a live developer tool and is intentionally not part
   of the operator evidence UI.
-- After a target reaches **Analysis complete**, select **Download client-ready evidence (.zip)**.
+- After a target reaches **Analysis complete**, select **Download client evidence (.zip)**.
   The exact-target attachment is capped at 20 MiB and contains an offline HTML summary, Markdown,
   client-facing findings, coverage, screenshots, an optional qualifying reproduction video,
   sanitized console/network/accessibility data, a structured event trace when recorded, and a
@@ -133,10 +167,31 @@ accepts a command over HTTP. Process control stays outside that surface.
 
 ## 4b. What the client evidence package contains
 
+Downloaded from the target's **Client package** section as
+`<domain>-qa-evidence-<YYYYMMDD>.zip`. It extracts into one dated folder — never a scatter of loose
+files — and everything in it opens offline by double-clicking:
+
+```
+<domain>-qa-evidence-YYYYMMDD/
+  00-README.html          what to open first
+  QA-Report.html          the findings with the screenshots that show them
+  Findings.csv            the same list for a tracker (UTF-8 BOM + CRLF, so Excel reads it)
+  Evidence/Screenshots/   named for the page each one shows
+  Evidence/Videos/
+  Evidence/Technical/     accessibility / performance / console / network summaries
+  manifest.json           MIME, size and SHA-256 per file, plus run and build provenance
+```
+
+The package is **one site only**: no other company's evidence, findings or contacts. Your talking
+points, the email draft and where the contact came from stay out of it — those are operator notes,
+and one accidental forward is all it takes to matter. `approved_for_client_delivery` is `false`
+inside the artifact itself, so a forwarded ZIP cannot imply an approval nobody gave: generating a
+package is not deciding it may be sent.
+
 - **Up to three UNIQUE screenshots** of pages the analysis actually visited — a ceiling, never a
   quota. A site with one meaningful page yields one frame. A capture that is byte-identical to one
   already packaged (the verification pass re-photographing an unchanged landing page) is dropped by
-  SHA-256 and recorded in `MANIFEST.json` under `omitted` with that reason.
+  SHA-256 and recorded in `manifest.json` under `omitted` with that reason.
 - Each frame is **named for the page it shows** (`landing.png`, `pricing.png`, `booking-flow.png`)
   and bound to that page's URL in the manifest, so "2 screenshots" always means two different
   pictures of two different pages.
@@ -172,6 +227,26 @@ accepts a command over HTTP. Process control stays outside that surface.
   refused; stop them safely first. Deleting a run is not the same as **Forget target**: forgetting
   removes the cross-run dedup/history entry so the domain can be discovered again.
 - Data and history are **file-based** under `outputs/` and **persist across a Dashboard restart**.
+
+### More → Data management (`/data`)
+
+Everything Scout has stored, what each run was for, and a staged way to let test data go.
+
+- **Purpose is declared, never guessed.** A run records `run_purpose` at launch. Anything that did
+  not — including every run made before the field existed — is **Unclassified** and is *never* swept,
+  because inferring "this looks like a test" from a name is how production history disappears. Use
+  **Record what these were** to make that decision explicitly; only Acceptance, Diagnostic and Manual
+  test can be chosen, so the screen cannot hand out production's protection.
+- **Deletion is staged**: *Preview* (names the runs, sites, screenshots, findings and megabytes, and
+  lists everything it refuses and why) → *Move to Trash* (reversible, nothing leaves the disk) →
+  *Restore*, or a **separate confirmation inside Trash** for permanent removal. There is deliberately
+  no "Clear all".
+- A site that production also scanned keeps its history, evidence and registry entry; only the test
+  run's claim on it is released. An interrupted cleanup converges when retried. A tombstone records
+  scope, counts and the moment — never the deleted content.
+
+Acceptance and diagnostic runs are also kept out of production counters by default; the switch to
+show them lives in **Settings**, beside the Runtime block.
 
 ## 6. Safety
 

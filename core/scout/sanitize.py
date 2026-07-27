@@ -91,6 +91,10 @@ class Sanitizer:
     def sanitize_observation(self, obs: PageObservation) -> Dict[str, Any]:
         """Persist the useful observation shape without credential-bearing URLs or raw free text."""
         data = obs.to_dict()
+        # The visible-text slice is an in-memory input to contact extraction, never evidence. Drop
+        # it here rather than filtering at each call site, so no future writer can leak page prose
+        # into an operator artifact by forgetting.
+        data.pop("text_sample", None)
         for key in ("url", "final_url", "canonical"):
             data[key] = self.safe_url(data.get(key, ""))
         data["redirect_chain"] = [self.safe_url(v) for v in data.get("redirect_chain", [])[:10]]

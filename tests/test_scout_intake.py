@@ -1,0 +1,132 @@
+"""One ingestion path for every source, and a rejected line is never a site.
+
+The operator can name sites three ways — paste, upload, discovery — and "where the list came from"
+must not change what happens to it. These tests pin the intake contract the preview shows and the
+queue then obeys: canonical-domain identity, an honest duplicate count, and rejections that say why.
+
+The two values in the spec's acceptance file are the point of the rejection tests: `0.1` and
+`http://localhost/` must never reach History looking like companies.
+"""
+from __future__ import annotations
+
+from core.scout.intake import (KIND_MALFORMED, KIND_NON_PUBLIC, canonical_entry_url, parse_rows,
+                               parse_targets, parse_text)
+
+
+def _domains(result):
+    return [t.domain for t in result.targets]
+
+
+# --- identity is the canonical domain, not the URL -------------------------------------------
+
+def test_www_and_bare_host_are_one_site():
+    result = parse_text("https://nolt.io/\nhttps://www.nolt.io/")
+
+    assert _domains(result) == ["nolt.io"]
+    assert result.counts()["unique_sites"] == 1
+    assert result.counts()["duplicates"] == 1
+    assert result.duplicates[0].duplicate_of == "https://nolt.io/"
+
+
+def test_a_deep_page_with_tracking_is_the_same_site_as_the_home_page():
+    result = parse_text("https://plausible.io/\nhttps://plausible.io/pricing?utm_source=scout-e2e")
+
+    assert result.counts()["unique_sites"] == 1
+    assert result.counts()["duplicates"] == 1
+
+
+def test_the_page_the_operator_named_is_kept_but_tracking_is_stripped():
+    """A pasted pricing page means that page; our own campaign tracking is not part of it."""
+    assert canonical_entry_url("https://plausible.io/pricing?utm_source=scout-e2e&plan=pro") == \
+        "https://plausible.io/pricing?plan=pro"
+    assert canonical_entry_url("plausible.io") == "https://plausible.io/"
+    assert canonical_entry_url("HTTPS://Plausible.IO/Pricing") == "https://plausible.io/Pricing"
+
+
+def test_scheme_case_and_trailing_slash_do_not_create_a_second_site():
+    result = parse_text("HTTP://Userlist.com\nhttps://userlist.com/\nuserlist.com")
+
+    assert _domains(result) == ["userlist.com"]
+    assert result.counts()["duplicates"] == 2
+
+
+# --- a rejected line is not a site -------------------------------------------------------------
+
+def test_a_bare_number_is_rejected_as_not_an_address():
+    result = parse_text("0.1")
+
+    assert result.targets == []
+    assert result.rejected[0].kind == KIND_MALFORMED
+    assert "not a website address" in result.rejected[0].reason
+    assert result.counts()["unique_sites"] == 0
+
+
+def test_localhost_and_private_addresses_are_rejected_as_non_public():
+    result = parse_text("http://localhost/\nhttp://127.0.0.1/\nhttp://192.168.0.10/")
+
+    assert result.targets == []
+    assert {r.kind for r in result.rejected} == {KIND_NON_PUBLIC}
+    assert all("public" in r.reason for r in result.rejected)
+
+
+def test_unsupported_schemes_are_refused_with_a_reason():
+    result = parse_text("ftp://example.com/\njavascript:alert(1)\nmailto:hi@example.com")
+
+    assert result.targets == []
+    assert len(result.rejected) == 3
+    assert all(r.reason for r in result.rejected)
+
+
+def test_a_real_file_mixes_all_four_outcomes():
+    """The spec's acceptance input, exactly."""
+    result = parse_text("https://userlist.com/\nhttps://nolt.io/\nhttps://www.nolt.io/\n0.1\n"
+                        "http://localhost/")
+    counts = result.counts()
+
+    assert _domains(result) == ["userlist.com", "nolt.io"]
+    assert counts == {"lines_read": 5, "unique_sites": 2, "duplicates": 1, "rejected": 2,
+                      "already_analyzed": 0}
+    assert {r.value for r in result.rejected} == {"0.1", "http://localhost/"}
+
+
+# --- history awareness -------------------------------------------------------------------------
+
+def test_a_site_already_in_history_is_flagged_but_still_scannable():
+    """Re-scanning is legitimate; what must not happen is a second CURRENT row for the site."""
+    result = parse_text("https://plausible.io/", known_domains=frozenset({"plausible.io"}))
+
+    assert _domains(result) == ["plausible.io"]              # still queued
+    assert result.counts()["already_analyzed"] == 1
+    assert result.duplicates[0].already_analyzed is True
+
+
+# --- pinned semantics ---------------------------------------------------------------------------
+
+def test_operator_named_targets_are_pinned_and_discovery_results_are_not():
+    assert parse_text("https://userlist.com/").targets[0].pinned is True
+    assert parse_targets(["https://userlist.com/"], pinned=False).targets[0].pinned is False
+
+
+# --- spreadsheet rows ----------------------------------------------------------------------------
+
+def test_a_curated_row_yields_its_address_and_ignores_the_rest():
+    rows = [["Scout seed URL", "Product", "Priority"],
+            ["https://plausible.io/", "Plausible", "A"],
+            ["userlist.com", "Userlist", "B"],
+            ["", "", ""],
+            ["not a url", "junk", "C"]]
+    result = parse_rows(rows)
+
+    assert _domains(result) == ["plausible.io", "userlist.com"]
+    # The header and the junk row carry no address. They are REPORTED rather than silently dropped,
+    # so a file that was only half understood cannot look fully understood.
+    assert result.counts()["rejected"] == 2
+    assert {r.value for r in result.rejected} == {"Scout seed URL", "not a url"}
+
+
+def test_blank_input_reads_as_nothing_rather_than_an_error():
+    result = parse_text("   \n\n  ")
+
+    assert result.counts() == {"lines_read": 0, "unique_sites": 0, "duplicates": 0,
+                               "rejected": 0, "already_analyzed": 0}
+    assert result.seeds() == []

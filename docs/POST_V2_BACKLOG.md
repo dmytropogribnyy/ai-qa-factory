@@ -64,7 +64,7 @@ benchmark, and the v2.0 release — those are roadmap, not backlog._
   gain in the evidence package — and a report-design change, not an evidence-collection one, so it
   is deliberately a separate slice. Shipped in the same area already: up to three UNIQUE frames of
   pages actually visited, byte-identical captures dropped by digest, frames named for their page and
-  bound to its URL in `MANIFEST.json`, and an explicit statement of why a reproduction video is
+  bound to its URL in `manifest.json`, and an explicit statement of why a reproduction video is
   absent (see `core/scout/client_evidence.py`, `tests/test_scout_evidence_screenshot_policy.py`).
 
 _Final Independent Acceptance (v2.0.1) owns the CI fix, complete provenance, real gate records,

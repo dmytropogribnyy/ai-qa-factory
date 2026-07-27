@@ -117,6 +117,33 @@ def _page_role(url: str, taken: Optional[set] = None) -> str:
 _FLOW_HINTS = ("book", "buy", "cart", "checkout", "signup", "sign-up", "subscribe",
                "contact", "start", "appointment", "reserve", "order", "quote", "demo")
 
+# Paths that plainly ARE the page a company puts its public address on. Matched on the final path
+# segment only, so /contact and /en/kontakt qualify while /contact-center-software (a product page)
+# does not — a substring match here would spend the page budget on marketing pages.
+_CONTACT_TEXT_LIMIT = 40_000     # bounded: enough for a contact page, never a whole site's prose
+_CONTACT_PATH_NAMES = frozenset({
+    "contact", "contacts", "contact-us", "contactus", "kontakt", "contacto", "contatti",
+    "support", "help", "impressum", "about", "about-us", "team",
+})
+
+
+def _contact_first(links: List[str], host: Optional[str]) -> List[str]:
+    """Same links, same count — but offer the contact page before the twenty-fifth feature page.
+
+    The live plausible.io run walked its full twelve-page budget and never reached /contact, which
+    was the twenty-sixth link on the landing page. Finding a public address is one of the pipeline's
+    stated outputs, so a page that plainly is the contact page is worth one of the budgeted slots.
+
+    This is a REORDERING and nothing more: the planner's ceiling, its noise skipping and its
+    stop-early rule all still apply unchanged, so no extra page is ever fetched.
+    """
+    same_host = [link for link in links if urlsplit(link).hostname == host]
+    contact = [link for link in same_host if ScoutEngine._looks_like_contact_page(link)]
+    if not contact:
+        return links
+    rest = [link for link in links if link not in set(contact)]
+    return contact + rest
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -275,13 +302,19 @@ class ScoutEngine:
             # Seed the digest set with the landing frame so a nav link back to the page we have
             # already photographed cannot contribute a second copy of the same picture.
             seen_digests = {landing_shot["sha256"]} if landing_shot.get("sha256") else set()
+            walked_contacts: List[Dict[str, str]] = []
             if "links" in cfg.check_families:
                 link_status = self._probe_links(
                     obs, planner, shot_dir=str(self.store.prospect_dir(pid)), shots=extra_shots,
-                    seen_digests=seen_digests)
+                    seen_digests=seen_digests, contacts=walked_contacts)
             else:
                 link_status = {}
                 planner.stop("links_check_disabled")
+            if walked_contacts:
+                self.store.save_prospect_artifact(pid, "contacts.json", {
+                    "schema": "scout-contacts/v1",
+                    "public": walked_contacts,
+                })
             shots = ([landing_shot] if landing_shot else []) + extra_shots
             if shots:
                 self.store.save_prospect_artifact(pid, "screenshots.json", {
@@ -572,7 +605,8 @@ class ScoutEngine:
 
     def _probe_links(self, obs: PageObservation, planner=None, *, shot_dir: Optional[str] = None,
                      shots: Optional[List[Dict[str, str]]] = None,
-                     seen_digests: Optional[set] = None) -> Dict[str, int]:
+                     seen_digests: Optional[set] = None,
+                     contacts: Optional[List[Dict[str, str]]] = None) -> Dict[str, int]:
         """Fetch a bounded set of same-host links once (read-only) and record status.
 
         When a ``CoveragePlanner`` is supplied (the first, measured pass) it governs the crawl: it
@@ -584,7 +618,7 @@ class ScoutEngine:
         seen: Dict[str, int] = {}
         count = 0
         exhausted = True
-        for link in obs.links:
+        for link in _contact_first(obs.links, host) if contacts is not None else obs.links:
             if urlsplit(link).hostname != host:
                 continue
             if link in seen:
@@ -620,6 +654,11 @@ class ScoutEngine:
                 self.backend.screenshot_dir = None
             seen[link] = probe.status if not probe.fetch_error else 0
             count += 1
+            # A page we actually opened may carry the company's public address — a contact page
+            # usually does. Reading only the landing observation threw that away and reported
+            # "Email not found" for a site whose mailbox Scout had just walked past.
+            if contacts is not None and not probe.fetch_error:
+                self._collect_contacts(probe, contacts)
             if planner is not None:
                 verdict = planner.record(link, probe)
                 if frame:
@@ -630,6 +669,52 @@ class ScoutEngine:
             if exhausted:
                 planner.finalize_links_exhausted()
         return seen
+
+    @staticmethod
+    def _looks_like_contact_page(url: str) -> bool:
+        path = (urlsplit(url).path or "/").lower().rstrip("/")
+        tail = path.rsplit("/", 1)[-1]
+        return tail in _CONTACT_PATH_NAMES or path.endswith(tuple(
+            "/" + name for name in _CONTACT_PATH_NAMES))
+
+    def _collect_contacts(self, probe: PageObservation, into: List[Dict[str, str]]) -> None:
+        """Record public addresses from one walked page, bound to the page they were found on.
+
+        Same rules as everywhere else: only genuinely public addresses, only same-company ones (a
+        walked page may link to a third party, and their mailbox is not this target's contact), and
+        every address keeps the exact URL it came from so provenance survives to the operator.
+        """
+        from core.scout.discovery.domain_intel import canonical_domain
+        from core.scout.outreach.qa_draft import extract_public_contact_records
+
+        page_url = probe.final_url or probe.url
+        domain = canonical_domain(page_url)
+        # Visible text is read ONLY on a page that plainly is the contact page. A feature page's
+        # prose is not a contact source — it quotes customers, shows example addresses and embeds
+        # support snippets, and scanning it would invent contacts out of marketing copy.
+        text = (probe.text_sample or "")[:_CONTACT_TEXT_LIMIT] if self._looks_like_contact_page(
+            page_url) else ""
+        for record in extract_public_contact_records(
+                {"links": list(probe.links or []), "title": probe.title or "",
+                 "meta_description": probe.meta_description or "",
+                 "headings": list(probe.headings or []),
+                 "text": text,
+                 "final_url": page_url, "url": probe.url},
+                domain=domain):
+            email = str(record.get("email") or "").strip().lower()
+            if not email or any(existing["email"] == email for existing in into):
+                continue
+            # Same company only, and strictly. extract_public_emails prefers same-domain addresses
+            # but falls back to returning everything when none exist — reasonable for a landing
+            # page an operator is reading, wrong here: a walked page can link a partner, an agency
+            # or a support vendor, and mailing them would be contacting the wrong company entirely.
+            host = email.rsplit("@", 1)[-1]
+            if domain and host != domain and not host.endswith("." + domain):
+                continue
+            into.append({"email": email, "source": str(record.get("source") or ""),
+                         "source_url": self.sanitizer.safe_url(
+                             str(record.get("source_url") or page_url)),
+                         "public": True})
 
     def _explore_flow(self, obs: PageObservation) -> Optional[Dict]:
         """Follow one primary public flow link a single step and STOP before any side effect."""
