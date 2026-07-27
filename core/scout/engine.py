@@ -117,6 +117,32 @@ def _page_role(url: str, taken: Optional[set] = None) -> str:
 _FLOW_HINTS = ("book", "buy", "cart", "checkout", "signup", "sign-up", "subscribe",
                "contact", "start", "appointment", "reserve", "order", "quote", "demo")
 
+# Paths that plainly ARE the page a company puts its public address on. Matched on the final path
+# segment only, so /contact and /en/kontakt qualify while /contact-center-software (a product page)
+# does not — a substring match here would spend the page budget on marketing pages.
+_CONTACT_PATH_NAMES = frozenset({
+    "contact", "contacts", "contact-us", "contactus", "kontakt", "contacto", "contatti",
+    "support", "help", "impressum", "about", "about-us", "team",
+})
+
+
+def _contact_first(links: List[str], host: Optional[str]) -> List[str]:
+    """Same links, same count — but offer the contact page before the twenty-fifth feature page.
+
+    The live plausible.io run walked its full twelve-page budget and never reached /contact, which
+    was the twenty-sixth link on the landing page. Finding a public address is one of the pipeline's
+    stated outputs, so a page that plainly is the contact page is worth one of the budgeted slots.
+
+    This is a REORDERING and nothing more: the planner's ceiling, its noise skipping and its
+    stop-early rule all still apply unchanged, so no extra page is ever fetched.
+    """
+    same_host = [link for link in links if urlsplit(link).hostname == host]
+    contact = [link for link in same_host if ScoutEngine._looks_like_contact_page(link)]
+    if not contact:
+        return links
+    rest = [link for link in links if link not in set(contact)]
+    return contact + rest
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -591,7 +617,7 @@ class ScoutEngine:
         seen: Dict[str, int] = {}
         count = 0
         exhausted = True
-        for link in obs.links:
+        for link in _contact_first(obs.links, host) if contacts is not None else obs.links:
             if urlsplit(link).hostname != host:
                 continue
             if link in seen:
@@ -642,6 +668,13 @@ class ScoutEngine:
             if exhausted:
                 planner.finalize_links_exhausted()
         return seen
+
+    @staticmethod
+    def _looks_like_contact_page(url: str) -> bool:
+        path = (urlsplit(url).path or "/").lower().rstrip("/")
+        tail = path.rsplit("/", 1)[-1]
+        return tail in _CONTACT_PATH_NAMES or path.endswith(tuple(
+            "/" + name for name in _CONTACT_PATH_NAMES))
 
     def _collect_contacts(self, probe: PageObservation, into: List[Dict[str, str]]) -> None:
         """Record public addresses from one walked page, bound to the page they were found on.

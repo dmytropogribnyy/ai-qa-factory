@@ -132,3 +132,58 @@ def test_an_address_on_another_company_is_never_collected(tmp_path):
 
     contacts = store.load_prospect_artifact(_pid(store), "contacts.json") or {}
     assert [c["email"] for c in contacts.get("public", [])] == []
+
+
+# --- and the reason it still found nothing on the real site --------------------------------------
+
+class _LinkRichSite:
+    """A landing page like plausible.io's: two dozen feature pages, with /contact far down."""
+    name = "static"
+    screenshot_dir = None
+
+    def observe(self, url, _timeout_s, _max_bytes, *, record_video=False, deep_qa=False):
+        if url.rstrip("/").endswith("/contact"):
+            return PageObservation(url=url, final_url=url, status=200, ok=True, backend="static",
+                                   title="Contact", has_viewport_meta=True,
+                                   headings=[{"level": 1, "text": "Contact"}],
+                                   landmarks={"main": 1}, links=[f"mailto:hello@{DOMAIN}"])
+        if url.rstrip("/") != f"https://{DOMAIN}":
+            return PageObservation(url=url, final_url=url, status=200, ok=True, backend="static",
+                                   title="Feature", has_viewport_meta=True,
+                                   headings=[{"level": 1, "text": "Feature"}],
+                                   landmarks={"main": 1}, links=[])
+        return PageObservation(
+            url=url, final_url=f"https://{DOMAIN}/", status=200, ok=True, backend="static",
+            title=DOMAIN, has_viewport_meta=True, headings=[{"level": 1, "text": "Analytics"}],
+            landmarks={"main": 1},
+            # /contact sits after twenty-five feature pages, exactly as it does on the real site.
+            links=[f"https://{DOMAIN}/feature-{i:02d}" for i in range(25)]
+                  + [f"https://{DOMAIN}/contact"])
+
+
+def test_the_contact_page_is_reached_even_on_a_link_rich_site(tmp_path):
+    """The live plausible.io run walked twelve pages and /contact was the twenty-sixth link.
+
+    Finding a public address is one of the pipeline's stated outputs, so a page that plainly IS the
+    contact page is worth one of the budgeted slots ahead of the twentieth feature page. The ceiling
+    itself does not move — only the order in which candidates are offered to it.
+    """
+    store = RunStore(str(tmp_path), "link-rich")
+    cfg = ScoutRunConfig(campaign_name="adhoc", seeds=[f"https://{DOMAIN}/"], max_sites=1,
+                         output_dir=str(tmp_path), run_id="link-rich", resolve_dns=False)
+    ScoutEngine(cfg, store, backend=_LinkRichSite()).run()
+
+    contacts = store.load_prospect_artifact(_pid(store), "contacts.json") or {}
+    assert [c["email"] for c in contacts.get("public", [])] == [f"hello@{DOMAIN}"]
+
+
+def test_prioritising_contact_pages_does_not_widen_the_page_budget(tmp_path):
+    """Reordering candidates must not become a way to fetch more pages than the ceiling allows."""
+    store = RunStore(str(tmp_path), "budget")
+    cfg = ScoutRunConfig(campaign_name="adhoc", seeds=[f"https://{DOMAIN}/"], max_sites=1,
+                         coverage="adaptive", output_dir=str(tmp_path), run_id="budget",
+                         resolve_dns=False)
+    ScoutEngine(cfg, store, backend=_LinkRichSite()).run()
+
+    coverage = store.load_prospect_artifact(_pid(store), "coverage.json") or {}
+    assert coverage["meaningful_pages_tested"] <= coverage["page_ceiling"]
