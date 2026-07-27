@@ -3255,6 +3255,10 @@ function startCampaign(){{
                 "qualified_auto": "No qualifying interaction finding triggered an automatic "
                                   "reproduction video for this target.",
             }
+            # What the recording actually shows, next to the recording. A clip on its own invites
+            # the reader to supply the conclusion; these four lines state it — including when the
+            # conclusion is "the control worked, and this proves only that we can record it".
+            body += _interaction_card(det.get("interaction"), _art_url)
             if not vids:
                 note = _VIDEO_POLICY_NOTE.get(video_mode,
                     "No reproduction video was captured for this target.")
@@ -5648,6 +5652,72 @@ def _client_package_html(service, domain: str, run_id: str, detail: dict) -> str
         f'One target only — no other company\'s evidence, findings or contacts are '
         f'included. Your talking points, the email draft and where the contact came from stay out of '
         f'it. Building the package is not approval to send it: review the contents first.</p></div>')
+
+
+_INTERACTION_HEADLINE = {
+    "defect": ("A control that does not do what it says", "bad"),
+    "interaction_trace": ("A recorded interaction — the control behaved correctly", "muted"),
+    "not_run": ("No interaction was recorded", "muted"),
+}
+
+
+def _interaction_card(record, art_url) -> str:
+    """Render the recorded interaction: what was true before, what was done, what happened, and
+    whether the page was put back.
+
+    The outcome is stated in words rather than left to the video, because a trace and a defect look
+    identical on screen — the same click, the same page — and only one of them is something a client
+    should ever hear about.
+    """
+    if not isinstance(record, dict) or not record.get("scenario"):
+        return ""
+    outcome = str(record.get("outcome") or "not_run")
+    headline, kind = _INTERACTION_HEADLINE.get(outcome, _INTERACTION_HEADLINE["not_run"])
+    video = record.get("video") if isinstance(record.get("video"), dict) else {}
+    ref = str(record.get("video_ref") or "")
+    run = str(record.get("run_id") or "")
+    pid = str(record.get("prospect_id") or "")
+    player = ""
+    if ref and run and pid:
+        src = art_url(f"prospects/{pid}/{ref}")
+        player = (f'<video src="{src}" controls preload="metadata" '
+                  f'style="max-width:520px;width:100%;margin:8px 0"></video>')
+    elif outcome in ("defect", "interaction_trace"):
+        player = (f'<p class="muted">{_esc(str(record.get("video_rejected_reason") or "No clip was kept for this interaction."))}</p>')
+    facts = []
+    for label, key in (("Before", "baseline"), ("After the action", "observed"),
+                       ("After cleanup", "after_cleanup")):
+        state = record.get(key) if isinstance(record.get(key), dict) else {}
+        if not state:
+            continue
+        bits = []
+        if state.get("result_count") is not None:
+            bits.append(f'{state["result_count"]} results stated')
+        if state.get("item_signature"):
+            bits.append(f'{state["item_signature"][0]} listed')
+        if state.get("selected_label") is not None:
+            bits.append(f'selected: {state["selected_label"]}')
+        if state.get("removable_count") is not None:
+            bits.append(f'{state["removable_count"]} removable element(s)')
+        facts.append(f'<tr><th scope="row">{_esc(label)}</th>'
+                     f'<td class="muted">{_esc(" · ".join(bits) or "nothing measurable")}</td></tr>')
+    if video:
+        facts.append(
+            f'<tr><th scope="row">Recording</th><td class="muted">'
+            f'{_esc(str(video.get("mime") or "video"))} · {_human_bytes(video.get("bytes"))} · '
+            f'{_esc(str(video.get("duration_s")))}s · {_esc(str(video.get("width")))}&times;'
+            f'{_esc(str(video.get("height")))} · SHA-256 '
+            f'<code>{_esc(str(video.get("sha256") or "")[:16])}&hellip;</code></td></tr>')
+    steps = "".join(f'<li>{_esc(str(s))}</li>' for s in (record.get("steps") or [])[:8])
+    cleanup = ("the page was put back" if record.get("cleanup_ok")
+               else "the page could not be verified as restored")
+    return (f'<div class="card"><h2>Recorded interaction</h2>'
+            f'{_badge(headline, kind)}'
+            f'<p class="muted">{_esc(str(record.get("reason") or ""))}</p>'
+            f'{player}'
+            f'<div class="scrollx"><table>{"".join(facts)}</table></div>'
+            f'{f"<ol class=muted>{steps}</ol>" if steps else ""}'
+            f'<p class="muted">Cleanup: {_esc(cleanup)}.</p></div>')
 
 
 def _data_empty_note(filters, in_trash: bool) -> str:

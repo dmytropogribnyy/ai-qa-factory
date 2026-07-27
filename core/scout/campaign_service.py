@@ -73,8 +73,10 @@ def analysis_incomplete(prospect_status: str) -> bool:
 # video clip. They may only be reached for a COMPLETED analysis — a screen that reports 0 confirmed
 # findings must not offer the result one click away, and the user-facing /scout/artifact URL is
 # guessable, so the rule cannot live in the page alone.
-_RESULT_BEARING_NAMES = frozenset({"findings.json", "scorecard.json", "reproduction.json"})
-_RESULT_BEARING_PREFIXES = ("reproduction.",)   # reproduction.webm / .mp4 and any future container
+_RESULT_BEARING_NAMES = frozenset({"findings.json", "scorecard.json", "reproduction.json",
+                                   "interaction_scenario.json"})
+# reproduction.webm / interaction.webm / .mp4 and any future container
+_RESULT_BEARING_PREFIXES = ("reproduction.", "interaction.")
 
 
 def is_result_bearing_artifact(name: str) -> bool:
@@ -94,6 +96,7 @@ _STRUCTURED_EVIDENCE_ARTIFACTS: tuple = (
     ("scorecard.json", "Priority scorecard"),
     ("coverage.json", "Coverage record"),
     ("reproduction.json", "Reproduction record"),
+    ("interaction_scenario.json", "Recorded interaction (baseline, action, result, cleanup)"),
     ("manual_action.json", "Stop-reason record"),
 )
 
@@ -506,6 +509,7 @@ class CampaignService:
         entry = reg.get(domain)
         brain = self._brain_for_domain(domain)
         findings: List[Dict[str, Any]] = []
+        interaction: Optional[Dict[str, Any]] = None
         contacts: List[str] = []
         contact_records: List[Dict[str, Any]] = []
         media: List[str] = []                 # rel paths under the run, servable via /scout/artifact
@@ -662,6 +666,12 @@ class CampaignService:
                         fdata = st.load_prospect_artifact(prospect_id, "findings.json") or {}
                         findings = list(fdata.get("verified", []))
                         reproduction = st.load_prospect_artifact(prospect_id, "reproduction.json") or None
+                        # The recorded reversible interaction, whatever it turned out to prove. It
+                        # is surfaced even when the outcome was "nothing was wrong" — that IS the
+                        # result, and hiding it would leave the clip on disk with nothing saying
+                        # what it shows.
+                        interaction = st.load_prospect_artifact(
+                            prospect_id, "interaction_scenario.json") or None
                         # The priority the run itself assigned. Gated with the findings it is derived
                         # from, and left absent when no scorecard was written — an invented "C" would
                         # say the run ranked this site low when it never ranked it at all.
@@ -721,7 +731,8 @@ class CampaignService:
                 "manual_action": manual_action, "source_kind": source_kind,
                 "video_mode": video_mode, "evidence_files": evidence_files, "coverage": coverage,
                 "evidence_status": evidence_status, "media": media, "network": network,
-                "reproduction": reproduction, "scorecard": scorecard,
+                "reproduction": reproduction, "interaction": interaction,
+                "scorecard": scorecard,
                 "findings": [_project_target_finding(f) for f in findings],
                 "contacts": contacts, "contact_records": contact_records,
                 "draft": draft, "fixability": fixability}

@@ -334,8 +334,14 @@ def _html_summary(domain: str, detail: Dict[str, Any], *, images: List[str],
         f'{html.escape(str(img.get("role") or "page"))}</a>'
         for img in images
     )
-    media += "".join(
-        f'<a href="{html.escape(name, quote=True)}">Open reproduction video {index}</a>'
+    # A relative <video> element, not only a link: the point of an offline package is that the
+    # recording plays where it was unpacked, without the recipient hunting for a player.
+    players = "".join(
+        f'<figure style="margin:0 0 12px"><video src="{html.escape(name, quote=True)}" controls '
+        f'preload="metadata" style="max-width:100%;border-radius:8px"></video>'
+        f'<figcaption class="muted">{html.escape(_video_caption(name, index))} &mdash; '
+        f'<a href="{html.escape(name, quote=True)}">open the file directly</a></figcaption>'
+        f'</figure>'
         for index, name in enumerate(videos, 1)
     )
     video_note = "" if videos else (
@@ -358,17 +364,28 @@ border-bottom:1px solid #e8ecf2;text-align:left;vertical-align:top}}.sev{{font-w
 <p>Completed bounded analysis of public pages. Review the package before sending.</p>
 <div class="metrics"><div class="metric"><strong>{len(findings)}</strong><br>confirmed findings</div>
 <div class="metric"><strong>{len(images)}</strong><br>unique screenshots</div>
-<div class="metric"><strong>{len(videos)}</strong><br>reproduction videos</div></div></header>
+<div class="metric"><strong>{len(videos)}</strong><br>recordings</div></div></header>
 <section class="card"><h2>Findings</h2>
 <table><thead><tr><th>Severity</th><th>Issue and impact</th><th>How to reproduce</th></tr></thead>
 <tbody>{''.join(rows) or '<tr><td colspan="3">No confirmed issue was recorded.</td></tr>'}</tbody></table>
 </section><section class="card"><h2>Evidence files</h2>
 <div class="links">{media or '<span class="muted">No visual evidence was captured.</span>'}</div>
+{players}
 {video_note}
 <p class="muted">Each screenshot is a distinct page or state; byte-identical captures are not
 packaged twice. Technical JSON is included for verification. The browser event trace is a
 redacted structured record, not a native Playwright trace.zip.</p></section>
 </main></body></html>"""
+
+
+def _video_caption(name: str, index: int) -> str:
+    """Say which kind of recording this is. A reproduction replays a confirmed finding; an
+    interaction recording shows a control being used, and its outcome may be that nothing was
+    wrong — calling both "reproduction" would put a claim in the client's hands that the clip
+    does not support."""
+    if "interaction-" in name:
+        return f"Recorded interaction {index}"
+    return f"Reproduction of a confirmed finding ({index})"
 
 
 def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]], videos: int,
@@ -530,7 +547,11 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
             image_meta[name] = {"role": role, "url": str(meta.get("url") or "")}
         else:
             video_count += 1
-            name = f"Evidence/Videos/reproduction-{video_count:02d}{suffix}"
+            # Named for what it IS. A recorded interaction whose outcome was "the control worked"
+            # packaged as "reproduction-01" tells the client a defect was reproduced, which is the
+            # opposite of what the clip shows.
+            kind = "interaction" if path.stem.lower().startswith("interaction") else "reproduction"
+            name = f"Evidence/Videos/{kind}-{video_count:02d}{suffix}"
         binary.append((name, path))
         total += size
 
@@ -611,6 +632,14 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                     "captured_at": datetime.fromtimestamp(
                         source.stat().st_mtime, tz=timezone.utc).isoformat(),
                 }
+                if source.suffix.lower() in _VIDEO_SUFFIXES:
+                    # Enough for a recipient to confirm the clip they received is the clip that was
+                    # recorded — and that it is a recording rather than a still frame.
+                    from core.scout.media_probe import probe_video
+                    probe = probe_video(source)
+                    entry.update({"duration_s": probe.get("duration_s"),
+                                  "width": probe.get("width"), "height": probe.get("height"),
+                                  "playable": probe.get("playable")})
                 entries.append(entry)
             manifest = {
                 "schema": "scout-client-evidence/v2",

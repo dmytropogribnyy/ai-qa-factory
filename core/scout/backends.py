@@ -15,6 +15,7 @@ tokens); no raw cookies/credentials are ever stored on the observation.
 from __future__ import annotations
 
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -660,6 +661,247 @@ class PlaywrightBackend:
                     pass
         return result
 
+    def record_interaction_scenario(self, url: str, record_dir: str, *,
+                                    timeout_s: float = 20.0,
+                                    settle_s: float = 4.0) -> Dict[str, Any]:
+        """Perform ONE bounded reversible interaction on a public page, recorded end to end.
+
+        The page is inspected before anything is touched: the control is found by shape, not by a
+        selector written down months ago against a site that has since changed. Everything happens
+        in a single recorded context so the clip contains the baseline, the action and the cleanup
+        in one continuous sequence — a video assembled from separate contexts would show a state
+        transition that never actually occurred.
+
+        Read-only in the sense that matters: no form is submitted, no navigation is followed, and
+        whatever was changed is changed back before the recording stops.
+        """
+        from core.scout.interaction_scenario import (FIND_CANDIDATE_JS, ScenarioResult,
+                                                     candidate_is_safe)
+        from core.scout.interaction_scenario import classify as classify_scenario
+
+        result = ScenarioResult(url=url)
+        if not self._url_allowed(url):
+            result.reason, result.error = "the URL is not eligible", "blocked_url"
+            return result.to_dict()
+        factory = self._playwright_factory
+        if factory is None:
+            try:
+                from playwright.sync_api import sync_playwright  # lazy: optional dependency
+                factory = sync_playwright
+            except Exception as exc:  # pragma: no cover - only when playwright missing
+                result.reason, result.error = "no browser is available", type(exc).__name__
+                return result.to_dict()
+        vidtmp = os.path.join(record_dir, "_scenariotmp")
+        os.makedirs(vidtmp, exist_ok=True)
+        with factory() as p:
+            headful = (self.headful if self.headful is not None
+                       else os.getenv("SCOUT_HEADFUL", "").lower() in ("1", "true", "yes", "on"))
+            launch_kwargs: Dict[str, Any] = {"headless": not headful}
+            if headful:
+                launch_kwargs["slow_mo"] = 400
+            browser = p.chromium.launch(**launch_kwargs)
+            context = browser.new_context(record_video_dir=vidtmp)
+            video = None
+            try:
+                page = context.new_page()
+                page.route("**/*", lambda route: (
+                    route.continue_() if self._url_allowed(
+                        getattr(getattr(route, "request", None), "url", "") or "")
+                    else route.abort()))
+                page.goto(url, wait_until="load", timeout=timeout_s * 1000)
+                result.steps.append(f"open {url}")
+                self._settle(page, 1.0)
+                candidate = page.evaluate(FIND_CANDIDATE_JS)
+                if not candidate_is_safe(candidate):
+                    result.reason = ("no reversible control that Scout can act on safely was found "
+                                     "on this page")
+                    video = page.video
+                    return self._finish_scenario(result, context, browser, vidtmp, video, record_dir)
+                result.scenario = str(candidate["kind"])
+                result.control_label = str(candidate.get("label") or "")
+                result.click_selector = str(candidate.get("click_selector") or "")
+                selector = str(candidate["selector"])
+                self._wait_interactive(page, result, selector)
+                result.baseline = dict(self._measure(page, result, selector))
+                result.baseline["control_label"] = result.control_label
+                result.steps.append(
+                    f"record baseline: {self._describe_state(result.scenario, result.baseline)}")
+
+                self._act(page, result, selector, settle_s)
+                result.observed = dict(self._measure(page, result, selector))
+                result.steps.append(
+                    f"observe result: {self._describe_state(result.scenario, result.observed)}")
+
+                result.cleanup_ok = self._revert(page, result, selector, settle_s)
+                result.after_cleanup = dict(self._measure(page, result, selector))
+                result.steps.append("restore the page to its original state"
+                                    if result.cleanup_ok else "cleanup could not be verified")
+                result.final_url = page.url
+                navigated = not _same_page(url, page.url)
+                result.outcome, result.reason = classify_scenario(
+                    result.scenario, result.baseline, result.observed,
+                    action_performed=result.action_performed, cleanup_ok=result.cleanup_ok,
+                    navigated_away=navigated)
+                self._settle(page, 1.0)          # a beat of the restored page closes the sequence
+                video = page.video
+            except Exception as exc:  # noqa: BLE001 - a browser failure keeps no clip and no claim
+                result.error = f"{type(exc).__name__}: {str(exc)[:120]}"
+                result.reason = "the interaction could not be completed"
+                result.outcome = "not_run"
+                video = None
+            finally:
+                pass
+            return self._finish_scenario(result, context, browser, vidtmp, video, record_dir)
+
+    def _act(self, page, result, selector: str, settle_s: float) -> None:
+        """Perform the one action this scenario is about, and wait for the page to answer."""
+        from core.scout.interaction_scenario import (SCENARIO_ADD_REMOVE, SCENARIO_FILTER,
+                                                     SCENARIO_SELECT)
+        target = page.locator(selector).first
+        if result.scenario == SCENARIO_FILTER:
+            result.action = f"select the {result.control_label or 'filter'} filter"
+            self._click_control(page, result, selector)
+        elif result.scenario == SCENARIO_ADD_REMOVE:
+            result.action = f"click {result.control_label or 'the add control'}"
+            target.click(timeout=8000)
+        elif result.scenario == SCENARIO_SELECT:
+            options = result.baseline.get("option_labels") or []
+            wanted = next((o for o in options if o != result.baseline.get("selected_label")), None)
+            result.action = f"choose {wanted or 'another option'}"
+            target.select_option(label=wanted, timeout=8000)
+        result.action_performed = True
+        result.steps.append(result.action)
+        self._await_change(page, result, selector, result.baseline, settle_s)
+
+    @staticmethod
+    def _measure(page, result, selector: str) -> Dict[str, Any]:
+        """One reading of the page. The control's label travels with the selector so a re-rendered
+        page can still be measured rather than reported as silent."""
+        from core.scout.interaction_scenario import MEASURE_JS
+        return page.evaluate(MEASURE_JS, {"selector": selector, "label": result.control_label})
+
+    def _wait_interactive(self, page, result, selector: str, budget_s: float = 10.0) -> None:
+        """Wait until the page has finished rendering ITSELF before touching it.
+
+        A single-page app serves its markup and attaches its handlers separately. Clicking in
+        between does nothing at all — and "nothing happened" is precisely the observation this
+        scenario exists to report, so acting too early would manufacture the defect it is looking
+        for. The page is considered ready when two consecutive readings agree.
+        """
+        try:
+            page.wait_for_load_state("networkidle", timeout=int(budget_s * 1000))
+        except Exception:  # noqa: BLE001 - a busy page is not an error; the stability check decides
+            pass
+        deadline = time.monotonic() + budget_s
+        previous = None
+        while time.monotonic() < deadline:
+            try:
+                now = self._measure(page, result, selector)
+            except Exception:  # noqa: BLE001
+                return
+            same = previous is not None and all(
+                now.get(k) == previous.get(k) for k in ("result_count", "item_signature"))
+            if same and (now.get("result_count") is not None or now.get("item_signature")):
+                return
+            previous = now
+            page.wait_for_timeout(400)
+
+    def _click_control(self, page, result, selector: str) -> None:
+        """Click the control the way a visitor would.
+
+        A styled filter is an invisible ``<input>`` behind a visible label; Playwright's ``check()``
+        refuses to act on it, and forcing the input would bypass the site's own click handler and
+        prove nothing about what a person experiences. So the label is the target, and the input's
+        state afterwards is the evidence that the click landed.
+        """
+        clickable = getattr(result, "click_selector", "") or selector
+        try:
+            page.locator(clickable).first.click(timeout=8000)
+        except Exception:
+            page.locator(selector).first.check(timeout=8000)   # a plain, visible checkbox
+
+    def _revert(self, page, result, selector: str, settle_s: float) -> bool:
+        """Put the page back, and CHECK that it went back — never assume it did."""
+        from core.scout.interaction_scenario import (SCENARIO_ADD_REMOVE, SCENARIO_FILTER,
+                                                     SCENARIO_SELECT)
+        try:
+            if result.scenario == SCENARIO_FILTER:
+                self._click_control(page, result, selector)
+                self._await_change(page, result, selector, result.observed, settle_s)
+                return self._measure(page, result, selector).get("control_engaged") is False
+            if result.scenario == SCENARIO_SELECT:
+                page.locator(selector).first.select_option(
+                    label=result.baseline.get("selected_label"), timeout=8000)
+                return (self._measure(page, result, selector).get("selected_label")
+                        == result.baseline.get("selected_label"))
+            if result.scenario == SCENARIO_ADD_REMOVE:
+                remover = page.get_by_role("button", name=re.compile("delete|remove", re.I)).first
+                remover.click(timeout=8000)
+                self._await_change(page, result, selector, result.observed, settle_s)
+                return (self._measure(page, result, selector).get("removable_count", 0)
+                        <= int(result.baseline.get("removable_count") or 0))
+        except Exception:  # noqa: BLE001 - an unverified cleanup is reported, never asserted
+            return False
+        return False
+
+    def _await_change(self, page, result, selector: str, before: Dict[str, Any],
+                      settle_s: float) -> None:
+        """Wait for the page to respond, bounded — never a long blind sleep.
+
+        A filter that does nothing is exactly the case being investigated, so this returns after the
+        budget rather than failing: "it never changed" is the observation, not an error.
+        """
+        from core.scout.interaction_scenario import SCENARIO_ADD_REMOVE, SCENARIO_SELECT
+        # ONLY the signals this scenario is actually asking about. A checkbox reports itself checked
+        # the instant it is clicked, so watching the control's own state would end the wait before
+        # the page had rendered anything — and the page would then be recorded as having answered
+        # with the results it still had. That reads as "the filter did nothing", which is the exact
+        # conclusion this method must never reach by accident.
+        keys = {SCENARIO_ADD_REMOVE: ("removable_count",),
+                SCENARIO_SELECT: ("selected_label",)}.get(
+                    result.scenario, ("result_count", "item_signature"))
+        deadline = time.monotonic() + max(0.5, settle_s)
+        changed_at = None
+        while time.monotonic() < deadline:
+            try:
+                now = self._measure(page, result, selector)
+            except Exception:  # noqa: BLE001 - a transient evaluation error is not an answer
+                break
+            if any(now.get(k) != before.get(k) for k in keys):
+                # Seen a change: let it settle briefly so a half-rendered list is not the reading.
+                if changed_at is None:
+                    changed_at = time.monotonic()
+                elif time.monotonic() - changed_at >= 0.5:
+                    break
+            page.wait_for_timeout(250)
+
+    @staticmethod
+    def _settle(page, seconds: float) -> None:
+        page.wait_for_timeout(int(max(0.0, seconds) * 1000))
+
+    @staticmethod
+    def _describe_state(scenario: str, state: Dict[str, Any]) -> str:
+        from core.scout.interaction_scenario import SCENARIO_ADD_REMOVE, SCENARIO_SELECT
+        if scenario == SCENARIO_SELECT:
+            return f"selected option {state.get('selected_label')!r}"
+        if scenario == SCENARIO_ADD_REMOVE:
+            return f"{state.get('removable_count', 0)} removable element(s)"
+        count = state.get("result_count")
+        listed = len(state.get("item_signature") or [])
+        return (f"{count if count is not None else 'no'} results stated, {listed} listed item(s), "
+                f"control engaged={bool(state.get('control_engaged'))}")
+
+    def _finish_scenario(self, result, context, browser, vidtmp: str, video, record_dir: str
+                         ) -> Dict[str, Any]:
+        """Close the context (which flushes the .webm) and bind the clip only if it earned it."""
+        self._safe_close(context, browser)
+        if video is not None and result.keeps_video:
+            try:
+                result.video_ref = os.path.join("_scenariotmp", os.path.basename(video.path()))
+            except Exception:  # noqa: BLE001 - an unreadable clip is simply not offered
+                result.video_ref = ""
+        return result.to_dict()
+
     @staticmethod
     def _safe_close(*closables) -> None:
         for c in closables:
@@ -668,6 +910,20 @@ class PlaywrightBackend:
                     c.close()
             except Exception:
                 pass
+
+
+def _same_page(before: str, after: str) -> bool:
+    """Did the interaction stay on the page it started on?
+
+    Path and host only: a filter that rewrites the query string (``?vendor=apple``) has not
+    navigated away in any sense that matters, while a click that lands on another document has.
+    """
+    from urllib.parse import urlsplit
+    try:
+        first, second = urlsplit(before or ""), urlsplit(after or "")
+    except ValueError:
+        return False
+    return (first.netloc, first.path.rstrip("/")) == (second.netloc, second.path.rstrip("/"))
 
 
 class _HeaderShim:
