@@ -2577,41 +2577,61 @@ function startCampaign(){{
                 until = (to + "T23:59:59+00:00") if to else ""
             elif days > 0:
                 since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-            rows = self._campaign_service().history(filters={
-                "text": qtext, "since": since, "until": until,
+            result_filter = (q.get("result") or [""])[0].strip()
+            rows = self._campaign_service().history_results(filters={
+                "text": qtext, "since": since, "until": until, "result": result_filter,
                 "archived": "only" if show_archived else "",
             })
             active_days = days if (days > 0 and not (frm or to)) else 0
-            filtered = bool(qtext or since or until)
+            filtered = bool(qtext or since or until or result_filter)
             total = len(self._campaign_service().history(filters={
                 "archived": "only" if show_archived else ""}))
             count_label = (f"{len(rows)} shown of {total} total"
                            if filtered and len(rows) != total else f"{total} total")
-            range_chips = "".join(
-                f'<a class="chip{" active" if active_days == val else ""}" '
-                f'href="/scout/history?days={val}'
-                f'{"&archived=1" if show_archived else ""}'
-                f'{("&text=" + _esc(qtext)) if qtext else ""}">{lbl}</a>'
-                for val, lbl in ((1, "Today"), (7, "7 days"), (30, "30 days"), (0, "All")))
-            trs = "".join(
-                f'<tr><td class="select-cell"><input type="checkbox" class="pick" '
-                f'value="{_esc(r.get("domain",""))}" aria-label="Select {_esc(r.get("domain",""))}"></td>'
-                f'<td data-label="Target"><a href="/scout/target?domain={_esc(r.get("domain",""))}">'
-                f'{_esc(r.get("domain",""))}</a></td>'
-                f'<td data-label="Analysis">{_badge(_analysis_status_label(r.get("analysis_status","")))}</td>'
-                f'<td data-label="Prospect stage">{_badge(r.get("engagement_status","prospect").title())}</td>'
-                f'<td data-label="Analyzed" class="muted">{_fmt_ts(r.get("last_analysis_at",""))}</td>'
-                f'<td data-label="Note" class="muted">'
-                f'{_esc(_manual_reason_label(r.get("reason",""))) if r.get("reason") else "&mdash;"}</td></tr>'
-                for r in rows)
+
+            def _row(r) -> str:
+                # Every cell states a fact about the outcome. "Not found" and "None captured" are
+                # said in words rather than left blank, because an empty cell reads as "still
+                # working" and this analysis has finished.
+                res = r.get("result") or {}
+                domain = r.get("domain", "")
+                run = r.get("run", "")
+                href = (f'/scout/target?domain={_esc(domain)}'
+                        + (f'&run={_esc(run)}' if run else ''))
+                email = res.get("contact_email") or ""
+                contact = (f'<a href="mailto:{_esc(email)}">{_esc(email)}</a>' if email
+                           else '<span class="muted">Not found</span>')
+                priority = res.get("priority") or ""
+                # Why, under the what. A blocked or rejected row without its reason forces the
+                # operator to open the target just to learn the run refused it as a social network.
+                raw_reason = res.get("reason") or r.get("reason") or ""
+                why = (f'<div class="muted result-why">'
+                       f'{_esc(_manual_reason_label(raw_reason))}</div>' if raw_reason else '')
+                return (
+                    f'<tr><td class="select-cell"><input type="checkbox" class="pick" '
+                    f'value="{_esc(domain)}" aria-label="Select {_esc(domain)}"></td>'
+                    f'<td data-label="Site"><a href="{href}">{_esc(domain)}</a></td>'
+                    f'<td data-label="Result">'
+                    f'{_badge(res.get("label", "Unknown"), res.get("kind", ""))}{why}</td>'
+                    f'<td data-label="Priority">'
+                    f'{_badge(priority) if priority else "<span class=\'muted\'>&mdash;</span>"}</td>'
+                    f'<td data-label="Evidence" class="muted">'
+                    f'{_esc(res.get("evidence_label", "None captured"))}</td>'
+                    f'<td data-label="Contact">{contact}</td>'
+                    f'<td data-label="Analyzed" class="muted">'
+                    f'{_fmt_ts(r.get("last_analysis_at", ""))}</td>'
+                    f'<td data-label="Open"><a class="chip" href="{href}">Open</a></td></tr>')
+
+            trs = "".join(_row(r) for r in rows)
             empty_msg = (f'0 shown of {total} total &mdash; no sites match this filter.'
                          if filtered and total > 0 else
                          ('No archived targets.' if show_archived else 'No analyzed sites yet.'))
             table = (f'<table class="responsive-table"><caption>'
                      f'{"Archived" if show_archived else "Active"} targets &mdash; {count_label}</caption>'
                      f'<thead><tr><th><input type="checkbox" id="pickall" aria-label="Select all"></th>'
-                     f'<th>Target</th><th>Analysis</th><th>Prospect stage</th><th>Analyzed</th>'
-                     f'<th>Note</th></tr></thead><tbody>{trs}</tbody></table>'
+                     f'<th>Site</th><th>Result</th><th>Priority</th><th>Evidence</th>'
+                     f'<th>Contact</th><th>Analyzed</th><th>Open</th></tr></thead>'
+                     f'<tbody>{trs}</tbody></table>'
                      if rows else f'<div class="card empty muted">{empty_msg}</div>')
             active_tab = ('<a class="chip" href="/scout/history">Active</a>'
                           if show_archived else '<span class="chip active">Active</span>')
@@ -2626,17 +2646,25 @@ function startCampaign(){{
                     f'<a class="chip" href="/scout/new">New campaign</a>'
                     f'<a class="chip" href="/scout/attention">Needs attention</a></div>'
                     f'<div class="row">{active_tab}{archived_tab}</div>'
-                    f'<div class="row" style="margin-bottom:6px">{range_chips}</div>'
+                    # Search, one result filter and ONE date disclosure. Range chips, a last-N-days
+                    # box and a from/to pair used to sit side by side — three controls for one
+                    # question, each silently overriding the others.
                     f'<form method="get" class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
                     f'<input type="hidden" name="archived" value="{"1" if show_archived else ""}">'
+                    f'<label class="sr-only" for="history_text">Filter by domain or text</label>'
+                    f'<input id="history_text" name="text" placeholder="filter domain/text" '
+                    f'value="{_esc(qtext)}">'
+                    f'<label class="sr-only" for="history_result">Filter by result</label>'
+                    f'<select id="history_result" name="result">'
+                    f'{_result_options(result_filter)}</select>'
+                    f'<details class="inline-filter"><summary>Date range</summary>'
+                    f'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
                     f'<label class="muted">Last <input name="days" type="number" min="1" max="3650" '
                     f'style="width:64px" value="{active_days or ""}"> days</label>'
                     f'<span class="muted">or</span>'
                     f'<label class="muted">from <input name="from" type="date" value="{_esc(frm)}"></label>'
                     f'<label class="muted">to <input name="to" type="date" value="{_esc(to)}"></label>'
-                    f'<label class="sr-only" for="history_text">Filter by domain or text</label>'
-                    f'<input id="history_text" name="text" placeholder="filter domain/text" '
-                    f'value="{_esc(qtext)}">'
+                    f'</div></details>'
                     f'<button class="chip">Filter</button>'
                     f'<a class="chip" href="/scout/history">Reset</a></form>'
                     f'<div class="scrollx">{table}</div>'
@@ -4789,6 +4817,10 @@ border-radius:var(--radius);background:var(--surface)}
 .quiet-state.attention{border-color:var(--attention)}
 .scout-actions{margin:.2rem 0 .8rem;flex-wrap:wrap}
 .attempt-history{margin:.4rem 0 0;padding-left:1.1rem;font-size:13px}
+.inline-filter>summary{cursor:pointer;color:var(--muted);padding:6px 10px;border:1px solid var(--border);border-radius:6px;list-style:none}
+.inline-filter[open]>summary{color:var(--text)}
+.inline-filter[open]{flex-basis:100%}
+.result-why{font-size:12px;margin-top:3px;max-width:34ch}
 .scrollx{overflow-x:auto;max-width:100%;margin-bottom:var(--gap)}
 h1{font-size:22px;margin:.2rem 0 1rem} h2{font-size:16px;margin:1.4rem 0 .6rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);margin-bottom:var(--gap)}
@@ -5224,6 +5256,17 @@ def _page(title: str, active: str, body: str, script: str = "") -> str:
 
 def _badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{_esc(text)}</span>'
+
+
+def _result_options(selected: str = "") -> str:
+    """The result filter, offering exactly the verdicts a row can actually hold."""
+    from core.scout.site_result import LABELS
+
+    options = ['<option value="">Any result</option>']
+    options += [f'<option value="{_esc(key)}"'
+                f'{" selected" if key == selected else ""}>{_esc(label)}</option>'
+                for key, label in LABELS.items()]
+    return "".join(options)
 
 
 # Stored source values are lowercase tokens; the operator reads the platform name.

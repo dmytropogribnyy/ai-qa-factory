@@ -427,6 +427,31 @@ class CampaignService:
             rows = [r for r in rows if str(r.get("last_analysis_at") or "") <= until]
         return rows
 
+    def history_results(self, *, filters: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+        """History rows carrying the verdict, computed from each target's own read model.
+
+        Deriving rather than storing costs one run-store read per row, and it is worth it: a stored
+        verdict goes stale the moment evidence is re-walked or a manual check rescues a target, and
+        the row would then contradict the page it links to. Bounded by the number of registered
+        domains, which is the same set the page renders anyway.
+        """
+        from core.scout.site_result import site_result
+
+        wanted = str((filters or {}).get("result") or "").strip()
+        rows: List[Dict[str, Any]] = []
+        for row in self.history(filters=filters):
+            domain = str(row.get("domain") or "")
+            try:
+                detail = self.target_detail(domain)
+            except Exception:      # noqa: BLE001 - one unreadable run must not empty the table
+                detail = {"domain": domain, "entry": row}
+            verdict = site_result(detail)
+            if wanted and verdict.result != wanted:
+                continue
+            rows.append({**row, "result": verdict.to_dict(),
+                         "run": str(detail.get("run") or detail.get("scout_run") or "")})
+        return rows
+
     def target_detail(self, domain: str, run: str = "") -> Dict[str, Any]:
         """Resolve one target's operator detail. When ``run`` is given the EXACT run store is pinned
         (never a newer run, never the first prospect) so a run's Details link opens that run's own
@@ -442,6 +467,7 @@ class CampaignService:
         media: List[str] = []                 # rel paths under the run, servable via /scout/artifact
         network: Dict[str, Any] = {}          # already-captured Chrome/Playwright network evidence
         reproduction: Optional[Dict[str, Any]] = None   # this domain's reproduction record, if any
+        scorecard: Optional[Dict[str, Any]] = None      # the run's own priority ranking, if written
         manual_action: Optional[Dict[str, Any]] = None  # persisted fail-closed record, if any
         prospect_id = ""                      # the exact prospect this card is bound to
         prospect_status = ""                  # DONE | MANUAL_ACTION_REQUIRED | FAILED | ...
@@ -580,6 +606,11 @@ class CampaignService:
                         fdata = st.load_prospect_artifact(prospect_id, "findings.json") or {}
                         findings = list(fdata.get("verified", []))
                         reproduction = st.load_prospect_artifact(prospect_id, "reproduction.json") or None
+                        # The priority the run itself assigned. Gated with the findings it is derived
+                        # from, and left absent when no scorecard was written — an invented "C" would
+                        # say the run ranked this site low when it never ranked it at all.
+                        _card = st.load_prospect_artifact(prospect_id, "scorecard.json")
+                        scorecard = _card if isinstance(_card, dict) else None
                     try:
                         pdir = st.prospect_dir(prospect_id)
                         # A page that reports 0 confirmed findings must not hand the operator the
@@ -634,7 +665,7 @@ class CampaignService:
                 "manual_action": manual_action, "source_kind": source_kind,
                 "video_mode": video_mode, "evidence_files": evidence_files, "coverage": coverage,
                 "evidence_status": evidence_status, "media": media, "network": network,
-                "reproduction": reproduction,
+                "reproduction": reproduction, "scorecard": scorecard,
                 "findings": [_project_target_finding(f) for f in findings],
                 "contacts": contacts, "contact_records": contact_records,
                 "draft": draft, "fixability": fixability}
