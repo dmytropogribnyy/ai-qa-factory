@@ -100,7 +100,13 @@ def test_summary_labels_match_the_row_labels(tmp_path, monkeypatch):
         server.shutdown()
 
     tiles = _tiles(html)
-    body = html.split("<tbody>")[-1].split("</tbody>")[0]
+    # Bind to the TARGETS table by its caption, not by position. "The last tbody on the page" broke
+    # the moment the page grew a second table below it (the run's Requested/Effective/Observed
+    # reconciliation) — and it broke by silently checking the wrong table, which is the failure mode
+    # a locator like that always has.
+    targets = html.split('<caption>Targets in this run</caption>', 1)
+    assert len(targets) == 2, "the targets table is no longer identifiable by its caption"
+    body = targets[1].split("<tbody>", 1)[1].split("</tbody>", 1)[0]
     for label in ("Completed", "Needs your help", "Could not complete", "Queued", "Skipped"):
         assert label in tiles, f"tile {label!r} missing"
         # The rows must use the SAME word. Asserting `label in html` would be a tautology — label was
