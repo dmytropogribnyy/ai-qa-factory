@@ -810,9 +810,18 @@ class CampaignService:
             from core.scout.discovery.domain_intel import canonical_domain
 
             dom = canonical_domain(domain) or domain
-            path = client_export_dir(self.output_dir, run) / f"{_safe_slug(dom)}-qa-evidence.zip"
-            if not path.is_file():
+            # The filename carries the day it was built, so two packages a month apart stop
+            # colliding in a downloads folder. Match the pattern rather than one exact name — and
+            # take the newest, so regenerating never leaves the card describing the older file.
+            slug = _safe_slug(dom)
+            found = sorted(client_export_dir(self.output_dir, run).glob(
+                f"{slug}-qa-evidence-*.zip"))
+            if not found:
                 return {"state": "not_generated"}
+            # By the date the NAME declares, not by mtime: the stamp is the package's own statement
+            # of when it was built, and YYYYMMDD sorts correctly as text. A file touched later says
+            # nothing about which package is the current one.
+            path = found[-1]
             stat = path.stat()
             return {"state": "ready", "filename": path.name, "bytes": stat.st_size,
                     "generated_at": datetime.fromtimestamp(

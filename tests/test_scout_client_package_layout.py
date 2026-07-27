@@ -245,3 +245,38 @@ def test_the_package_is_never_marked_approved_to_send(packaged):
 
     assert manifest.get("approved_for_client_delivery") is False
     assert manifest.get("review_before_sending") is True
+
+
+# --- the status the operator reads on the target page --------------------------------------------
+
+def test_a_generated_package_is_reported_as_ready(packaged, tmp_path):
+    """Caught by the live UI walkthrough: the card said Not generated with the ZIP sitting on disk.
+
+    The package filename gained a date so two months of packages stop colliding in a downloads
+    folder; the status probe was still looking for the undated name and therefore never found
+    anything it had just built.
+    """
+    status = CampaignService(str(tmp_path)).client_package_status(DOMAIN, run=RUN)
+
+    assert status["state"] == "ready"
+    assert status["filename"] == packaged["result"]["filename"]
+    assert status["bytes"] == packaged["result"]["bytes"]
+    assert status["generated_at"]
+
+
+def test_a_target_with_no_package_still_says_not_generated(tmp_path):
+    assert CampaignService(str(tmp_path)).client_package_status(
+        "never-packaged.example", run="nope")["state"] == "not_generated"
+
+
+def test_the_newest_package_wins_when_several_days_exist(packaged, tmp_path):
+    """Regenerating on a later day must not leave the card describing the older file."""
+    from core.scout.client_evidence import client_export_dir
+
+    older = client_export_dir(str(tmp_path), RUN) / f"{DOMAIN}-qa-evidence-20200101.zip"
+    older.write_bytes(b"stale")
+
+    status = CampaignService(str(tmp_path)).client_package_status(DOMAIN, run=RUN)
+
+    assert status["filename"] == packaged["result"]["filename"]
+    assert status["bytes"] != 5

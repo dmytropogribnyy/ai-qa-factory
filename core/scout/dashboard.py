@@ -5042,6 +5042,11 @@ border-radius:var(--radius);background:var(--surface)}
 .inline-filter[open]>summary{color:var(--text)}
 .inline-filter[open]{flex-basis:100%}
 .result-why{font-size:12px;margin-top:3px;max-width:34ch}
+/* An evidence state carries its reason ("Not captured: no safe interaction reproduced cleanly"),
+   which is a sentence, not a word. Badges are nowrap by default, so these overflowed their cell and
+   collided with the next one — visible only in a screenshot, never in an HTTP assertion. */
+.evidence-item .badge{white-space:normal;display:inline-block;max-width:100%;line-height:1.35}
+.evidence-item{min-width:0;overflow-wrap:anywhere}
 .scrollx{overflow-x:auto;max-width:100%;margin-bottom:var(--gap)}
 h1{font-size:22px;margin:.2rem 0 1rem} h2{font-size:16px;margin:1.4rem 0 .6rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);margin-bottom:var(--gap)}
@@ -5389,8 +5394,8 @@ def _system_ready_html(output_dir: str, diagnostics_hidden: int = 0) -> str:
         probe.unlink()
     except OSError:
         problems.append("the evidence directory is not writable")
-    note = (f' <span class="muted">{diagnostics_hidden} diagnostic record(s) are hidden from '
-            f'production counts.</span>' if diagnostics_hidden else '')
+    note = (f' &middot; <span class="muted">{diagnostics_hidden} diagnostic record(s) are hidden '
+            f'from production counts.</span>' if diagnostics_hidden else '')
     if problems:
         return (f'<p id="system-ready" class="quiet-state attention">'
                 f'<strong>System needs attention</strong> &mdash; {_esc("; ".join(problems))}. '
