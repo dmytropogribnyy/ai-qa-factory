@@ -303,6 +303,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     (q.get("domain") or [""])[0], run=(q.get("run") or [""])[0]))
             if path == "/scout/run":
                 return self._html(200, self._scout_run_results_page((q.get("id") or [""])[0]))
+            if path == "/api/scout/validation":
+                return self._json(200, self._run_validation((q.get("run") or [""])[0]))
             if path == "/scout/attention":
                 return self._html(200, self._scout_attention_page())
             if path == "/docs":
@@ -532,6 +534,78 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             else:
                 result = parse_text(text, **common)
             return self._json(200, {"ok": True, **result.to_dict()})
+
+        def _run_setup_card(self, run_id: str) -> str:
+            """Requested, effective and observed for one run, plus the reconciliation verdict.
+
+            The three columns exist because two of them are settings and only the third is a result.
+            "Deep capture" in a config is a permission; the browser receipt is the evidence. Merging
+            them into one "Deep capture ✓" is how a static run came to be described as a browser one.
+            """
+            try:
+                from core.scout.run_validation import PASS, validate_run
+                report = validate_run(service.output_dir, run_id, write=False,
+                                      read_model=self._campaign_service())
+            except Exception:  # noqa: BLE001 - an unreadable run shows no card rather than a false one
+                return ""
+            if not report.checks:
+                return ""
+
+            def _cell(value) -> str:
+                if value is None:
+                    return '<span class="muted">Unknown</span>'
+                if isinstance(value, (list, tuple)):
+                    return _esc(", ".join(str(v) for v in value) or "none")
+                if isinstance(value, dict):
+                    return _esc(" · ".join(f"{k}: {v}" for k, v in value.items()))
+                return _esc(str(value))
+
+            rows = "".join(
+                f'<tr><th scope="row">{_esc(name.replace("_", " ").capitalize())}</th>'
+                f'<td>{_cell(layer.get("requested"))}</td>'
+                f'<td>{_cell(layer.get("effective"))}</td>'
+                f'<td>{_cell(layer.get("observed"))}</td></tr>'
+                for name, layer in (report.layers or {}).items())
+            problems = report.problems()
+            verdict_kind = {"VALIDATED": "good", "FAILED": "bad"}.get(report.status, "warn")
+            problem_rows = "".join(
+                f'<li><code>{_esc(c.check_id)}</code> — <b>{_esc(c.status)}</b>: '
+                f'{_esc(c.explanation)}</li>' for c in problems)
+            counts = report.counts
+            return (
+                f'<div class="card"><h2>Run setup and execution</h2>'
+                f'{_badge(report.status.replace("_", " ").title(), verdict_kind)}'
+                f'<p class="muted">{counts.get(PASS, 0)} check(s) passed, '
+                f'{len(problems)} unresolved, '
+                f'{counts.get("NOT_APPLICABLE", 0)} not applicable. Build '
+                f'<code>{_esc(report.build or "unknown")}</code> · purpose '
+                f'<code>{_esc(report.purpose)}</code>.</p>'
+                f'<div class="scrollx"><table><caption>What was asked for, accepted, and done'
+                f'</caption><thead><tr><th>Setting</th><th>Requested</th><th>Effective</th>'
+                f'<th>Observed</th></tr></thead><tbody>{rows}</tbody></table></div>'
+                + (f'<h3>Not proven</h3><ul class="muted">{problem_rows}</ul>' if problems else
+                   '<p class="muted">Every applicable check is backed by a receipt, a file, or a '
+                   'hash on disk.</p>')
+                + f'<p class="muted"><a href="/api/scout/validation?run={_esc(run_id)}">'
+                  f'Machine-readable validation report</a></p></div>')
+
+        def _run_validation(self, run_id: str) -> dict:
+            """Reconcile a run against its own evidence, on demand.
+
+            Recomputed rather than served from the file the run wrote: a package exported after the
+            run finished, or evidence that has since gone missing, both change the answer, and a
+            stale report is exactly the kind of reassurance this is meant to remove.
+            """
+            run = str(run_id or "").strip()
+            if not run:
+                return {"ok": False, "error": "a run id is required"}
+            try:
+                from core.scout.run_validation import validate_run
+                report = validate_run(service.output_dir, run, write=True,
+                                      read_model=self._campaign_service())
+            except Exception as exc:  # noqa: BLE001 - an unreadable run is reported, never guessed
+                return {"ok": False, "error": f"{type(exc).__name__}", "run_id": run}
+            return {"ok": True, **report.to_dict()}
 
         def _data_store(self):
             from core.scout.data_management import DataManagementStore
@@ -4011,7 +4085,10 @@ function startCampaign(){{
                         f'<strong>{count}</strong></div>'
                         for label, count in _run_status_summary(prospects))
                     + f'</div><div class="scrollx" style="margin-top:12px">{table}</div></div>'
-                    f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
+                    # What was asked for, what the system accepted, and what it actually did --
+                    # side by side, because a setting reads exactly like a result until they are.
+                    + self._run_setup_card(run_id)
+                    + f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
                     f'selected</b><div class="row">'
                     f'<button class="chip" onclick="selectedAction(\'skip_queued\')">Skip queued</button>'
                     f'<button class="chip" onclick="selectedAction(\'archive_targets\')">'

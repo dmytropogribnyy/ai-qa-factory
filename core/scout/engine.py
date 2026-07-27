@@ -242,6 +242,15 @@ class ScoutEngine:
         state["finished_at"] = self.clock()
         self.store.save_state(state)
         self._event("run_finished", status=state["status"])
+        # Reconcile the run against its own evidence while everything it produced is still on disk,
+        # and write the result down. A validation computed later, on request, is still correct — but
+        # a report that exists from the moment the run ends is one an operator can be handed rather
+        # than one they have to know to ask for.
+        try:
+            from core.scout.run_validation import validate_run
+            validate_run(str(Path(self.store.root).parent.parent), self.store.root.name, write=True)
+        except Exception:  # noqa: BLE001 - a reconciliation failure never rewrites a finished run
+            pass
         return state
 
     # ------------------------------------------------------------------
