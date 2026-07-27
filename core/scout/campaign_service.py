@@ -605,6 +605,18 @@ class CampaignService:
                         screenshots = [f for f in _raw_shots["frames"] if isinstance(f, dict)]
                     obs = st.load_prospect_artifact(prospect_id, "observation.json") or {}
                     contact_records = extract_public_contact_records(obs, domain=domain)
+                    # Addresses found on the OTHER pages Scout walked. The landing page rarely
+                    # carries the mailbox — the contact page does — and reading only the landing
+                    # observation reported "Email not found" for sites Scout had just walked past.
+                    walked = st.load_prospect_artifact(prospect_id, "contacts.json") or {}
+                    known = {str(r.get("email") or "").lower() for r in contact_records}
+                    for row in (walked.get("public") or []):
+                        email = str(row.get("email") or "").strip().lower()
+                        if email and email not in known:
+                            known.add(email)
+                            contact_records.append({
+                                "email": email, "source": row.get("source") or "Public page text",
+                                "source_url": row.get("source_url") or "", "public": True})
                     contacts = [row["email"] for row in contact_records]
                     network = {"status": obs.get("status"), "timing_ms": obs.get("timing_ms", {}),
                                "console_errors": obs.get("console_errors", [])[:10],
