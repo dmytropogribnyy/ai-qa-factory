@@ -19,8 +19,16 @@ not full accessibility certification, and not Lighthouse-level performance.
 
 ## Pipeline
 
+Three operator sources — **Find websites**, **Paste URLs**, **Upload file** — fill ONE queue. They
+differ only in how targets arrive; after intake the pipeline is identical, so the same site cannot
+yield different evidence depending on which door it came through.
+
 ```
-campaign + 1..10 explicit public seeds
+find | paste | upload
+  → one intake (core/scout/intake.py): canonical entry URL, tracking stripped,
+    dedup BY CANONICAL DOMAIN, non-websites refused by name, operator targets pinned
+  → depth resolved by a real Chromium probe (never asked of the operator, never silently
+    downgraded — campaign_start.AUTO_BROWSER_MODE / CampaignService._browser_available)
   → fail-closed URL eligibility (core/scout/url_safety.py)
   → bounded profiling + read-only checks (backends.py, checks.py)
   → independent second-pass verification (verification.py)
@@ -79,8 +87,19 @@ A pluggable `BrowserBackend` keeps automated tests deterministic:
   meaningful pages the coverage pass actually visited. A capture byte-identical to one already held
   is deleted at the source (`engine._keep_or_drop_frame`) and again at export, so a screenshot count
   is a count of distinct pages. Each frame is bound to its page role and URL in `screenshots.json`,
-  which the Dashboard and the client `MANIFEST.json` both read. A ceiling, never a quota: a site
+  which the Dashboard and the client `manifest.json` both read. A ceiling, never a quota: a site
   with one meaningful page yields one frame.
+- **Presence is four states, not a blank** (`core/scout/evidence_state.py`): *Available*, *Not
+  applicable* (a static scan opens no browser), *Not captured: reason* (in scope, policy declined),
+  *Capture failed: reason* (the browser ran and the capture still failed — the only one that is a
+  fault on our side). Scan depth is read from the persisted `axe_status` rather than a second notion
+  of depth that could disagree with the first.
+- **Public contacts** — collected from every page the walk opened, not only the landing observation,
+  and bound to the exact URL each address was found on (`contacts.json`). Contact-like paths are
+  offered to the coverage planner first — a reordering, never an increase in the page ceiling — and
+  visible page text is read ONLY on such a page. That text is an in-memory input
+  (`PageObservation.text_sample`) which `Sanitizer.sanitize_observation` drops at the persistence
+  boundary: the address is kept, the prose it was written in never is.
 - **Reproduction video** — decided by Scout, not by an operator switch. `video_mode` defaults to
   `qualified_auto` for a NEW run; every candidate is judged by
   `evidence_policy.video_qualified` (interaction a still cannot show, severity + evidence-quality
