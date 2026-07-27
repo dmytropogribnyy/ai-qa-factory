@@ -13,6 +13,7 @@ from typing import Any, Dict, FrozenSet, List
 from core.scout import SCOUT_VERSION
 from core.scout.coverage import COVERAGE_MODES, OPERATOR_COVERAGE, derive_page_ceiling
 from core.scout.evidence_policy import VIDEO_MANUAL, VIDEO_MODES, VIDEO_QUALIFIED_AUTO
+from core.scout.run_purpose import KNOWN_PURPOSES, PURPOSE_PRODUCTION, PURPOSE_UNCLASSIFIED
 from core.scout.url_safety import UrlPolicy
 
 MAX_SEEDS = 10
@@ -58,9 +59,10 @@ class ScoutRunConfig:
     video_mode: str = VIDEO_QUALIFIED_AUTO
     # Why this run exists: production work, or acceptance/diagnostic/manual-test data that must not
     # distort production counters and may later be cleaned up. NOT an operator-facing scan mode --
-    # it is set by the harness or internal launch context. Absent means genuinely unrecorded, and
-    # Data management treats that as "unclassified" rather than guessing from the run id.
-    run_purpose: str = ""
+    # it is set by the harness or internal launch context. A new run is production unless something
+    # deliberate says otherwise, so "unclassified" now means only "written before this field
+    # existed" -- a reading of old data rather than a state anything new can enter.
+    run_purpose: str = PURPOSE_PRODUCTION
     output_dir: str = "outputs"
     resume: bool = False
     run_id: str = ""
@@ -105,6 +107,8 @@ class ScoutRunConfig:
             raise ScoutConfigError(f"unknown browser_mode: {self.browser_mode!r}")
         if self.video_mode not in VIDEO_MODES:
             raise ScoutConfigError(f"unknown video_mode: {self.video_mode!r}")
+        if self.run_purpose not in KNOWN_PURPOSES:
+            raise ScoutConfigError(f"unknown run_purpose: {self.run_purpose!r}")
         self.check_families = sorted(set(self.check_families))
         self.allowed_local_hosts = frozenset(self.allowed_local_hosts)
 
@@ -171,6 +175,11 @@ class ScoutRunConfig:
         # current default is. Reading it back as "automatic" would re-describe a finished run as
         # something it never was, so a missing key keeps the historical behaviour.
         kwargs.setdefault("video_mode", VIDEO_MANUAL)
+        # Same reasoning for purpose: a run that recorded nothing genuinely declared nothing, and
+        # reading it back as "production" would hand old test data protection it was never given
+        # (or, worse, claim an unknown run was real work). Unclassified is the honest reading.
+        if not str(kwargs.get("run_purpose") or "").strip():
+            kwargs["run_purpose"] = PURPOSE_UNCLASSIFIED
         return cls(**kwargs)
 
 

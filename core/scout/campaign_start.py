@@ -40,6 +40,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from core.scout.config import BROWSER_MODES, MAX_SEEDS, ScoutConfigError, ScoutRunConfig, fresh_run_id
 from core.scout.coverage import OPERATOR_COVERAGE
+from core.scout.run_purpose import PurposeNotPermitted, resolve_requested_purpose, test_purposes_enabled
 from core.scout.url_safety import Resolver, UrlPolicy, dedupe_eligible
 
 _REGISTRY_DIRNAME = "_campaigns"
@@ -93,8 +94,12 @@ class CampaignLauncher:
                  resolver: Optional[Resolver] = None,
                  starter: Optional[Callable[[ScoutRunConfig], str]] = None,
                  browser_probe: Optional[Callable[[], bool]] = None,
-                 clock: Callable[[], str] = _now_iso) -> None:
+                 clock: Callable[[], str] = _now_iso,
+                 env: Optional[Dict[str, str]] = None) -> None:
         self._service = service
+        # Server environment, not request data: it decides whether this host may hand out a
+        # disposable run purpose at all. Injectable so the rule is testable without setenv.
+        self._env = env
         self._allowed = frozenset(allowed_local_hosts)
         self._resolve_dns = resolve_dns
         self._resolver = resolver
@@ -259,16 +264,15 @@ class CampaignLauncher:
         if isinstance(families, list) and families and all(isinstance(f, str) for f in families):
             kwargs["check_families"] = families
         # Why this run exists, for Data management. NOT an operator-facing scan mode: the daily form
-        # never sends it, so an ordinary run stays unclassified and is therefore never swept as test
-        # data. An acceptance harness sets it explicitly. Only the removable purposes are accepted —
-        # a request cannot label itself "production" and gain protection it was not given.
-        purpose = request.get("run_purpose")
-        if isinstance(purpose, str) and purpose:
-            from core.scout.data_management import REMOVABLE_PURPOSES
-            if purpose not in REMOVABLE_PURPOSES:
-                raise ScoutConfigError(
-                    "run_purpose must be one of: " + ", ".join(sorted(REMOVABLE_PURPOSES)))
-            kwargs["run_purpose"] = purpose
+        # never sends it, and what it does not send is production — an ordinary run is real work and
+        # is protected as such. A DISPOSABLE purpose is a different matter: honouring it from an
+        # arbitrary POST field would let a request declare its own data sweepable, so it is accepted
+        # only from a server that was deliberately started to host an acceptance harness.
+        try:
+            kwargs["run_purpose"] = resolve_requested_purpose(
+                request.get("run_purpose"), allow_test=test_purposes_enabled(self._env))
+        except PurposeNotPermitted as exc:
+            raise ScoutConfigError(str(exc)) from exc
         return ScoutRunConfig(**kwargs)
 
 

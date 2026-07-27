@@ -18,6 +18,7 @@ from core.schemas.prospect_campaign import (
     MarketPolicy,
     ProspectCampaign,
 )
+from core.scout.run_purpose import KNOWN_PURPOSES, PURPOSE_PRODUCTION, PURPOSE_UNCLASSIFIED
 from core.scout.url_safety import UrlPolicy
 
 
@@ -89,6 +90,9 @@ class DiscoveryCampaignConfig:
     # Promotion / Scout run settings.
     browser_mode: str = "static"
     video_mode: str = "manual"          # off | manual (default) | qualified_auto (opt-in short clip)
+    # Why this campaign exists. It is INHERITED by every Scout run it promotes, so an acceptance
+    # discovery cannot leave production-looking per-target runs behind it.
+    run_purpose: str = PURPOSE_PRODUCTION
     max_pages_per_site: int = 4
     allowed_local_hosts: FrozenSet[str] = field(default_factory=frozenset)
     resolve_dns: bool = True
@@ -132,6 +136,8 @@ class DiscoveryCampaignConfig:
             raise DiscoveryConfigError(f"unknown browser_mode: {self.browser_mode!r}")
         if self.video_mode not in ("off", "manual", "qualified_auto"):
             raise DiscoveryConfigError(f"unknown video_mode: {self.video_mode!r}")
+        if self.run_purpose not in KNOWN_PURPOSES:
+            raise DiscoveryConfigError(f"unknown run_purpose: {self.run_purpose!r}")
         if self.strategy not in ("conservative", "balanced", "opportunity"):
             raise DiscoveryConfigError(f"unknown strategy: {self.strategy!r}")
         if not (1 <= self.max_pages_per_site <= 50):
@@ -182,4 +188,8 @@ class DiscoveryCampaignConfig:
         kwargs = {k: v for k, v in data.items() if k in known}
         if "allowed_local_hosts" in kwargs:
             kwargs["allowed_local_hosts"] = frozenset(kwargs["allowed_local_hosts"])
+        # A campaign written before this field existed declared nothing. Reading it back as
+        # "production" would grant old data a protection it was never given.
+        if not str(kwargs.get("run_purpose") or "").strip():
+            kwargs["run_purpose"] = PURPOSE_UNCLASSIFIED
         return cls(**kwargs)

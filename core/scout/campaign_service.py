@@ -31,6 +31,7 @@ from core.scout.presets import (
 )
 from core.scout.preflight import run_preflight
 from core.scout.priority import classify, load_verified_findings
+from core.scout.run_purpose import RunPurposeIndex
 from core.scout.run_control import (
     ANALYZING,
     TRIAGING,
@@ -423,6 +424,16 @@ class CampaignService:
             rows = [r for r in rows
                     if not (set(r.get("campaign_ids") or [])
                             and set(r.get("campaign_ids") or []) <= trashed_runs)]
+        # Acceptance/diagnostic/manual-test data is real data — it is simply not the operator's
+        # work. A site reached ONLY by disposable runs leaves the default view; a site production
+        # also scanned stays, because the production run is what History is about. Purpose is read
+        # from each run's own declaration, never inferred from the domain or the campaign name.
+        purposes = RunPurposeIndex(self.output_dir)
+        wanted_purpose = (f.get("purpose") or "").strip()
+        rows = [r for r in rows
+                if purposes.matches_filter(r.get("campaign_ids") or [], wanted_purpose)]
+        for row in rows:
+            row["purposes"] = sorted(purposes.purposes_of(row.get("campaign_ids") or []))
         archived_filter = (f.get("archived") or "").strip().lower()
         if archived_filter in ("1", "true", "yes", "only"):
             rows = [r for r in rows if r.get("archived")]

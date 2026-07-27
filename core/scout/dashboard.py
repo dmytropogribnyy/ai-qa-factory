@@ -285,6 +285,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._json(200, {"rows": self._campaign_service().history(
                     filters={"text": (q.get("text") or [""])[0],
                              "status": (q.get("status") or [""])[0],
+                             "purpose": (q.get("purpose") or [""])[0],
                              "archived": (q.get("archived") or [""])[0]})})
             if path == "/api/scout/target":
                 return self._json(200, self._campaign_service().target_detail(
@@ -534,8 +535,17 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
 
         def _data_store(self):
             from core.scout.data_management import DataManagementStore
+            # ``service.run_id`` survives the run that set it, so it names the LAST run, not a
+            # running one. Pass whether a run is actually in flight as well, or the most recent
+            # finished run stays permanently unmanageable behind a "still running" refusal.
+            running = False
+            try:
+                running = bool(service.is_running())
+            except Exception:      # noqa: BLE001 - an unavailable probe must fail SAFE (protect)
+                running = True
             return DataManagementStore(service.output_dir,
-                                       active_run_id=str(getattr(service, "run_id", "") or ""))
+                                       active_run_id=str(getattr(service, "run_id", "") or ""),
+                                       run_active=running)
 
         def _scout_data_action(self, action: str):
             """Preview / Trash / Restore / permanent delete, each behind the shared mutation guard.
@@ -566,10 +576,20 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
 
         def _data_page(self, q=None) -> str:
             """Everything that takes up space, what it is for, and a staged way to let it go."""
-            view = ((q or {}).get("view") or [""])[0].strip().lower()
+            query = q or {}
+            view = (query.get("view") or [""])[0].strip().lower()
             in_trash = view == "trash"
-            inv = self._data_store().inventory()
-            rows_source = [r for r in inv.runs if r.trashed == in_trash]
+
+            def _one(name: str) -> str:
+                return (query.get(name) or [""])[0].strip()[:120]
+
+            # The filters an operator can combine. Each one only ever NARROWS, so a preview built
+            # from the visible selection can never reach a run the table was not showing.
+            filters = {"purpose": _one("purpose"), "text": _one("q"),
+                       "since": _one("since"), "until": _one("until"),
+                       "trash": "only" if in_trash else "exclude"}
+            inv = self._data_store().inventory(filters=filters)
+            rows_source = list(inv.runs)
             from core.scout.data_management import (PURPOSE_ACCEPTANCE, PURPOSE_DIAGNOSTIC,
                                                     PURPOSE_LABELS, PURPOSE_MANUAL_TEST,
                                                     PURPOSE_PRODUCTION, PURPOSE_UNCLASSIFIED)
@@ -600,8 +620,32 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                      f'<th>{"Moved to Trash" if in_trash else "Recorded"}</th></tr></thead>'
                      f'<tbody>{rows}</tbody></table>'
                      if rows else
-                     f'<div class="card empty muted">'
-                     f'{"Trash is empty." if in_trash else "No Scout runs are stored yet."}</div>')
+                     f'<div class="card empty muted">{_esc(_data_empty_note(filters, in_trash))}</div>')
+            active_purpose = filters["purpose"].lower()
+            options = "".join(
+                f'<option value="{_esc(key)}"'
+                f'{" selected" if active_purpose == key else ""}>{_esc(label)}</option>'
+                for key, label in (("", "Any purpose"),
+                                   (PURPOSE_PRODUCTION, PURPOSE_LABELS[PURPOSE_PRODUCTION]),
+                                   (PURPOSE_ACCEPTANCE, PURPOSE_LABELS[PURPOSE_ACCEPTANCE]),
+                                   (PURPOSE_DIAGNOSTIC, PURPOSE_LABELS[PURPOSE_DIAGNOSTIC]),
+                                   (PURPOSE_MANUAL_TEST, PURPOSE_LABELS[PURPOSE_MANUAL_TEST]),
+                                   (PURPOSE_UNCLASSIFIED, PURPOSE_LABELS[PURPOSE_UNCLASSIFIED])))
+            filter_bar = (
+                f'<form class="row filters" method="get" action="/data">'
+                f'{"<input type=hidden name=view value=trash>" if in_trash else ""}'
+                f'<label class="sr-only" for="f_purpose">Purpose</label>'
+                f'<select id="f_purpose" name="purpose">{options}</select>'
+                f'<label class="sr-only" for="f_q">Run or site</label>'
+                f'<input id="f_q" name="q" value="{_esc(filters["text"])}" '
+                f'placeholder="run id or site" maxlength="120">'
+                f'<label class="sr-only" for="f_since">Recorded from</label>'
+                f'<input id="f_since" name="since" type="date" value="{_esc(filters["since"][:10])}">'
+                f'<label class="sr-only" for="f_until">Recorded to</label>'
+                f'<input id="f_until" name="until" type="date" value="{_esc(filters["until"][:10])}">'
+                f'<button class="chip" type="submit">Filter</button>'
+                f'<a class="chip" href="/data{"?view=trash" if in_trash else ""}">Clear</a>'
+                f'</form>')
             actions = (
                 '<button class="chip" onclick="act(\'restore\')">Restore selected</button>'
                 '<button class="chip danger" onclick="destroy()">Delete permanently…</button>'
@@ -629,6 +673,9 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 'recorded are never swept automatically.</p>'
                 f'<div class="row">{tabs}</div>'
                 f'<div class="summary-grid">{tiles}</div>'
+                f'{filter_bar}'
+                f'<p class="muted">The tiles above count everything stored. The table below shows '
+                f'what your filters selected — and a removal can only ever reach what is in it.</p>'
                 f'<div class="scrollx">{table}</div>'
                 '<div class="card" id="previewout" role="status" aria-live="polite" hidden></div>'
                 f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
@@ -2622,6 +2669,19 @@ function startCampaign(){{
                 return self._json(*refusal)
             body = body or {}
             overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else None
+            # ``overrides`` is forwarded field-by-field into the campaign config, so run_purpose
+            # would otherwise ride in as an ordinary override and let a request declare its own
+            # discovery — and every per-target run it promotes — disposable. Resolve it here, at the
+            # untrusted boundary, through the same server-side gate the seeded launcher uses.
+            from core.scout.run_purpose import (PurposeNotPermitted, resolve_requested_purpose,
+                                                test_purposes_enabled)
+            requested_purpose = (overrides or {}).get("run_purpose", body.get("run_purpose"))
+            try:
+                purpose = resolve_requested_purpose(requested_purpose,
+                                                    allow_test=test_purposes_enabled())
+            except PurposeNotPermitted as exc:
+                return self._json(422, {"ok": False, "error": str(exc)})
+            overrides = {**(overrides or {}), "run_purpose": purpose}
             try:
                 res = self._campaign_service().launch(
                     campaign_preset=str(body.get("campaign_preset") or "balanced-production"),
@@ -2816,13 +2876,19 @@ function startCampaign(){{
             elif days > 0:
                 since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
             result_filter = (q.get("result") or [""])[0].strip()
+            # History is the operator's own work by default. Acceptance/diagnostic/manual-test runs
+            # are real and are kept, but they are shown only when explicitly asked for — otherwise a
+            # release check quietly becomes four more companies to follow up.
+            purpose_filter = (q.get("purpose") or [""])[0].strip().lower()[:24]
             rows = self._campaign_service().history_results(filters={
                 "text": qtext, "since": since, "until": until, "result": result_filter,
+                "purpose": purpose_filter,
                 "archived": "only" if show_archived else "",
             })
             active_days = days if (days > 0 and not (frm or to)) else 0
             filtered = bool(qtext or since or until or result_filter)
             total = len(self._campaign_service().history(filters={
+                "purpose": purpose_filter,
                 "archived": "only" if show_archived else ""}))
             count_label = (f"{len(rows)} shown of {total} total"
                            if filtered and len(rows) != total else f"{total} total")
@@ -2895,6 +2961,9 @@ function startCampaign(){{
                     f'<label class="sr-only" for="history_result">Filter by result</label>'
                     f'<select id="history_result" name="result">'
                     f'{_result_options(result_filter)}</select>'
+                    f'<label class="sr-only" for="history_purpose">Show runs recorded for</label>'
+                    f'<select id="history_purpose" name="purpose">'
+                    f'{_purpose_options(purpose_filter)}</select>'
                     f'<details class="inline-filter"><summary>Date range</summary>'
                     f'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
                     f'<label class="muted">Last <input name="days" type="number" min="1" max="3650" '
@@ -5581,6 +5650,15 @@ def _client_package_html(service, domain: str, run_id: str, detail: dict) -> str
         f'it. Building the package is not approval to send it: review the contents first.</p></div>')
 
 
+def _data_empty_note(filters, in_trash: bool) -> str:
+    """Say WHY the table is empty. "Trash is empty" under an active filter is simply wrong, and it
+    reads as reassurance at the moment an operator is looking for something they cannot find."""
+    narrowed = [name for name in ("purpose", "text", "since", "until") if (filters or {}).get(name)]
+    if narrowed:
+        return "No stored run matches these filters. Clear them to see everything again."
+    return "Trash is empty." if in_trash else "No Scout runs are stored yet."
+
+
 def _human_bytes(size) -> str:
     try:
         value = float(size)
@@ -5591,6 +5669,21 @@ def _human_bytes(size) -> str:
             return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
         value /= 1024
     return f"{value:.1f} MiB"
+
+
+def _purpose_options(selected: str = "") -> str:
+    """The purpose filter. Blank means the operator's own work, which is what History is for —
+    so the first option says so rather than reading as "no filter applied"."""
+    from core.scout.run_purpose import (PURPOSE_ACCEPTANCE, PURPOSE_DIAGNOSTIC, PURPOSE_LABELS,
+                                        PURPOSE_MANUAL_TEST)
+
+    choices = [("", "Production work"), ("all", "Everything, including test runs"),
+               (PURPOSE_ACCEPTANCE, PURPOSE_LABELS[PURPOSE_ACCEPTANCE]),
+               (PURPOSE_DIAGNOSTIC, PURPOSE_LABELS[PURPOSE_DIAGNOSTIC]),
+               (PURPOSE_MANUAL_TEST, PURPOSE_LABELS[PURPOSE_MANUAL_TEST])]
+    return "".join(f'<option value="{_esc(key)}"'
+                   f'{" selected" if key == selected else ""}>{_esc(label)}</option>'
+                   for key, label in choices)
 
 
 def _result_options(selected: str = "") -> str:

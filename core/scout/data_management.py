@@ -29,38 +29,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 
-PURPOSE_PRODUCTION = "production"
-PURPOSE_DIAGNOSTIC = "diagnostic"
-PURPOSE_ACCEPTANCE = "acceptance"
-PURPOSE_MANUAL_TEST = "manual_test"
-PURPOSE_UNCLASSIFIED = "unclassified"
-
-# Purposes whose data is understood to be disposable. Production and unclassified are not here, and
-# that is the whole point.
-REMOVABLE_PURPOSES = frozenset({PURPOSE_DIAGNOSTIC, PURPOSE_ACCEPTANCE, PURPOSE_MANUAL_TEST})
-KNOWN_PURPOSES = REMOVABLE_PURPOSES | {PURPOSE_PRODUCTION, PURPOSE_UNCLASSIFIED}
-
-PURPOSE_LABELS = {
-    PURPOSE_PRODUCTION: "Production",
-    PURPOSE_DIAGNOSTIC: "Diagnostic",
-    PURPOSE_ACCEPTANCE: "Acceptance",
-    PURPOSE_MANUAL_TEST: "Manual test",
-    PURPOSE_UNCLASSIFIED: "Unclassified",
-}
+# The purpose vocabulary is shared with History, Overview and Needs attention — one definition of
+# what a run was for, so a site cannot be disposable on one screen and production on the next.
+from core.scout.run_purpose import (KNOWN_PURPOSES, PURPOSE_ACCEPTANCE,  # noqa: F401 (re-exported)
+                                    PURPOSE_DIAGNOSTIC, PURPOSE_LABELS, PURPOSE_MANUAL_TEST,
+                                    PURPOSE_PRODUCTION, PURPOSE_UNCLASSIFIED, REMOVABLE_PURPOSES,
+                                    RunPurposeIndex, normalise_purpose)
 
 _IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 _VIDEO_SUFFIXES = (".webm", ".mp4")
 _STATE_NAME = "data_management.json"
+# Where a run being deleted lives between "no longer reachable" and "gone". A crash in between
+# leaves a directory here rather than a half-deleted run and a registry that already forgot it.
+_STAGING_NAME = "_pending_delete"
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def normalise_purpose(value: Any) -> str:
-    """Map a persisted value onto a known purpose, defaulting to unclassified rather than guessing."""
-    text = str(value or "").strip().lower().replace("-", "_")
-    return text if text in KNOWN_PURPOSES else PURPOSE_UNCLASSIFIED
 
 
 @dataclass
@@ -106,6 +91,7 @@ class CleanupPreview:
     findings: int = 0
     screenshots: int = 0
     videos: int = 0
+    files: int = 0
     bytes_to_reclaim: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
@@ -113,24 +99,39 @@ class CleanupPreview:
                 "unique_domains": sorted(self.unique_domains),
                 "shared_with_production": sorted(self.shared_with_production),
                 "findings": self.findings, "screenshots": self.screenshots,
-                "videos": self.videos, "bytes_to_reclaim": self.bytes_to_reclaim}
+                "videos": self.videos, "files": self.files,
+                "bytes_to_reclaim": self.bytes_to_reclaim}
 
 
 class DataManagementStore:
     """Read the run tree, stage removals, and never touch anything outside one run directory."""
 
-    def __init__(self, output_dir: str = "outputs", *, active_run_id: str = "") -> None:
+    def __init__(self, output_dir: str = "outputs", *, active_run_id: str = "",
+                 run_active: bool = True) -> None:
+        """``active_run_id`` protects the run that is executing right now.
+
+        It protects nothing when ``run_active`` is False. A service keeps the last run's id long
+        after that run finished, so an id on its own means "the most recent run", not "a run in
+        progress" — treating the two as the same thing left a finished run permanently unmanageable.
+        """
         self.output_dir = str(output_dir)
-        self.active_run_id = str(active_run_id or "").strip()
+        self.active_run_id = str(active_run_id or "").strip() if run_active else ""
         self._root = Path(self.output_dir) / "scout"
         self._path = self._root / "_operator" / _STATE_NAME
+        self._purposes = RunPurposeIndex(self.output_dir)
 
     # -- reading ---------------------------------------------------------------------------------
 
     def run_dir(self, run_id: str) -> Path:
         return self._root / self._safe_run(run_id)
 
-    def inventory(self) -> Inventory:
+    def inventory(self, *, filters: Optional[Dict[str, str]] = None) -> Inventory:
+        """Every stored run, narrowed by the operator's filters.
+
+        The counts describe what is STORED, not what survived the filter — an operator narrowing to
+        one domain still needs to see that ten production runs exist, or the tiles would report the
+        library shrinking every time they typed.
+        """
         state = self._state()
         trashed = {item["run_id"]: item for item in state.get("trash", [])}
         runs = [self._describe(path.name, trashed.get(path.name))
@@ -142,7 +143,36 @@ class DataManagementStore:
             counts[run.purpose] = counts.get(run.purpose, 0) + 1
             if run.trashed:
                 counts["in_trash"] += 1
-        return Inventory(runs=runs, counts=counts, bytes_total=sum(r.bytes for r in runs))
+        total = sum(r.bytes for r in runs)
+        return Inventory(runs=self._filtered(runs, filters), counts=counts, bytes_total=total)
+
+    @staticmethod
+    def _filtered(runs: List[RunRecord], filters: Optional[Dict[str, str]]) -> List[RunRecord]:
+        """Narrow a run list. Every filter is a plain AND, so a preview can never select more than
+        the table the operator was looking at."""
+        f = {k: str(v or "").strip() for k, v in (filters or {}).items()}
+        purpose = f.get("purpose", "").lower().replace("-", "_")
+        if purpose and purpose != "all":
+            runs = [r for r in runs if r.purpose == purpose]
+        run_q = f.get("run", "").lower()
+        if run_q:
+            runs = [r for r in runs if run_q in r.run_id.lower()]
+        text = f.get("text", "").lower()
+        if text:
+            runs = [r for r in runs
+                    if text in r.run_id.lower() or any(text in d.lower() for d in r.domains)]
+        since, until = f.get("since", ""), f.get("until", "")
+        if since:
+            runs = [r for r in runs if r.created_at and r.created_at >= since]
+        if until:
+            # A bare date means the whole of that day, so compare only as far as the operator typed.
+            runs = [r for r in runs if r.created_at and r.created_at[:len(until)] <= until]
+        trash = f.get("trash", "").lower()
+        if trash in ("1", "true", "yes", "only"):
+            runs = [r for r in runs if r.trashed]
+        elif trash in ("0", "false", "no", "exclude"):
+            runs = [r for r in runs if not r.trashed]
+        return runs
 
     def preview(self, run_ids: Iterable[str]) -> CleanupPreview:
         """What would actually be removed, with every refusal named.
@@ -168,6 +198,7 @@ class DataManagementStore:
             preview.findings += record.findings
             preview.screenshots += record.screenshots
             preview.videos += record.videos
+            preview.files += record.files
             preview.bytes_to_reclaim += record.bytes
         # Named, not silently excluded: the operator should see that a site they are about to clear
         # is also part of real history, and decide with that in view.
@@ -229,19 +260,37 @@ class DataManagementStore:
             state.setdefault("classified", {})[run_id] = {
                 "purpose": wanted, "decided_at": _now()}
             self._save(state)
+            self._purposes = RunPurposeIndex(self.output_dir)   # the decision is effective at once
             classified.append(run_id)
         return {"ok": True, "classified": classified, "refused": refused}
 
     def restore(self, run_ids: Iterable[str]) -> Dict[str, Any]:
-        """Put a run back whole — the record, its evidence and its visibility."""
+        """Put a run back whole — the record, its evidence and its visibility.
+
+        Only a run that is actually in Trash can come back. Reporting "restored" for an id that was
+        never there (or whose directory is gone) would tell the operator their evidence is safe at
+        the exact moment they need to know it is not.
+        """
         state = self._state()
-        wanted = {str(r or "").strip() for r in (run_ids or [])}
-        before = len(state.get("trash", []))
-        state["trash"] = [item for item in state.get("trash", [])
-                          if item["run_id"] not in wanted]
-        self._save(state)
-        restored = sorted(w for w in wanted if w)
-        return {"ok": True, "restored": restored, "removed_from_trash": before - len(state["trash"])}
+        in_trash = {item["run_id"] for item in state.get("trash", [])}
+        restored, missing = [], []
+        for raw in run_ids or []:
+            run_id = str(raw or "").strip()
+            if not run_id:
+                continue
+            if run_id not in in_trash:
+                missing.append({"run_id": run_id, "reason": "not found in Trash"})
+                continue
+            if not self.run_dir(run_id).is_dir():
+                missing.append({"run_id": run_id, "reason": "the run directory no longer exists"})
+                continue
+            restored.append(run_id)
+        if restored:
+            state["trash"] = [item for item in state.get("trash", [])
+                              if item["run_id"] not in set(restored)]
+            self._save(state)
+        return {"ok": True, "restored": sorted(restored), "missing": missing,
+                "removed_from_trash": len(restored)}
 
     def permanently_delete(self, run_ids: Iterable[str], *, confirm: bool) -> Dict[str, Any]:
         """Irreversible, and reachable only from Trash after a separate confirmation.
@@ -272,10 +321,30 @@ class DataManagementStore:
                 state["trash"] = [i for i in state.get("trash", []) if i["run_id"] != run_id]
                 continue
             record = self._describe(run_id, None)
-            # Forget the dedup entries this run is the ONLY source of. A site that production also
-            # scanned keeps its history untouched — only this run's claim on it goes.
+            # ORDER MATTERS. Releasing the dedup entry first and then failing to remove the files
+            # leaves a run that exists on disk, is missing from the registry, and can be discovered
+            # again as if it had never been scanned. So: make the run unreachable by a recoverable
+            # move, complete the irreversible removal, and only then let go of what it owned.
+            try:
+                staged = self._stage_for_delete(run_id, directory)
+            except OSError as exc:
+                refused.append({"run_id": run_id,
+                                "reason": f"the run could not be moved for deletion ({exc.__class__.__name__})"})
+                continue
+            try:
+                self._confined_rmtree(staged, root=self._staging_root())
+            except OSError as exc:
+                self._unstage(run_id, staged, directory)     # compensate: put it back untouched
+                refused.append({"run_id": run_id,
+                                "reason": f"deletion failed and the run was restored ({exc.__class__.__name__})"})
+                continue
+            # Irreversible removal is done: forget the dedup entries this run is the ONLY source of.
+            # A site that production also scanned keeps its history untouched — only this run's
+            # claim on it goes.
             self._release_domains(record, run_id)
-            self._confined_rmtree(directory)
+            state.setdefault("journal", []).append(
+                {"run_id": run_id, "op": "permanent_delete", "at": _now()})
+            state["journal"] = state["journal"][-200:]
             reclaimed += record.bytes
             deleted.append(run_id)
             state["trash"] = [i for i in state.get("trash", []) if i["run_id"] != run_id]
@@ -311,15 +380,7 @@ class DataManagementStore:
 
     def _purpose(self, run_id: str) -> str:
         """What the run declared at launch, or what the operator later decided it had been."""
-        try:
-            raw = json.loads((self.run_dir(run_id) / "config.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            raw = {}
-        declared = normalise_purpose((raw or {}).get("run_purpose"))
-        if declared != PURPOSE_UNCLASSIFIED:
-            return declared
-        decided = (self._state().get("classified") or {}).get(run_id) or {}
-        return normalise_purpose(decided.get("purpose"))
+        return self._purposes.purpose_of(run_id)
 
     def _client_linked(self, run_id: str) -> bool:
         """Has a human already carried this run's result into client work?"""
@@ -401,10 +462,48 @@ class DataManagementStore:
         except Exception:      # noqa: BLE001 - bookkeeping must not abort a confirmed deletion
             pass
 
-    def _confined_rmtree(self, directory: Path) -> None:
+    def _staging_root(self) -> Path:
+        return self._root / "_operator" / _STAGING_NAME
+
+    def _stage_for_delete(self, run_id: str, directory: Path) -> Path:
+        """Move a run out of the visible tree. Recoverable: nothing is lost if the next step fails."""
+        staging = self._staging_root()
+        staging.mkdir(parents=True, exist_ok=True)
+        target = staging / run_id
+        if target.exists():
+            self._confined_rmtree(target, root=staging)   # a leftover from an interrupted delete
+        os.rename(directory, target)
+        return target
+
+    def _unstage(self, run_id: str, staged: Path, original: Path) -> None:
+        """Undo a staging move after a failed deletion, so the run is exactly where it was."""
+        try:
+            if staged.is_dir() and not original.exists():
+                os.rename(staged, original)
+        except OSError:
+            pass          # the run is still whole in staging; recovery reports it rather than lying
+
+    def recover_interrupted_deletes(self) -> List[str]:
+        """Finish what a crash left in staging. A staged run is one whose files the operator already
+        confirmed away, so completing the removal is the consistent state — not resurrection."""
+        staging = self._staging_root()
+        finished: List[str] = []
+        if not staging.is_dir():
+            return finished
+        for path in sorted(staging.iterdir()):
+            if not path.is_dir():
+                continue
+            try:
+                self._confined_rmtree(path, root=staging)
+                finished.append(path.name)
+            except OSError:
+                continue
+        return finished
+
+    def _confined_rmtree(self, directory: Path, *, root: Optional[Path] = None) -> None:
         resolved = directory.resolve()
-        root = self._root.resolve()
-        if root not in resolved.parents or resolved == root:
+        base = (root or self._root).resolve()
+        if base not in resolved.parents or resolved == base:
             raise ValueError("refusing to delete outside the Scout run tree")
         shutil.rmtree(resolved)
 
@@ -427,6 +526,7 @@ class DataManagementStore:
                 "trash": [i for i in (raw.get("trash") or []) if isinstance(i, dict)
                           and i.get("run_id")],
                 "tombstones": [t for t in (raw.get("tombstones") or []) if isinstance(t, dict)],
+                "journal": [j for j in (raw.get("journal") or []) if isinstance(j, dict)],
                 "classified": {k: v for k, v in (raw.get("classified") or {}).items()
                                if isinstance(v, dict)}}
 

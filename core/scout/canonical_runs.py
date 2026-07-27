@@ -41,7 +41,8 @@ _DIAG_EXACT = frozenset({"smoke", "demo", "replay", "fixture", "acceptance", "ra
 # force diagnostic without touching the id at all.
 _KIND_PRODUCTION = frozenset({"production", "campaign", "client", "real", "prod"})
 _KIND_DIAGNOSTIC = frozenset({"smoke", "acceptance", "safe-live-acceptance", "demo", "replay",
-                              "headed-replay", "skip-proof", "fixture", "diagnostic", "acceptance-proof"})
+                              "headed-replay", "skip-proof", "fixture", "diagnostic",
+                              "acceptance-proof", "manual_test", "manual-test"})
 
 
 def is_diagnostic_run(run_id: str, *, run_kind: Optional[str] = None) -> bool:
@@ -83,14 +84,32 @@ def _runcontrol_ids(output_dir: str) -> List[str]:
     return sorted(p.stem for p in rc.glob("*.json"))
 
 
+def _declared_kinds(output_dir: str):
+    """What each run declared it was for — authoritative when present, absent for older runs.
+
+    A declaration outranks every id heuristic below it. Without this, a campaign minted with a
+    perfectly ordinary production-shaped id counts as production on Overview while Data management,
+    reading the same run's own config, calls it acceptance — one run, two answers.
+    """
+    from core.scout.run_purpose import PURPOSE_UNCLASSIFIED, RunPurposeIndex
+    index = RunPurposeIndex(output_dir)
+
+    def kind_of(run_id: str) -> Optional[str]:
+        purpose = index.purpose_of(run_id)
+        return None if purpose == PURPOSE_UNCLASSIFIED else purpose
+
+    return kind_of
+
+
 def canonical_campaigns(output_dir: str, *, include_diagnostics: bool = False) -> List[Dict[str, Any]]:
     """Enumerate campaigns from the canonical ``_runcontrol`` source, each tagged production/diagnostic.
 
     By default only production campaigns are returned (diagnostics excluded); pass
     ``include_diagnostics=True`` to get every canonical campaign with its ``diagnostic`` flag."""
     rows: List[Dict[str, Any]] = []
+    kind_of = _declared_kinds(output_dir)
     for cid in _runcontrol_ids(output_dir):
-        diagnostic = is_diagnostic_run(cid)
+        diagnostic = is_diagnostic_run(cid, run_kind=kind_of(cid))
         if diagnostic and not include_diagnostics:
             continue
         rows.append({"campaign_id": cid, "diagnostic": diagnostic})
@@ -100,5 +119,6 @@ def canonical_campaigns(output_dir: str, *, include_diagnostics: bool = False) -
 def campaign_counts(output_dir: str) -> Dict[str, int]:
     """Production vs diagnostic canonical campaign counts (the truthful, Observer-matching split)."""
     ids = _runcontrol_ids(output_dir)
-    diagnostic = sum(1 for cid in ids if is_diagnostic_run(cid))
+    kind_of = _declared_kinds(output_dir)
+    diagnostic = sum(1 for cid in ids if is_diagnostic_run(cid, run_kind=kind_of(cid)))
     return {"production": len(ids) - diagnostic, "diagnostic": diagnostic, "total": len(ids)}
