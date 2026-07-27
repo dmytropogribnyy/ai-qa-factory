@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.scout.discovery.domain_intel import canonical_domain
-from core.scout.store import RunStore
+from core.scout.store import RunStore, StoreError
 
 _WAIT_TIMEOUT_S = 15 * 60
 _TERMINAL = frozenset({"completed", "deferred", "skipped", "failed", "timed_out"})
@@ -193,13 +193,23 @@ class ChallengeSessionManager:
                 else:
                     final_state = "failed"
                     message = f"Manual attempt ended with {status or 'an unknown status'}."
-                item.update({"state": final_state, "message": message, "updated_at": _now()})
-                self._persist_locked()
-            if status == "DONE":
+
+            # Reconcile BEFORE announcing the outcome. The moment the session reads "completed" the
+            # operator (or a poll) may look at Needs your help, and finding the rescued target still
+            # listed there would be the surface contradicting itself.
+            source_run = session.get("source_run", "")
+            self._mark_attempt_run(run_id, source_run)
+            if final_state == "completed":
                 from core.scout.discovery.analyzed_registry import ANALYZED, AnalyzedSiteRegistry
                 AnalyzedSiteRegistry(self.output_dir).record_analysis(
                     dom, status=ANALYZED, evidence_ref=f"scout/{run_id}",
                     campaign_id=run_id)
+                self._resolve_source_target(source_run, dom, run_id)
+
+            with self._lock:
+                self._sessions[session_id].update(
+                    {"state": final_state, "message": message, "updated_at": _now()})
+                self._persist_locked()
         except Exception as exc:  # browser/dependency errors are operator-visible, never silent
             with self._lock:
                 item = self._sessions[session_id]
@@ -212,6 +222,53 @@ class ChallengeSessionManager:
                     "updated_at": _now(),
                 })
                 self._persist_locked()
+
+    def _mark_attempt_run(self, run_id: str, source_run: str) -> None:
+        """Record that this run is an ATTEMPT at an existing target, not a campaign of its own.
+
+        Without it every abandoned attempt adds another "Needs your help" row for the same domain,
+        because the inventory below reads any run holding a blocked prospect. The operator-facing
+        item is the original target; the attempt is its history.
+        """
+        if not str(source_run or "").strip():
+            return          # no origin to fold back into: this attempt IS the target's record
+        try:
+            store = RunStore(self.output_dir, run_id)
+            state = store.load_state() or {}
+            state["manual_attempt_for"] = str(source_run)
+            store.save_state(state)
+        except (StoreError, OSError, ValueError):
+            pass            # bookkeeping must never break the operator's attempt
+
+    def _resolve_source_target(self, source_run: str, domain: str, result_run: str) -> None:
+        """Stop the original target asking for help it has already received.
+
+        The status becomes RESOLVED_BY_MANUAL_CHECK rather than DONE on purpose: this run still
+        holds no findings for the target, and claiming otherwise would make the run page offer a
+        result that lives somewhere else. The blockage itself (reason, manual_action.json) is left
+        exactly as it was -- it really happened.
+        """
+        if not str(source_run or "").strip():
+            return
+        try:
+            from core.scout.engine import P_MANUAL, P_RESOLVED
+
+            store = RunStore(self.output_dir, source_run)
+            state = store.load_state() or {}
+            changed = False
+            for prospect in (state.get("prospects", {}) or {}).values():
+                if not isinstance(prospect, dict) or prospect.get("status") != P_MANUAL:
+                    continue
+                if canonical_domain(prospect.get("url", "")
+                                    or prospect.get("final_url", "")) != domain:
+                    continue
+                prospect.update({"status": P_RESOLVED, "resolved_by_run": result_run,
+                                 "resolved_at": _now()})
+                changed = True
+            if changed:
+                store.save_state(state)
+        except (StoreError, OSError, ValueError, ImportError):
+            pass            # a rescued target must never be lost to a bookkeeping failure
 
     def _load_interrupted(self) -> None:
         try:
@@ -254,6 +311,10 @@ def _blocked_targets(output_dir: str) -> List[Dict[str, Any]]:
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            continue
+        # A manual attempt at a target that already has a row elsewhere is that row's history, not
+        # a second target. Listing both makes every abandoned retry add another identical entry.
+        if str(state.get("manual_attempt_for") or "").strip():
             continue
         for pid, prospect in (state.get("prospects", {}) or {}).items():
             if not isinstance(prospect, dict) or prospect.get("status") != "MANUAL_ACTION_REQUIRED":

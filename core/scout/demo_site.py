@@ -92,11 +92,60 @@ FIXTURE_PAGES: Dict[str, Tuple[int, str, str]] = {
         "<input type='text' name='name' required aria-label='name'>"
         "<button type='submit'>Confirm booking</button></form></main>")),
 
+    # A site whose primary conversion flow is genuinely dead: the "Book now" entry 404s. This is the
+    # one shape that earns a reproduction video -- an action that really misbehaves, not a page that
+    # merely loads.
+    "/broken_flow/index.html": (200, "text/html", _page(
+        "<title>Salon Nova — Book an appointment</title>"
+        "<meta name='description' content='Book a visit with Salon Nova online.'>",
+        "<header><nav><a href='/broken_flow/index.html'>Home</a>"
+        "<a href='/clean/about.html'>About</a></nav></header>"
+        "<main><h1>Salon Nova</h1><h2>Appointments</h2>"
+        "<p>Choose a time that suits you and book it online in under a minute.</p>"
+        "<a href='/broken_flow/booking.html'>Book now</a>"
+        "<img src='/img/salon.png' alt='Salon Nova interior'></main><footer>Salon Nova</footer>")),
+
     "/captcha/index.html": (200, "text/html", _page(
         "<title>Protected Site</title>"
         "<meta name='description' content='Behind a CAPTCHA.'>",
         "<main><h1>Verify</h1><div class='g-recaptcha'>Please complete the reCAPTCHA to continue.</div>"
         "</main>")),
+
+    # A real, fully served site whose OWN signup form carries an anti-spam widget. The site never
+    # challenged us: it answered 200 with its complete content. Only the widget markup and an i18n
+    # string mention a human check. This is the shape of most B2B SaaS landing pages.
+    "/own_widget/index.html": (200, "text/html", _page(
+        "<title>Booking Suite — Online booking for your business</title>"
+        "<meta name='description' content='Let clients book appointments online 24/7.'>",
+        "<header><nav>"
+        "<a href='/own_widget/index.html'>Home</a>"
+        "<a href='/clean/index.html'>Customers</a>"
+        "<a href='/clean/about.html'>About</a>"
+        "</nav>"
+        "<form method='post' action='/own_widget/index.html'>"
+        "<input type='email' name='email' aria-label='email'>"
+        "<div class='cf-turnstile' data-sitekey='0x4AAAAAAADEMOKEY' data-size='compact'></div>"
+        "<button type='submit'>Free sign up</button></form></header>"
+        "<main><h1>Booking Suite</h1>"
+        "<h2>Features</h2><p>Calendar, SMS reminders and client management in one app.</p>"
+        "<h2>Pricing</h2><p>Start free, no credit card needed.</p>"
+        "<img src='/img/hero.png' alt='Booking dashboard on a laptop'></main>"
+        "<footer>Booking Suite</footer>"
+        "<script>window.__I18N__={\"registerError\":\"Could not create account\","
+        "\"captchaRequired\":\"Please verify that you are not a robot\"}</script>")),
+
+    # A genuine interstitial that keeps the site's chrome around it. Density alone cannot tell this
+    # apart from a thin real page; the title and the standalone widget can.
+    "/challenge_with_nav/index.html": (200, "text/html", _page(
+        "<title>Just a moment...</title>",
+        "<header><nav>"
+        "<a href='/clean/index.html'>Home</a>"
+        "<a href='/clean/about.html'>About</a>"
+        "<a href='/own_widget/index.html'>Contact</a>"
+        "</nav></header>"
+        "<main><h1>Checking your browser before you continue</h1>"
+        "<div class='cf-turnstile' data-sitekey='0x4AAAAAAAGATE'></div></main>"
+        "<footer>Protected by a verification service</footer>")),
 
     "/access_prohibition/index.html": (403, "text/html", _page(
         "<title>Access Denied</title>",

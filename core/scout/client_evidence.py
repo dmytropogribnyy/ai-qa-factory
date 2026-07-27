@@ -39,7 +39,7 @@ _NETWORK_FIELDS = (
 _REPRODUCTION_FIELDS = (
     "start_url", "action_url", "action_log", "precondition_ok", "final_url",
     "actual_status", "expected", "actual", "cleanup_ok", "reproduced",
-    "reproduction_status", "video_ref",
+    "reproduction_status", "video_decision", "video_ref",
 )
 
 
@@ -75,6 +75,76 @@ def _sha256_file(path: Path) -> str:
 def _safe_slug(value: str) -> str:
     slug = re.sub(r"[^a-z0-9.-]+", "-", str(value or "").lower()).strip(".-")
     return (slug or "target")[:120]
+
+
+# A client reads pictures, not a file count: at most three DISTINCT frames, and fewer whenever the
+# analysis genuinely saw fewer distinct pages. This is a ceiling, never a quota.
+_MAX_CLIENT_SCREENSHOTS = 3
+
+
+def _frame_roles(pdir: Path) -> Dict[str, Dict[str, str]]:
+    """Map ``file name -> {role, url}`` from the run's screenshots record, or {} when absent.
+
+    Historical runs pre-date the record; their frames keep their file stem as the label rather than
+    inventing a page role nobody measured.
+    """
+    try:
+        raw = json.loads((pdir / "screenshots.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    frames = raw.get("frames") if isinstance(raw, dict) else None
+    if not isinstance(frames, list):
+        return {}
+    out: Dict[str, Dict[str, str]] = {}
+    for frame in frames:
+        if isinstance(frame, dict) and frame.get("file"):
+            out[str(frame["file"])] = {"role": str(frame.get("role") or ""),
+                                       "url": str(frame.get("url") or "")}
+    return out
+
+
+def _unique_role(role: str, taken: Dict[str, Dict[str, str]]) -> str:
+    base = _safe_slug(role) or "page"
+    used = {meta.get("role") for meta in taken.values()}
+    unique, suffix = base, 2
+    while unique in used:
+        unique, suffix = f"{base}-{suffix}", suffix + 1
+    return unique
+
+
+def _video_absence_note(detail: Dict[str, Any]) -> str:
+    """Say WHY there is no reproduction video, so its absence never reads as missing evidence.
+
+    A video proves one thing only: that an interaction really misbehaves. Accessibility, structural,
+    console and performance findings are proved by the page itself, and attaching a clip of a page
+    that merely loads would dress up evidence we do not have.
+    """
+    reproduction = detail.get("reproduction")
+    if isinstance(reproduction, dict) and reproduction:
+        # Scout judged THIS finding and recorded the verdict. Prefer it over any reasoning from the
+        # run-wide policy: the decision was per-finding, so the explanation must be too.
+        if reproduction.get("reproduction_status") == "not_reproduced":
+            return ("No reproduction video: the interaction was replayed and did not misbehave, so "
+                    "there was nothing to record.")
+        if reproduction.get("video_decision"):
+            return f"No reproduction video: {reproduction['video_decision']}."
+    # The reason must be the one that actually applied. Saying "no broken interaction was found"
+    # for a run whose video capture was switched off would be a confident answer to a question we
+    # never asked. The operator surface already distinguishes these three cases; so must this.
+    mode = str(detail.get("video_mode") or "")
+    if mode == "off":
+        return ("No reproduction video: video capture was disabled for this run "
+                "(policy: off). This is a chosen setting, not a failed capture.")
+    if mode == "manual":
+        return ("No reproduction video: video capture is manual/opt-in for this run, so none was "
+                "recorded automatically. This is a chosen setting, not a failed capture.")
+    if mode == "qualified_auto":
+        return ("No reproduction video: no confirmed finding is a broken interaction. A video is "
+                "recorded only when an action genuinely misbehaves (a dead control, a broken flow, "
+                "an error or lost state after a step). Accessibility, structure, console and "
+                "performance findings are evidenced by the page capture and the technical records.")
+    return ("No reproduction video was recorded for this target, and the capture policy for this "
+            "run was not persisted, so the reason cannot be stated.")
 
 
 def client_export_dir(output_dir: str, run_id: str) -> Path:
@@ -163,14 +233,20 @@ def _html_summary(domain: str, detail: Dict[str, Any], *, images: List[str],
             f"<td>{steps_html}</td>"
             "</tr>"
         )
+    # Label each frame by the page it shows. "Open screenshot 2" told the client nothing about what
+    # they were about to open, and said "2" even when both links led to the same picture.
     media = "".join(
-        f'<a href="{html.escape(name, quote=True)}">Open screenshot {index}</a>'
-        for index, name in enumerate(images, 1)
+        f'<a href="{html.escape(str(img["name"]), quote=True)}" '
+        f'title="{html.escape(str(img.get("url") or ""), quote=True)}">'
+        f'{html.escape(str(img.get("role") or "page"))}</a>'
+        for img in images
     )
     media += "".join(
         f'<a href="{html.escape(name, quote=True)}">Open reproduction video {index}</a>'
         for index, name in enumerate(videos, 1)
     )
+    video_note = "" if videos else (
+        f'<p class="muted">{html.escape(_video_absence_note(detail))}</p>')
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -188,19 +264,21 @@ border-bottom:1px solid #e8ecf2;text-align:left;vertical-align:top}}.sev{{font-w
 <header><p class="muted">Client-ready QA evidence</p><h1>{html.escape(domain)}</h1>
 <p>Completed bounded analysis of public pages. Review the package before sending.</p>
 <div class="metrics"><div class="metric"><strong>{len(findings)}</strong><br>confirmed findings</div>
-<div class="metric"><strong>{len(images)}</strong><br>screenshots</div>
+<div class="metric"><strong>{len(images)}</strong><br>unique screenshots</div>
 <div class="metric"><strong>{len(videos)}</strong><br>reproduction videos</div></div></header>
 <section class="card"><h2>Findings</h2>
 <table><thead><tr><th>Severity</th><th>Issue and impact</th><th>How to reproduce</th></tr></thead>
 <tbody>{''.join(rows) or '<tr><td colspan="3">No confirmed issue was recorded.</td></tr>'}</tbody></table>
 </section><section class="card"><h2>Evidence files</h2>
 <div class="links">{media or '<span class="muted">No visual evidence was captured.</span>'}</div>
-<p class="muted">Technical JSON is included for verification. The browser event trace is a
+{video_note}
+<p class="muted">Each screenshot is a distinct page or state; byte-identical captures are not
+packaged twice. Technical JSON is included for verification. The browser event trace is a
 redacted structured record, not a native Playwright trace.zip.</p></section>
 </main></body></html>"""
 
 
-def _summary(domain: str, detail: Dict[str, Any], *, images: int, videos: int,
+def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]], videos: int,
              trace_available: bool, omitted: List[Dict[str, Any]]) -> str:
     findings = list(detail.get("findings") or [])
     actionable = [f for f in findings
@@ -217,8 +295,12 @@ def _summary(domain: str, detail: Dict[str, Any], *, images: int, videos: int,
         "",
         f"- Confirmed actionable findings: **{len(actionable)}**",
         f"- Informational notes: **{len(findings) - len(actionable)}**",
-        f"- Screenshots included: **{images}**",
+        f"- Unique screenshots included: **{len(images)}**",
+        *[f"  - `{img['name']}` — {img.get('role') or 'page'}"
+          + (f" ({img['url']})" if img.get("url") else "")
+          for img in images],
         f"- Reproduction videos included: **{videos}**",
+        *([] if videos else [f"  - {_video_absence_note(detail)}"]),
         f"- Structured browser event trace included: **{'yes' if trace_available else 'no'}**",
         "",
         "## Findings",
@@ -229,6 +311,8 @@ def _summary(domain: str, detail: Dict[str, Any], *, images: int, videos: int,
         "",
         "## Evidence notes",
         "",
+        "- Each screenshot is a distinct page or state actually visited; a byte-identical capture",
+        "  is never packaged twice, so the count above is evidence, not files.",
         "- `browser-event-trace.json` is a redacted structured event record, not a native",
         "  Playwright `trace.zip`.",
         "- Playwright Inspector is a live developer tool and is not a saved client artifact.",
@@ -288,7 +372,14 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
 
     binary: List[Tuple[str, Path]] = []
     omitted: List[Dict[str, Any]] = []
-    image_count = video_count = 0
+    video_count = 0
+    # Screenshots are packaged as DISTINCT evidence, not as a file count. A frame whose bytes we
+    # already ship (the verification pass re-photographing an unchanged landing page produces a
+    # byte-identical file) adds a second link to the same picture and nothing else, so it is dropped
+    # by digest. What survives is named for the page it shows and carries that page's URL.
+    roles = _frame_roles(pdir)
+    seen_digests: Dict[str, str] = {}
+    image_meta: Dict[str, Dict[str, str]] = {}
     total = sum(len(text.encode("utf-8")) for text in structured.values())
     for rel in detail.get("media") or []:
         parts = [part for part in str(rel).replace("\\", "/").split("/") if part not in ("", ".")]
@@ -309,8 +400,21 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
             omitted.append({"name": path.name, "reason": "20 MiB email-package limit reached"})
             continue
         if suffix in _IMAGE_SUFFIXES:
-            image_count += 1
-            name = f"evidence/screenshots/screenshot-{image_count:02d}{suffix}"
+            digest = _sha256_file(path)
+            if digest in seen_digests:
+                omitted.append({"name": path.name,
+                                "reason": f"identical to {seen_digests[digest]} (same SHA-256)"})
+                continue
+            if len(image_meta) >= _MAX_CLIENT_SCREENSHOTS:
+                omitted.append({"name": path.name,
+                                "reason": f"evidence budget of {_MAX_CLIENT_SCREENSHOTS} unique "
+                                          "screenshots reached"})
+                continue
+            meta = roles.get(path.name) or {}
+            role = _unique_role(str(meta.get("role") or path.stem), image_meta)
+            name = f"evidence/screenshots/{role}{suffix}"
+            seen_digests[digest] = f"{role}{suffix}"
+            image_meta[name] = {"role": role, "url": str(meta.get("url") or "")}
         else:
             video_count += 1
             name = f"evidence/reproduction/reproduction-{video_count:02d}{suffix}"
@@ -325,11 +429,12 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
     while True:
         image_names = [name for name, _path in binary if "/screenshots/" in name]
         video_names = [name for name, _path in binary if "/reproduction/" in name]
+        images = [{"name": name, **image_meta.get(name, {})} for name in image_names]
         summary = _summary(
-            dom, detail, images=len(image_names), videos=len(video_names),
+            dom, detail, images=images, videos=len(video_names),
             trace_available=trace_available, omitted=omitted)
         html_summary = _html_summary(
-            dom, detail, images=image_names, videos=video_names)
+            dom, detail, images=images, videos=video_names)
         candidate = {
             "QA_Evidence_Summary.html": html_summary,
             "QA_Evidence_Summary.md": summary,
@@ -371,11 +476,15 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                 entries.append({"path": name, "bytes": len(data), "sha256": _sha256_bytes(data)})
             for name, source in binary:
                 archive.write(source, name)
-                entries.append({
+                entry = {
                     "path": name,
                     "bytes": source.stat().st_size,
                     "sha256": _sha256_file(source),
-                })
+                }
+                # Bind each frame to the page it shows. Without it a screenshot is an image the
+                # client cannot place, and nothing records which of the walked pages was captured.
+                entry.update(image_meta.get(name, {}))
+                entries.append(entry)
             manifest = {
                 "schema": "scout-client-evidence/v1",
                 "domain": dom,

@@ -45,8 +45,16 @@ explored up to (never through) a side-effect boundary.
 **Blocked (fail-closed):** form submission; login/credentials; OTP/email/SMS; account creation;
 bookings/orders/payments/uploads; CAPTCHA interaction/solving; access-control bypass;
 stealth/fingerprint/proxy evasion; automatic outreach; automatic contact discovery; destructive
-actions; cloud deployment. CAPTCHA / access-prohibition pages become `MANUAL_ACTION_REQUIRED`
-with no interaction while other safe prospects continue.
+actions; cloud deployment. A **blocking** challenge / access-prohibition page becomes
+`MANUAL_ACTION_REQUIRED` with no interaction while other safe prospects continue.
+
+"Blocking" is decided structurally (`core/scout/challenge_detect.py`): a challenge that replaced
+the page (blocking HTTP status, interstitial title, challenge headline, or a challenge element with
+no page around it). A CAPTCHA/Turnstile widget on the site's **own** signup, newsletter, login or
+contact form is `embedded` — the site served its content, so the target is analysed normally and
+the widget is recorded as an observation. Marker text inside `script`/`style`/`template` (hydration
+state, localisation bundles) is never evidence of a block. An ambiguous low-content page fails
+closed as `suspected`, and the operator surface must word it as a possibility, not a fact.
 
 ## Backends
 
@@ -64,6 +72,24 @@ A pluggable `BrowserBackend` keeps automated tests deterministic:
   unsupported schemes are aborted; the final URL is re-validated before content is read; rendered
   HTML is byte-bounded; and the browser always closes on error. A marked `playwright_acceptance`
   test exercises the real Chromium path against an allow-listed local fixture.
+
+## Visual evidence
+
+- **Screenshots** — up to three UNIQUE frames per target: the landing capture plus frames of the
+  meaningful pages the coverage pass actually visited. A capture byte-identical to one already held
+  is deleted at the source (`engine._keep_or_drop_frame`) and again at export, so a screenshot count
+  is a count of distinct pages. Each frame is bound to its page role and URL in `screenshots.json`,
+  which the Dashboard and the client `MANIFEST.json` both read. A ceiling, never a quota: a site
+  with one meaningful page yields one frame.
+- **Reproduction video** — decided by Scout, not by an operator switch. `video_mode` defaults to
+  `qualified_auto` for a NEW run; every candidate is judged by
+  `evidence_policy.video_qualified` (interaction a still cannot show, severity + evidence-quality
+  floors, genuinely replayed, safe deterministic path with verified cleanup, per-campaign cap), and
+  the verdict with its reason is persisted as `video_decision` in `reproduction.json`. A
+  page-load-only clip is never kept. `off`/`manual` remain explicit opt-outs, and a run config
+  written without `video_mode` reads back as `manual` — it never recorded, and history is not
+  re-described. Today the flow explorer follows ONE public step, so a broken primary flow entry is
+  the only interaction defect that can qualify.
 
 ## Discovery + commercial triage (Phase 8.4)
 

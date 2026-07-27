@@ -1733,7 +1733,8 @@ function startCampaign(){{
                     f'validated. Everything not yet finished lives in Open work.</p>'
                     f'{work_tbl}'
                     f'<h2>Scout</h2>{scout_failed_block}'
-                    f'<div class="scrollx">{camp_tbl}</div>{diag_options}')
+                    f'<div class="scrollx">{camp_tbl}</div>{diag_options}'
+                    f'{_runtime_block_html()}')
             script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
                       + self._poll_script(
                           "/api/overview",
@@ -2939,10 +2940,28 @@ function startCampaign(){{
             imgs = [m for m in media if _ext(m) in ("png", "jpg", "jpeg", "webp", "gif")]
             vids = [m for m in media if _ext(m) in ("webm", "mp4")]
             others = [m for m in media if m not in imgs and m not in vids]
+            # Name each frame by the page it shows. Three anonymous thumbnails force the operator to
+            # open them one by one to work out which is the pricing page and which is the landing.
+            shot_roles = {str(s.get("file") or ""): s for s in (det.get("screenshots") or [])
+                          if isinstance(s, dict)}
+
+            def _shot_caption(rel: str) -> str:
+                meta = shot_roles.get(rel.rsplit("/", 1)[-1]) or {}
+                role = str(meta.get("role") or "")
+                page = str(meta.get("url") or "")
+                if not role:
+                    return ""
+                return (f'<div class="muted" style="font-size:12px;max-width:280px">{_esc(role)}'
+                        + (f' &middot; <span title="{_esc(page)}">{_esc(page[:46])}</span>'
+                           if page else "") + "</div>")
+
             media_html = "".join(
+                f'<figure style="display:inline-block;margin:4px;vertical-align:top">'
                 f'<a href="{_art_url(m)}" target="_blank" rel="noopener"><img src="{_art_url(m)}" '
-                f'alt="screenshot" style="max-width:280px;max-height:200px;margin:4px;'
-                f'border:1px solid var(--border,#ccc)"></a>' for m in imgs)
+                f'alt="{_esc((shot_roles.get(m.rsplit("/", 1)[-1]) or {}).get("role") or "screenshot")}" '
+                f'style="max-width:280px;max-height:200px;'
+                f'border:1px solid var(--border,#ccc)"></a>{_shot_caption(m)}</figure>'
+                for m in imgs)
             media_html += "".join(
                 f'<video src="{_art_url(m)}" controls preload="metadata" '
                 f'style="max-width:360px;margin:4px"></video>' for m in vids)
@@ -3157,9 +3176,34 @@ function startCampaign(){{
             trace = next((e for e in evidence_files if e.get("name") == "browser_trace.json"), None)
             obs_file = next((e for e in evidence_files if e.get("name") == "observation.json"), None)
             evidence_count = len(media) + len(evidence_files)
+            # Name each frame by the page it shows. A row of anonymous thumbnails makes the operator
+            # open them one by one to work out which is the pricing page and which is the landing —
+            # and makes a client package impossible to check before sending.
+            frames = {str(s.get("file") or ""): s for s in (det.get("screenshots") or [])
+                      if isinstance(s, dict)}
+
+            def _frame(rel: str) -> dict:
+                return frames.get(rel.rsplit("/", 1)[-1]) or {}
+
+            def _caption(rel: str) -> str:
+                meta = _frame(rel)
+                role, page = str(meta.get("role") or ""), str(meta.get("url") or "")
+                if not role and rel.rsplit("/", 1)[-1] == "verification.png":
+                    # Not a page of the site: the independent second pass photographing the same
+                    # landing page. Saying so beats leaving an unexplained fourth thumbnail.
+                    return ('<figcaption class="muted" style="font-size:12px">verification pass '
+                            '&middot; same page, re-checked</figcaption>')
+                if not role:
+                    return ""
+                return (f'<figcaption class="muted" style="font-size:12px">{_esc(role)}'
+                        + (f' &middot; {_esc(page[:52])}' if page else "") + "</figcaption>")
+
             media_html = "".join(
+                f'<figure style="display:inline-block;margin:0 8px 8px 0;vertical-align:top">'
                 f'<a href="{_art_url(m)}" target="_blank" rel="noopener">'
-                f'<img src="{_art_url(m)}" alt="Captured page for {_esc(domain)}"></a>'
+                f'<img src="{_art_url(m)}" alt="'
+                f'{_esc(_frame(m).get("role") or f"Captured page for {domain}")}"></a>'
+                f'{_caption(m)}</figure>'
                 for m in imgs)
             media_html += "".join(
                 f'<video src="{_art_url(m)}" controls preload="metadata" '
@@ -3355,17 +3399,39 @@ function startCampaign(){{
             # happened: a blocked/CAPTCHA target has a persisted reason and a session an operator can
             # take over; an interrupted or skipped target has neither, and offering to "open a manual
             # check" for one would be a false story about the run.
-            challenge = bool(raw_reason) or prospect_status == "MANUAL_ACTION_REQUIRED"
-            if prospect_status == "SKIPPED":
+            # A target a later manual check carried to a result keeps its blocked evidence, so
+            # raw_reason is still set — but it is no longer asking for anything. Offering "Open
+            # manual check" here would send the operator to redo work that is already done, and the
+            # "Needs attention" chip would promise a list this target has already left.
+            resolved_by_run = str(det.get("resolved_by_run") or "")
+            resolved = prospect_status == "RESOLVED_BY_MANUAL_CHECK"
+            challenge = (bool(raw_reason) or prospect_status == "MANUAL_ACTION_REQUIRED") \
+                and not resolved
+            if resolved:
+                human_reason = ("A manual check completed this target later, in a separate run. "
+                                "This run holds only what was captured before the block.")
+            elif prospect_status == "SKIPPED":
                 human_reason = "This target was skipped, so it was never analyzed."
             elif prospect_status == "PENDING":
                 human_reason = ("The analysis did not finish for this target — the run stopped "
                                 "before its result was recorded.")
             else:
-                human_reason = {
-                    "captcha_detected": "The site requested a human verification check.",
-                    "access_prohibited": "The site blocked automated access.",
-                }.get(raw_reason, "The browser could not complete this target automatically.")
+                # Only a proven blocking challenge earns a categorical sentence. When the detector
+                # failed closed on an ambiguous page it says so, and either way it names the actual
+                # signal — an operator who can see the evidence can overrule a wrong call, which is
+                # exactly what "The site requested a human verification check" denied them when the
+                # site had merely put an anti-spam widget on its own signup form.
+                confidence = str(ma.get("challenge_confidence") or "confirmed")
+                signal = str(ma.get("challenge_signal") or "")
+                if confidence == "suspected":
+                    human_reason = "A verification page may have prevented analysis."
+                else:
+                    human_reason = {
+                        "captcha_detected": "The site requested a human verification check.",
+                        "access_prohibited": "The site blocked automated access.",
+                    }.get(raw_reason, "The browser could not complete this target automatically.")
+                if signal:
+                    human_reason = f"{human_reason} Detected: {signal}."
             # The badge/chip/title must tell the SAME story as human_reason above, using only
             # statuses that really exist. /scout/attention's blocked list is filtered to
             # MANUAL_ACTION_REQUIRED only (core/scout/challenge_session.py's _blocked_targets), so
@@ -3376,6 +3442,8 @@ function startCampaign(){{
             # "Skipped") instead of inventing new vocabulary.
             if challenge:
                 status_label = "Needs your help"
+            elif resolved:
+                status_label = "Resolved by a manual check"
             elif prospect_status == "SKIPPED":
                 status_label = "Skipped"
             elif prospect_status == "PENDING":
@@ -3416,6 +3484,13 @@ function startCampaign(){{
                     '<p id="challengemsg" class="muted" aria-live="polite">Open a visible Chromium '
                     'window, complete the human check there, then choose Continue. The same browser '
                     'session stays open for up to 15 minutes.</p>')
+            elif resolved and resolved_by_run:
+                # Send the operator to the result instead of asking them to redo the check.
+                actions_html = (
+                    f'<div class="row"><a class="btn primary" href="/scout/target?'
+                    f'run={_esc(resolved_by_run)}&domain={_esc(domain)}">Open the result</a></div>'
+                    '<p class="muted">The manual check finished this target in its own run; the '
+                    'findings live there, not here.</p>')
             else:
                 actions_html = (
                     '<div class="row"><a class="btn primary" href="/scout">'
@@ -4330,6 +4405,7 @@ def _finding_qa_value(f: dict) -> int:
 _RUN_STATUS_LABELS = (
     ("DONE", "Completed"),
     ("MANUAL_ACTION_REQUIRED", "Needs your help"),
+    ("RESOLVED_BY_MANUAL_CHECK", "Resolved by a manual check"),
     ("FAILED", "Could not complete"),
     ("PENDING", "Queued"),
     ("SKIPPED", "Skipped"),
@@ -4955,6 +5031,46 @@ _PAGE_UI_JS = (
     "d.showModal();if(expected)i.focus();});}")
 
 
+def _runtime_block_html() -> str:
+    """Compact Runtime block for Overview — what code this process is actually serving.
+
+    A Dashboard started from a working tree can quietly outlive the code it loaded, and a commit SHA
+    cannot reveal it: an uncommitted edit never moves HEAD. So this reports the fingerprint verdict
+    over executable code (``main.py`` + ``core/``), and never calls a process started from a dirty
+    tree a clean commit. Docs, outputs, evidence and tests are outside that fingerprint by design —
+    editing them changes nothing this process is running.
+
+    Restarting is deliberately NOT offered here: process control stays outside the HTTP surface.
+    """
+    try:
+        from core.build_identity import current_identity
+        ident = current_identity()
+    except Exception:
+        return ""
+    restart = bool(ident.get("restart_required"))
+    dirty = ident.get("local_changes_at_start")
+    dirty_label = "Unknown" if dirty is None else ("Yes" if dirty else "No")
+    verdict = ('<strong style="color:var(--attention)">Yes</strong>' if restart
+               else "<strong>No</strong>")
+    hint = ('<div class="muted">Executable code changed since this process started. Run '
+            '<code>tools/restart_dashboard.ps1</code> (or the "AI QA Factory Dashboard" desktop '
+            'shortcut).</div>' if restart else '')
+    rows = "".join(
+        f'<tr><th scope="row">{label}</th><td>{value}</td></tr>'
+        for label, value in (
+            ("Process started", _esc(ident.get("process_started_at") or "unknown")),
+            ("Running HEAD", _esc(ident.get("running_build") or "unknown")),
+            ("Local changes at process start", dirty_label),
+            ("Restart required", verdict),
+        ))
+    # The verdict rides in the summary and the block opens itself when a restart is due: a fact the
+    # operator must act on cannot live behind a fold they have to know to open.
+    return (f'<details class="advanced compact-details"{" open" if restart else ""}>'
+            f'<summary>Runtime — {"restart required" if restart else "up to date"}</summary>'
+            f'<div class="scrollx"><table class="runtime-table">{rows}</table></div>'
+            f'{hint}</details>')
+
+
 def _build_footer_html(active: str = "/") -> str:
     """Compact build-identity footer (version + running SHA, plus a stale-build warning). Never
     raises to the page; cached so it costs no git subprocess per render."""
@@ -4963,8 +5079,11 @@ def _build_footer_html(active: str = "/") -> str:
         ident = current_identity()
     except Exception:
         return ""
+    # Follow restart_required, not stale: an uncommitted edit never moves HEAD, so a footer keyed on
+    # the SHA alone would stay quiet while the Runtime block on Overview says a restart is due.
     warn = (f'<span style="color:var(--attention);font-weight:600">&#9888; '
-            f'{_esc(ident.get("warning",""))}</span> &middot; ' if ident.get("stale") else "")
+            f'{_esc(ident.get("warning",""))}</span> &middot; '
+            if ident.get("restart_required") else "")
     scout_surface = active.startswith("/scout") or active in ("/results", "/company")
     identity = (str(ident.get("product_version") or "AI QA Factory")
                 if scout_surface else "AI QA Factory &middot; Operator Dashboard")

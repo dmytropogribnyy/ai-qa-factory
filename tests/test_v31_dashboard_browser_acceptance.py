@@ -564,11 +564,12 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
             download = download_info.value
             assert download.suggested_filename == "alpha.example-qa-evidence.zip"
             with zipfile.ZipFile(download.path()) as archive:
-                assert {
-                    "QA_Evidence_Summary.html",
-                    "MANIFEST.json",
-                    "evidence/screenshots/screenshot-01.png",
-                } <= set(archive.namelist())
+                names = set(archive.namelist())
+                assert {"QA_Evidence_Summary.html", "MANIFEST.json"} <= names
+                # Frames are named for the page they show, and a byte-identical capture is never
+                # packaged twice, so the count is evidence rather than files.
+                shots = [n for n in names if n.startswith("evidence/screenshots/")]
+                assert shots == ["evidence/screenshots/landing.png"]
             desktop.screenshot(
                 path=screenshot_dir / "02-scout-target-complete-desktop.png", full_page=True)
             desktop.goto(

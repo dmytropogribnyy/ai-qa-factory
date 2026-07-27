@@ -23,6 +23,8 @@ from html.parser import HTMLParser
 from typing import Any, Callable, Dict, List, Optional, Protocol
 from urllib.parse import urljoin
 
+from core.scout.challenge_detect import (R_CAPTCHA, classify, widget_from_attrs,
+                                         widgets_to_dicts)
 from core.scout.url_safety import UrlPolicy, check_url
 
 # Response headers we keep (lowercased). Everything else (cookies, auth, tokens) is dropped.
@@ -82,8 +84,15 @@ class PageObservation:
     structured_data: List[Dict[str, Any]] = field(default_factory=list)
     landmarks: Dict[str, int] = field(default_factory=dict)        # nav/main/header/... counts
     input_labels_ok: bool = True
+    # Challenge detection (core/scout/challenge_detect.py). The two *_marker flags mean the site
+    # BLOCKED us, never "the word captcha occurs somewhere in the HTML" — a site's own anti-spam
+    # widget leaves captcha_widget_present set and the markers clear, and the page is analysed.
     access_blocked_marker: bool = False
     captcha_marker: bool = False
+    challenge_kind: str = ""            # "" | "embedded" | "blocking"
+    challenge_confidence: str = ""      # "" | "confirmed" | "suspected"
+    challenge_signal: str = ""          # the concrete evidence behind the verdict
+    captcha_widget_present: bool = False   # the page carries a widget (blocking or not)
     # Playwright-only (empty for the static backend):
     console_errors: List[str] = field(default_factory=list)
     failed_resources: List[str] = field(default_factory=list)
@@ -115,9 +124,9 @@ class BrowserBackend(Protocol):
 # HTML parsing (stdlib)
 # ---------------------------------------------------------------------------
 
-_ACCESS_MARKERS = ("access denied", "403 forbidden", "not authorized", "please log in to continue")
-_CAPTCHA_MARKERS = ("captcha", "recaptcha", "hcaptcha", "i'm not a robot", "verify you are human",
-                    "cf-turnstile", "g-recaptcha")
+# Tags whose payload is machine data, not page content: hydration state, localisation bundles,
+# inert templates. Their text is deliberately excluded from the visible text used for detection.
+_NON_VISIBLE_TAGS = frozenset({"script", "style", "template", "noscript"})
 
 
 class _HtmlExtractor(HTMLParser):
@@ -136,6 +145,12 @@ class _HtmlExtractor(HTMLParser):
         self.landmarks: Dict[str, int] = {}
         self.jsonld_blocks: List[str] = []
         self.forms: List[FormObservation] = []
+        # Text a human would actually read, and the challenge elements really present in the DOM.
+        # Hydration/localisation payloads live in <script> and are NOT visible text — reading them
+        # as page content is what made a site's own i18n string look like a challenge.
+        self.visible_text: List[str] = []
+        self.widgets: List[Any] = []        # (kind, in_form)
+        self._suppress = 0
         self._in_title = False
         self._in_jsonld = False
         self._jsonld_buf: List[str] = []
@@ -146,6 +161,12 @@ class _HtmlExtractor(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         a = {k.lower(): (v or "") for k, v in attrs}
+        kind = widget_from_attrs(tag, a)
+        if kind:
+            # Whether it sits inside one of the site's own forms decides embedded vs interstitial.
+            self.widgets.append((kind, self._cur_form is not None))
+        if tag in _NON_VISIBLE_TAGS:
+            self._suppress += 1
         if tag == "html" and a.get("lang"):
             self.lang = a["lang"]
         elif tag == "title":
@@ -193,8 +214,12 @@ class _HtmlExtractor(HTMLParser):
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
+        if tag in _NON_VISIBLE_TAGS:
+            self._suppress = max(0, self._suppress - 1)   # self-closing: no content to skip
 
     def handle_endtag(self, tag):
+        if tag in _NON_VISIBLE_TAGS:
+            self._suppress = max(0, self._suppress - 1)
         if tag == "title":
             self._in_title = False
         elif tag in ("h1", "h2", "h3", "h4", "h5", "h6") and self._heading_stack:
@@ -215,6 +240,8 @@ class _HtmlExtractor(HTMLParser):
             self._jsonld_buf.append(data)
         if self._heading_stack:
             self._heading_buf.append(data)
+        if not self._suppress:
+            self.visible_text.append(data)
 
 
 def _parse_html(base_url: str, html: str, obs: PageObservation) -> None:
@@ -241,9 +268,18 @@ def _parse_html(base_url: str, html: str, obs: PageObservation) -> None:
             obs.structured_data.append({"valid": True, "data": json.loads(block)})
         except Exception as exc:
             obs.structured_data.append({"valid": False, "error": str(exc)[:120]})
-    low = html.lower()
-    obs.access_blocked_marker = any(m in low for m in _ACCESS_MARKERS)
-    obs.captcha_marker = any(m in low for m in _CAPTCHA_MARKERS)
+    # Was the page served, or withheld? Structure and visible text decide — never a substring
+    # search over the raw HTML, which cannot tell a site's own signup widget from a wall.
+    verdict = classify(status=obs.status, title=obs.title,
+                       visible_text=" ".join(ex.visible_text), headings=obs.headings,
+                       links=obs.links, forms=obs.forms,
+                       widgets=widgets_to_dicts(ex.widgets))
+    obs.challenge_kind = verdict.kind
+    obs.challenge_confidence = verdict.confidence
+    obs.challenge_signal = verdict.signal
+    obs.captcha_widget_present = bool(ex.widgets)
+    obs.captcha_marker = verdict.blocks() and verdict.reason == R_CAPTCHA
+    obs.access_blocked_marker = verdict.blocks() and verdict.reason != R_CAPTCHA
 
 
 def _safe_headers(raw_headers) -> Dict[str, str]:

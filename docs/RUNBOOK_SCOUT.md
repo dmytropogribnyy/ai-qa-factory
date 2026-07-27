@@ -76,8 +76,11 @@ path that surfaces per-target findings in the Dashboard — see §3.)
 
 ## 4. Finish a target blocked by CAPTCHA or Cloudflare
 
-Scout never solves or bypasses a challenge. When a challenge is detected, the target is marked
-**Needs your help** and the Dashboard provides:
+Scout never solves or bypasses a challenge. Only a challenge that actually **blocks** the page
+counts: the site answered with a refusal, an interstitial, or a bare challenge element with no page
+around it. A CAPTCHA/Turnstile widget sitting on the site's own signup or contact form does **not**
+block anything — the site served its content, so the target is analysed normally. When a real
+challenge is detected, the target is marked **Needs your help** and the Dashboard provides:
 
 1. **Open manual check** — starts a visible Chromium session for that exact target.
 2. Complete the challenge yourself in the opened browser. The browser stays open for up to 15 minutes.
@@ -87,6 +90,72 @@ Scout never solves or bypasses a challenge. When a challenge is detected, the ta
 Cookies/session state stay in process memory and are not written into Scout evidence. A successful
 manual handoff creates a new exact attempt and preserves the original blocked evidence rather than
 rewriting history. If the challenge remains after Continue, the attempt stays incomplete.
+
+**Nothing expires while you are away.** A blocked target waits in Needs attention indefinitely; the
+15-minute clock starts only once the visible browser has reached the block, i.e. when the window is
+already in front of you. Opening the check re-walks that ONE target, never the campaign. A timed-out
+or deferred attempt leaves the target listed so you can simply start another; retries never pile up
+duplicate rows.
+
+When a check does carry a target to a result, that target **leaves** Needs attention: the original
+run marks it `RESOLVED_BY_MANUAL_CHECK` ("Resolved by a manual check") and links to the attempt run
+where the findings live. The original run keeps its blocked evidence and still reports no findings
+of its own — the result belongs to the run that produced it.
+
+If the banner says a verification page **may have** prevented analysis, the detector could not
+prove a block and failed closed; it names the signal it saw so you can judge it yourself. Opening
+the manual check on such a target and finding an ordinary page is a legitimate outcome — report it,
+because it means the signal was wrong.
+
+## 4a. Restart the Dashboard after a code change
+
+The Dashboard is run from source, so a process keeps serving whatever it loaded at start. **Overview
+→ Runtime** answers whether that still matches the disk:
+
+- **Process started** — when this process began serving.
+- **Running HEAD** — the commit it started from. A process started from a working tree is reported
+  as `<sha> + local changes`, never as a clean commit it is not serving.
+- **Local changes at process start** — whether uncommitted executable code was on disk then.
+- **Restart required** — `Yes` when executable code (`main.py`, `core/`) changed after the process
+  started. Docs, outputs, evidence, test data and the test suite are outside that check on purpose:
+  editing them changes nothing the running process does.
+
+To clear it, run `tools/restart_dashboard.ps1` (or the "AI QA Factory Dashboard" desktop shortcut,
+which passes `-OpenBrowser` and is the single button for both starting and restarting — starting a
+Dashboard that is already running is only the special case of restarting one).
+It stops only THIS checkout's Dashboard, lets the `AIQA-Collab-Supervisor` task bring it back on the
+repo venv, waits for `/health`, and prints the new PID, start time, running build and executable. If
+the supervisor is unavailable it says so and exits non-zero rather than leaving you with a stopped
+Dashboard and a success message; `-StartIfNoSupervisor` launches it directly instead.
+
+There is deliberately **no restart button in the Dashboard**: it never spawns processes and never
+accepts a command over HTTP. Process control stays outside that surface.
+
+## 4b. What the client evidence package contains
+
+- **Up to three UNIQUE screenshots** of pages the analysis actually visited — a ceiling, never a
+  quota. A site with one meaningful page yields one frame. A capture that is byte-identical to one
+  already packaged (the verification pass re-photographing an unchanged landing page) is dropped by
+  SHA-256 and recorded in `MANIFEST.json` under `omitted` with that reason.
+- Each frame is **named for the page it shows** (`landing.png`, `pricing.png`, `booking-flow.png`)
+  and bound to that page's URL in the manifest, so "2 screenshots" always means two different
+  pictures of two different pages.
+- **A reproduction video only for a reproducible interaction defect** — a dead control, a broken
+  flow, an error or lost state after an action. Accessibility, structure, console and performance
+  findings are evidenced by the page capture and the technical records, so the package states in
+  writing *why* no video is attached instead of leaving a bare zero that reads as missing evidence.
+
+  Scout makes that call itself — there is no capture switch to remember. Every finding is judged by
+  `core/scout/evidence_policy.py::video_qualified`: the defect must be an interaction a still frame
+  cannot show, severe enough, evidenced strongly enough, genuinely replayed (never merely attempted),
+  reached by a safe read-only path with verified cleanup, and within the per-campaign cap. The
+  verdict — kept or refused, with its reason — is persisted in `reproduction.json` as
+  `video_decision` and is what the client package quotes. A page-load clip is never kept.
+
+  `video_mode` remains in the run config as an explicit opt-out (`off`, or the legacy `manual`); a
+  run recorded before this became automatic reads back as `manual`, because it never recorded.
+- Deferred (see `docs/POST_V2_BACKLOG.md`): cropped, highlighted shots of the individual element
+  behind a visual finding.
 
 ## 5. Control or clean up runs
 

@@ -24,7 +24,7 @@ from core.scout.checks import CheckContext, run_checks
 from core.scout.config import ScoutRunConfig
 from core.scout.control import RunControl
 from core.scout.coverage import make_planner
-from core.scout.evidence_policy import EvidenceSettings, VIDEO_QUALIFIED_AUTO
+from core.scout.evidence_policy import EvidenceSettings, VIDEO_QUALIFIED_AUTO, video_qualified
 from core.scout.findings import ScoutFinding
 from core.scout.sanitize import Sanitizer
 from core.scout.scoring import build_scorecard
@@ -60,6 +60,11 @@ RUN_COMPLETED, RUN_CANCELLED, RUN_KILLED, RUN_FAILED = "COMPLETED", "CANCELLED",
 P_PENDING, P_DONE, P_MANUAL, P_FAILED, P_SKIPPED = (
     "PENDING", "DONE", "MANUAL_ACTION_REQUIRED", "FAILED", "SKIPPED",
 )
+# A target this run left blocked, which a later operator-driven manual check carried to a result.
+# The result lives in that attempt's own run, so this status is deliberately NOT `DONE`: this run
+# still holds no findings for the target and must not pretend otherwise. It exists so the target
+# stops asking for help it has already received.
+P_RESOLVED = "RESOLVED_BY_MANUAL_CHECK"
 
 # Safe operator next-step per fail-closed reason (persisted; never invented in the UI).
 _MANUAL_RECOMMENDED_ACTION = {
@@ -68,6 +73,46 @@ _MANUAL_RECOMMENDED_ACTION = {
     "access_prohibited": "The site blocked automated access. Confirm you are authorized, open it in "
                          "your browser, then rescan this target.",
 }
+
+# Visual evidence budget: the landing frame plus at most two more MEANINGFUL pages the coverage pass
+# actually visited. It is a ceiling, never a quota — a site with one meaningful page yields one frame,
+# and a page the planner judged a structural near-duplicate has its frame discarded rather than
+# padding the count.
+_MAX_EVIDENCE_SHOTS = 3
+
+# Path words that name what a page IS, so a client sees "pricing" rather than "screenshot-02".
+_PAGE_ROLES = (
+    ("pricing", ("pricing", "prices", "price", "cennik", "cenník", "tarif", "plans", "plany")),
+    ("booking-flow", ("book", "booking", "reserve", "rezerv", "appointment", "objednat", "termin")),
+    ("signup", ("signup", "sign-up", "register", "registracia", "trial", "join")),
+    ("contact", ("contact", "kontakt", "contacts")),
+    ("features", ("features", "product", "produkt", "funkcie", "solutions")),
+    ("faq", ("faq", "help", "support", "pomoc")),
+    ("about", ("about", "o-nas", "company")),
+)
+
+
+def _page_role(url: str, taken: Optional[set] = None) -> str:
+    """Name a captured page by what it is. Falls back to its first path segment, then to "page"."""
+    segments = [s for s in urlsplit(url).path.split("/") if s]
+    haystack = " ".join(segments).lower()
+    role = ""
+    for name, hints in _PAGE_ROLES:
+        if any(hint in haystack for hint in hints):
+            role = name
+            break
+    if not role:
+        first = segments[0] if segments else ""
+        cleaned = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in first.lower()).strip("-")
+        role = cleaned[:24] or "page"
+    if taken is None:
+        return role
+    unique, suffix = role, 2
+    while unique in taken:
+        unique, suffix = f"{role}-{suffix}", suffix + 1
+    taken.add(unique)
+    return unique
+
 
 _FLOW_HINTS = ("book", "buy", "cart", "checkout", "signup", "sign-up", "subscribe",
                "contact", "start", "appointment", "reserve", "order", "quote", "demo")
@@ -222,11 +267,29 @@ class ScoutEngine:
 
             planner = make_planner(cfg.coverage, cfg.max_pages_per_site)
             planner.seed(obs)                     # the landing page is page #1 (always meaningful)
+            # Visual evidence of the pages we actually walked, not the landing page twice. The list
+            # holds only the EXTRA frames here; the landing frame is prepended below, so the budget
+            # arithmetic and the page-NN numbering stay in one place.
+            extra_shots: List[Dict[str, str]] = []
+            landing_shot = self._landing_frame(pid, obs, url)
+            # Seed the digest set with the landing frame so a nav link back to the page we have
+            # already photographed cannot contribute a second copy of the same picture.
+            seen_digests = {landing_shot["sha256"]} if landing_shot.get("sha256") else set()
             if "links" in cfg.check_families:
-                link_status = self._probe_links(obs, planner)
+                link_status = self._probe_links(
+                    obs, planner, shot_dir=str(self.store.prospect_dir(pid)), shots=extra_shots,
+                    seen_digests=seen_digests)
             else:
                 link_status = {}
                 planner.stop("links_check_disabled")
+            shots = ([landing_shot] if landing_shot else []) + extra_shots
+            if shots:
+                self.store.save_prospect_artifact(pid, "screenshots.json", {
+                    "schema": "scout-screenshots/v1",
+                    "captured": len(shots),
+                    "max_frames": _MAX_EVIDENCE_SHOTS,
+                    "frames": [{**s, "url": self.sanitizer.safe_url(s["url"])} for s in shots],
+                })
             flow_result = self._explore_flow(obs) if "business_flow" in cfg.check_families else None
             ctx = CheckContext(run_id=self.store.root.name, prospect_ref=pid,
                                backend=obs.backend, link_status=link_status, flow_result=flow_result,
@@ -265,7 +328,11 @@ class ScoutEngine:
             )
             scorecard = build_scorecard(pid, verified)
             self.store.save_prospect_artifact(pid, "scorecard.json", scorecard.to_dict())
-            video_ref = self._reproduce_prospect_findings(pid, url, verified, flow_result)
+            # Technical confidence is the scorecard dimension that measures how strongly the finding
+            # is evidenced, which is exactly what the video policy's quality floor is asking about.
+            qa_score = next((int(d.value) for d in scorecard.dimensions
+                             if d.name == "technical_confidence"), 100)
+            video_ref = self._reproduce_prospect_findings(pid, url, verified, flow_result, qa_score)
 
             coverage_record = dict(planner.summary())
             coverage_record.update(self._flow_coverage(flow_result, "business_flow" in cfg.check_families))
@@ -369,7 +436,8 @@ class ScoutEngine:
         })
 
     def _reproduce_prospect_findings(self, pid: str, start_url: str,
-                                     verified: List[ScoutFinding], flow_result) -> str:
+                                     verified: List[ScoutFinding], flow_result,
+                                     qa_score: int = 100) -> str:
         """Capture a TRUE reproduction video — in the SAME bounded browser context that performs the
         exact safe steps producing a verified INTERACTION finding — and bind the reproduction evidence.
         A page-load-only clip is NEVER kept. If the finding cannot be genuinely replayed (or the backend
@@ -389,6 +457,21 @@ class ScoutEngine:
                 return ""                          # opt-out / cap reached / no browser: no video
             rep = self.backend.reproduce_interaction(start_url, action_url, str(pdir))
             reproduced = _finding_reproduced(finding, rep)
+            # The keep/discard decision belongs to the evidence policy, not to this method. It
+            # already encodes every rule that matters -- severity floor, confidence floor, genuinely
+            # reproduced, an interaction a still frame cannot show, a safe deterministic path, and
+            # the per-campaign cap -- and it returns the REASON, which is what makes an absent video
+            # explainable instead of merely absent.
+            allowed, decision = video_qualified(
+                self._evidence,
+                severity=finding.severity,
+                qa_score=qa_score,
+                reproduced=reproduced,
+                visual_or_interaction=True,      # only interaction findings are picked at all
+                screenshots_sufficient=False,    # a still cannot show that an action leads nowhere
+                safe_deterministic_path=bool(rep.get("precondition_ok") and rep.get("cleanup_ok")),
+                videos_recorded=self._videos_recorded,
+            )
             record = {
                 "finding_id": finding.finding_id, "signature": finding.signature,
                 "start_url": self.sanitizer.safe_url(start_url),
@@ -402,11 +485,12 @@ class ScoutEngine:
                 "actual": finding.actual, "cleanup_ok": bool(rep.get("cleanup_ok")),
                 "reproduced": reproduced,
                 "reproduction_status": "reproduced" if reproduced else "not_reproduced",
+                "video_decision": decision,
                 "video_ref": "",
             }
             clip = pdir / str(rep.get("video_ref") or "_nope_")
-            # Keep the video ONLY when the finding genuinely replayed AND cleanup was verified.
-            if reproduced and record["cleanup_ok"] and rep.get("video_ref") and clip.exists():
+            # Keep the video ONLY when the policy allowed it for THIS finding.
+            if allowed and rep.get("video_ref") and clip.exists():
                 clip.replace(pdir / "reproduction.webm")
                 record["video_ref"] = "reproduction.webm"
                 self._videos_recorded += 1
@@ -421,20 +505,74 @@ class ScoutEngine:
 
     def _pick_reproducible(self, verified: List[ScoutFinding], flow_result):
         """The best qualifying INTERACTION finding that has a genuinely replayable safe action, plus
-        that action URL. Currently: a broken primary business-flow entry -> navigate to the flow entry
-        (a bounded, read-only step). Returns (finding, action_url) or None."""
+        that action URL, or None.
+
+        A finding belongs here only when the proof is an ACTION rather than a page: no still frame
+        can show that a control leads nowhere. Everything else Scout confirms today -- accessibility,
+        structure, metadata, console, performance -- is fully evidenced by the page capture and the
+        structured records, and replaying it would produce a clip of a page that merely loads.
+
+        The set is deliberately small because the flow explorer follows exactly ONE public step, so
+        a broken primary entry is the only interaction defect the engine can currently confirm.
+        Widening it is a one-line change once multi-step flows land; inventing entries for defects
+        the engine cannot produce would be fiction.
+        """
         min_sev = _SEV_ORDER.get(self._evidence.min_video_severity, 2)
         entry = (flow_result or {}).get("entry_url", "") if isinstance(flow_result, dict) else ""
+        action_for = {"flow_entry_broken": entry}
         for f in verified:
-            if f.severity == "info":
+            if f.severity == "info" or _SEV_ORDER.get(f.severity, 0) < min_sev:
                 continue
-            if (f.signature == "flow_entry_broken" and entry
-                    and _SEV_ORDER.get(f.severity, 0) >= min_sev):
-                return f, entry
+            action_url = action_for.get(f.signature, "")
+            if action_url:
+                return f, action_url
         return None
 
     # ------------------------------------------------------------------
-    def _probe_links(self, obs: PageObservation, planner=None) -> Dict[str, int]:
+    def _landing_frame(self, pid: str, obs: PageObservation, url: str) -> Dict[str, str]:
+        """The landing capture as an evidence frame, digest included, or {} when none was taken."""
+        if not obs.screenshot_ref:
+            return {}
+        path = self.store.prospect_dir(pid) / obs.screenshot_ref
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+        except OSError:
+            digest = ""
+        return {"file": obs.screenshot_ref, "url": obs.final_url or url, "role": "landing",
+                "sha256": digest}
+
+    @staticmethod
+    def _keep_or_drop_frame(shot_dir: str, frame: str, url: str, probe: PageObservation,
+                            verdict: str, shots: List[Dict[str, str]],
+                            seen_digests: set) -> None:
+        """Keep a captured frame only if the page it shows earned its place in the evidence.
+
+        Three ways a frame fails to earn it: the page did not load, the planner judged it a
+        structural near-duplicate, or -- the one a live easybooking.sk run exposed -- the capture is
+        byte-identical to a frame we already hold, because a nav link led straight back to the page
+        we had already photographed. All three produce another file and no further fact, so the file
+        is deleted here rather than being counted downstream. Recording the digest is what makes the
+        screenshot record honest at the source instead of relying on the export to hide the repeat.
+        """
+        path = Path(shot_dir) / frame
+        usable = verdict == "meaningful" and probe.ok and not probe.fetch_error
+        digest = ""
+        if usable and path.is_file() and path.stat().st_size:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if not digest or digest in seen_digests:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+        seen_digests.add(digest)
+        shots.append({"file": frame, "url": probe.final_url or url, "sha256": digest,
+                      "role": _page_role(probe.final_url or url,
+                                         {s["role"] for s in shots} | {"landing"})})
+
+    def _probe_links(self, obs: PageObservation, planner=None, *, shot_dir: Optional[str] = None,
+                     shots: Optional[List[Dict[str, str]]] = None,
+                     seen_digests: Optional[set] = None) -> Dict[str, int]:
         """Fetch a bounded set of same-host links once (read-only) and record status.
 
         When a ``CoveragePlanner`` is supplied (the first, measured pass) it governs the crawl: it
@@ -465,11 +603,28 @@ class ScoutEngine:
             elif count >= cfg.max_pages_per_site:
                 exhausted = False
                 break
+            # Capture a frame for this page only on the measured pass, only while the evidence budget
+            # has room, and only into its OWN file — the landing frame is never overwritten. The
+            # verification re-probe (planner is None) still captures nothing.
+            frame = ""
+            wants_frame = (planner is not None and shot_dir and shots is not None
+                           and len(shots) < _MAX_EVIDENCE_SHOTS - 1
+                           and hasattr(self.backend, "screenshot_dir"))
+            if wants_frame:
+                frame = f"page-{len(shots) + 2:02d}.png"
+                self.backend.screenshot_dir = shot_dir
+                if hasattr(self.backend, "screenshot_filename"):
+                    self.backend.screenshot_filename = frame
             probe = self.backend.observe(link, cfg.request_timeout_s, min(cfg.max_response_bytes, 200_000))
+            if wants_frame:
+                self.backend.screenshot_dir = None
             seen[link] = probe.status if not probe.fetch_error else 0
             count += 1
             if planner is not None:
-                planner.record(link, probe)
+                verdict = planner.record(link, probe)
+                if frame:
+                    self._keep_or_drop_frame(shot_dir, frame, link, probe, verdict, shots,
+                                             seen_digests if seen_digests is not None else set())
         if planner is not None:
             planner.should_stop()                  # capture a ceiling/no-coverage stop from the last page
             if exhausted:
@@ -511,6 +666,11 @@ class ScoutEngine:
             "final_url": obs.final_url or obs.url,
             "screenshot_ref": obs.screenshot_ref or "",
             "analysis_complete": False,
+            # How sure the detector is, and of what. "confirmed" earns a categorical sentence in the
+            # operator UI; "suspected" is a fail-closed guess and must be worded as one. The signal
+            # is the actual evidence, so the operator can judge it instead of trusting the label.
+            "challenge_confidence": obs.challenge_confidence or "confirmed",
+            "challenge_signal": obs.challenge_signal,
             "recommended_action": _MANUAL_RECOMMENDED_ACTION.get(
                 reason, "Review this target yourself in a browser, then rescan it."),
         }
