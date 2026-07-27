@@ -5543,7 +5543,14 @@ def _client_package_html(service, domain: str, run_id: str, detail: dict) -> str
                 f'<code>{_esc(status.get("filename", ""))}</code></p>')
     elif state == "blocked":
         meta = f'<p class="muted">{_esc(status.get("reason", "Package could not be built."))}</p>'
-    action = "Regenerate and download" if state == "ready" else "Download client evidence (.zip)"
+    # One name, always. Renaming the primary action to "Regenerate and download" once a ZIP existed
+    # made the button the operator reaches for change under them after every download.
+    #
+    # There is deliberately no separate Regenerate control either: this route rebuilds the package
+    # from current evidence on every request, so a second button would advertise a distinction the
+    # system does not have. The card says that instead.
+    rebuild_note = ('Downloading rebuilds the package from the evidence as it stands now. '
+                    if state == "ready" else '')
     return (
         f'<div class="card"><h2>Client package</h2>'
         f'<div class="row">{_badge(label, tone)}'
@@ -5551,10 +5558,11 @@ def _client_package_html(service, domain: str, run_id: str, detail: dict) -> str
         f' &middot; {videos} video(s)</span></div>{meta}'
         f'<div class="row" style="margin-top:12px">'
         f'<a class="btn primary" href="/scout/client-evidence?run={_esc(run_id)}'
-        f'&amp;domain={_esc(domain)}">{action}</a>'
+        f'&amp;domain={_esc(domain)}">Download client evidence (.zip)</a>'
         f'<a class="btn" href="/scout/client-report?run={_esc(run_id)}'
         f'&amp;domain={_esc(domain)}">Preview report</a></div>'
-        f'<p class="muted">One target only — no other company\'s evidence, findings or contacts are '
+        f'<p class="muted">{rebuild_note}'
+        f'One target only — no other company\'s evidence, findings or contacts are '
         f'included. Your talking points, the email draft and where the contact came from stay out of '
         f'it. Building the package is not approval to send it: review the contents first.</p></div>')
 

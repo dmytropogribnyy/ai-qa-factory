@@ -280,3 +280,30 @@ def test_the_newest_package_wins_when_several_days_exist(packaged, tmp_path):
 
     assert status["filename"] == packaged["result"]["filename"]
     assert status["bytes"] != 5
+
+
+def test_the_download_button_keeps_one_name_whatever_state_the_package_is_in(packaged, tmp_path):
+    """Caught by browser acceptance: downloading once renamed the button the operator reaches for.
+
+    The card used to switch its primary action to "Regenerate and download" as soon as a ZIP
+    existed, so the label changed under the operator after every download and every reference to it
+    broke. Regenerate is a separate affordance (spec §11.3), offered only when there is something to
+    regenerate.
+    """
+    from core.scout.dashboard import _client_package_html
+
+    service = CampaignService(str(tmp_path))
+    detail = service.target_detail(DOMAIN, run=RUN)
+
+    ready = _client_package_html(service, DOMAIN, RUN, detail)
+    fresh = _client_package_html(service, "never-packaged.example", "no-such-run", detail)
+
+    assert "Download client evidence (.zip)</a>" in ready
+    assert "Download client evidence (.zip)</a>" in fresh
+    assert "Regenerate and download" not in ready
+    # And no separate Regenerate control: this route rebuilds from current evidence on every
+    # request, so a second button would advertise a distinction the system does not have. The card
+    # states that instead.
+    assert ">Regenerate</a>" not in ready and ">Regenerate</a>" not in fresh
+    assert "rebuilds the package from the evidence as it stands now" in ready
+    assert "rebuilds the package" not in fresh
