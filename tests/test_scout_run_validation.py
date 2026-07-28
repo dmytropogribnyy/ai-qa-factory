@@ -22,7 +22,10 @@ from core.scout.store import RunStore
 _CONFIG = {"campaign_name": "acc", "seeds": ["https://fixture.example/"], "browser_mode": "static",
            "coverage": "adaptive", "video_mode": "manual", "run_purpose": "acceptance",
            "max_pages_per_site": 12, "max_sites": 10, "concurrency": 1,
-           "check_families": ["accessibility"]}
+           "check_families": ["accessibility"],
+           # Where the one seed came from. Without it the run is honestly UNKNOWN rather than clean.
+           "intake": {"kind": "paste", "rows_read": 1, "rows_accepted": 1, "rows_rejected": 0,
+                      "duplicates": 0, "rows_capped": 0}}
 
 
 def _run(tmp_path, *, config=None, prospect=None, findings=1, events=None, run_id="acc-run"):
@@ -329,7 +332,8 @@ def _discovery(tmp_path, *, promoted="camp-1-promo-01"):
     """A discovery campaign holds no targets itself; it promotes them into their own runs."""
     campaign = RunStore(str(tmp_path), "camp-1")
     campaign.write_config({"campaign_name": "acc", "run_purpose": "acceptance",
-                           "browser_mode": "playwright", "video_mode": "manual"})
+                           "browser_mode": "playwright", "video_mode": "manual",
+                           "intake": {"kind": "discovery", "query": "dental clinics, DE"}})
     campaign.save_state({
         "status": "COMPLETED", "started_at": "2026-07-27T10:00:00+00:00",
         "finished_at": "2026-07-27T10:20:00+00:00",
@@ -337,15 +341,21 @@ def _discovery(tmp_path, *, promoted="camp-1-promo-01"):
                    "browser_mode": "playwright", "video_mode": "manual"},
         "counts": {"discovered": 6, "eligible": 1, "promoted": 1, "rejected": 4,
                    "duplicates": 0, "already_analyzed": 0, "qa_analyzed": 1, "failed": 0},
-        "candidates": [{"registrable_domain": "found.example",
-                        "promotion_decision": "promoted", "promoted_scout_run": promoted}],
+        # Six discovered candidates, six explicit dispositions. `discovered` is `len(records)` in a
+        # real campaign, so a stand that published 6 while persisting 1 was a state the product
+        # cannot reach — and it let a campaign that loses a candidate look exactly like a healthy one.
+        "candidates": [{"registrable_domain": "found.example", "candidate_id": "c0",
+                        "promotion_decision": "promoted", "promoted_scout_run": promoted}]
+                      + [{"registrable_domain": f"rejected-{n}.example", "candidate_id": f"c{n}",
+                          "promotion_decision": "not_promoted"} for n in range(1, 6)],
         "prospects": {}})
     campaign.append_event({"event": "run_started"})
     campaign.append_event({"event": "run_finished"})
     child = RunStore(str(tmp_path), promoted)
     child.write_config({"campaign_name": "camp-1", "run_purpose": "acceptance",
                         "browser_mode": "playwright", "video_mode": "manual",
-                        "seeds": ["https://found.example/"]})
+                        "seeds": ["https://found.example/"],
+                        "intake": {"kind": "discovery", "source_name": "camp-1"}})
     child.save_state({"status": "COMPLETED", "prospects": {
         "01": {"status": "DONE", "url": "https://found.example/", "verified_findings": 1,
                "verified_defects": 1}}})
@@ -384,18 +394,23 @@ def test_a_discovery_campaign_counts_its_candidates_not_its_seeds(tmp_path):
     intake = _check(validate_run(str(tmp_path), "camp-1"), "source_intake_consistency")
 
     assert intake.status == PASS
-    assert intake.observed["candidates"] == ["found.example"]
+    assert intake.observed["candidates"][0] == "found.example"
+    assert len(intake.observed["candidates"]) == 6
     assert "given a query, not a target list" in intake.explanation
 
 
 def test_more_dispositions_than_discoveries_is_caught(tmp_path):
+    """The overlapping labels can never be summed against `discovered` — one candidate is often a
+    duplicate AND rejected — but each of them is a subset of it, so none may exceed it."""
     campaign, _child = _discovery(tmp_path)
     state = campaign.load_state()
     state["counts"]["rejected"] = 99
     campaign.save_state(state)
 
-    assert _check(validate_run(str(tmp_path), "camp-1"),
-                  "target_count_arithmetic").status == FAIL
+    check = _check(validate_run(str(tmp_path), "camp-1"), "target_count_arithmetic")
+
+    assert check.status == FAIL
+    assert check.observed["impossible_counters"] == ["rejected"]
 
 
 def test_the_read_model_is_asked_about_the_run_the_evidence_lives_in(tmp_path):
@@ -437,7 +452,9 @@ def test_a_module_the_policy_switched_off_is_not_reported_as_a_missing_receipt(t
     modules = _check(report, "module_receipts")
 
     assert modules.status == PASS
-    assert modules.observed["interaction"] == "not_requested"
+    # Receipts are per TARGET. A flat {module: outcome} map let the first target answer for all of
+    # them, so a second target missing a receipt was not merely unreported but unobservable.
+    assert [m["interaction"] for m in modules.observed.values()] == ["not_requested"]
 
 
 def test_an_automatic_policy_that_produced_nothing_is_still_a_missing_receipt(tmp_path):
@@ -455,7 +472,7 @@ def test_an_automatic_policy_that_produced_nothing_is_still_a_missing_receipt(tm
     modules = _check(validate_run(str(tmp_path), "camp-1"), "module_receipts")
 
     assert modules.status == PARTIAL
-    assert modules.observed["interaction"] == "not_executed"
+    assert [m["interaction"] for m in modules.observed.values()] == ["not_executed"]
 
 
 @pytest.mark.parametrize("status", ["COMPLETED", "FAILED", "STOPPED"])

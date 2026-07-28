@@ -62,7 +62,8 @@ class Check:
 class RunValidation:
     run_id: str
     generated_at: str
-    build: str = ""
+    build: str = ""              # the build that is VALIDATING
+    execution_build: str = ""    # the build that RAN the work; re-validation must never overwrite it
     purpose: str = ""
     layers: Dict[str, Any] = field(default_factory=dict)
     checks: List[Check] = field(default_factory=list)
@@ -93,7 +94,8 @@ class RunValidation:
 
     def to_dict(self) -> Dict[str, Any]:
         return {"schema": SCHEMA, "run_id": self.run_id, "generated_at": self.generated_at,
-                "build": self.build, "purpose": self.purpose, "status": self.status,
+                "build": self.build, "execution_build": self.execution_build,
+                "purpose": self.purpose, "status": self.status,
                 "validated": self.validated, "counts": self.counts, "layers": self.layers,
                 "checks": [c.to_dict() for c in self.checks]}
 
@@ -117,21 +119,59 @@ class _Evidence:
         # down. Following the promotion link is what makes the answer useful as well as honest.
         self._homes: Dict[str, Path] = {pid: self.root for pid in self.prospects}
         self.promoted: List[str] = []
-        for record in self.state.get("candidates") or []:
-            child = str((record or {}).get("promoted_scout_run") or "")
+        # Every candidate the campaign recorded, kept as records rather than as tallies. The
+        # persisted counters are OVERLAPPING classifications -- one candidate can be a duplicate and
+        # rejected at the same time -- so they can never be summed into a partition. The records can.
+        self.candidates: List[Dict[str, Any]] = [
+            record for record in (self.state.get("candidates") or []) if isinstance(record, dict)]
+        # A promoted child declares its own purpose. Validating only the parent lets an acceptance
+        # campaign promote children that land in production counters.
+        self.child_configs: Dict[str, Dict[str, Any]] = {}
+        # A promotion with no child at all and a promotion whose child is still working are two
+        # different facts, and collapsing them into one "analysed runs" number turns a healthy
+        # in-flight campaign into a corrupt one.
+        self.child_status: Dict[str, str] = {}
+        self.promotions_without_child: List[str] = []
+        for record in self.candidates:
+            child = str(record.get("promoted_scout_run") or "")
             if not child:
+                if str(record.get("promotion_decision") or "") == "promoted":
+                    self.promotions_without_child.append(
+                        str(record.get("candidate_id") or record.get("registrable_domain") or "?"))
                 continue
             self.promoted.append(child)
             child_root = Path(output_dir) / "scout" / child
             try:
                 child_state = json.loads((child_root / "state.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
+                # The campaign says it promoted into this run and the run is not on disk.
+                self.child_status[child] = "missing"
                 continue
+            self.child_status[child] = str(child_state.get("status") or "") or UNKNOWN
+            try:
+                self.child_configs[child] = json.loads(
+                    (child_root / "config.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self.child_configs[child] = {}
             for pid, rec in (child_state.get("prospects") or {}).items():
                 if isinstance(rec, dict):
                     key = f"{child}/{pid}"
                     self.prospects[key] = rec
                     self._homes[key] = child_root
+
+    @property
+    def execution_build(self) -> str:
+        """The build that RAN the work, which is not the build validating it.
+
+        Re-validating an old run on today's code and stamping today's SHA on the report erases the
+        one fact a disputed finding needs: which code produced it.
+        """
+        for source in (self.state, self.config):
+            for key in ("build", "running_sha", "build_sha", "running_build"):
+                value = str((source or {}).get(key) or "")
+                if value:
+                    return value
+        return UNKNOWN
 
     @property
     def is_discovery(self) -> bool:
@@ -191,6 +231,7 @@ def validate_run(output_dir: str, run_id: str, *, write: bool = False,
     """
     ev = _Evidence(output_dir, run_id)
     report = RunValidation(run_id=run_id, generated_at=_now(), build=_build_marker(),
+                           execution_build=ev.execution_build,
                            purpose=str(ev.config.get("run_purpose") or "") or UNKNOWN.lower())
     if not ev.exists():
         report.checks.append(Check("run_exists", FAIL, expected="a persisted run",
@@ -203,6 +244,7 @@ def validate_run(output_dir: str, run_id: str, *, write: bool = False,
         _check_lifecycle(ev),
         _check_target_arithmetic(ev),
         _check_intake(ev),
+        _check_intake_provenance(ev),
         _check_requested_effective(ev),
         _check_execution_mode(ev),
         _check_modules(ev),
@@ -288,28 +330,36 @@ def _layers(ev: _Evidence) -> Dict[str, Any]:
     }
 
 
-def _observed_modules(ev: _Evidence) -> Dict[str, Any]:
-    """Which QA modules left a receipt. Absence is "not executed", never "0 problems"."""
-    out: Dict[str, Any] = {}
+def _module_receipts(ev: _Evidence) -> Dict[str, Dict[str, str]]:
+    """Which QA modules left a receipt, PER TARGET. Absence is "not executed", never "0 problems".
+
+    This used to collapse into one flat ``{module: outcome}`` map filled with ``setdefault`` inside
+    the loop, which meant the FIRST target answered on behalf of all of them: a second target that
+    never ran accessibility was not merely unreported, it was unobservable. Keeping the target axis
+    is the whole check.
+    """
+    out: Dict[str, Dict[str, str]] = {}
+    mode = str(ev.config.get("video_mode") or "")
     for pid in ev.prospects:
         obs = ev.artifact(pid, "observation.json") or ev.artifact(pid, "evidence.json") or {}
-        axe = str(obs.get("axe_status") or "")
-        out.setdefault("accessibility", axe or "not_executed")
-        out.setdefault("performance", "executed" if obs.get("perf") else "not_executed")
         shots = ev.artifact(pid, "screenshots.json") or {}
-        out.setdefault("screenshot",
-                       f"captured:{shots.get('captured')}" if shots else "not_executed")
         scenario = ev.artifact(pid, "interaction_scenario.json") or {}
-        if scenario:
-            out.setdefault("interaction", scenario.get("outcome"))
-        else:
+        out[pid] = {
+            "accessibility": str(obs.get("axe_status") or "") or "not_executed",
+            "performance": "executed" if obs.get("perf") else "not_executed",
+            "screenshot": f"captured:{shots.get('captured')}" if shots else "not_executed",
             # "Not requested" and "not executed" are different facts. A run whose video policy is
             # manual never asked for an interaction recording, and reporting that as a missing
             # receipt makes a deliberate setting look like a gap.
-            mode = str(ev.config.get("video_mode") or "")
-            out.setdefault("interaction",
-                           "not_executed" if mode == "qualified_auto" else "not_requested")
-    return out or UNKNOWN
+            "interaction": (str(scenario.get("outcome") or "recorded") if scenario
+                            else ("not_executed" if mode == "qualified_auto" else "not_requested")),
+        }
+    return out
+
+
+def _observed_modules(ev: _Evidence) -> Any:
+    """The per-target receipts as the Observed layer. UNKNOWN when there is no target at all."""
+    return _module_receipts(ev) or UNKNOWN
 
 
 # --- the checks -----------------------------------------------------------------------------------
@@ -336,30 +386,115 @@ def _check_lifecycle(ev: _Evidence) -> Check:
                  explanation="the lifecycle timestamps match the recorded state")
 
 
+def _disposition_partition(ev: _Evidence) -> Dict[str, Any]:
+    """Partition the candidates by the ONE explicit decision each of them carries.
+
+    The persisted counters cannot be summed into a total: `duplicates`, `rejected` and
+    `already_analyzed` are overlapping labels, so one candidate can legitimately appear in several
+    of them and `promoted + rejected + ...` can exceed `discovered` without anything being wrong.
+    `promotion_decision` is different — the engine resolves every record to exactly one value before
+    it persists, so these buckets are a true partition and their sum is checkable.
+    """
+    buckets: Dict[str, int] = {}
+    unaccounted: List[str] = []
+    for record in ev.candidates:
+        decision = str(record.get("promotion_decision") or "").strip()
+        if not decision or decision == "pending":
+            unaccounted.append(str(record.get("candidate_id")
+                                   or record.get("registrable_domain") or "?"))
+            continue
+        buckets[decision] = buckets.get(decision, 0) + 1
+    counts = ev.state.get("counts") or {}
+    declared_discovered = int(counts.get("discovered") or 0)
+    # The overlapping labels cannot be SUMMED against `discovered`, but each one is a subset of it:
+    # a campaign cannot reject, duplicate or already-have-analysed more candidates than it found.
+    # That is the part of the old arithmetic that was true, kept as its own provable invariant.
+    impossible = sorted(
+        name for name, value in counts.items()
+        if isinstance(value, int) and not isinstance(value, bool)
+        and name not in ("discovered", "candidates") and value > declared_discovered)
+    terminal = {"COMPLETED", "FAILED", "STOPPED", "CANCELLED"}
+    running = sorted(child for child, status in ev.child_status.items()
+                     if status not in terminal and status != "missing")
+    return {
+        "buckets": buckets,
+        "unaccounted": unaccounted,
+        "records": len(ev.candidates),
+        "accounted": sum(buckets.values()),
+        "declared_discovered": declared_discovered,
+        "declared_promoted": int(counts.get("promoted") or 0),
+        "impossible_counters": impossible,
+        "analysed_runs": len(ev.prospects),
+        # Promotions and their children, told apart rather than summed.
+        "promoted_children": sorted(ev.child_status),
+        "completed_children": sorted(child for child, status in ev.child_status.items()
+                                     if status in terminal),
+        "running_children": running,
+        "missing_children": (sorted(child for child, status in ev.child_status.items()
+                                    if status == "missing")
+                             + list(ev.promotions_without_child)),
+        "child_status": dict(ev.child_status),
+    }
+
+
+def _disposition_status(partition: Dict[str, Any]) -> str:
+    """The POLICY call, decided by the owner: which shapes may still be VALIDATED?
+
+    Precedence is FAIL > UNKNOWN > PARTIAL > PASS, and UNKNOWN means "the data needed to judge is
+    absent or unconfirmable" — never a proven disagreement, which is always FAIL.
+
+    1. A candidate a terminal campaign never decided about is an integrity violation, not merely
+       unfinished work.
+    2. Records that do not add up to the aggregate the campaign published is a contradiction
+       between two things it wrote itself.
+    3. A promotion is judged by its CHILD, not by a count: a child that is absent or unlinked is a
+       FAIL, a child that exists and is still working is a PARTIAL, and only children that reached
+       a terminal state satisfy this condition. Sharing one `analysed_runs` number between those
+       three cases is what would declare a healthy in-flight campaign corrupt.
+    4. `held_for_review` is a decision, so the candidate IS accounted for — but a campaign waiting
+       on a human has not finished being validated.
+    """
+    if partition["unaccounted"]:
+        return FAIL
+    if partition["missing_children"]:
+        return FAIL
+    if partition["accounted"] != partition["declared_discovered"]:
+        return FAIL
+    if partition["impossible_counters"]:
+        return FAIL
+    if not partition["records"] and not partition["declared_discovered"]:
+        return UNKNOWN
+    if partition["running_children"]:
+        return PARTIAL
+    if partition["buckets"].get("held_for_review"):
+        return PARTIAL
+    # Every promotion is terminal, so the analysed runs behind them must now be there.
+    if partition["declared_promoted"] != partition["analysed_runs"]:
+        return FAIL
+    return PASS
+
+
 def _check_target_arithmetic(ev: _Evidence) -> Check:
     if ev.is_discovery:
         counts = ev.state.get("counts") or {}
-        discovered = int(counts.get("discovered") or 0)
-        accounted = sum(int(counts.get(k) or 0)
-                        for k in ("promoted", "rejected", "duplicates", "already_analyzed"))
-        promoted, analysed = int(counts.get("promoted") or 0), len(ev.prospects)
-        if not counts:
+        partition = _disposition_partition(ev)
+        if not counts and not ev.candidates:
             return Check("target_count_arithmetic", UNKNOWN, expected="discovery counters",
                          observed=None, explanation="the campaign recorded no counters")
-        if accounted > discovered:
-            return Check("target_count_arithmetic", FAIL, expected=discovered, observed=accounted,
-                         explanation="more candidates were dispositioned than were discovered")
-        if promoted != analysed:
-            return Check("target_count_arithmetic", FAIL,
-                         expected={"promoted": promoted}, observed={"analysed_runs": analysed},
-                         explanation="a promoted candidate has no analysed run behind it")
-        return Check("target_count_arithmetic", PASS,
-                     expected={"discovered": discovered},
-                     observed={k: counts.get(k) for k in
-                               ("discovered", "eligible", "promoted", "rejected", "qa_analyzed",
-                                "failed")},
-                     explanation=("every discovered candidate has a recorded disposition, and each "
-                                  "promotion has an analysed run"))
+        status = _disposition_status(partition)
+        explanation = {
+            PASS: ("every candidate carries exactly one disposition, the records add up to the "
+                   "published total, and every promotion has a finished run behind it"),
+            PARTIAL: ("every candidate is accounted for, but the campaign is still waiting: a "
+                      "promoted run is in flight or a candidate is held for human review"),
+            FAIL: ("the campaign cannot account for every candidate it discovered, or claims a "
+                   "promotion with no run behind it"),
+            UNKNOWN: "the campaign recorded neither candidates nor a discovered total",
+        }[status]
+        return Check("target_count_arithmetic", status,
+                     expected={"discovered": partition["declared_discovered"],
+                               "every candidate carries exactly one disposition": True},
+                     observed=partition, explanation=explanation)
     total = len(ev.prospects)
     by_status: Dict[str, int] = {}
     for record in ev.prospects.values():
@@ -378,6 +513,45 @@ def _check_target_arithmetic(ev: _Evidence) -> Check:
                  expected={"seeds": seeds, "targets": total},
                  observed={"by_status": by_status, "total": total},
                  explanation="every target is accounted for by exactly one status")
+
+
+def _check_intake_provenance(ev: _Evidence) -> Check:
+    """Not what was scanned — where the list of things to scan CAME FROM.
+
+    An uploaded client list and a pasted one produced identical config on disk, so "did we scan the
+    file they sent us?" had no answer anybody could check. The record is bounded and its own
+    arithmetic has to close: rows read = accepted + rejected + duplicates.
+    """
+    intake = ev.config.get("intake") or {}
+    if not isinstance(intake, dict) or not intake:
+        return Check("intake_provenance", UNKNOWN, expected="a recorded intake source",
+                     observed=None,
+                     explanation=("this run predates intake provenance, so where its targets came "
+                                  "from cannot be established from what is on disk"))
+    kind = str(intake.get("kind") or "")
+    if kind == "upload" and not str(intake.get("source_name") or "").strip():
+        return Check("intake_provenance", FAIL, expected="an uploaded list names its file",
+                     observed=intake,
+                     explanation="the run says a file was uploaded and does not say which file")
+    read = intake.get("rows_read")
+    parts = [intake.get(k) for k in ("rows_accepted", "rows_rejected", "duplicates", "rows_capped")]
+    if read is not None and all(p is not None for p in parts):
+        accounted = sum(int(p) for p in parts)
+        if int(read) != accounted:
+            return Check("intake_provenance", FAIL,
+                         expected={"rows_read": read},
+                         observed={"accounted": accounted, **intake},
+                         explanation="the intake accounting does not add up to the rows it read")
+    accepted = intake.get("rows_accepted")
+    seeds = len(ev.config.get("seeds") or [])
+    if accepted is not None and kind in ("paste", "upload") and int(accepted) != seeds:
+        return Check("intake_provenance", FAIL, expected={"rows_accepted": accepted},
+                     observed={"seeds_persisted": seeds},
+                     explanation=("the run kept a different number of seeds than intake says it "
+                                  "accepted"))
+    return Check("intake_provenance", PASS, expected="a recorded, self-consistent intake source",
+                 observed=intake,
+                 explanation=f"the target list arrived by {kind} and its accounting closes")
 
 
 def _check_intake(ev: _Evidence) -> Check:
@@ -461,18 +635,24 @@ def _check_execution_mode(ev: _Evidence) -> Check:
 
 
 def _check_modules(ev: _Evidence) -> Check:
-    observed = _observed_modules(ev)
-    if observed == UNKNOWN:
+    receipts = _module_receipts(ev)
+    if not receipts:
         return Check("module_receipts", UNKNOWN, expected="a receipt per QA module", observed=None,
                      explanation="no target recorded any module outcome")
-    unexecuted = sorted(k for k, v in observed.items() if str(v) == "not_executed")
-    if unexecuted:
-        return Check("module_receipts", PARTIAL, expected="every module leaves a receipt",
-                     observed=observed,
-                     explanation=("these modules left no receipt and are reported as not executed "
-                                  "rather than as clean: " + ", ".join(unexecuted)))
-    return Check("module_receipts", PASS, expected="every module leaves a receipt",
-                 observed=observed, explanation="each QA module recorded what it did")
+    gaps = {pid: sorted(name for name, value in modules.items() if value == "not_executed")
+            for pid, modules in receipts.items()}
+    gaps = {pid: missing for pid, missing in gaps.items() if missing}
+    if gaps:
+        return Check("module_receipts", PARTIAL,
+                     expected="every module leaves a receipt on every target",
+                     observed=receipts,
+                     explanation=("these targets left no receipt for a module and are reported as "
+                                  "not executed rather than as clean: "
+                                  + "; ".join(f"{pid}: {', '.join(missing)}"
+                                              for pid, missing in sorted(gaps.items()))))
+    return Check("module_receipts", PASS, expected="every module leaves a receipt on every target",
+                 observed=receipts,
+                 explanation=f"each of the {len(receipts)} target(s) recorded what every module did")
 
 
 def _check_findings(ev: _Evidence) -> Check:
@@ -484,8 +664,11 @@ def _check_findings(ev: _Evidence) -> Check:
             if record.get("status") == "DONE":
                 problems.append({"prospect": pid, "reason": "completed but no finding records"})
             continue
+        from core.scout.actionable import is_actionable
         verified = list(data.get("verified") or [])
-        actionable = [f for f in verified if str(f.get("severity") or "") != "info"]
+        # The product's ONE actionability rule. A local `severity != "info"` copy counted
+        # "informational", "none" and "" as defects and disagreed with every other surface.
+        actionable = [f for f in verified if is_actionable(f)]
         totals["verified"] += len(verified)
         totals["actionable"] += len(actionable)
         if record.get("verified_findings") not in (None, len(verified)):
@@ -581,9 +764,20 @@ def _check_contacts(ev: _Evidence) -> Check:
         records = (contacts.get("public") or contacts.get("records")
                    or contacts.get("contacts") or [])
         if records:
-            found.append({"prospect": pid, "count": len(records)})
+            # An address with no reviewable origin cannot be checked by the person who has to
+            # decide whether to write to it, and "we found it somewhere on the site" is not a source.
+            without_source = [str(r.get("email") or "?") for r in records
+                              if isinstance(r, dict) and not str(r.get("source_url") or "").strip()]
+            found.append({"prospect": pid, "count": len(records),
+                          "without_provenance": without_source})
         else:
             missing.append(pid)
+    unsourced = [entry for entry in found if entry["without_provenance"]]
+    if unsourced:
+        return Check("contact_persistence", PARTIAL,
+                     expected="every persisted contact names the page it came from",
+                     observed=unsourced,
+                     explanation="a contact was kept without the source URL that justifies it")
     if not found and not missing:
         return Check("contact_persistence", NOT_APPLICABLE, expected="a persisted contact record",
                      observed=None,
@@ -603,24 +797,36 @@ def _check_activity(ev: _Evidence) -> Check:
         return Check("activity_no_duplicates", UNKNOWN, expected="an activity trail", observed=None,
                      explanation="the run recorded no events")
     names = [str(e.get("event") or "") for e in ev.events]
-    starts, finishes = names.count("run_started"), names.count("run_finished")
+    # Two vocabularies, one lifecycle: a Scout run writes run_started/run_finished, a discovery
+    # campaign writes campaign_started/campaign_finished. Counting only the first pair would have
+    # made "exactly one start" fail every campaign ever run.
+    starts = names.count("run_started") + names.count("campaign_started")
+    finishes = names.count("run_finished") + names.count("campaign_finished")
     done: Dict[str, int] = {}
     for event in ev.events:
         if event.get("event") == "prospect_done":
             key = str(event.get("prospect") or "")
             done[key] = done.get(key, 0) + 1
     duplicates = {k: v for k, v in done.items() if v > 1}
-    if starts > 1 or finishes > 1 or duplicates:
+    # Exactly one start, and exactly one terminal event once the run IS terminal. Only counting
+    # events that occur too often left the opposite hole wide open: a run whose start or finish was
+    # never written passed a check named for the trail being a single complete chain.
+    terminal_state = str(ev.state.get("status") or "") in ("COMPLETED", "FAILED", "STOPPED",
+                                                           "CANCELLED")
+    expected_finishes = 1 if terminal_state else 0
+    observed = {"run_started": starts, "run_finished": finishes,
+                "duplicate_completions": duplicates, "run_status": ev.state.get("status")}
+    if starts != 1 or finishes != expected_finishes or duplicates:
         return Check("activity_no_duplicates", FAIL,
-                     expected="one start, at most one finish, one completion per target",
-                     observed={"run_started": starts, "run_finished": finishes,
-                               "duplicate_completions": duplicates},
-                     explanation="the activity trail records the same event more than once")
+                     expected={"run_started": 1, "run_finished": expected_finishes,
+                               "duplicate_completions": {}},
+                     observed=observed,
+                     explanation=("the activity trail is not one complete chain: a lifecycle event "
+                                  "is missing or recorded more than once"))
     return Check("activity_no_duplicates", PASS,
-                 expected="one start, at most one finish, one completion per target",
-                 observed={"events": len(ev.events), "run_started": starts,
-                           "run_finished": finishes},
-                 explanation="the trail is a single chain with no duplicate terminal events")
+                 expected={"run_started": 1, "run_finished": expected_finishes},
+                 observed={"events": len(ev.events), **observed},
+                 explanation="exactly one start, one terminal event, and one completion per target")
 
 
 def _check_purpose(ev: _Evidence) -> Check:
@@ -634,8 +840,21 @@ def _check_purpose(ev: _Evidence) -> Check:
     if purpose == PURPOSE_UNCLASSIFIED:
         return Check("purpose_isolation", FAIL, expected=sorted(KNOWN_PURPOSES), observed=declared,
                      explanation="the run declared a purpose that is not a known value")
-    return Check("purpose_isolation", PASS, expected="a declared purpose", observed=purpose,
-                 explanation=f"the run was created as {purpose} and is filtered as {purpose}")
+    # A campaign's purpose does not travel to its children by wishing. An acceptance campaign that
+    # promotes production children puts test work into the operator's real counters, and validating
+    # only the parent reports that as isolated.
+    strays = {child: (cfg.get("run_purpose") if cfg.get("run_purpose") not in (None, "") else None)
+              for child, cfg in ev.child_configs.items()
+              if normalise_purpose(cfg.get("run_purpose")) != purpose}
+    if strays:
+        return Check("purpose_isolation", FAIL, expected={"every promoted child": purpose},
+                     observed=strays,
+                     explanation=("a promoted child run declares a different purpose from the "
+                                  "campaign that created it"))
+    return Check("purpose_isolation", PASS, expected="a declared purpose",
+                 observed={"run": purpose, "promoted_children": len(ev.child_configs)},
+                 explanation=(f"the run was created as {purpose} and is filtered as {purpose}, "
+                              f"and every promoted child declares the same purpose"))
 
 
 def _check_cleanup(ev: _Evidence) -> Check:
@@ -644,16 +863,32 @@ def _check_cleanup(ev: _Evidence) -> Check:
                  for pid in ev.prospects
                  for name in ("_vidtmp", "_reprotmp", "_scenariotmp")
                  if (ev.prospect_dir(pid) / name).exists()]
-    scenario_cleanups = [str((ev.artifact(pid, "interaction_scenario.json") or {}).get("cleanup_ok"))
-                         for pid in ev.prospects
-                         if ev.artifact(pid, "interaction_scenario.json")]
+    # A scenario that touched a live control and could not put it back is an unresolved change on
+    # someone else's site. It was recorded here and reported as an observation beside a PASS.
+    not_restored, cleanups = [], {}
+    for pid in ev.prospects:
+        scenario = ev.artifact(pid, "interaction_scenario.json")
+        if not scenario:
+            continue
+        cleanup_ok = scenario.get("cleanup_ok")
+        cleanups[pid] = cleanup_ok
+        if scenario.get("action_performed") and cleanup_ok is not True:
+            not_restored.append({"prospect": pid, "cleanup_ok": cleanup_ok,
+                                 "scenario": scenario.get("scenario")})
     if leftovers:
         return Check("cleanup_result", FAIL, expected="no temporary recording directories",
                      observed=leftovers,
                      explanation="a temporary capture directory outlived the run")
-    return Check("cleanup_result", PASS, expected="no temporary recording directories",
-                 observed={"temp_dirs": 0, "interaction_cleanup": scenario_cleanups or "none"},
-                 explanation="nothing temporary was left behind")
+    if not_restored:
+        return Check("cleanup_result", FAIL,
+                     expected="every performed interaction is undone and the undo is verified",
+                     observed=not_restored,
+                     explanation=("an interaction changed a control and the run could not verify it "
+                                  "was restored"))
+    return Check("cleanup_result", PASS,
+                 expected="no temporary directories and every performed interaction restored",
+                 observed={"temp_dirs": 0, "interaction_cleanup": cleanups or "none"},
+                 explanation="nothing temporary was left behind and every interaction was undone")
 
 
 def _check_client_package(ev: _Evidence) -> Check:
@@ -664,31 +899,117 @@ def _check_client_package(ev: _Evidence) -> Check:
         return Check("client_package", NOT_APPLICABLE, expected="a package only when exported",
                      observed={"packages": 0},
                      explanation="no client package was built for this run")
+    import hashlib
     import zipfile
     from core.scout.media_probe import sha256_of
     details = []
     for archive_path in zips:
         try:
             with zipfile.ZipFile(archive_path) as archive:
-                names = archive.namelist()
+                names = [n for n in archive.namelist() if not n.endswith("/")]
                 manifest_name = next((n for n in names if n.endswith("manifest.json")), "")
-                manifest = json.loads(archive.read(manifest_name)) if manifest_name else {}
+                if not manifest_name:
+                    return Check("client_package", FAIL, expected="a manifest inside the archive",
+                                 observed={"path": archive_path.name},
+                                 explanation="the package carries no manifest to check it against")
+                manifest = json.loads(archive.read(manifest_name))
                 entries = manifest.get("entries") or []
                 root = str(manifest.get("root") or "")
+                # ONE root folder, and it is the one the manifest names. A flat archive scatters a
+                # dozen loose files across whatever directory the client unpacked it in.
+                roots = {n.split("/", 1)[0] for n in names}
+                if roots != {root} or not root:
+                    return Check("client_package", FAIL, expected={"single root": root},
+                                 observed={"roots": sorted(roots)},
+                                 explanation="the archive does not unpack into the one folder it declares")
                 missing = [e["path"] for e in entries if f"{root}/{e['path']}" not in names]
+                if missing:
+                    return Check("client_package", FAIL,
+                                 expected="every manifest entry is in the archive",
+                                 observed={"missing": missing},
+                                 explanation="the manifest names files the archive does not contain")
+                # A hash nobody recomputes is decoration. Every member, not a sample.
+                altered = []
+                for entry in entries:
+                    declared = str(entry.get("sha256") or "")
+                    if not declared:
+                        altered.append({"path": entry.get("path"), "reason": "no hash recorded"})
+                        continue
+                    actual = hashlib.sha256(archive.read(f"{root}/{entry['path']}")).hexdigest()
+                    if actual != declared:
+                        altered.append({"path": entry.get("path"), "reason": "hash mismatch"})
+                if altered:
+                    return Check("client_package", FAIL, expected="every member hashes as recorded",
+                                 observed=altered,
+                                 explanation="a packaged file does not match the hash beside it")
+                unlisted = sorted(set(names) - {f"{root}/{e['path']}" for e in entries}
+                                  - {manifest_name})
+                if unlisted:
+                    return Check("client_package", FAIL, expected="the manifest lists every member",
+                                 observed={"unlisted": unlisted},
+                                 explanation="the archive contains files its manifest does not describe")
+                # What must never leave the building, checked in the artifact that leaves it.
+                readable = {n: archive.read(n).decode("utf-8", "ignore") for n in names
+                            if n.endswith((".html", ".csv", ".json", ".txt", ".md"))}
+                leaks = _forbidden_content(readable)
+                if leaks:
+                    return Check("client_package", FAIL,
+                                 expected="no local paths, credentials or operator internals",
+                                 observed=leaks,
+                                 explanation="the package carries content that must not be sent")
+                video_problems = _packaged_video_problems(archive, names)
+                if video_problems:
+                    return Check("client_package", FAIL, expected="every packaged clip plays",
+                                 observed=video_problems,
+                                 explanation="a video was packaged that does not decode as a recording")
         except (OSError, ValueError, zipfile.BadZipFile) as exc:
             return Check("client_package", FAIL, expected="a readable package",
                          observed={"path": archive_path.name, "error": type(exc).__name__},
                          explanation="the exported package could not be opened")
-        if missing:
-            return Check("client_package", FAIL, expected="every manifest entry is in the archive",
-                         observed={"missing": missing},
-                         explanation="the manifest names files the archive does not contain")
         details.append({"path": archive_path.name, "bytes": archive_path.stat().st_size,
-                        "sha256": sha256_of(archive_path), "manifest_entries": len(entries)})
-    return Check("client_package", PASS, expected="a readable package matching its manifest",
+                        "sha256": sha256_of(archive_path), "manifest_entries": len(entries),
+                        "root": root})
+    return Check("client_package", PASS,
+                 expected="one root, every member listed and hashed, nothing forbidden inside",
                  observed=details,
-                 explanation="every manifest entry exists inside the archive it describes")
+                 explanation=("every manifest entry exists, still hashes as recorded, and the "
+                              "package carries no local path, credential or unplayable clip"))
+
+
+def _forbidden_content(readable: Dict[str, str]) -> List[Dict[str, str]]:
+    """Local paths, credentials and operator-only internals, found in the thing that gets sent."""
+    from core.orchestration.content_safety import ContentSecretScanner
+    leaks: List[Dict[str, str]] = []
+    for name, text in readable.items():
+        for marker, reason in (("C:\\", "absolute local path"), ("C:/", "absolute local path"),
+                               ("file://", "local file link"),
+                               ("/outputs/scout/", "internal workspace path"),
+                               ("Authorization:", "credential header"),
+                               ("Set-Cookie", "cookie"), ("Bearer ", "bearer token")):
+            if marker in text:
+                leaks.append({"file": name, "reason": reason})
+        found = ContentSecretScanner().scan_text(name, text)
+        if found:
+            leaks.append({"file": name, "reason": "secret scanner: " + ", ".join(map(str, found))})
+    return leaks
+
+
+def _packaged_video_problems(archive: Any, names: List[str]) -> List[Dict[str, Any]]:
+    """A clip inside a ZIP is only evidence if it still decodes after being unpacked."""
+    import tempfile
+    from core.scout.media_probe import probe_video
+    problems: List[Dict[str, Any]] = []
+    clips = [n for n in names if n.lower().endswith((".webm", ".mp4"))]
+    if not clips:
+        return problems
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in clips:
+            path = Path(tmp) / Path(name).name
+            path.write_bytes(archive.read(name))
+            probe = probe_video(path)
+            if not probe.get("playable"):
+                problems.append({"file": name, "reason": probe.get("error") or "does not decode"})
+    return problems
 
 
 def _check_surface_agreement(ev: _Evidence, read_model: Any) -> Check:
@@ -708,15 +1029,59 @@ def _check_surface_agreement(ev: _Evidence, read_model: Any) -> Check:
         except Exception as exc:  # noqa: BLE001
             disagreements.append({"domain": domain, "error": type(exc).__name__})
             continue
+        from core.scout.actionable import actionable_set
         stored = ev.artifact(pid, "findings.json") or {}
-        expected_findings = len([f for f in (stored.get("verified") or [])
-                                 if str(f.get("severity") or "") != "info"])
-        shown = len([f for f in (detail.get("findings") or [])
-                     if str(f.get("severity") or "") != "info"])
+        # Compared through the canonical split on BOTH sides, so deduplication and the actionability
+        # rule cannot make the store and the screen differ for a reason that is not a disagreement.
+        expected_findings = actionable_set(stored.get("verified") or []).confirmed_issue_count
+        shown = actionable_set(detail.get("findings") or []).confirmed_issue_count
         if record.get("status") == "DONE" and shown != expected_findings:
             disagreements.append({"domain": domain, "store": expected_findings, "shown": shown})
+        # The count the operator reads must be the count the page's own summary claims.
+        summary = (detail.get("actionable_summary") or {}).get("confirmed_issues")
+        if summary is not None and summary != shown:
+            disagreements.append({"domain": domain, "reason": "the page's count and its own list "
+                                                             "disagree",
+                                  "summary": summary, "listed": shown})
         if detail.get("evidence_status") == "prospect_not_found":
             disagreements.append({"domain": domain, "reason": "the read model cannot bind evidence"})
+        # The REGISTRY is the surface History reads. A target the run finished while the registry
+        # still calls it unanalysed is one row saying done beside another saying it never happened.
+        try:
+            from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry
+            entry = AnalyzedSiteRegistry(ev.output_dir).get(domain)
+        except Exception:      # noqa: BLE001
+            entry = None
+        if record.get("status") == "DONE" and entry is not None:
+            registry_status = str(getattr(entry, "analysis_status", "") or "").upper()
+            if registry_status not in ("ANALYZED", ""):
+                disagreements.append({"domain": domain, "reason": "History and the run disagree",
+                                      "registry": registry_status, "run": "DONE"})
+    # The OBSERVER is a third reader of the same store, and a direct run used to report zero
+    # evidence and zero findings there while its own target pages listed both.
+    try:
+        from core.scout.observer_api import ObserverAPI
+        observer = ObserverAPI(ev.output_dir)
+        seen_findings = observer.list_findings(ev.run_id)["total"]
+        seen_evidence = observer.get_evidence_manifest(ev.run_id)["count"]
+    except Exception as exc:      # noqa: BLE001 - reported, never assumed fine
+        disagreements.append({"surface": "observer",
+                              "reason": f"the observer could not read this run ({type(exc).__name__})"})
+        seen_findings = seen_evidence = None
+    if seen_findings is not None and not ev.is_discovery:
+        # Counted RAW on both sides: the observer lists every finding row, so comparing it against
+        # the canonical actionable count would manufacture a disagreement out of the split itself.
+        stored_total = sum(len((ev.artifact(pid, "findings.json") or {}).get("verified") or [])
+                           for pid in ev.prospects)
+        if stored_total and not seen_findings:
+            disagreements.append({"surface": "observer", "stored": stored_total, "shown": 0,
+                                  "reason": "the observer reports no finding for a run that has some"})
+        files = sum(1 for pid in ev.prospects
+                    for _f in ev.prospect_dir(pid).glob("*")
+                    if _f.is_file() and _f.suffix.lower() in (".json", ".png", ".webm"))
+        if files and not seen_evidence:
+            disagreements.append({"surface": "observer", "stored_files": files, "shown": 0,
+                                  "reason": "the observer reports no evidence for a run that has some"})
     if disagreements:
         return Check("surface_agreement", FAIL, expected="the store and the read model agree",
                      observed=disagreements,

@@ -32,6 +32,41 @@ class ScoutConfigError(ValueError):
     """Raised when a Scout run configuration is invalid."""
 
 
+# How a run's target list arrived. "unknown" is only ever a READING of a config written before
+# provenance existed — nothing new may enter it.
+INTAKE_KINDS = frozenset({"paste", "upload", "discovery", "api", "unknown"})
+# Every row read ends in exactly one of these. `rows_capped` exists because the operator's list may
+# be longer than the run's site limit: without it, truncation looks like rows vanishing.
+_INTAKE_COUNTS = ("rows_read", "rows_accepted", "rows_rejected", "duplicates", "rows_capped")
+_MAX_INTAKE_TEXT = 200
+
+
+def normalise_intake(value: Any) -> Dict[str, Any]:
+    """Validate and bound an intake provenance record. Unknown keys are dropped, never stored.
+
+    Free text from an untrusted request is the last thing that should end up in a client-facing
+    artifact, so only a fixed set of keys survives and each is length- or type-bounded.
+    """
+    if not isinstance(value, dict) or not value:
+        return {}
+    kind = str(value.get("kind") or "").strip().lower()
+    if kind not in INTAKE_KINDS:
+        raise ScoutConfigError(f"unknown intake kind: {value.get('kind')!r}")
+    out: Dict[str, Any] = {"kind": kind}
+    for name in ("source_name", "query"):
+        text = value.get(name)
+        if isinstance(text, str) and text.strip():
+            out[name] = text.strip()[:_MAX_INTAKE_TEXT]
+    for name in _INTAKE_COUNTS:
+        count = value.get(name)
+        if isinstance(count, bool) or count is None:
+            continue
+        if not isinstance(count, int) or count < 0:
+            raise ScoutConfigError(f"intake {name} must be a non-negative integer, got {count!r}")
+        out[name] = count
+    return out
+
+
 @dataclass
 class ScoutRunConfig:
     """Bounded configuration for one Scout run."""
@@ -63,6 +98,11 @@ class ScoutRunConfig:
     # deliberate says otherwise, so "unclassified" now means only "written before this field
     # existed" -- a reading of old data rather than a state anything new can enter.
     run_purpose: str = PURPOSE_PRODUCTION
+    # WHERE this run's targets came from, recorded at intake. A finished run could say what it
+    # scanned and never what it was handed: an uploaded list and a pasted one produced identical
+    # config on disk, so "did we scan the file the client sent?" had no answer a person could check.
+    # Bounded and arithmetic-checkable, never free text.
+    intake: Dict[str, Any] = field(default_factory=dict)
     output_dir: str = "outputs"
     resume: bool = False
     run_id: str = ""
@@ -71,6 +111,7 @@ class ScoutRunConfig:
     resolve_dns: bool = True
 
     def __post_init__(self) -> None:
+        self.intake = normalise_intake(self.intake)
         if not isinstance(self.seeds, list) or not all(isinstance(s, str) for s in self.seeds):
             raise ScoutConfigError("seeds must be a list of URL strings")
         if not (MIN_SEEDS <= len(self.seeds) <= MAX_SEEDS):
@@ -154,6 +195,7 @@ class ScoutRunConfig:
             "coverage": self.coverage,
             "video_mode": self.video_mode,
             "run_purpose": self.run_purpose,
+            "intake": dict(self.intake),
             "output_dir": self.output_dir,
             "resume": self.resume,
             "run_id": self.run_id,
@@ -166,7 +208,7 @@ class ScoutRunConfig:
         known = {
             "campaign_name", "seeds", "max_sites", "max_pages_per_site", "request_timeout_s",
             "max_response_bytes", "concurrency", "check_families", "browser_mode", "coverage",
-            "video_mode", "run_purpose", "output_dir", "resume", "run_id", "resolve_dns",
+            "video_mode", "run_purpose", "intake", "output_dir", "resume", "run_id", "resolve_dns",
         }
         kwargs = {k: v for k, v in data.items() if k in known}
         if "allowed_local_hosts" in data:

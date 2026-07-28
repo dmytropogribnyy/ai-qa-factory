@@ -268,6 +268,10 @@ class CampaignLauncher:
         # is protected as such. A DISPOSABLE purpose is a different matter: honouring it from an
         # arbitrary POST field would let a request declare its own data sweepable, so it is accepted
         # only from a server that was deliberately started to host an acceptance harness.
+        # WHERE the target list came from. Bounded and key-filtered in `normalise_intake`, so an
+        # untrusted request contributes accounting a human can check, never free text or new keys.
+        if request.get("intake") is not None:
+            kwargs["intake"] = request["intake"]
         try:
             kwargs["run_purpose"] = resolve_requested_purpose(
                 request.get("run_purpose"), allow_test=test_purposes_enabled(self._env))
