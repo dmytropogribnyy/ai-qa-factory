@@ -4308,8 +4308,10 @@ function startCampaign(){{
             try:
                 attached_id = str(service.status().get("run_id") or "")
                 if attached_id and (not project or project == attached_id):
-                    from core.scout.canonical_runs import is_diagnostic_run
-                    if include_diagnostics or not is_diagnostic_run(attached_id):
+                    # The run's OWN declared purpose, not a reading of its name: an acceptance run
+                    # with a production-shaped id was counted here as real work.
+                    from core.scout.canonical_runs import is_diagnostic
+                    if include_diagnostics or not is_diagnostic(service.output_dir, attached_id):
                         scout_run_ids.append(attached_id)
             except Exception:
                 pass
@@ -4318,8 +4320,8 @@ function startCampaign(){{
             scout_events = 0
             scout_runs_without_history = 0
             for run_id in scout_run_ids:
-                from core.scout.canonical_runs import is_diagnostic_run
-                diagnostic = is_diagnostic_run(run_id)
+                from core.scout.canonical_runs import is_diagnostic
+                diagnostic = is_diagnostic(service.output_dir, run_id)
                 try:
                     run_events = RunStore(service.output_dir, run_id).read_events()
                 except Exception:
@@ -4708,18 +4710,19 @@ function checks(name){return Array.from(document.querySelectorAll(
 function csv(s){return String(s||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}
 function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){
 return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
-var PENDING={targets:[],counts:null};
+var PENDING={targets:[],counts:null,kind:'',file:''};
 function showPanels(){var s=source();
 ['find','paste','file'].forEach(function(k){$('p-'+k).hidden=(k!==s);});
 $('intake').hidden=(s==='find');
-if(s==='find'){PENDING={targets:[],counts:null};}
+if(s==='find'){PENDING={targets:[],counts:null,kind:'',file:''};}
 summary();}
 function summary(){var n=parseInt($('maxsites').value,10)||10;
 var s=source();var what=(s==='find')?('up to '+n+' sites'):
 ((PENDING.counts?PENDING.counts.unique_sites:0)+' site(s)');
 $('safetysummary').textContent='Read-only scan · '+what+
 ' · evidence saved automatically · no forms, purchases or messages.';}
-function renderIntake(j){PENDING={targets:(j.targets||[]),counts:(j.counts||null)};
+function renderIntake(j,kind,file){PENDING={targets:(j.targets||[]),counts:(j.counts||null),
+kind:(kind||''),file:(file||'')};
 var c=j.counts||{};var out=$('intake');out.hidden=false;
 var lines=[c.unique_sites+' site(s) will be scanned'];
 if(c.duplicates)lines.push(c.duplicates+' duplicate line(s) ignored');
@@ -4730,7 +4733,8 @@ if((j.rejected||[]).length){html+='<ul>'+j.rejected.map(function(r){
 return '<li><code>'+esc(r.value)+'</code> — '+esc(r.reason)+'</li>';}).join('')+'</ul>';}
 out.innerHTML=html;summary();}
 function previewText(){J('/api/scout/intake/preview',{text:$('seeds').value||''})
-.then(renderIntake).catch(function(e){$('intake').hidden=false;
+.then(function(j){renderIntake(j,'paste','');})
+.catch(function(e){$('intake').hidden=false;
 $('intake').textContent='Could not read those addresses: '+e;});}
 function previewFile(){var f=$('listfile').files[0];if(!f)return;
 var reader=new FileReader();reader.onload=function(){
@@ -4739,7 +4743,8 @@ J('/api/scout/import',{filename:f.name,content_b64:b64}).then(function(j){
 if(!j.ok){$('intake').hidden=false;$('intake').textContent='Could not read that file: '+
 (j.error||'unknown error');return;}
 var rows=((j.result||{}).rows||[]).map(function(r){return [r.original];});
-return J('/api/scout/intake/preview',{rows:rows}).then(renderIntake);})
+return J('/api/scout/intake/preview',{rows:rows})
+.then(function(p){renderIntake(p,'upload',f.name);});})
 .catch(function(e){$('intake').hidden=false;
 $('intake').textContent='Could not read that file: '+e;});};
 reader.readAsDataURL(f);}
@@ -4760,8 +4765,15 @@ var seeds=PENDING.targets.map(function(t){return t.url;});
 if(!seeds.length){btn.disabled=false;
 msg.textContent='No valid website addresses yet — add some and check the preview.';return;}
 var key=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();
-J('/api/campaign/start',{confirm:true,idempotency_key:key,seeds:seeds.slice(0,n),
-campaign:'operator-scan',browser_mode:'auto',coverage:'adaptive',max_sites:n})
+var queued=seeds.slice(0,n);var pc=PENDING.counts||{};
+// Where this list came from, recorded with the run. Every row read ends in exactly one bucket,
+// including the ones the site limit cut off — otherwise truncation reads as rows vanishing.
+var intake={kind:(PENDING.kind||'paste'),rows_read:(pc.lines_read||0),
+rows_accepted:queued.length,rows_rejected:(pc.rejected||0),duplicates:(pc.duplicates||0),
+rows_capped:Math.max(0,(pc.unique_sites||0)-queued.length)};
+if(PENDING.file)intake.source_name=PENDING.file;
+J('/api/campaign/start',{confirm:true,idempotency_key:key,seeds:queued,
+campaign:'operator-scan',browser_mode:'auto',coverage:'adaptive',max_sites:n,intake:intake})
 .then(function(j){if(j.ok||j.run_id){location.href='/scout/run?id='+encodeURIComponent(j.run_id);}
 else{btn.disabled=false;msg.textContent='Scout could not start: '+
 (j.message||j.error||'unknown error');}})
@@ -6064,6 +6076,18 @@ def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 
     # the commit this dashboard actually started serving (stale detection works before the 1st request).
     from core.build_identity import freeze_running_identity
     freeze_running_identity()
+    # Finish any deletion a crash interrupted, on the real startup path rather than only when the
+    # next deletion happens to run. A run staged for removal is one the operator already confirmed
+    # away; leaving it in staging means disk stays occupied by data everyone believes is gone, and
+    # the recovery routine existed with no caller at all.
+    try:
+        from core.scout.data_management import DataManagementStore
+        outcome = DataManagementStore(service.output_dir).reconcile(repair=True)
+        for entry in outcome["repaired"]:
+            print(f"[scout] recovered after an interrupted deletion: "
+                  f"{entry['run_id']} — {entry['action']}")
+    except Exception as exc:      # noqa: BLE001 - never block the dashboard on housekeeping
+        print(f"[scout] interrupted-deletion recovery could not run: {type(exc).__name__}")
     launcher = launcher or CampaignLauncher(service)
     token = secrets.token_urlsafe(32) if csrf_token is None else csrf_token
     from core.scout.challenge_session import ChallengeSessionManager

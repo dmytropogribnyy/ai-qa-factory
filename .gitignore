@@ -101,3 +101,8 @@ tools/tunnel-client*/
 
 # Browser-automation scratch output (page snapshots, audit screenshots, console logs)
 .playwright-mcp/
+
+# Working instructions handed to an agent for one piece of work. They are scratch input, not
+# product documentation — and while they sat untracked, "the tree is clean" was not a true
+# statement about this repository.
+docs/temp_instructions/
