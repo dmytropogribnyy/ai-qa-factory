@@ -124,6 +124,11 @@ def _project_target_finding(f: Dict[str, Any]) -> Dict[str, Any]:
         "evidence_refs": f.get("evidence_refs", []),
         "confidence": f.get("confidence"),
         "reproduction_steps": f.get("reproduction_steps", []),
+        # The decision the canonical split already made about this finding. Carried because the
+        # fields that DISTINGUISH two findings do not survive this projection: two accessibility
+        # findings on one page share a title and a URL and differ only by signature, so anything
+        # that re-splits the projected list merges them and loses one between a count and its list.
+        "kind": f.get("kind"),
     }
 
 
@@ -777,10 +782,11 @@ class CampaignService:
                 # findings they describe.
                 "actionable_summary": canonical.to_dict(),
                 # The LIST is the same collection the COUNTS describe — actionable first, then
-                # informational, duplicates already suppressed. Handing out the raw list beside a
-                # deduplicated count is how a page comes to show more rows than it says it found.
-                "findings": [_project_target_finding(f)
-                             for f in (canonical.actionable + canonical.informational)],
+                # informational, duplicates already suppressed, each row carrying the decision made
+                # about it. Handing out the raw list beside a deduplicated count is how a page comes
+                # to show more rows than it says it found; handing out a projected list that has to
+                # be re-split is how it comes to show fewer.
+                "findings": [_project_target_finding(f) for f in canonical.labelled()],
                 "contacts": contacts, "contact_records": contact_records,
                 "draft": draft, "fixability": fixability}
 

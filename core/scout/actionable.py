@@ -25,6 +25,32 @@ from typing import Any, Dict, Iterable, List
 # Severities that mean "not a problem to fix". Everything else is a real severity.
 _NON_ACTIONABLE_SEVERITIES = frozenset({"info", "informational", "none", ""})
 
+# The decision, as it travels. A finding that carries one of these has already been classified by
+# the canonical split; nothing downstream may classify it again.
+KIND_ACTIONABLE = "actionable"
+KIND_INFORMATIONAL = "informational"
+
+
+def kind_of(finding: Dict[str, Any]) -> str:
+    """Read the decision a finding carries; classify only if it carries none.
+
+    The fallback is for records written before the label existed. It answers the classification
+    question correctly — the rule is the same one — but it cannot restore IDENTITY, which is why
+    the totals a surface prints must be counted from labels rather than recovered by re-splitting.
+    """
+    carried = str((finding or {}).get("kind") or "").strip().lower()
+    if carried in (KIND_ACTIONABLE, KIND_INFORMATIONAL):
+        return carried
+    return KIND_ACTIONABLE if is_actionable(finding) else KIND_INFORMATIONAL
+
+
+def count_kinds(findings: Iterable[Dict[str, Any]]) -> Dict[str, int]:
+    """How many of each kind an already-split collection holds. Never re-splits or deduplicates."""
+    out = {KIND_ACTIONABLE: 0, KIND_INFORMATIONAL: 0}
+    for finding in findings or []:
+        out[kind_of(finding)] += 1
+    return out
+
 
 def is_actionable(finding: Dict[str, Any]) -> bool:
     """The ONE rule. A finding is actionable when it carries a real severity."""
@@ -85,6 +111,20 @@ class ActionableSet:
     def confirmed_issue_count(self) -> int:
         """The number an operator reads as "issues". Nothing else may disagree with it."""
         return len(self.actionable)
+
+    def labelled(self) -> List[Dict[str, Any]]:
+        """The surviving findings in canonical order, each carrying the decision made about it.
+
+        This is what makes the split survive a lossy projection. Re-running the split after fields
+        have been dropped is not a recount — it is a different question asked of poorer data: two
+        findings kept apart by their signatures become one finding once the signature is gone, and
+        the second disappears between a page's count and the page's own list.
+
+        So the decision is made once, here, and travels as `kind`. Everything downstream reads a
+        label it was handed instead of re-deriving one from fields that may no longer exist.
+        """
+        return ([{**f, "kind": KIND_ACTIONABLE} for f in self.actionable]
+                + [{**f, "kind": KIND_INFORMATIONAL} for f in self.informational])
 
     def display(self, shown: int) -> ActionableDisplay:
         """Bind a surface's visible count to the total it was drawn from."""

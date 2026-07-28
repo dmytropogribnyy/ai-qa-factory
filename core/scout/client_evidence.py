@@ -136,12 +136,12 @@ def _build_identity() -> str:
 def _finding_kind(finding: Dict[str, Any]) -> str:
     """What a client is looking at: a defect to fix, or an observation about the site.
 
-    The same one rule the count, the verdict, the fix offer and the draft use. A package that lists
-    both under one "confirmed findings" heading hands the client a defect total that includes things
-    nobody claims are defects.
+    Reads the decision the canonical split already made and carried here. It does not decide again:
+    by this point the fields that tell two findings apart have been dropped for the client's sake,
+    and re-deciding over what is left merges findings that were never the same.
     """
-    from core.scout.actionable import is_actionable
-    return "Actionable" if is_actionable(finding) else "Informational"
+    from core.scout.actionable import KIND_ACTIONABLE, kind_of
+    return "Actionable" if kind_of(finding) == KIND_ACTIONABLE else "Informational"
 
 
 def _findings_csv(findings: List[Dict[str, Any]]) -> str:
@@ -280,6 +280,10 @@ def _public_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
         for key in (
             "severity", "category", "title", "business_impact", "url", "confidence",
             "reproduction_steps",
+            # The decision, carried through one more lossy step. Without it this projection is the
+            # last place the split could still be reconstructed from — and it cannot be, because
+            # `signature` is deliberately not here: it identifies our checks, not the client's site.
+            "kind",
         )
         if finding.get(key) not in (None, "", [])
     }
@@ -324,9 +328,10 @@ def _client_trace(pdir: Path) -> Dict[str, Any]:
 def _html_summary(domain: str, detail: Dict[str, Any], *, images: List[str],
                   videos: List[str]) -> str:
     """Standalone, offline client report with relative links to packaged evidence."""
-    from core.scout.actionable import actionable_set
     findings = [_public_finding(f) for f in list(detail.get("findings") or [])]
-    canonical = actionable_set(findings)
+    # Partitioned by the label each finding carries, never by asking the question again.
+    actionable_items = [f for f in findings if _finding_kind(f) == "Actionable"]
+    informational_items = [f for f in findings if _finding_kind(f) != "Actionable"]
 
     def _rows(items: List[Dict[str, Any]]) -> str:
         out = []
@@ -347,8 +352,8 @@ def _html_summary(domain: str, detail: Dict[str, Any], *, images: List[str],
 
     # Two sections rather than one list with a column: a client reading a defect report should not
     # have to check a cell to learn whether the row is something we are saying is broken.
-    rows = _rows(canonical.actionable)
-    info_rows = _rows(canonical.informational)
+    rows = _rows(actionable_items)
+    info_rows = _rows(informational_items)
     info_section = (
         '<section class="card"><h2>Informational observations</h2>'
         '<p class="muted">Recorded because they describe the site, not because we consider them '
@@ -392,8 +397,8 @@ border-bottom:1px solid #e8ecf2;text-align:left;vertical-align:top}}.sev{{font-w
 </style></head><body><main>
 <header><p class="muted">Client-ready QA evidence</p><h1>{html.escape(domain)}</h1>
 <p>Completed bounded analysis of public pages. Review the package before sending.</p>
-<div class="metrics"><div class="metric"><strong>{canonical.confirmed_issue_count}</strong><br>actionable findings</div>
-<div class="metric"><strong>{len(canonical.informational)}</strong><br>informational notes</div>
+<div class="metrics"><div class="metric"><strong>{len(actionable_items)}</strong><br>actionable findings</div>
+<div class="metric"><strong>{len(informational_items)}</strong><br>informational notes</div>
 <div class="metric"><strong>{len(images)}</strong><br>unique screenshots</div>
 <div class="metric"><strong>{len(videos)}</strong><br>recordings</div></div></header>
 <section class="card"><h2>Actionable findings</h2>
@@ -421,12 +426,13 @@ def _video_caption(name: str, index: int) -> str:
 
 def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]], videos: int,
              trace_available: bool, omitted: List[Dict[str, Any]]) -> str:
-    from core.scout.actionable import actionable_set
     findings = list(detail.get("findings") or [])
-    # The product's ONE actionability rule, not a local approximation of it. `severity != "info"`
-    # quietly let "informational", "none" and "" through and counted them as defects.
-    canonical = actionable_set(findings)
-    actionable = canonical.actionable
+    # Partitioned by the carried decision. A local `severity != "info"` rule used to let
+    # "informational", "none" and "" through as defects; re-running the canonical split here would
+    # fix that and introduce the opposite error, merging findings the projection can no longer tell
+    # apart. Reading the label does neither.
+    actionable = [f for f in findings if _finding_kind(f) == "Actionable"]
+    informational = [f for f in findings if _finding_kind(f) != "Actionable"]
     lines = [
         f"# QA Evidence Summary — {domain}",
         "",
@@ -438,7 +444,7 @@ def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]
         "## Result",
         "",
         f"- Confirmed actionable findings: **{len(actionable)}**",
-        f"- Informational notes: **{len(canonical.informational)}**",
+        f"- Informational notes: **{len(informational)}**",
         f"- Unique screenshots included: **{len(images)}**",
         *[f"  - `{img['name']}` — {img.get('role') or 'page'}"
           + (f" ({img['url']})" if img.get("url") else "")
@@ -457,8 +463,8 @@ def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]
            "",
            "Recorded because they describe the site; they are not counted as actionable findings.",
            "",
-           *_finding_lines(canonical.informational),
-           ""] if canonical.informational else []),
+           *_finding_lines(informational),
+           ""] if informational else []),
         "## Evidence notes",
         "",
         "- Each screenshot is a distinct page or state actually visited; a byte-identical capture",
@@ -494,12 +500,14 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
     if not pdir.is_dir() or store.root not in pdir.parents:
         raise ClientEvidenceError("target evidence directory not found")
 
-    from core.scout.actionable import actionable_set
+    from core.scout.actionable import KIND_ACTIONABLE, count_kinds
     public_findings = [_public_finding(f) for f in list(detail.get("findings") or [])]
-    # One split, read once, quoted by the README, the report, the CSV, the JSON and the manifest.
-    canonical_public = actionable_set(public_findings)
-    actionable_total = canonical_public.confirmed_issue_count
-    informational_total = len(canonical_public.informational)
+    # Counted from the labels the read model carried in, never by splitting again. Every number the
+    # README, the report, the CSV, the JSON and the manifest print comes from this one tally, so a
+    # field this projection drops can no longer change any of them.
+    kinds = count_kinds(public_findings)
+    actionable_total = kinds[KIND_ACTIONABLE]
+    informational_total = len(public_findings) - actionable_total
     # Split by what a reader is looking for rather than by which artifact we happened to store it
     # in. "network-console-accessibility.json" required knowing our internals to guess what was in
     # it; a client hunting a slow page opens performance-summary.json.
