@@ -112,9 +112,13 @@ class DiscoveryEngine:
                 f"campaign {cfg.campaign_id!r} already exists; refusing to overwrite it "
                 "(use a fresh campaign id, or reset the campaign directory explicitly)")
         plan = self.plan()
+        from core.build_identity import execution_identity
         state: Dict[str, Any] = {
             "campaign_id": cfg.campaign_id, "status": RUN_RUNNING,
             "started_at": self.clock(), "config": cfg.to_dict(),
+            # The campaign's OWN build. A promoted child records its own separately, because a
+            # long campaign can promote a run after the checkout underneath it has moved.
+            "execution_build": execution_identity(),
             "matrix": plan["CAMPAIGN_MATRIX.json"], "budget": dict(self._budget),
         }
         # A campaign is not handed a target list — it is handed a question. Recording that question

@@ -56,6 +56,9 @@ def _run(tmp_path, run_id="adv-run", *, targets=2):
             "entries": [{"ref": "landing.png", "sha256": sha256_of(shot)}]})
     store.save_state({"status": "COMPLETED", "started_at": "2026-07-28T09:00:00+00:00",
                       "finished_at": "2026-07-28T09:20:00+00:00", "config": config,
+                      # The stamp the engine writes at start. A run that cannot say which code
+                      # produced it is not a clean baseline for the tests below.
+                      "execution_build": {"sha": "advsha0000001", "build": "advsha0000001"},
                       "prospects": prospects})
     store.append_event({"event": "run_started"})
     for pid in prospects:
@@ -78,6 +81,7 @@ def _discovery(tmp_path, *, child_purpose="acceptance", child_status="COMPLETED"
     campaign.save_state({
         "status": "COMPLETED", "started_at": "2026-07-28T09:00:00+00:00",
         "finished_at": "2026-07-28T09:20:00+00:00", "config": config,
+        "execution_build": {"sha": "advsha0000001", "build": "advsha0000001"},
         "counts": {"discovered": candidates, "eligible": 1, "promoted": 1,
                    "rejected": candidates - 1, "duplicates": 0, "already_analyzed": 0,
                    "qa_analyzed": 1, "failed": 0},
@@ -90,9 +94,11 @@ def _discovery(tmp_path, *, child_purpose="acceptance", child_status="COMPLETED"
     child.write_config({**_CONFIG, "run_purpose": child_purpose,
                         "seeds": ["https://found.example/"],
                         "intake": {"kind": "discovery", "source_name": "camp-adv"}})
-    child.save_state({"status": child_status, "prospects": {
-        "01": {"status": "DONE", "url": "https://found.example/",
-               "verified_findings": 1, "verified_defects": 1}}})
+    child.save_state({"status": child_status,
+                      "execution_build": {"sha": "advsha0000001", "build": "advsha0000001"},
+                      "prospects": {
+                          "01": {"status": "DONE", "url": "https://found.example/",
+                                 "verified_findings": 1, "verified_defects": 1}}})
     child.save_prospect_artifact("01", "findings.json", {"verified": [
         {"title": "Issue", "severity": "high", "signature": "s0"}]})
     child.save_prospect_artifact("01", "observation.json",
@@ -422,11 +428,18 @@ def test_a_package_that_scatters_its_files_is_caught(tmp_path):
 def test_the_report_keeps_the_execution_build_apart_from_its_own(tmp_path):
     """Re-validating an old run on today's code must not restamp it with today's SHA."""
     store = _run(tmp_path)
-    state = store.load_state()
-    state["build"] = "abc1234"
-    store.save_state(state)
 
     report = validate_run(str(tmp_path), "adv-run")
 
-    assert report.execution_build == "abc1234"
-    assert report.to_dict()["execution_build"] == "abc1234"
+    assert report.execution_build == "advsha0000001"
+    assert report.to_dict()["execution_build"] == "advsha0000001"
+    assert report.build != report.execution_build
+
+    # A run written before the structured stamp, carrying only the older scalar, is still read
+    # rather than treated as unknown — the point is never to invent one, not to ignore one.
+    state = store.load_state()
+    state.pop("execution_build")
+    state["build"] = "abc1234"
+    store.save_state(state)
+
+    assert validate_run(str(tmp_path), "adv-run").execution_build == "abc1234"

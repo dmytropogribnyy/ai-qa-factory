@@ -120,6 +120,23 @@ def freeze_running_identity(repo_dir: Optional[str] = None) -> Dict[str, Any]:
     return dict(_RUNNING)
 
 
+def execution_identity() -> Dict[str, Any]:
+    """The build that is EXECUTING, stamped into a run so the run can always say what made it.
+
+    Written once, when a run is created, and never rewritten. Re-validating a finished run on
+    today's code must not restamp it: a disputed finding is traced to the code that produced it, and
+    "whatever is checked out now" answers a different question. A run created before this existed
+    carries nothing and is honestly UNKNOWN — never today's SHA standing in for an unknown one.
+    """
+    identity = current_identity()
+    return {
+        "sha": str(identity.get("running_sha") or ""),
+        "build": str(identity.get("running_build") or ""),
+        "product_version": str(identity.get("product_version") or ""),
+        "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
 def _running() -> Dict[str, Any]:
     """Return the frozen running identity, capturing it now if the bootstrap never did (e.g. a
     direct library/test caller). Server processes freeze eagerly in ``start_dashboard``."""

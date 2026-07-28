@@ -164,14 +164,34 @@ class _Evidence:
         """The build that RAN the work, which is not the build validating it.
 
         Re-validating an old run on today's code and stamping today's SHA on the report erases the
-        one fact a disputed finding needs: which code produced it.
+        one fact a disputed finding needs: which code produced it. A run that recorded nothing is
+        UNKNOWN, and stays UNKNOWN — an absent SHA is never filled in from the environment.
         """
+        stamp = (self.state or {}).get("execution_build")
+        if isinstance(stamp, dict):
+            value = str(stamp.get("sha") or stamp.get("build") or "")
+            if value:
+                return value
         for source in (self.state, self.config):
             for key in ("build", "running_sha", "build_sha", "running_build"):
                 value = str((source or {}).get(key) or "")
                 if value:
                     return value
         return UNKNOWN
+
+    def child_execution_builds(self) -> Dict[str, str]:
+        """Each promoted child's own stamp, kept apart from the parent's."""
+        out: Dict[str, str] = {}
+        for child in self.promoted:
+            try:
+                child_state = json.loads(
+                    (Path(self.output_dir) / "scout" / child / "state.json").read_text(
+                        encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            stamp = child_state.get("execution_build")
+            out[child] = (str(stamp.get("sha") or "") if isinstance(stamp, dict) else "") or UNKNOWN
+        return out
 
     @property
     def is_discovery(self) -> bool:
@@ -257,6 +277,7 @@ def validate_run(output_dir: str, run_id: str, *, write: bool = False,
         _check_cleanup(ev),
     ])
     report.checks.append(_check_client_package(ev))
+    report.checks.append(_check_execution_build(ev))
     if read_model is not None:
         report.checks.append(_check_surface_agreement(ev, read_model))
     if write:
@@ -664,19 +685,19 @@ def _check_findings(ev: _Evidence) -> Check:
             if record.get("status") == "DONE":
                 problems.append({"prospect": pid, "reason": "completed but no finding records"})
             continue
-        from core.scout.actionable import is_actionable
-        verified = list(data.get("verified") or [])
-        # The product's ONE actionability rule. A local `severity != "info"` copy counted
-        # "informational", "none" and "" as defects and disagreed with every other surface.
-        actionable = [f for f in verified if is_actionable(f)]
-        totals["verified"] += len(verified)
-        totals["actionable"] += len(actionable)
-        if record.get("verified_findings") not in (None, len(verified)):
+        from core.scout.actionable import actionable_set
+        # Compared through the canonical split on BOTH sides. The engine writes these numbers from
+        # the split, so measuring the records with a raw `len()` counts a suppressed duplicate the
+        # state deliberately does not — and reports the agreement as a disagreement.
+        canonical = actionable_set(data.get("verified") or [])
+        totals["verified"] += canonical.total
+        totals["actionable"] += canonical.confirmed_issue_count
+        if record.get("verified_findings") not in (None, canonical.total):
             problems.append({"prospect": pid, "state": record.get("verified_findings"),
-                             "records": len(verified)})
-        if record.get("verified_defects") not in (None, len(actionable)):
+                             "records": canonical.total})
+        if record.get("verified_defects") not in (None, canonical.confirmed_issue_count):
             problems.append({"prospect": pid, "state_defects": record.get("verified_defects"),
-                             "records": len(actionable)})
+                             "records": canonical.confirmed_issue_count})
     if problems:
         return Check("finding_count_consistency", FAIL, expected="one set of findings",
                      observed=problems,
@@ -1012,6 +1033,38 @@ def _packaged_video_problems(archive: Any, names: List[str]) -> List[Dict[str, A
     return problems
 
 
+def _check_execution_build(ev: _Evidence) -> Check:
+    """Which code produced this run, recorded by the run rather than inferred later.
+
+    Kept as its own check because the alternative to knowing is not "assume the current checkout" —
+    it is saying so. A run written before the stamp existed is UNKNOWN, which blocks VALIDATED
+    honestly rather than being quietly filled in from the environment.
+    """
+    own = ev.execution_build
+    children = ev.child_execution_builds()
+    if own == UNKNOWN:
+        return Check("execution_build_identity", UNKNOWN,
+                     expected="the run records the build that executed it",
+                     observed={"execution_build": UNKNOWN, "children": children},
+                     explanation=("this run predates execution-build stamping, so which code "
+                                  "produced it cannot be established from what is on disk"))
+    unstamped = sorted(child for child, sha in children.items() if sha == UNKNOWN)
+    if unstamped:
+        return Check("execution_build_identity", PARTIAL,
+                     expected="every promoted child records its own build",
+                     observed={"execution_build": own, "children": children},
+                     explanation=("a promoted run does not say which code executed it: "
+                                  + ", ".join(unstamped)))
+    # Differing builds are not an error. A long campaign can promote a run after the checkout under
+    # it has moved, and the useful thing is that both facts are recorded rather than merged.
+    return Check("execution_build_identity", PASS,
+                 expected="the run records the build that executed it",
+                 observed={"execution_build": own, "children": children,
+                           "children_match_parent": all(sha == own for sha in children.values())},
+                 explanation=("the executing build is recorded by the run itself and is kept "
+                              "separate from the build performing this validation"))
+
+
 def _check_surface_agreement(ev: _Evidence, read_model: Any) -> Check:
     """The derived read model against the store. The UI is checked, never consulted."""
     from core.scout.discovery.domain_intel import canonical_domain
@@ -1029,15 +1082,17 @@ def _check_surface_agreement(ev: _Evidence, read_model: Any) -> Check:
         except Exception as exc:  # noqa: BLE001
             disagreements.append({"domain": domain, "error": type(exc).__name__})
             continue
-        from core.scout.actionable import actionable_set
+        from core.scout.actionable import KIND_ACTIONABLE, actionable_set, count_kinds
         stored = ev.artifact(pid, "findings.json") or {}
-        # Compared through the canonical split on BOTH sides, so deduplication and the actionability
-        # rule cannot make the store and the screen differ for a reason that is not a disagreement.
+        # The STORE is split canonically, because it holds complete findings. The SCREEN is counted
+        # from the labels it carries, because its findings are projected and splitting them again
+        # merges any two the projection can no longer tell apart — which is the product's own
+        # projection being reported as a disagreement.
         expected_findings = actionable_set(stored.get("verified") or []).confirmed_issue_count
-        shown = actionable_set(detail.get("findings") or []).confirmed_issue_count
+        shown = count_kinds(detail.get("findings") or [])[KIND_ACTIONABLE]
         if record.get("status") == "DONE" and shown != expected_findings:
             disagreements.append({"domain": domain, "store": expected_findings, "shown": shown})
-        # The count the operator reads must be the count the page's own summary claims.
+        # The count the operator reads must be the count the page's own list contains.
         summary = (detail.get("actionable_summary") or {}).get("confirmed_issues")
         if summary is not None and summary != shown:
             disagreements.append({"domain": domain, "reason": "the page's count and its own list "

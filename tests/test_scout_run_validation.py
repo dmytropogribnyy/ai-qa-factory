@@ -38,6 +38,9 @@ def _run(tmp_path, *, config=None, prospect=None, findings=1, events=None, run_i
     store.save_state({"status": "COMPLETED", "run_id": run_id,
                       "started_at": "2026-07-27T10:00:00+00:00",
                       "finished_at": "2026-07-27T10:05:00+00:00",
+                      # The stamp the engine writes at start; without it the run honestly cannot say
+                      # which code produced it, and a fixture that omits it is not a clean run.
+                      "execution_build": {"sha": "fixturesha001", "build": "fixturesha001"},
                       "config": cfg, "prospects": {"01": record}})
     store.save_prospect_artifact("01", "findings.json", {"verified": [
         {"title": f"Issue {i}", "severity": "high", "signature": f"s{i}"} for i in range(findings)]})
@@ -337,6 +340,7 @@ def _discovery(tmp_path, *, promoted="camp-1-promo-01"):
     campaign.save_state({
         "status": "COMPLETED", "started_at": "2026-07-27T10:00:00+00:00",
         "finished_at": "2026-07-27T10:20:00+00:00",
+        "execution_build": {"sha": "fixturesha001", "build": "fixturesha001"},
         "config": {"campaign_name": "acc", "run_purpose": "acceptance",
                    "browser_mode": "playwright", "video_mode": "manual"},
         "counts": {"discovered": 6, "eligible": 1, "promoted": 1, "rejected": 4,
@@ -356,9 +360,11 @@ def _discovery(tmp_path, *, promoted="camp-1-promo-01"):
                         "browser_mode": "playwright", "video_mode": "manual",
                         "seeds": ["https://found.example/"],
                         "intake": {"kind": "discovery", "source_name": "camp-1"}})
-    child.save_state({"status": "COMPLETED", "prospects": {
-        "01": {"status": "DONE", "url": "https://found.example/", "verified_findings": 1,
-               "verified_defects": 1}}})
+    child.save_state({"status": "COMPLETED",
+                      "execution_build": {"sha": "fixturesha001", "build": "fixturesha001"},
+                      "prospects": {
+                          "01": {"status": "DONE", "url": "https://found.example/",
+                                 "verified_findings": 1, "verified_defects": 1}}})
     child.save_prospect_artifact("01", "findings.json", {"verified": [
         {"title": "Issue", "severity": "high", "signature": "s0"}]})
     child.save_prospect_artifact("01", "browser_trace.json", {"backend": "playwright"})

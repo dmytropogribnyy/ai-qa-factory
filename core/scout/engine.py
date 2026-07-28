@@ -182,6 +182,10 @@ class ScoutEngine:
         self._guard_run_preconditions()
         self.store.write_config(cfg.to_dict())
         state = self._load_or_init_state()
+        # Stamped once and never rewritten — `setdefault`, so a resume or a restart keeps the build
+        # that actually did the work rather than the one that happened to pick the run back up.
+        from core.build_identity import execution_identity
+        state.setdefault("execution_build", execution_identity())
         state["status"] = RUN_RUNNING
         state["updated_at"] = self.clock()
         self.store.save_state(state)
