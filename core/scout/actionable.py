@@ -31,6 +31,12 @@ KIND_ACTIONABLE = "actionable"
 KIND_INFORMATIONAL = "informational"
 
 
+def _carried_decision(finding: Dict[str, Any]) -> str:
+    """The decision this finding already carries, or "" when it has not been through the split."""
+    carried = str((finding or {}).get("kind") or "").strip().lower()
+    return carried if carried in (KIND_ACTIONABLE, KIND_INFORMATIONAL) else ""
+
+
 def kind_of(finding: Dict[str, Any]) -> str:
     """Read the decision a finding carries; classify only if it carries none.
 
@@ -38,10 +44,8 @@ def kind_of(finding: Dict[str, Any]) -> str:
     question correctly — the rule is the same one — but it cannot restore IDENTITY, which is why
     the totals a surface prints must be counted from labels rather than recovered by re-splitting.
     """
-    carried = str((finding or {}).get("kind") or "").strip().lower()
-    if carried in (KIND_ACTIONABLE, KIND_INFORMATIONAL):
-        return carried
-    return KIND_ACTIONABLE if is_actionable(finding) else KIND_INFORMATIONAL
+    return _carried_decision(finding) or (
+        KIND_ACTIONABLE if is_actionable(finding) else KIND_INFORMATIONAL)
 
 
 def count_kinds(findings: Iterable[Dict[str, Any]]) -> Dict[str, int]:
@@ -151,11 +155,24 @@ def actionable_set(findings: Iterable[Dict[str, Any]]) -> ActionableSet:
 
     Deduplication happens BEFORE the split, so a problem reported twice is one problem in every
     number that follows rather than one in the count and two in the offer.
+
+    A finding that ALREADY carries a decision is not re-decided — it is placed where its label says
+    and never re-identified, re-deduplicated or re-classified. This is what makes the function safe
+    to call on a read model. `_identity` falls back to title-and-URL when no signature is present,
+    and a projection built for display drops the signature, so re-splitting a projected list merges
+    findings the split had deliberately kept apart: the surface then lists, and offers to fix, one
+    fewer than the count printed above it. Deciding once and carrying the decision is the fix;
+    honouring the carried decision HERE is what stops the next caller from undoing it.
     """
     result = ActionableSet()
     seen: Dict[str, Dict[str, Any]] = {}
     for finding in findings or []:
         if not isinstance(finding, dict):
+            continue
+        decided = _carried_decision(finding)
+        if decided:
+            (result.actionable if decided == KIND_ACTIONABLE
+             else result.informational).append(finding)
             continue
         key = _identity(finding)
         if key in seen:
