@@ -156,7 +156,7 @@ def test_a_done_target_keeps_its_completed_card_pinned_and_unpinned(tmp_path, mo
     for html in (pinned, unpinned):
         assert "Analysis complete" in html
         assert "Download client evidence (.zip)" in html
-        assert "alpha.example: alpha (high)" in html    # confirmed findings stay available
+        assert "alpha.example: alpha 1 (high)" in html    # confirmed findings stay available
 
 
 # -- P1-B: result-bearing artifacts are not reachable for an incomplete analysis ------------------

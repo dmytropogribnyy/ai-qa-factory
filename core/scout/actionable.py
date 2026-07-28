@@ -42,6 +42,32 @@ def _identity(finding: Dict[str, Any]) -> str:
             + str((finding or {}).get("url") or "").strip().lower())
 
 
+@dataclass(frozen=True)
+class ActionableDisplay:
+    """How many of the actionable findings a surface is showing, and how many there are.
+
+    A shortened list is a legitimate thing for an email to contain; passing its length off as the
+    finding count is not, and `len(bullets)` is a perfectly valid expression that no reviewer and no
+    type checker will ever object to. Carrying both numbers in one object removes the opportunity:
+    there is no way to read the cap while believing you read the total.
+    """
+
+    shown: int
+    total: int
+
+    @property
+    def capped(self) -> bool:
+        return self.shown < self.total
+
+    @property
+    def caption(self) -> str:
+        """What the surface must say when it is showing a subset. Empty when it is showing all."""
+        if not self.capped:
+            return ""
+        return (f"Showing the top {self.shown} of {self.total} confirmed "
+                f"{'issue' if self.total == 1 else 'issues'}.")
+
+
 @dataclass
 class ActionableSet:
     """The canonical split for one target."""
@@ -59,6 +85,10 @@ class ActionableSet:
     def confirmed_issue_count(self) -> int:
         """The number an operator reads as "issues". Nothing else may disagree with it."""
         return len(self.actionable)
+
+    def display(self, shown: int) -> ActionableDisplay:
+        """Bind a surface's visible count to the total it was drawn from."""
+        return ActionableDisplay(shown=max(0, int(shown)), total=self.confirmed_issue_count)
 
     def severity_breakdown(self) -> Dict[str, int]:
         out: Dict[str, int] = {}

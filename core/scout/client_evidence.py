@@ -133,6 +133,17 @@ def _build_identity() -> str:
         return "unknown"
 
 
+def _finding_kind(finding: Dict[str, Any]) -> str:
+    """What a client is looking at: a defect to fix, or an observation about the site.
+
+    The same one rule the count, the verdict, the fix offer and the draft use. A package that lists
+    both under one "confirmed findings" heading hands the client a defect total that includes things
+    nobody claims are defects.
+    """
+    from core.scout.actionable import is_actionable
+    return "Actionable" if is_actionable(finding) else "Informational"
+
+
 def _findings_csv(findings: List[Dict[str, Any]]) -> str:
     """The finding list as a spreadsheet, because that is what a client forwards to their developer.
 
@@ -142,10 +153,11 @@ def _findings_csv(findings: List[Dict[str, Any]]) -> str:
     """
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\r\n")
-    writer.writerow(["Severity", "Category", "Title", "Impact", "Page", "How to reproduce",
+    writer.writerow(["Type", "Severity", "Category", "Title", "Impact", "Page", "How to reproduce",
                      "Evidence", "Confidence"])
     for finding in findings:
         writer.writerow([
+            _finding_kind(finding),
             str(finding.get("severity") or ""),
             str(finding.get("category") or ""),
             str(finding.get("title") or ""),
@@ -159,7 +171,7 @@ def _findings_csv(findings: List[Dict[str, Any]]) -> str:
     return "﻿" + buffer.getvalue()
 
 
-def _readme_html(domain: str, *, findings: int, screenshots: int, videos: int,
+def _readme_html(domain: str, *, findings: int, informational: int, screenshots: int, videos: int,
                  omitted: List[Dict[str, Any]]) -> str:
     """The first thing the client opens: what is in here and which file to read first."""
     dropped = "".join(
@@ -189,7 +201,8 @@ them.</li>
 </ul>
 <h2>What is in the package</h2>
 <ul>
-<li><strong>{findings}</strong> confirmed finding(s)</li>
+<li><strong>{findings}</strong> actionable finding(s) — problems we suggest fixing</li>
+<li><strong>{informational}</strong> informational note(s) — observations, not defects</li>
 <li><strong>{screenshots}</strong> screenshot(s) in <code>Evidence/Screenshots/</code></li>
 <li><strong>{videos}</strong> reproduction video(s) in <code>Evidence/Videos/</code></li>
 <li>Accessibility, performance, console and network summaries in
@@ -311,21 +324,38 @@ def _client_trace(pdir: Path) -> Dict[str, Any]:
 def _html_summary(domain: str, detail: Dict[str, Any], *, images: List[str],
                   videos: List[str]) -> str:
     """Standalone, offline client report with relative links to packaged evidence."""
+    from core.scout.actionable import actionable_set
     findings = [_public_finding(f) for f in list(detail.get("findings") or [])]
-    rows = []
-    for finding in findings:
-        steps = finding.get("reproduction_steps") or []
-        steps_html = "<ol>" + "".join(
-            f"<li>{html.escape(str(step))}</li>" for step in steps
-        ) + "</ol>" if steps else "Not recorded"
-        rows.append(
-            "<tr>"
-            f"<td><span class=\"sev\">{html.escape(str(finding.get('severity') or 'unknown').upper())}</span></td>"
-            f"<td><strong>{html.escape(str(finding.get('title') or 'Untitled finding'))}</strong>"
-            f"<p>{html.escape(str(finding.get('business_impact') or 'Impact not recorded.'))}</p></td>"
-            f"<td>{steps_html}</td>"
-            "</tr>"
-        )
+    canonical = actionable_set(findings)
+
+    def _rows(items: List[Dict[str, Any]]) -> str:
+        out = []
+        for finding in items:
+            steps = finding.get("reproduction_steps") or []
+            steps_html = "<ol>" + "".join(
+                f"<li>{html.escape(str(step))}</li>" for step in steps
+            ) + "</ol>" if steps else "Not recorded"
+            out.append(
+                "<tr>"
+                f"<td><span class=\"sev\">{html.escape(str(finding.get('severity') or 'unknown').upper())}</span></td>"
+                f"<td><strong>{html.escape(str(finding.get('title') or 'Untitled finding'))}</strong>"
+                f"<p>{html.escape(str(finding.get('business_impact') or 'Impact not recorded.'))}</p></td>"
+                f"<td>{steps_html}</td>"
+                "</tr>"
+            )
+        return "".join(out)
+
+    # Two sections rather than one list with a column: a client reading a defect report should not
+    # have to check a cell to learn whether the row is something we are saying is broken.
+    rows = _rows(canonical.actionable)
+    info_rows = _rows(canonical.informational)
+    info_section = (
+        '<section class="card"><h2>Informational observations</h2>'
+        '<p class="muted">Recorded because they describe the site, not because we consider them '
+        'defects. They are not counted as actionable findings.</p>'
+        "<table><thead><tr><th>Severity</th><th>Observation</th><th>Where seen</th></tr></thead>"
+        f"<tbody>{info_rows}</tbody></table></section>"
+    ) if info_rows else ""
     # Label each frame by the page it shows. "Open screenshot 2" told the client nothing about what
     # they were about to open, and said "2" even when both links led to the same picture.
     media = "".join(
@@ -362,13 +392,14 @@ border-bottom:1px solid #e8ecf2;text-align:left;vertical-align:top}}.sev{{font-w
 </style></head><body><main>
 <header><p class="muted">Client-ready QA evidence</p><h1>{html.escape(domain)}</h1>
 <p>Completed bounded analysis of public pages. Review the package before sending.</p>
-<div class="metrics"><div class="metric"><strong>{len(findings)}</strong><br>confirmed findings</div>
+<div class="metrics"><div class="metric"><strong>{canonical.confirmed_issue_count}</strong><br>actionable findings</div>
+<div class="metric"><strong>{len(canonical.informational)}</strong><br>informational notes</div>
 <div class="metric"><strong>{len(images)}</strong><br>unique screenshots</div>
 <div class="metric"><strong>{len(videos)}</strong><br>recordings</div></div></header>
-<section class="card"><h2>Findings</h2>
+<section class="card"><h2>Actionable findings</h2>
 <table><thead><tr><th>Severity</th><th>Issue and impact</th><th>How to reproduce</th></tr></thead>
-<tbody>{''.join(rows) or '<tr><td colspan="3">No confirmed issue was recorded.</td></tr>'}</tbody></table>
-</section><section class="card"><h2>Evidence files</h2>
+<tbody>{rows or '<tr><td colspan="3">No actionable issue was recorded.</td></tr>'}</tbody></table>
+</section>{info_section}<section class="card"><h2>Evidence files</h2>
 <div class="links">{media or '<span class="muted">No visual evidence was captured.</span>'}</div>
 {players}
 {video_note}
@@ -390,9 +421,12 @@ def _video_caption(name: str, index: int) -> str:
 
 def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]], videos: int,
              trace_available: bool, omitted: List[Dict[str, Any]]) -> str:
+    from core.scout.actionable import actionable_set
     findings = list(detail.get("findings") or [])
-    actionable = [f for f in findings
-                  if str(f.get("severity") or "").strip().lower() != "info"]
+    # The product's ONE actionability rule, not a local approximation of it. `severity != "info"`
+    # quietly let "informational", "none" and "" through and counted them as defects.
+    canonical = actionable_set(findings)
+    actionable = canonical.actionable
     lines = [
         f"# QA Evidence Summary — {domain}",
         "",
@@ -404,7 +438,7 @@ def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]
         "## Result",
         "",
         f"- Confirmed actionable findings: **{len(actionable)}**",
-        f"- Informational notes: **{len(findings) - len(actionable)}**",
+        f"- Informational notes: **{len(canonical.informational)}**",
         f"- Unique screenshots included: **{len(images)}**",
         *[f"  - `{img['name']}` — {img.get('role') or 'page'}"
           + (f" ({img['url']})" if img.get("url") else "")
@@ -413,12 +447,18 @@ def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]
         *([] if videos else [f"  - {_video_absence_note(detail)}"]),
         f"- Structured browser event trace included: **{'yes' if trace_available else 'no'}**",
         "",
-        "## Findings",
+        "## Actionable findings",
         "",
-        *(_finding_lines(findings) or [
-            "No confirmed problem items were recorded in this bounded analysis."
+        *(_finding_lines(actionable) or [
+            "No actionable problem was recorded in this bounded analysis."
         ]),
         "",
+        *(["## Informational observations",
+           "",
+           "Recorded because they describe the site; they are not counted as actionable findings.",
+           "",
+           *_finding_lines(canonical.informational),
+           ""] if canonical.informational else []),
         "## Evidence notes",
         "",
         "- Each screenshot is a distinct page or state actually visited; a byte-identical capture",
@@ -454,15 +494,22 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
     if not pdir.is_dir() or store.root not in pdir.parents:
         raise ClientEvidenceError("target evidence directory not found")
 
+    from core.scout.actionable import actionable_set
     public_findings = [_public_finding(f) for f in list(detail.get("findings") or [])]
+    # One split, read once, quoted by the README, the report, the CSV, the JSON and the manifest.
+    canonical_public = actionable_set(public_findings)
+    actionable_total = canonical_public.confirmed_issue_count
+    informational_total = len(canonical_public.informational)
     # Split by what a reader is looking for rather than by which artifact we happened to store it
     # in. "network-console-accessibility.json" required knowing our internals to guess what was in
     # it; a client hunting a slow page opens performance-summary.json.
     raw_network = detail.get("network") or {}
     structured: Dict[str, str] = {
         "Evidence/Technical/findings.json": json.dumps(
-            {"schema": "scout-client-findings/v1", "domain": dom,
-             "findings": public_findings},
+            {"schema": "scout-client-findings/v2", "domain": dom,
+             "actionable_count": actionable_total,
+             "informational_count": informational_total,
+             "findings": [{**f, "kind": _finding_kind(f)} for f in public_findings]},
             indent=2, ensure_ascii=False, sort_keys=True),
         "Evidence/Technical/accessibility-summary.json": json.dumps(
             {"schema": "scout-client-accessibility/v1", "domain": dom,
@@ -568,7 +615,8 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
             dom, detail, images=images, videos=len(video_names),
             trace_available=trace_available, omitted=omitted)
         candidate = {
-            "00-README.html": _readme_html(dom, findings=len(public_findings),
+            "00-README.html": _readme_html(dom, findings=actionable_total,
+                                           informational=informational_total,
                                            screenshots=len(image_names),
                                            videos=len(video_names), omitted=omitted),
             "QA-Report.html": _html_summary(dom, detail, images=images, videos=video_names),
@@ -659,7 +707,12 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                 # Building a package is not deciding it may be sent. This stays false in the
                 # artifact itself so a forwarded ZIP cannot imply an approval nobody gave.
                 "approved_for_client_delivery": False,
+                # The same two numbers the README, the report, the CSV and the JSON print. A
+                # manifest that disagrees with the pages it indexes is worse than no manifest.
+                "actionable_findings": actionable_total,
+                "informational_findings": informational_total,
                 "findings": [{"title": f.get("title"), "severity": f.get("severity"),
+                              "kind": _finding_kind(f),
                               "url": f.get("url"),
                               "evidence": [str(ref).rsplit("/", 1)[-1]
                                            for ref in (f.get("evidence_refs") or [])]}

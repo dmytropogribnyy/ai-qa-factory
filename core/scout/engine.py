@@ -388,10 +388,16 @@ class ScoutEngine:
             coverage_record.update(self._flow_coverage(flow_result, "business_flow" in cfg.check_families))
             self.store.save_prospect_artifact(pid, "coverage.json", coverage_record)
 
-            defects = [f for f in verified if f.severity != "info"]
+            # The compact state is what the run-results ROW counts from, while the target card
+            # counts from the canonical split. Writing a private rule over the raw list here made
+            # the two disagree for any target holding a duplicate finding: the row said three, the
+            # card said two, and both were reading the same run.
+            from core.scout.actionable import actionable_set
+            canonical = actionable_set([f.to_dict() for f in verified])
             prospects[pid].update({
                 "status": P_DONE, "priority": scorecard.priority,
-                "verified_findings": len(verified), "verified_defects": len(defects),
+                "verified_findings": canonical.total,
+                "verified_defects": canonical.confirmed_issue_count,
                 "rejected_findings": len(rejected), "evidence_ref": evidence_ref,
                 # Either kind of recording is the prospect's video. A reproduction of a confirmed
                 # finding is the stronger one and wins when both exist.
@@ -401,8 +407,9 @@ class ScoutEngine:
                 "meaningful_pages_tested": coverage_record["meaningful_pages_tested"],
                 "page_stop_reason": coverage_record["page_stop_reason"],
             })
-            self._event("prospect_done", prospect=pid, verified=len(verified),
-                        defects=len(defects), rejected=len(rejected), priority=scorecard.priority)
+            self._event("prospect_done", prospect=pid, verified=canonical.total,
+                        defects=canonical.confirmed_issue_count, rejected=len(rejected),
+                        priority=scorecard.priority)
         finally:
             # Guarantee no temp recording is ever left behind — on an early manual/unreachable/stop
             # return, an exception, or normal completion (a kept clip was already moved out of _vidtmp).

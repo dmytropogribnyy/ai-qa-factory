@@ -58,7 +58,7 @@ def test_pending_prospect_withholds_findings_and_reports_status(tmp_path, monkey
     assert payload["prospect_status"] == "PENDING"
     assert payload["analysis_complete"] is False
     assert "verified" not in json.dumps(payload)            # nowhere in the payload, incl. nested
-    assert "delta.example: delta (high)" not in body        # the leaked title, raw response text
+    assert "delta.example: delta 1 (high)" not in body      # the leaked title, raw response text
     # delta genuinely HAS a findings.json on disk (scout_seam_fixtures.py:72) but never a
     # scorecard.json -- the marker must say so honestly, not collapse both to the same shape.
     _assert_withheld(payload["findings"], artifact_present=True)
