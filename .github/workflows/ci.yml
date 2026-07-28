@@ -270,7 +270,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install mcp starlette uvicorn
+          # PINNED. Unpinned, this line made the gate depend on what PyPI happened to hold that
+          # morning: mcp 2.0.0 shipped on 2026-07-28 and removed `Server.list_tools`, so the relay
+          # server stopped importing and the job failed on a commit whose own CI had been green
+          # hours earlier. 1.28.1 is the exact version of the last green run, verified against this
+          # repository's own server in a clean environment. Migrating to the 2.x API is a separate,
+          # reviewable change; reproducibility is the fix here.
+          pip install "mcp==1.28.1" starlette uvicorn
+      - name: Record the relay transport versions actually installed
+        run: |
+          python -c "import importlib.metadata as m; print('mcp==' + m.version('mcp'))"
+          python -c "import importlib.metadata as m; print('starlette==' + m.version('starlette'))"
+          python -c "import importlib.metadata as m; print('uvicorn==' + m.version('uvicorn'))"
       - name: Relay focused tests
         run: python -m pytest tests/test_review_relay.py -q -ra
       - name: Role separation + runtime 'both' rejected (stdio smoke)
