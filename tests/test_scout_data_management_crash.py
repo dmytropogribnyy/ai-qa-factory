@@ -76,10 +76,20 @@ def test_a_crash_between_staging_and_removal_is_finished_on_restart(out):
 
     # ONE crash leaves three disagreements — files staged, a Trash entry for a run that is gone, and
     # a registry claim on a run nobody can open. A single pass has to settle all of them.
-    assert {r["kind"] for r in outcome["repaired"]} == {
-        "staged", "trash_without_run", "dangling_claim"}
+    #
+    # It settles them as ONE repair, not three: recovery finishes the interrupted delete rather than
+    # merely removing its files, so the Trash entry and the claim are closed by the completion
+    # instead of being swept up afterwards as separate damage. Sweeping them up worked here and left
+    # the retry path — which never reconciles — reporting success over a registry still naming the
+    # run. The repair kinds are therefore asserted alongside the state they must produce.
+    assert {r["kind"] for r in outcome["repaired"]} == {"staged"}
     assert DataManagementStore(out).reconcile()["ok"] is True
     assert not (fresh.run_dir(ACCEPT)).is_dir()
+
+    entry = AnalyzedSiteRegistry(out).get("userlist.com")
+    assert ACCEPT not in list(getattr(entry, "campaign_ids", []) or [])
+    assert [t for t in DataManagementStore(out).tombstones() if t["run_id"] == ACCEPT]
+    assert [i for i in DataManagementStore(out).inventory().runs if i.run_id == ACCEPT] == []
 
 
 def test_recovery_is_idempotent(out):

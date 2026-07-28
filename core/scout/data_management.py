@@ -300,8 +300,10 @@ class DataManagementStore:
         error, so a run that is already gone is reported as already gone.
         """
         # Finish anything a crash left half-done BEFORE deciding what is on disk now, so this pass
-        # sees a settled tree rather than one still holding a previous run's staged remains.
-        self.recover_interrupted_deletes()
+        # sees a settled tree rather than one still holding a previous run's staged remains. A run
+        # completed here IS deleted — reporting it as "not in Trash" would refuse the operator the
+        # very deletion that just finished on their behalf.
+        recovered = set(self.recover_interrupted_deletes())
         state = self._state()
         in_trash = {item["run_id"] for item in state.get("trash", [])}
         deleted, refused, already_gone, reclaimed = [], [], [], 0
@@ -309,6 +311,9 @@ class DataManagementStore:
         for raw in run_ids or []:
             run_id = str(raw or "").strip()
             if not run_id or run_id != self._safe_run(run_id):
+                continue
+            if run_id in recovered:
+                already_gone.append(run_id)      # this call's own recovery just completed it
                 continue
             if run_id not in in_trash:
                 refused.append({"run_id": run_id,
@@ -322,17 +327,35 @@ class DataManagementStore:
                 continue
             directory = self.run_dir(run_id)
             if not directory.is_dir():
+                # The files are gone and the bookkeeping is not: an older build's recovery, or a
+                # directory removed outside the product. Dropping the Trash row and calling the run
+                # "already gone" left the registry naming a run that exists nowhere, inside a result
+                # that reported ok — the inconsistency was discoverable only by reconciling
+                # afterwards. Whatever removed the files, these claims are this store's to release.
                 already_gone.append(run_id)
-                state["trash"] = [i for i in state.get("trash", []) if i["run_id"] != run_id]
+                problems = self._finish_delete(state, self._recorded(None, run_id),
+                                               metadata_known=False)
+                registry_problems.extend({**p, "run_id": run_id} for p in problems)
                 continue
             record = self._describe(run_id, None)
             # ORDER MATTERS. Releasing the dedup entry first and then failing to remove the files
             # leaves a run that exists on disk, is missing from the registry, and can be discovered
             # again as if it had never been scanned. So: make the run unreachable by a recoverable
             # move, complete the irreversible removal, and only then let go of what it owned.
+            #
+            # The record is written down BEFORE any of that. Everything the last step owes — which
+            # sites this run claimed, how much it held — is read from the directory the middle step
+            # destroys, so a crash used to leave a completion that had nothing left to work from.
+            state.setdefault("pending_deletes", []).append(
+                {"run_id": run_id, "record": record.to_dict(), "at": _now()})
+            self._save(state)
             try:
                 staged = self._stage_for_delete(run_id, directory)
             except OSError as exc:
+                # Nothing irreversible happened and the operator is being told so: the intent must
+                # go with it, or a later recovery would carry out a deletion they were told failed.
+                self._drop_pending(state, run_id)
+                self._save(state)
                 refused.append({"run_id": run_id,
                                 "reason": f"the run could not be moved for deletion ({exc.__class__.__name__})"})
                 continue
@@ -340,27 +363,18 @@ class DataManagementStore:
                 self._confined_rmtree(staged, root=self._staging_root())
             except OSError as exc:
                 self._unstage(run_id, staged, directory)     # compensate: put it back untouched
+                self._drop_pending(state, run_id)
+                self._save(state)
                 refused.append({"run_id": run_id,
                                 "reason": f"deletion failed and the run was restored ({exc.__class__.__name__})"})
                 continue
-            # Irreversible removal is done: forget the dedup entries this run is the ONLY source of.
-            # A site that production also scanned keeps its history untouched — only this run's
-            # claim on it goes.
-            problems = self._release_domains(record, run_id)
+            # Irreversible removal is done: close the bookkeeping it owes. The same routine runs in
+            # recovery, so an interrupted delete converges on exactly this state rather than a
+            # cheaper one that merely looks finished.
+            problems = self._finish_delete(state, record)
             registry_problems.extend({**p, "run_id": run_id} for p in problems)
-            state.setdefault("journal", []).append(
-                {"run_id": run_id, "op": "permanent_delete", "at": _now(),
-                 "registry_problems": len(problems)})
-            state["journal"] = state["journal"][-200:]
             reclaimed += record.bytes
             deleted.append(run_id)
-            state["trash"] = [i for i in state.get("trash", []) if i["run_id"] != run_id]
-            # Scope, counts and the moment — never the deleted content itself.
-            state.setdefault("tombstones", []).append({
-                "run_id": run_id, "purpose": record.purpose, "deleted_at": _now(),
-                "sites": len(record.domains), "findings": record.findings,
-                "screenshots": record.screenshots, "videos": record.videos,
-                "bytes_reclaimed": record.bytes})
         self._save(state)
         # The files really are gone, so `deleted` is true — but a deletion that left the registry
         # inconsistent is not a success, and saying so was how a broken dedup state stayed invisible.
@@ -498,6 +512,59 @@ class DataManagementStore:
                                  "reason": f"registry update failed ({type(exc).__name__})"})
         return problems
 
+    @staticmethod
+    def _pending(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return [p for p in (state.get("pending_deletes") or [])
+                if isinstance(p, dict) and p.get("run_id")]
+
+    def _drop_pending(self, state: Dict[str, Any], run_id: str) -> None:
+        state["pending_deletes"] = [p for p in self._pending(state) if p["run_id"] != run_id]
+
+    def _recorded(self, intent: Optional[Dict[str, Any]], run_id: str) -> RunRecord:
+        """Rebuild the record captured before the files went. Fields the dataclass does not own
+        (`purpose_label` is derived) are dropped rather than passed back into it.
+
+        With no record at all the purpose is still recoverable: an operator's classification is an
+        overlay beside the run, not inside it, so it outlives the directory.
+        """
+        raw = dict((intent or {}).get("record") or {})
+        kept = {k: v for k, v in raw.items() if k in RunRecord.__dataclass_fields__}
+        kept["run_id"] = run_id
+        if not kept.get("purpose"):
+            kept["purpose"] = self._purpose(run_id) or PURPOSE_UNCLASSIFIED
+        kept.setdefault("created_at", "")
+        return RunRecord(**kept)
+
+    def _finish_delete(self, state: Dict[str, Any], record: RunRecord, *,
+                       metadata_known: bool = True) -> List[Dict[str, str]]:
+        """Everything a completed removal owes, done from the record instead of from the tree.
+
+        Shared by the delete and by recovery so both converge on ONE state. Recovery used to stop
+        after removing the files, which left the registry claiming a run that existed nowhere and a
+        retry reporting success over it.
+        """
+        run_id = record.run_id
+        # Forget the dedup entries this run is the ONLY source of. A site production also scanned
+        # keeps its history untouched — only this run's claim on it goes.
+        problems = self._release_domains(record, run_id)
+        state.setdefault("journal", []).append(
+            {"run_id": run_id, "op": "permanent_delete", "at": _now(),
+             "registry_problems": len(problems)})
+        state["journal"] = state["journal"][-200:]
+        state["trash"] = [i for i in state.get("trash", []) if i.get("run_id") != run_id]
+        if not any(t.get("run_id") == run_id for t in (state.get("tombstones") or [])):
+            # Scope, counts and the moment — never the deleted content itself. A directory staged by
+            # an older build carries no record, and zeroes would be asserted as facts, so the
+            # tombstone says the counts went with the files.
+            state.setdefault("tombstones", []).append({
+                "run_id": run_id, "purpose": record.purpose, "deleted_at": _now(),
+                "sites": len(record.domains), "findings": record.findings,
+                "screenshots": record.screenshots, "videos": record.videos,
+                "bytes_reclaimed": record.bytes,
+                "metadata": "recorded" if metadata_known else "lost with the files"})
+        self._drop_pending(state, run_id)
+        return problems
+
     def _staging_root(self) -> Path:
         return self._root / "_operator" / _STAGING_NAME
 
@@ -597,20 +664,43 @@ class DataManagementStore:
         return {"ok": not problems, "problems": problems, "repaired": repaired}
 
     def recover_interrupted_deletes(self) -> List[str]:
-        """Finish what a crash left in staging. A staged run is one whose files the operator already
-        confirmed away, so completing the removal is the consistent state — not resurrection."""
+        """Finish what a crash left half-done. A staged run is one whose files the operator already
+        confirmed away, so completing the removal is the consistent state — not resurrection.
+
+        Completing means all of it: remove the files, release the claims, write the tombstone, close
+        Trash and the journal. Stopping after the files was the defect — the retry that followed saw
+        no directory, called the run already gone, and returned success over a registry still naming
+        it. The record captured before the point of no return is what makes the rest possible.
+
+        An intent with the run still whole in the tree is the one shape that is NOT completed: the
+        irreversible step never began, nothing was lost, and a recovery pass must not delete files on
+        a confirmation the operator can simply give again.
+        """
+        state = self._state()
+        pending = {p["run_id"]: p for p in self._pending(state)}
         staging = self._staging_root()
+        staged = {p.name: p for p in sorted(staging.iterdir())
+                  if p.is_dir()} if staging.is_dir() else {}
         finished: List[str] = []
-        if not staging.is_dir():
-            return finished
-        for path in sorted(staging.iterdir()):
-            if not path.is_dir():
-                continue
-            try:
-                self._confined_rmtree(path, root=staging)
-                finished.append(path.name)
-            except OSError:
-                continue
+        changed = False
+        for run_id in sorted(set(pending) | set(staged)):
+            directory = staged.get(run_id)
+            if directory is None:
+                if self.run_dir(run_id).is_dir():
+                    self._drop_pending(state, run_id)     # never started; give the confirmation back
+                    changed = True
+                    continue
+            else:
+                try:
+                    self._confined_rmtree(directory, root=staging)
+                except OSError:
+                    continue      # still on disk: reconcile keeps reporting it rather than lying
+            self._finish_delete(state, self._recorded(pending.get(run_id), run_id),
+                                metadata_known=run_id in pending)
+            finished.append(run_id)
+            changed = True
+        if changed:
+            self._save(state)
         return finished
 
     def _confined_rmtree(self, directory: Path, *, root: Optional[Path] = None) -> None:
@@ -639,6 +729,10 @@ class DataManagementStore:
                 "trash": [i for i in (raw.get("trash") or []) if isinstance(i, dict)
                           and i.get("run_id")],
                 "tombstones": [t for t in (raw.get("tombstones") or []) if isinstance(t, dict)],
+                # Deletions confirmed and past the point of no return, each carrying what its
+                # completion needs after the files it describes are gone.
+                "pending_deletes": [p for p in (raw.get("pending_deletes") or [])
+                                    if isinstance(p, dict) and p.get("run_id")],
                 "journal": [j for j in (raw.get("journal") or []) if isinstance(j, dict)],
                 "classified": {k: v for k, v in (raw.get("classified") or {}).items()
                                if isinstance(v, dict)}}
