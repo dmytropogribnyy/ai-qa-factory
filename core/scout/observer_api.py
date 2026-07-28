@@ -54,6 +54,17 @@ class ObserverError(RuntimeError):
     pass
 
 
+def _observer_build() -> str:
+    """What code THIS Observer process is serving, under its honest name (a process started from a
+    working tree reports ``<sha> + local changes``, never the bare commit)."""
+    try:
+        from core.build_identity import current_identity
+        ident = current_identity()
+        return str(ident.get("running_build") or ident.get("running_sha") or "unknown")
+    except Exception:      # noqa: BLE001 - an unknown build is reported as unknown, never invented
+        return "unknown"
+
+
 # A campaign id must be a single safe path segment (no separators/traversal). Real ids are
 # generated as campaign-<slug>-<stamp>-<hex>, so this never rejects a legitimate id.
 _VALID_CAMPAIGN_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -186,9 +197,18 @@ class ObserverAPI:
 
     def campaign_counts(self) -> Dict[str, Any]:
         """Production vs diagnostic canonical campaign counts — the SAME read model the Dashboard
-        uses (core.scout.canonical_runs.campaign_counts), so Observer and Dashboard never disagree."""
+        uses (core.scout.canonical_runs.campaign_counts), so Observer and Dashboard never disagree.
+
+        Sharing the classifier makes the two agree only while both processes are running the same
+        code. This one is long-lived and started from a terminal, so it can outlive its own source
+        by hours: an Observer left over from before the classifier read a run's declared purpose
+        answered 10/1 where the Dashboard, restarted, answered 5/6 — same disk, same rule, different
+        vintage of it. Neither number looked wrong on its own. So the build is reported here, beside
+        the counts it produced, and a disagreement can be explained instead of investigated.
+        """
         from core.scout.canonical_runs import campaign_counts
-        return {"api_version": OBSERVER_API_VERSION, **campaign_counts(str(self._root))}
+        return {"api_version": OBSERVER_API_VERSION, "build": _observer_build(),
+                **campaign_counts(str(self._root))}
 
     def get_campaign(self, campaign_id: str) -> Dict[str, Any]:
         campaign_id = self._cid(campaign_id)
