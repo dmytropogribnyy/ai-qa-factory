@@ -675,8 +675,9 @@ class PlaywrightBackend:
         Read-only in the sense that matters: no form is submitted, no navigation is followed, and
         whatever was changed is changed back before the recording stops.
         """
-        from core.scout.interaction_scenario import (FIND_CANDIDATE_JS, ScenarioResult,
-                                                     candidate_is_safe)
+        from core.scout.interaction_scenario import (FIND_CANDIDATE_JS, OUTCOME_NOT_APPLICABLE,
+                                                     OUTCOME_NOT_RUN, ScenarioResult,
+                                                     screen_candidate)
         from core.scout.interaction_scenario import classify as classify_scenario
 
         result = ScenarioResult(url=url)
@@ -704,17 +705,22 @@ class PlaywrightBackend:
             video = None
             try:
                 page = context.new_page()
-                page.route("**/*", lambda route: (
-                    route.continue_() if self._url_allowed(
-                        getattr(getattr(route, "request", None), "url", "") or "")
-                    else route.abort()))
+                # Fail closed on the WIRE, not only on the control. Whatever a page does in
+                # response to a click, it may not write to anybody's server: an allow-listed domain
+                # is permission to read it, and same-origin is not an exception to that. A blocked
+                # request is recorded so a refusal can never be mistaken for a quiet success.
+                page.route("**/*", lambda route: self._route_readonly(route, result))
                 page.goto(url, wait_until="load", timeout=timeout_s * 1000)
                 result.steps.append(f"open {url}")
                 self._settle(page, 1.0)
                 candidate = page.evaluate(FIND_CANDIDATE_JS)
-                if not candidate_is_safe(candidate):
-                    result.reason = ("no reversible control that Scout can act on safely was found "
-                                     "on this page")
+                allowed, refusal = screen_candidate(candidate)
+                if not allowed:
+                    # Something WAS found and declined, or nothing qualified at all. Say which:
+                    # "not applicable" carries the refusal, "not_run" means there was nothing here.
+                    result.reason = refusal
+                    result.outcome = (OUTCOME_NOT_APPLICABLE if isinstance(candidate, dict)
+                                      else OUTCOME_NOT_RUN)
                     video = page.video
                     return self._finish_scenario(result, context, browser, vidtmp, video, record_dir)
                 result.scenario = str(candidate["kind"])
@@ -727,7 +733,10 @@ class PlaywrightBackend:
                 result.steps.append(
                     f"record baseline: {self._describe_state(result.scenario, result.baseline)}")
 
-                self._act(page, result, selector, settle_s)
+                if not self._act(page, result, selector, settle_s):
+                    result.outcome = OUTCOME_NOT_APPLICABLE
+                    video = page.video
+                    return self._finish_scenario(result, context, browser, vidtmp, video, record_dir)
                 result.observed = dict(self._measure(page, result, selector))
                 result.steps.append(
                     f"observe result: {self._describe_state(result.scenario, result.observed)}")
@@ -741,7 +750,7 @@ class PlaywrightBackend:
                 result.outcome, result.reason = classify_scenario(
                     result.scenario, result.baseline, result.observed,
                     action_performed=result.action_performed, cleanup_ok=result.cleanup_ok,
-                    navigated_away=navigated)
+                    navigated_away=navigated, blocked_writes=len(result.blocked_requests))
                 self._settle(page, 1.0)          # a beat of the restored page closes the sequence
                 video = page.video
             except Exception as exc:  # noqa: BLE001 - a browser failure keeps no clip and no claim
@@ -753,25 +762,53 @@ class PlaywrightBackend:
                 pass
             return self._finish_scenario(result, context, browser, vidtmp, video, record_dir)
 
-    def _act(self, page, result, selector: str, settle_s: float) -> None:
-        """Perform the one action this scenario is about, and wait for the page to answer."""
+    def _route_readonly(self, route, result) -> None:
+        """Let a read through; refuse anything that would change someone else's data."""
+        from core.scout.interaction_scenario import SAFE_HTTP_METHODS
+        request = getattr(route, "request", None)
+        url = str(getattr(request, "url", "") or "")
+        method = str(getattr(request, "method", "GET") or "GET").upper()
+        if not self._url_allowed(url):
+            route.abort()
+            return
+        if method not in SAFE_HTTP_METHODS:
+            # Recorded, not silently dropped: an operator reading the scenario must be able to see
+            # that the page tried to write and was stopped, rather than wonder why it looked inert.
+            result.blocked_requests.append({"method": method, "url": url[:200]})
+            route.abort()
+            return
+        route.continue_()
+
+    def _act(self, page, result, selector: str, settle_s: float) -> bool:
+        """Perform the one action this scenario is about, and wait for the page to answer.
+
+        Returns False when the action was refused on inspection — the option a select was about to
+        be switched to is screened HERE, because the select passing its own label check says
+        nothing about its contents: a "Plan" dropdown is ordinary until the alternative is
+        "Cancel subscription".
+        """
         from core.scout.interaction_scenario import (SCENARIO_ADD_REMOVE, SCENARIO_FILTER,
-                                                     SCENARIO_SELECT)
+                                                     SCENARIO_SELECT, safe_option)
         target = page.locator(selector).first
         if result.scenario == SCENARIO_FILTER:
             result.action = f"select the {result.control_label or 'filter'} filter"
             self._click_control(page, result, selector)
         elif result.scenario == SCENARIO_ADD_REMOVE:
-            result.action = f"click {result.control_label or 'the add control'}"
+            result.action = f"click {result.control_label}"
             target.click(timeout=8000)
         elif result.scenario == SCENARIO_SELECT:
             options = result.baseline.get("option_labels") or []
             wanted = next((o for o in options if o != result.baseline.get("selected_label")), None)
-            result.action = f"choose {wanted or 'another option'}"
+            allowed, refusal = safe_option(wanted or "")
+            if not allowed:
+                result.reason = refusal
+                return False
+            result.action = f"choose {wanted}"
             target.select_option(label=wanted, timeout=8000)
         result.action_performed = True
         result.steps.append(result.action)
         self._await_change(page, result, selector, result.baseline, settle_s)
+        return True
 
     @staticmethod
     def _measure(page, result, selector: str) -> Dict[str, Any]:

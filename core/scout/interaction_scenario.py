@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from core.scout.public_action_policy import is_irreversible
+from core.scout.public_action_policy import is_irreversible, is_reversible
 
 SCENARIO_FILTER = "reversible_filter"
 SCENARIO_SELECT = "reversible_select"
@@ -43,6 +43,16 @@ SCENARIO_ADD_REMOVE = "reversible_add_remove"
 OUTCOME_DEFECT = "defect"
 OUTCOME_TRACE = "interaction_trace"
 OUTCOME_NOT_RUN = "not_run"
+# Reversibility was not PROVEN. Distinct from not_run ("nothing to do here"): something was found,
+# and the recorder declined it or could not put the page back.
+OUTCOME_NOT_APPLICABLE = "not_applicable"
+
+# The only requests a recorded interaction may cause. A domain sitting in the allow-list is
+# permission to READ it — never permission to change it, and same-origin is not an exception.
+SAFE_HTTP_METHODS = frozenset({"GET", "HEAD"})
+
+_MIN_LABEL_CHARS = 2
+_MAX_LABEL_CHARS = 80
 
 # Only this one may become a finding. The others prove the recorder works, which is not a defect.
 DEFECT_SIGNATURE = "interaction_filter_ineffective"
@@ -68,6 +78,9 @@ class ScenarioResult:
     after_cleanup: Dict[str, Any] = field(default_factory=dict)
     cleanup_ok: bool = False
     steps: List[str] = field(default_factory=list)
+    # Writes the page attempted and the recorder refused. Kept because an operator reading a clip
+    # of a page that did nothing deserves to know it did nothing because it was STOPPED.
+    blocked_requests: List[Dict[str, Any]] = field(default_factory=list)
     video_ref: str = ""
     error: str = ""
 
@@ -93,23 +106,70 @@ class ScenarioResult:
                 "action_performed": self.action_performed, "baseline": dict(self.baseline),
                 "observed": dict(self.observed), "after_cleanup": dict(self.after_cleanup),
                 "cleanup_ok": self.cleanup_ok, "steps": list(self.steps),
+                "blocked_requests": list(self.blocked_requests),
                 "video_ref": self.video_ref, "error": self.error}
 
 
-def candidate_is_safe(candidate: Optional[Dict[str, Any]]) -> bool:
-    """Refuse a control whose own label crosses an irreversible boundary.
+def screen_candidate(candidate: Optional[Dict[str, Any]]) -> tuple:
+    """Decide whether Scout may touch this control at all. Returns ``(allowed, refusal_reason)``.
 
-    The scenario classes here are reversible by construction, but the label is what a human would
-    read, and a "Subscribe" checkbox inside a filter group must never be the thing Scout clicks.
+    Fail-closed, and deliberately not one rule for everything. Positive recognition comes from
+    different places for different controls, and using one criterion for both would either wave
+    through "Add payment method" or refuse every genuine filter:
+
+    * a FILTER or a SELECT is recognised by its SHAPE — a checkbox among siblings on a page that
+      states a result count, a select with real alternatives. Its label is a facet value ("Blue",
+      "Under $50") and could never appear on a list of approved actions, so the label is screened
+      only for being present, readable and not an irreversible boundary.
+    * an ADD control is recognised by its LABEL, because there the label IS the action. A bare
+      "Add" says nothing about what it adds, so it must positively match a known reversible action
+      rather than merely fail to match a forbidden one.
+
+    A control with no label at all is refused outright: nothing about it can be checked, and an
+    unreadable control is exactly the one whose consequences cannot be predicted.
     """
-    if not candidate or candidate.get("kind") not in (
+    if not isinstance(candidate, dict) or candidate.get("kind") not in (
             SCENARIO_FILTER, SCENARIO_SELECT, SCENARIO_ADD_REMOVE):
-        return False
-    return not is_irreversible(str(candidate.get("label") or ""))
+        return False, "no reversible control that Scout can act on safely was found on this page"
+    kind = str(candidate["kind"])
+    label = str(candidate.get("label") or "").strip()
+    if len(label) < _MIN_LABEL_CHARS:
+        return False, "the control has no readable label, so its effect cannot be checked"
+    if len(label) > _MAX_LABEL_CHARS:
+        return False, "the control's label is not a label a person would read"
+    if is_irreversible(label):
+        return False, f"the control's label crosses an irreversible boundary: {label!r}"
+    if kind == SCENARIO_ADD_REMOVE and not is_reversible(label):
+        return False, (f"{label!r} does not name a known reversible action, and an ambiguous "
+                       "control is refused rather than guessed at")
+    side_effect = str(candidate.get("side_effect") or "").strip()
+    if side_effect:
+        return False, side_effect
+    return True, ""
+
+
+def candidate_is_safe(candidate: Optional[Dict[str, Any]]) -> bool:
+    """Boolean form of :func:`screen_candidate`, kept for callers that only need the verdict."""
+    return screen_candidate(candidate)[0]
+
+
+def safe_option(label: str) -> tuple:
+    """Screen the option a select is about to be switched TO.
+
+    The select itself passing the label check says nothing about its contents: a "Plan" dropdown is
+    an ordinary reversible control right up until the option chosen from it is "Cancel subscription".
+    """
+    text = (label or "").strip()
+    if len(text) < _MIN_LABEL_CHARS:
+        return False, "the alternative option has no readable label"
+    if is_irreversible(text):
+        return False, f"the alternative option crosses an irreversible boundary: {text!r}"
+    return True, ""
 
 
 def classify(scenario: str, baseline: Dict[str, Any], observed: Dict[str, Any],
-             *, action_performed: bool, cleanup_ok: bool, navigated_away: bool = False):
+             *, action_performed: bool, cleanup_ok: bool, navigated_away: bool = False,
+             blocked_writes: int = 0):
     """Name what the interaction showed. Returns ``(outcome, reason)``.
 
     The rules are deliberately asymmetric. A control whose own state refuses to change is reported
@@ -122,6 +182,18 @@ def classify(scenario: str, baseline: Dict[str, Any], observed: Dict[str, Any],
         return OUTCOME_NOT_RUN, "the action never ran, so nothing was observed"
     if navigated_away:
         return OUTCOME_NOT_RUN, "the page navigated away, so this was not a same-page interaction"
+    if blocked_writes:
+        # The page tried to write and was stopped, so what happened next is a picture of a page
+        # missing a response it would normally have had. Calling that a defect would report our own
+        # guard as the site's fault.
+        return OUTCOME_NOT_APPLICABLE, (
+            f"the control triggered {blocked_writes} request(s) that would have changed data on the "
+            "site; they were refused, so the result of the interaction cannot be judged")
+    if action_performed and not cleanup_ok:
+        # Reversibility is the licence for touching a stranger's page at all. Unproven, the only
+        # honest outcome is that this scenario did not apply here.
+        return OUTCOME_NOT_APPLICABLE, (
+            "the page could not be verified as restored, so this interaction is not reported")
 
     if scenario == SCENARIO_FILTER:
         if not observed.get("control_engaged"):
@@ -225,6 +297,27 @@ FIND_CANDIDATE_JS = r"""
     return '[' + name + ']';
   };
 
+  // What touching this control would ALSO do. This check was described in a comment here for
+  // months and never actually performed, so a select that submitted its form on change was
+  // indistinguishable from an inert one. A GET form is safe by definition — it is the non-GET
+  // form, the submit button and the inline handler that reach through to somebody's server.
+  const sideEffect = el => {
+    // The PROPERTY, not the attribute: a bare <button> inside a form has no type attribute and is
+    // a submit button anyway, which is exactly the case an attribute check would wave through.
+    const type = String(el.type || el.getAttribute('type') || '').toLowerCase();
+    if (type === 'submit' || type === 'image' || type === 'reset')
+      return 'the control submits or resets a form';
+    for (const attr of ['onchange', 'onclick', 'oninput'])
+      if (/submit\s*\(|\.submit\b/i.test(el.getAttribute(attr) || ''))
+        return 'the control runs an inline handler that submits a form';
+    const f = el.form || el.closest('form');
+    if (!f) return '';
+    if ((f.getAttribute('method') || 'get').toLowerCase() !== 'get')
+      return 'the control is inside a form that does not use GET';
+    if (f.getAttribute('onsubmit')) return 'the surrounding form runs an onsubmit handler';
+    return '';
+  };
+
   // What a person would actually click. A styled checkbox hides the real <input> behind a label
   // or a span, so acting on the input itself either fails or bypasses the site's own handler.
   const clickTargetFor = el => {
@@ -244,7 +337,7 @@ FIND_CANDIDATE_JS = r"""
     const group = boxes.filter(b => !b.checked && !b.disabled && vis(clickTargetFor(b)));
     if (group.length >= 2) {
       const el = group[0];
-      return {kind: 'reversible_filter', label: labelOf(el),
+      return {kind: 'reversible_filter', label: labelOf(el), side_effect: sideEffect(el),
               selector: tag(el, 'data-aiqa-control'),
               click_selector: tag(clickTargetFor(el), 'data-aiqa-click')};
     }
@@ -253,14 +346,15 @@ FIND_CANDIDATE_JS = r"""
   const buttons = Array.from(document.querySelectorAll('button, input[type=button]')).filter(vis);
   const adder = buttons.find(b => /^\s*add\b/i.test(b.textContent || b.value || ''));
   if (adder && !buttons.some(b => /delete|remove/i.test(b.textContent || b.value || ''))) {
-    return {kind: 'reversible_add_remove', label: labelOf(adder),
+    return {kind: 'reversible_add_remove', label: labelOf(adder), side_effect: sideEffect(adder),
             selector: tag(adder, 'data-aiqa-control'),
             click_selector: tag(adder, 'data-aiqa-click')};
   }
   // 3. A select with real alternatives and no submit-on-change form around it.
   const sel = Array.from(document.querySelectorAll('select')).filter(vis).find(
     s => s.options.length >= 2 && !s.multiple && !s.disabled);
-  if (sel) return {kind: 'reversible_select', label: labelOf(sel),
+  if (sel) return {kind: 'reversible_select', label: labelOf(sel), side_effect: sideEffect(sel),
+                   option_labels: Array.from(sel.options).map(o => o.text).slice(0, 12),
                    selector: tag(sel, 'data-aiqa-control'),
                    click_selector: tag(sel, 'data-aiqa-click')};
   return null;
