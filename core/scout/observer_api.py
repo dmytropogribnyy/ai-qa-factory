@@ -166,17 +166,20 @@ class ObserverAPI:
         """Canonical campaigns from _runcontrol. Each row is tagged production/diagnostic via the
         SAME classifier the Dashboard uses (so counts agree). ``include_diagnostics=False`` returns
         only production campaigns; the production/diagnostic totals are always reported."""
-        from core.scout.canonical_runs import is_diagnostic_run
+        from core.scout.canonical_runs import is_diagnostic
         ids = self._campaign_ids()
-        diagnostic_total = sum(1 for cid in ids if is_diagnostic_run(cid))
-        shown = ids if include_diagnostics else [c for c in ids if not is_diagnostic_run(c)]
+        # Classified by what each run DECLARED itself to be, the same way the Dashboard's counters
+        # and Data management do. Classifying by id alone here is how one run got two answers.
+        diagnostic = {cid: is_diagnostic(self.output_dir, cid) for cid in ids}
+        diagnostic_total = sum(1 for cid in ids if diagnostic[cid])
+        shown = ids if include_diagnostics else [c for c in ids if not diagnostic[c]]
         page = shown[offset:offset + max(1, min(limit, 500))]
         rows = []
         for cid in page:
             prog = self.svc.progress(cid)
             rows.append({"campaign_id": cid, "run_state": prog["run_state"],
                          "stop_reason": prog["stop_reason"], "counters": prog["counters"],
-                         "diagnostic": is_diagnostic_run(cid)})
+                         "diagnostic": diagnostic[cid]})
         return {"api_version": OBSERVER_API_VERSION, "total": len(shown), "offset": offset,
                 "limit": limit, "production_total": len(ids) - diagnostic_total,
                 "diagnostic_total": diagnostic_total, "campaigns": redact(rows)}
@@ -243,6 +246,16 @@ class ObserverAPI:
 
     # -- findings + evidence (campaign-scoped, path-confined) -------------------------------------
     def _promoted_runs(self, campaign_id: str) -> List[str]:
+        """The runs whose prospect evidence belongs to this id.
+
+        A discovery campaign holds none of its own — it promotes candidates into their own runs, and
+        following that link is how its evidence is found. A DIRECT run holds its evidence itself,
+        and asking it for promoted children returned an empty list: the evidence manifest reported
+        zero artifacts for a run whose own target page was listing screenshots.
+        """
+        from core.scout.canonical_runs import KIND_DIRECT, run_kind
+        if run_kind(self.output_dir, campaign_id) == KIND_DIRECT:
+            return [campaign_id]
         state = self.svc._discovery_state(campaign_id) or {}
         return [c.get("promoted_scout_run") for c in state.get("candidates", [])
                 if c.get("promoted_scout_run")]

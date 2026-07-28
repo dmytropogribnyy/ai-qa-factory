@@ -380,13 +380,47 @@ class CampaignService:
 
     # -- progress / control ----------------------------------------------------------------------
     def progress(self, campaign_id: str) -> Dict[str, Any]:
+        """Campaign progress — and an explicit refusal when the id does not name a campaign.
+
+        A DIRECT run has no run-control record, so building one for it returned the run-control
+        DEFAULT: queued, empty counters, no timestamps. A finished run therefore read as never
+        started here while Activity and its own target pages showed it complete. The counters a
+        discovery funnel produces do not exist for a supplied list of targets, and reporting them as
+        zero states that nothing was discovered rather than that nothing was ever discoverable.
+        """
+        from core.scout.canonical_runs import (KIND_CAMPAIGN, KIND_DIRECT, NOT_APPLICABLE,
+                                               canonical_run_state)
+        canonical = canonical_run_state(self.output_dir, campaign_id)
+        if canonical["kind"] == KIND_DIRECT:
+            return {
+                "campaign_id": campaign_id,
+                "applicable": False,
+                "not_applicable_reason": (
+                    "this id names a direct Scout run over supplied targets, not a discovery "
+                    "campaign; the discovery funnel counters do not exist for it"),
+                "run_kind": KIND_DIRECT,
+                # The REAL state, from the store that owns it. Never the run-control default.
+                "run_state": canonical["state"],
+                "state_source": canonical["source"],
+                "stop_reason": "",
+                "requested_control": "",
+                "current_company": "",
+                "counters": {k: NOT_APPLICABLE
+                             for k in ("discovered", "eligible", "qa_analyzed", "actionable",
+                                       "already_analyzed", "rejected", "failed")},
+                "budget": {}, "allocation": {}, "decisions": [],
+                "updated_at": canonical["updated_at"],
+            }
         rc = CampaignRunControl(campaign_id, self.output_dir)
         state = self._read(campaign_id, "STATE.json") or self._discovery_state(campaign_id)
         counts = (state or {}).get("counts", {})
         brain = self._read(campaign_id, "BRAIN_DECISIONS.json") or {}
         return {
             "campaign_id": campaign_id,
+            "applicable": True,
+            "run_kind": KIND_CAMPAIGN if canonical["kind"] == KIND_CAMPAIGN else canonical["kind"],
             "run_state": rc.state.state,
+            "state_source": canonical["source"],
             "stop_reason": rc.state.stop_reason or (state or {}).get("stop_reason", ""),
             "requested_control": rc.state.requested_control,
             "current_company": rc.state.checkpoint.current_company,
@@ -742,7 +776,11 @@ class CampaignService:
                 # The counts every surface must agree with, computed once and carried with the
                 # findings they describe.
                 "actionable_summary": canonical.to_dict(),
-                "findings": [_project_target_finding(f) for f in findings],
+                # The LIST is the same collection the COUNTS describe — actionable first, then
+                # informational, duplicates already suppressed. Handing out the raw list beside a
+                # deduplicated count is how a page comes to show more rows than it says it found.
+                "findings": [_project_target_finding(f)
+                             for f in (canonical.actionable + canonical.informational)],
                 "contacts": contacts, "contact_records": contact_records,
                 "draft": draft, "fixability": fixability}
 
