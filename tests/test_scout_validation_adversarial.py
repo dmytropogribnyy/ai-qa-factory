@@ -111,9 +111,13 @@ def _discovery(tmp_path, *, child_purpose="acceptance", child_status="COMPLETED"
 
 def test_an_untouched_run_validates(tmp_path):
     """Without this, every test below would pass on a validator that simply fails everything."""
+    from core.scout.campaign_service import CampaignService
+
     _run(tmp_path)
 
-    report = validate_run(str(tmp_path), "adv-run")
+    # With the read model: a report that never compared the screen to the store is INCOMPLETE by
+    # rule, so a VALIDATED baseline has to supply one.
+    report = validate_run(str(tmp_path), "adv-run", read_model=CampaignService(str(tmp_path)))
 
     assert report.status == "VALIDATED", [c.to_dict() for c in report.problems()]
 

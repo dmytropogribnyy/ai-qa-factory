@@ -577,9 +577,15 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 f'{_badge(report.status.replace("_", " ").title(), verdict_kind)}'
                 f'<p class="muted">{counts.get(PASS, 0)} check(s) passed, '
                 f'{len(problems)} unresolved, '
-                f'{counts.get("NOT_APPLICABLE", 0)} not applicable. Build '
-                f'<code>{_esc(report.build or "unknown")}</code> · purpose '
+                f'{counts.get("NOT_APPLICABLE", 0)} not applicable. Purpose '
                 f'<code>{_esc(report.purpose)}</code>.</p>'
+                # Two builds, never one. They are the same value only when a run is validated by the
+                # code that produced it; showing a single "Build" left the operator reading the
+                # CHECKING build as the one that made the result. A build carrying "+ local changes"
+                # is shown exactly as recorded — a dirty tree is not the commit it started from.
+                f'<p class="muted">Executed by '
+                f'<code>{_esc(report.execution_build or "unknown")}</code> &middot; '
+                f'Validated by <code>{_esc(report.validation_build or "unknown")}</code></p>'
                 f'<div class="scrollx"><table><caption>What was asked for, accepted, and done'
                 f'</caption><thead><tr><th>Setting</th><th>Requested</th><th>Effective</th>'
                 f'<th>Observed</th></tr></thead><tbody>{rows}</tbody></table></div>'

@@ -174,9 +174,10 @@ class DiscoveryEngine:
         # surface with no report on disk to contradict it.
         try:
             from pathlib import Path
+            from core.scout.campaign_service import CampaignService
             from core.scout.run_validation import validate_run
-            validate_run(str(Path(self.store.root).parent.parent), self.store.root.name,
-                         write=True)
+            out = str(Path(self.store.root).parent.parent)
+            validate_run(out, self.store.root.name, write=True, read_model=CampaignService(out))
         except Exception:      # noqa: BLE001 - a missing report never invalidates a real campaign
             pass
         return state

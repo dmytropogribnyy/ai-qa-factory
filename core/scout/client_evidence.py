@@ -43,6 +43,13 @@ _REPRODUCTION_FIELDS = (
     "actual_status", "expected", "actual", "cleanup_ok", "reproduced",
     "reproduction_status", "video_decision", "video_ref",
 )
+# What a recorded interaction is allowed to tell a client: what was touched, what came of it, and
+# proof the page was put back. Never the raw measurements — they are our instrumentation, not the
+# client's evidence, and a clip with no account of its outcome is the thing this prevents.
+_INTERACTION_FIELDS = (
+    "scenario", "outcome", "reason", "url", "control_label", "action",
+    "action_performed", "cleanup_ok", "steps",
+)
 
 
 class ClientEvidenceError(StoreError):
@@ -133,6 +140,22 @@ def _build_identity() -> str:
         return "unknown"
 
 
+def _run_execution_build(output_dir: str, run_id: str) -> str:
+    """The build that PRODUCED this run, read from the run's own stamp — never today's checkout.
+
+    A run recorded before stamping existed carries none, and says so rather than borrowing the
+    packaging build, which would be the same false attribution in a quieter form.
+    """
+    try:
+        from pathlib import Path
+        from core.build_identity import stamped_build
+        state = json.loads((Path(output_dir) / "scout" / str(run_id) / "state.json")
+                           .read_text(encoding="utf-8"))
+        return stamped_build(state.get("execution_build")) or "unknown"
+    except Exception:      # noqa: BLE001 - never let provenance break the deliverable
+        return "unknown"
+
+
 def _finding_kind(finding: Dict[str, Any]) -> str:
     """What a client is looking at: a defect to fix, or an observation about the site.
 
@@ -172,7 +195,7 @@ def _findings_csv(findings: List[Dict[str, Any]]) -> str:
 
 
 def _readme_html(domain: str, *, findings: int, informational: int, screenshots: int, videos: int,
-                 omitted: List[Dict[str, Any]]) -> str:
+                 omitted: List[Dict[str, Any]], interactions: int = 0) -> str:
     """The first thing the client opens: what is in here and which file to read first."""
     dropped = "".join(
         f"<li>{html.escape(str(item.get('name') or 'a file'))} — "
@@ -204,7 +227,11 @@ them.</li>
 <li><strong>{findings}</strong> actionable finding(s) — problems we suggest fixing</li>
 <li><strong>{informational}</strong> informational note(s) — observations, not defects</li>
 <li><strong>{screenshots}</strong> screenshot(s) in <code>Evidence/Screenshots/</code></li>
-<li><strong>{videos}</strong> reproduction video(s) in <code>Evidence/Videos/</code></li>
+<li><strong>{videos}</strong> reproduction video(s) in <code>Evidence/Videos/</code> — a defect
+being reproduced</li>
+<li><strong>{interactions}</strong> recorded interaction(s) — a control being used, with
+<code>Evidence/Technical/interaction.json</code> saying what each one showed. A recorded
+interaction is not a defect unless the report lists one.</li>
 <li>Accessibility, performance, console and network summaries in
 <code>Evidence/Technical/</code></li>
 <li><code>manifest.json</code> — a SHA-256 for every file, so either side can prove nothing was
@@ -424,8 +451,26 @@ def _video_caption(name: str, index: int) -> str:
     return f"Reproduction of a confirmed finding ({index})"
 
 
+def _interaction_note(detail: Dict[str, Any]) -> str:
+    """What the recorded interaction actually showed, in the client's words rather than ours.
+
+    A clip of a control being used says nothing on its own. Shipping it beside a defect list, with
+    no outcome, invites the reading that it IS the defect list moving.
+    """
+    record = detail.get("interaction")
+    if not isinstance(record, dict) or not record:
+        return "a control was recorded being used; see `Evidence/Technical/interaction.json`"
+    reason = str(record.get("reason") or "").strip()
+    control = str(record.get("control_label") or "a control").strip()
+    outcome = str(record.get("outcome") or "").strip()
+    if outcome == "defect":
+        return f"{control}: {reason or 'the control did not do what it says'}"
+    return (f"{control}: this recording is not a defect — "
+            f"{reason or 'the control behaved correctly'}")
+
+
 def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]], videos: int,
-             trace_available: bool, omitted: List[Dict[str, Any]]) -> str:
+             trace_available: bool, omitted: List[Dict[str, Any]], interactions: int = 0) -> str:
     findings = list(detail.get("findings") or [])
     # Partitioned by the carried decision. A local `severity != "info"` rule used to let
     # "informational", "none" and "" through as defects; re-running the canonical split here would
@@ -451,6 +496,8 @@ def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]
           for img in images],
         f"- Reproduction videos included: **{videos}**",
         *([] if videos else [f"  - {_video_absence_note(detail)}"]),
+        f"- Recorded interactions included: **{interactions}**",
+        *([f"  - {_interaction_note(detail)}"] if interactions else []),
         f"- Structured browser event trace included: **{'yes' if trace_available else 'no'}**",
         "",
         "## Actionable findings",
@@ -550,6 +597,14 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
         structured["Evidence/Technical/reproduction.json"] = json.dumps(
             _project_fields(reproduction, _REPRODUCTION_FIELDS),
             indent=2, ensure_ascii=False, sort_keys=True)
+    # A recorded interaction ships with an account of what it showed, or it does not ship. The clip
+    # alone is ambiguous by construction — the same footage backs "the control is broken" and "the
+    # control worked", and only the outcome separates them.
+    interaction = detail.get("interaction")
+    if isinstance(interaction, dict) and interaction:
+        structured["Evidence/Technical/interaction.json"] = json.dumps(
+            _project_fields(interaction, _INTERACTION_FIELDS),
+            indent=2, ensure_ascii=False, sort_keys=True)
     client_trace = _client_trace(pdir)
     if client_trace:
         structured["Evidence/Technical/browser-event-trace.json"] = json.dumps(
@@ -618,15 +673,22 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
     while True:
         image_names = [name for name, _path in binary if "/Screenshots/" in name]
         video_names = [name for name, _path in binary if "/Videos/" in name]
+        # Counted apart, because they are different claims. A reproduction replays a confirmed
+        # defect; a recorded interaction shows a control being used and may have proved nothing was
+        # wrong. Adding them together let a package announce "1 reproduction video" over footage of
+        # a control working correctly.
+        repro_count = sum(1 for name in video_names if "/reproduction-" in name)
+        interaction_count = len(video_names) - repro_count
         images = [{"name": name, **image_meta.get(name, {})} for name in image_names]
         summary = _summary(
-            dom, detail, images=images, videos=len(video_names),
+            dom, detail, images=images, videos=repro_count, interactions=interaction_count,
             trace_available=trace_available, omitted=omitted)
         candidate = {
             "00-README.html": _readme_html(dom, findings=actionable_total,
                                            informational=informational_total,
                                            screenshots=len(image_names),
-                                           videos=len(video_names), omitted=omitted),
+                                           videos=repro_count,
+                                           interactions=interaction_count, omitted=omitted),
             "QA-Report.html": _html_summary(dom, detail, images=images, videos=video_names),
             "Findings.csv": _findings_csv(public_findings),
             "Evidence/Technical/scan-summary.md": summary,
@@ -705,6 +767,12 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                 "domain": dom,
                 "target_id": dom,
                 "run_id": run_id,
+                # TWO builds, because they answer different questions and are routinely different
+                # values. Re-exporting a months-old run stamps today's code on the package; printing
+                # that single number beside the findings attributed them to code that never produced
+                # them. `build` stays as the packaging build so an existing reader keeps working.
+                "execution_build": _run_execution_build(output_dir, run_id),
+                "package_build": _build_identity(),
                 "build": _build_identity(),
                 "generated_at": generated_at,
                 "root": root,

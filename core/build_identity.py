@@ -137,6 +137,20 @@ def execution_identity() -> Dict[str, Any]:
     }
 
 
+def stamped_build(stamp: Any) -> str:
+    """Read a recorded execution stamp as the build's HONEST name, or "" when it records none.
+
+    The stamp keeps two values: the commit, and what the process was actually serving. They differ
+    exactly when the tree had uncommitted edits, which is the case the marker exists for — so every
+    reader must prefer ``build``. Reaching for ``sha`` because it is the tidier value is how a run
+    produced by modified code came to name a clean commit that never produced it, and a reader who
+    checked that commit out could not reproduce the finding.
+    """
+    if not isinstance(stamp, dict):
+        return ""
+    return str(stamp.get("build") or stamp.get("sha") or "")
+
+
 def _running() -> Dict[str, Any]:
     """Return the frozen running identity, capturing it now if the bootstrap never did (e.g. a
     direct library/test caller). Server processes freeze eagerly in ``start_dashboard``."""

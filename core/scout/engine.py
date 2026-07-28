@@ -251,8 +251,13 @@ class ScoutEngine:
         # a report that exists from the moment the run ends is one an operator can be handed rather
         # than one they have to know to ask for.
         try:
+            from core.scout.campaign_service import CampaignService
             from core.scout.run_validation import validate_run
-            validate_run(str(Path(self.store.root).parent.parent), self.store.root.name, write=True)
+            out = str(Path(self.store.root).parent.parent)
+            # WITH the read model: a report that never compares the operator's screen to the store
+            # can reach VALIDATED while the two disagree, and this is the copy nobody asks for.
+            validate_run(out, self.store.root.name, write=True,
+                         read_model=CampaignService(out))
         except Exception:  # noqa: BLE001 - a reconciliation failure never rewrites a finished run
             pass
         return state

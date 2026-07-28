@@ -167,6 +167,23 @@ def safe_option(label: str) -> tuple:
     return True, ""
 
 
+def _site_applied_the_filter(baseline: Dict[str, Any], observed: Dict[str, Any]) -> str:
+    """The site's OWN statement that the filter is in effect, or "" when it made none.
+
+    Scout cannot know what a facet is supposed to exclude, so "the list did not change" is only a
+    defect once the site has claimed the filter is active. Two claims are recognised, both made by
+    the page rather than inferred by us: it moved to a filtered URL, or it started offering a way to
+    clear a filter it was not offering before.
+    """
+    before, after = str(baseline.get("url") or ""), str(observed.get("url") or "")
+    if before and after and before != after:
+        return f"the page moved to {after}"
+    clear_after = str(observed.get("clear_control") or "").strip()
+    if clear_after and not str(baseline.get("clear_control") or "").strip():
+        return f"the page began offering {clear_after!r}"
+    return ""
+
+
 def classify(scenario: str, baseline: Dict[str, Any], observed: Dict[str, Any],
              *, action_performed: bool, cleanup_ok: bool, navigated_away: bool = False,
              blocked_writes: int = 0):
@@ -210,9 +227,23 @@ def classify(scenario: str, baseline: Dict[str, Any], observed: Dict[str, Any],
             return OUTCOME_TRACE, ("the filter narrowed the results, which is correct behaviour — "
                                    "this recording is evidence that the interaction was captured, "
                                    "not a defect")
+        # Nothing changed. Before that can be an accusation, two things have to be TRUE rather than
+        # assumed — and the commonest filter on the web makes the first of them false.
+        apply_control = str(observed.get("apply_control")
+                            or baseline.get("apply_control") or "").strip()
+        if apply_control:
+            return OUTCOME_NOT_APPLICABLE, (
+                f"the page has a separate {apply_control!r} control, so ticking this filter is not "
+                "expected to change the results on its own — nothing is claimed")
+        applied = _site_applied_the_filter(baseline, observed)
+        if not applied:
+            return OUTCOME_NOT_APPLICABLE, (
+                "the page gave no sign that the filter took effect — no filtered URL and no way to "
+                "clear it — so there is nothing to say it should have changed the results")
         return OUTCOME_DEFECT, (
-            f"the {baseline.get('control_label') or 'filter'} filter was applied and accepted, but "
-            f"the result count stayed at {count_after} and the visible results did not change")
+            f"the {baseline.get('control_label') or 'filter'} filter was applied and accepted "
+            f"({applied}), but the result count stayed at {count_after} and the visible results did "
+            "not change")
 
     if scenario == SCENARIO_SELECT:
         if baseline.get("selected_label") == observed.get("selected_label"):
@@ -417,10 +448,34 @@ MEASURE_JS = r"""
   if (items) items = [String(best)].concat(items);   // the SIZE of the collection matters too
   const removable = Array.from(document.querySelectorAll('button, input[type=button]')).filter(
     e => vis(e) && /delete|remove/i.test(e.textContent || e.value || '')).length;
+  // What the page says about applying and clearing filters. Both are read from the page rather
+  // than assumed about it: the first says this control was never meant to act on its own, the
+  // second is the page stating that a filter is now in effect.
+  const labelOfControl = e => ((e.textContent || e.value || '')
+    .replace(/\s+/g, ' ').trim().slice(0, 80));
+  const clickable = root => Array.from(root.querySelectorAll(
+    'button, input[type=submit], input[type=button], a[role=button]')).filter(vis);
+  const clearing = clickable(document).find(
+    e => /clear|reset|remove filter/i.test(labelOfControl(e)) && /filter|all/i.test(
+      labelOfControl(e)));
   const out = {result_count: count, item_signature: items, removable_count: removable,
-               url: location.href};
+               url: location.href,
+               clear_control: clearing ? labelOfControl(clearing) : ''};
   if (el) {
     if (el.type === 'checkbox') out.control_engaged = !!el.checked;
+    // The submit-style control this checkbox belongs WITH, if any. Scoped to the control's own
+    // form or filter region so a "Search" box in the site header is not mistaken for this
+    // filter's Apply button.
+    const scope = el.form || el.closest(
+      'form, fieldset, [role=group], [class*=filter], [id*=filter]') || null;
+    if (scope) {
+      const applyer = clickable(scope).find(
+        e => e !== el && /appl|update|show result|refine|^\s*go\s*$|^\s*search\s*$|submit/i.test(
+          labelOfControl(e)));
+      out.apply_control = applyer ? labelOfControl(applyer) : '';
+    } else {
+      out.apply_control = '';
+    }
     if (el.tagName === 'SELECT') {
       out.selected_label = (el.options[el.selectedIndex] || {}).text || '';
       out.selected_value = el.value;

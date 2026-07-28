@@ -86,9 +86,13 @@ def _fully_evidenced(tmp_path):
 
 
 def test_a_clean_run_validates_and_says_what_it_checked(tmp_path):
+    """WITH a read model, because agreement between the store and the screen is not optional: a
+    validation that never looked at the derived layer cannot report VALIDATED."""
+    from core.scout.campaign_service import CampaignService
+
     _fully_evidenced(tmp_path)
 
-    report = validate_run(str(tmp_path), "acc-run")
+    report = validate_run(str(tmp_path), "acc-run", read_model=CampaignService(str(tmp_path)))
 
     assert report.validated is True
     assert report.status == "VALIDATED"
@@ -384,9 +388,11 @@ def _discovery(tmp_path, *, promoted="camp-1-promo-01"):
 def test_a_discovery_campaign_is_validated_through_the_runs_it_promoted(tmp_path):
     """Validating only the campaign directory found no targets and reported UNKNOWN for work that
     had in fact been done one level down."""
+    from core.scout.campaign_service import CampaignService
+
     _discovery(tmp_path)
 
-    report = validate_run(str(tmp_path), "camp-1")
+    report = validate_run(str(tmp_path), "camp-1", read_model=CampaignService(str(tmp_path)))
 
     assert _check(report, "browser_receipt").status == PASS
     assert _check(report, "evidence_existence_hashes").status == PASS

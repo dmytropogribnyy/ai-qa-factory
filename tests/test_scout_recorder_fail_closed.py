@@ -204,9 +204,15 @@ def test_an_unverified_restore_is_not_applicable_rather_than_a_trace():
 
 
 def test_a_clean_reversible_filter_still_reaches_its_verdict():
-    """The guards must not swallow the outcome they exist to protect."""
+    """The guards must not swallow the outcome they exist to protect.
+
+    The page states the filter is now in effect — it offers to clear it — and returns the same ten
+    results. That pair is the defect; an unchanged list on its own is not (see
+    tests/test_scout_interaction_oracle.py).
+    """
     outcome, _reason = classify(SCENARIO_FILTER, {"result_count": 10, "control_label": "Blue"},
-                                {"result_count": 10, "control_engaged": True},
+                                {"result_count": 10, "control_engaged": True,
+                                 "clear_control": "Clear all filters"},
                                 action_performed=True, cleanup_ok=True)
 
     assert outcome == "defect"

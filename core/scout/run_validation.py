@@ -62,7 +62,7 @@ class Check:
 class RunValidation:
     run_id: str
     generated_at: str
-    build: str = ""              # the build that is VALIDATING
+    build: str = ""              # the build that is VALIDATING (kept: the original key name)
     execution_build: str = ""    # the build that RAN the work; re-validation must never overwrite it
     purpose: str = ""
     layers: Dict[str, Any] = field(default_factory=dict)
@@ -92,9 +92,18 @@ class RunValidation:
     def problems(self) -> List[Check]:
         return [c for c in self.checks if c.status in (FAIL, PARTIAL, UNKNOWN)]
 
+    @property
+    def validation_build(self) -> str:
+        """The build that CHECKED the run. Named explicitly because ``build`` alone cannot say which
+        of the two it is, and a machine consumer choosing between them was left guessing."""
+        return self.build
+
     def to_dict(self) -> Dict[str, Any]:
         return {"schema": SCHEMA, "run_id": self.run_id, "generated_at": self.generated_at,
-                "build": self.build, "execution_build": self.execution_build,
+                # Both names for the same value: the explicit one to read, the original one kept so
+                # a consumer written against the earlier shape does not break.
+                "validation_build": self.validation_build, "build": self.build,
+                "execution_build": self.execution_build,
                 "purpose": self.purpose, "status": self.status,
                 "validated": self.validated, "counts": self.counts, "layers": self.layers,
                 "checks": [c.to_dict() for c in self.checks]}
@@ -167,11 +176,10 @@ class _Evidence:
         one fact a disputed finding needs: which code produced it. A run that recorded nothing is
         UNKNOWN, and stays UNKNOWN — an absent SHA is never filled in from the environment.
         """
-        stamp = (self.state or {}).get("execution_build")
-        if isinstance(stamp, dict):
-            value = str(stamp.get("sha") or stamp.get("build") or "")
-            if value:
-                return value
+        from core.build_identity import stamped_build
+        value = stamped_build((self.state or {}).get("execution_build"))
+        if value:
+            return value
         for source in (self.state, self.config):
             for key in ("build", "running_sha", "build_sha", "running_build"):
                 value = str((source or {}).get(key) or "")
@@ -180,7 +188,9 @@ class _Evidence:
         return UNKNOWN
 
     def child_execution_builds(self) -> Dict[str, str]:
-        """Each promoted child's own stamp, kept apart from the parent's."""
+        """Each promoted child's own stamp, kept apart from the parent's — and just as honest about
+        having been produced by a modified tree."""
+        from core.build_identity import stamped_build
         out: Dict[str, str] = {}
         for child in self.promoted:
             try:
@@ -189,8 +199,7 @@ class _Evidence:
                         encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            stamp = child_state.get("execution_build")
-            out[child] = (str(stamp.get("sha") or "") if isinstance(stamp, dict) else "") or UNKNOWN
+            out[child] = stamped_build(child_state.get("execution_build")) or UNKNOWN
         return out
 
     @property
@@ -280,6 +289,15 @@ def validate_run(output_dir: str, run_id: str, *, write: bool = False,
     report.checks.append(_check_execution_build(ev))
     if read_model is not None:
         report.checks.append(_check_surface_agreement(ev, read_model))
+    else:
+        # Absent is not the same as passed. Leaving the check OUT let the store and the operator's
+        # screen disagree inside a report that still read VALIDATED — and the report a run writes
+        # for itself, the one most likely to be read unattended, was exactly the one omitting it.
+        report.checks.append(Check(
+            "surface_agreement", UNKNOWN,
+            expected="the read model agrees with the store",
+            observed="no read model was supplied to this validation",
+            explanation="what the operator is shown was never compared with what the store holds"))
     if write:
         _write_report(ev, report)
     return report
@@ -296,9 +314,12 @@ def _write_report(ev: _Evidence, report: RunValidation) -> None:
 
 
 def _build_marker() -> str:
+    """The build doing the VALIDATING, under its honest name. A report written from a modified tree
+    is not evidence produced by the commit it would otherwise name."""
     try:
         from core.build_identity import current_identity
-        return str(current_identity().get("running_sha") or "")
+        ident = current_identity()
+        return str(ident.get("running_build") or ident.get("running_sha") or "")
     except Exception:  # noqa: BLE001 - an unknown build is reported as unknown, never invented
         return ""
 
