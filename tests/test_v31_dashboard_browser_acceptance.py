@@ -503,7 +503,12 @@ def test_mobile_work_shows_cards_not_squeezed_table(tmp_path):
             assert cards_visible >= 1 and table_visible == 0
             # The card exposes identity + a next action, and search/filters remain.
             assert page.locator(".cards.only-mobile a").first.is_visible()
-            assert page.get_by_role("button", name="Filter") or True
+            # A locator object is always truthy, so the previous `... or True` asserted nothing at
+            # all — and what it named does not exist on this page: /work filters by a Status select
+            # and an Apply button, while the button called "Filter" belongs to /data. What matters
+            # is that filtering survives the mobile layout and can still be operated.
+            assert page.locator("#work_status").is_visible()
+            assert page.get_by_role("button", name="Apply").count() >= 1
             browser.close()
     finally:
         server.shutdown()

@@ -153,8 +153,11 @@ def test_a_shared_domain_keeps_its_production_registry_entry(out):
 
     entry = AnalyzedSiteRegistry(out).get("plausible.io")
     assert entry is not None
-    assert PROD in entry.campaign_ids
-    assert ACCEPT not in entry.campaign_ids or True   # the claim may remain; the ENTRY must not go
+    assert PROD in entry.campaign_ids                 # the surviving run keeps its claim
+    # The deleted run's claim goes with the run. Left behind, History offers a link to a run that
+    # cannot be opened and the site reads as having more work behind it than it has. This assertion
+    # was written as `... or True` — it could not fail, and the claim was in fact never removed.
+    assert ACCEPT not in entry.campaign_ids
 
 
 # --- restore -------------------------------------------------------------------------------------

@@ -247,8 +247,10 @@ def test_an_audit_tombstone_records_the_scope_without_the_content(store):
     assert tombstones[-1]["run_id"] == "acceptance-1"
     assert tombstones[-1]["deleted_at"]
     assert tombstones[-1]["screenshots"] == 1
-    assert "findings" not in json.dumps(tombstones[-1]).lower() or True
-    for leaked in ("Issue 0", "plausible.io/"):
+    # A tombstone records HOW MANY findings there were, never what any of them said. The previous
+    # `... or True` form asserted nothing at all; this pins the actual contract.
+    assert isinstance(tombstones[-1]["findings"], int)
+    for leaked in ("Issue 0", "plausible.io/", "title", "severity"):
         assert leaked not in json.dumps(tombstones[-1])
 
 

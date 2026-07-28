@@ -299,9 +299,13 @@ class DataManagementStore:
         Idempotent on purpose: an interrupted cleanup that is retried must converge rather than
         error, so a run that is already gone is reported as already gone.
         """
+        # Finish anything a crash left half-done BEFORE deciding what is on disk now, so this pass
+        # sees a settled tree rather than one still holding a previous run's staged remains.
+        self.recover_interrupted_deletes()
         state = self._state()
         in_trash = {item["run_id"] for item in state.get("trash", [])}
         deleted, refused, already_gone, reclaimed = [], [], [], 0
+        registry_problems: List[Dict[str, str]] = []
         for raw in run_ids or []:
             run_id = str(raw or "").strip()
             if not run_id or run_id != self._safe_run(run_id):
@@ -342,9 +346,11 @@ class DataManagementStore:
             # Irreversible removal is done: forget the dedup entries this run is the ONLY source of.
             # A site that production also scanned keeps its history untouched — only this run's
             # claim on it goes.
-            self._release_domains(record, run_id)
+            problems = self._release_domains(record, run_id)
+            registry_problems.extend({**p, "run_id": run_id} for p in problems)
             state.setdefault("journal", []).append(
-                {"run_id": run_id, "op": "permanent_delete", "at": _now()})
+                {"run_id": run_id, "op": "permanent_delete", "at": _now(),
+                 "registry_problems": len(problems)})
             state["journal"] = state["journal"][-200:]
             reclaimed += record.bytes
             deleted.append(run_id)
@@ -356,8 +362,11 @@ class DataManagementStore:
                 "screenshots": record.screenshots, "videos": record.videos,
                 "bytes_reclaimed": record.bytes})
         self._save(state)
-        return {"ok": True, "deleted": deleted, "refused": refused,
-                "already_gone": already_gone, "bytes_reclaimed": reclaimed}
+        # The files really are gone, so `deleted` is true — but a deletion that left the registry
+        # inconsistent is not a success, and saying so was how a broken dedup state stayed invisible.
+        return {"ok": not registry_problems, "deleted": deleted, "refused": refused,
+                "already_gone": already_gone, "bytes_reclaimed": reclaimed,
+                "registry_problems": registry_problems}
 
     # -- internals -------------------------------------------------------------------------------
 
@@ -442,26 +451,52 @@ class DataManagementStore:
                 for run in self.inventory().runs if run.purpose == purpose
                 for domain in run.domains}
 
-    def _release_domains(self, record: RunRecord, run_id: str) -> None:
-        """Drop dedup entries this run alone is responsible for; leave shared ones alone.
+    def _release_domains(self, record: RunRecord, run_id: str) -> List[Dict[str, str]]:
+        """Drop what this run alone justified; keep what other runs still stand behind.
 
-        A site that production also scanned keeps its history, its evidence and its registry entry —
-        only this run's claim on it is removed. A site that exists solely because of the test run
-        loses its entry, because otherwise dedup would silently block a genuine scan of it later.
+        Two failures this used to have. A SHARED site kept the deleted run's id in its
+        ``campaign_ids`` — History then offered a link to a run that cannot be opened, and the site
+        looked as though more work stood behind it than did. And every registry failure was
+        swallowed, so a deletion that left the registry inconsistent still reported success; the
+        problems are returned now and travel back to the caller.
         """
+        problems: List[Dict[str, str]] = []
         try:
             from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry
             registry = AnalyzedSiteRegistry(self.output_dir)
-            for domain in record.domains:
+        except Exception as exc:      # noqa: BLE001 - reported, never silently accepted
+            return [{"domain": "*", "reason": f"the registry could not be opened "
+                                              f"({type(exc).__name__})"}]
+        # Every site this run has a CLAIM on, not only the ones its own prospects visited. A run can
+        # be recorded against a domain it never held as a prospect — a curated import registers the
+        # analysis, a target fails after registration — and sweeping only `record.domains` left those
+        # claims pointing at a run that no longer exists.
+        targets = set(record.domains)
+        try:
+            for entry in registry.all():
+                if run_id in (getattr(entry, "campaign_ids", []) or []):
+                    targets.add(getattr(entry, "domain", ""))
+        except Exception as exc:      # noqa: BLE001 - reported, never silently accepted
+            problems.append({"domain": "*",
+                             "reason": f"the registry could not be listed ({type(exc).__name__})"})
+        for domain in sorted(d for d in targets if d):
+            try:
                 entry = registry.get(domain)
                 if entry is None:
                     continue
                 others = [c for c in (getattr(entry, "campaign_ids", []) or []) if c != run_id]
                 if others:
-                    continue                  # another run still stands behind this site
-                registry.forget(domain, confirm=True)
-        except Exception:      # noqa: BLE001 - bookkeeping must not abort a confirmed deletion
-            pass
+                    # Another run still stands behind this site: keep the entry and its history,
+                    # drop only the claim that belonged to the run being deleted.
+                    registry.release_campaign(domain, run_id)
+                    continue
+                if not registry.forget(domain, confirm=True):
+                    problems.append({"domain": domain,
+                                     "reason": "the registry refused to forget the site"})
+            except Exception as exc:      # noqa: BLE001 - one bad domain never aborts the rest
+                problems.append({"domain": domain,
+                                 "reason": f"registry update failed ({type(exc).__name__})"})
+        return problems
 
     def _staging_root(self) -> Path:
         return self._root / "_operator" / _STAGING_NAME
@@ -483,6 +518,83 @@ class DataManagementStore:
                 os.rename(staged, original)
         except OSError:
             pass          # the run is still whole in staging; recovery reports it rather than lying
+
+    def reconcile(self, *, repair: bool = False) -> Dict[str, Any]:
+        """Compare the four places a deletion touches and report where they disagree.
+
+        A permanent delete writes, in this order: stage the files out of the tree, remove them,
+        release the registry claims, then update Trash and the journal. Because the order is fixed,
+        a crash can only leave one of a few KNOWN shapes — and naming those shapes is what turns
+        recovery into a decision instead of a guess:
+
+        * files still in staging — the operator confirmed them away and the removal did not finish;
+        * a Trash entry for a run whose directory is gone — the delete completed and the bookkeeping
+          did not;
+        * a registry claim naming a run that exists in neither the tree nor Trash — history pointing
+          at a run nobody can open.
+
+        With ``repair`` it converges each of them; without, it only reports, so the same routine can
+        answer "is this store consistent?" without changing anything.
+        """
+        problems: List[Dict[str, str]] = []
+        repaired: List[Dict[str, str]] = []
+
+        def _staged_now() -> List[str]:
+            root = self._staging_root()
+            return [p.name for p in sorted(root.iterdir()) if p.is_dir()] if root.is_dir() else []
+
+        staged = _staged_now()
+        for run_id in staged:
+            problems.append({"run_id": run_id, "kind": "staged",
+                             "reason": "a confirmed deletion did not finish"})
+        # Repaired in the SAME order the delete writes, so one pass converges. Fixing staging and
+        # then judging Trash against the pre-repair picture is what made recovery need two runs —
+        # and a store that needs recovering twice is a store nobody can call settled.
+        if repair and staged:
+            repaired += [{"run_id": r, "kind": "staged", "action": "deletion completed"}
+                         for r in self.recover_interrupted_deletes()]
+            staged = _staged_now()
+
+        state = self._state()
+        live_trash = []
+        for item in state.get("trash", []):
+            run_id = str(item.get("run_id") or "")
+            if run_id and not self.run_dir(run_id).is_dir() and run_id not in staged:
+                problems.append({"run_id": run_id, "kind": "trash_without_run",
+                                 "reason": "Trash holds a run whose files are already gone"})
+                if repair:
+                    repaired.append({"run_id": run_id, "kind": "trash_without_run",
+                                     "action": "trash entry dropped"})
+                    continue
+            live_trash.append(item)
+
+        # The claims are judged against what Trash will hold AFTER this pass; otherwise a claim
+        # belonging to an entry dropped a moment ago survives until the next restart.
+        known = {str(i.get("run_id") or "") for i in (live_trash if repair else state.get("trash", []))}
+        try:
+            from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry
+            registry = AnalyzedSiteRegistry(self.output_dir)
+            for entry in registry.all():
+                domain = getattr(entry, "domain", "")
+                for claim in list(getattr(entry, "campaign_ids", []) or []):
+                    if self.run_dir(claim).is_dir() or claim in known or claim in staged:
+                        continue
+                    problems.append({"run_id": claim, "kind": "dangling_claim",
+                                     "reason": f"{domain} still names a run that no longer exists"})
+                    if repair and registry.release_campaign(domain, claim):
+                        repaired.append({"run_id": claim, "kind": "dangling_claim",
+                                         "action": f"claim on {domain} released"})
+        except Exception as exc:      # noqa: BLE001 - reported, never silently accepted
+            problems.append({"run_id": "*", "kind": "registry",
+                             "reason": f"the registry could not be read ({type(exc).__name__})"})
+
+        if repair and repaired:
+            state["trash"] = live_trash
+            state.setdefault("journal", []).append(
+                {"op": "reconcile", "at": _now(), "repaired": len(repaired)})
+            state["journal"] = state["journal"][-200:]
+            self._save(state)
+        return {"ok": not problems, "problems": problems, "repaired": repaired}
 
     def recover_interrupted_deletes(self) -> List[str]:
         """Finish what a crash left in staging. A staged run is one whose files the operator already

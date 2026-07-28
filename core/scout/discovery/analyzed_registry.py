@@ -246,6 +246,22 @@ class AnalyzedSiteRegistry:
         self._save()
         return True
 
+    def release_campaign(self, url_or_domain: str, campaign_id: str) -> bool:
+        """Drop ONE run's claim on a site the run no longer exists to justify.
+
+        A deleted run whose id stayed in ``campaign_ids`` leaves the entry pointing at a run that
+        cannot be opened: History offers a link to nothing, and the site looks as though more work
+        stands behind it than does. Claims belonging to runs that still exist are untouched — this
+        is the shared-domain case, where forgetting the whole entry would erase real history.
+        """
+        domain = canonical_domain(url_or_domain)
+        entry = self._entries.get(domain)
+        if entry is None or campaign_id not in (entry.campaign_ids or []):
+            return False
+        entry.campaign_ids = [c for c in entry.campaign_ids if c != campaign_id]
+        self._save()
+        return True
+
     def set_engagement(self, url_or_domain: str, status: str, *, work_id: str = "",
                        confirm: bool = False) -> bool:
         """Advance the sales-funnel status of a known target (prospect->contacted->replied->won->

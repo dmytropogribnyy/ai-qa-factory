@@ -112,5 +112,19 @@ def test_discovery_does_not_touch_outreach_or_kill_switch(tmp_path, monkeypatch)
     # A discovery run promotes nothing to outreach and sends nothing; the external-send guard is
     # not toggled by discovery (kill switch stays as-is / disabled).
     assert state["counts"].get("promoted", 0) <= 10
-    blob = json.dumps(state)
-    assert "send" not in blob.lower() or "outreach" not in blob.lower() or True  # no comms invoked
+    # The old `A or B or True` form was a tautology and could not fail. What the test actually
+    # means: discovery records no message having been prepared or sent. Matched on KEYS, because
+    # a substring scan finds "sent" inside "present" and fails on a scorecard reason.
+    def _keys(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                yield str(key).lower()
+                yield from _keys(value)
+        elif isinstance(node, list):
+            for item in node:
+                yield from _keys(item)
+
+    comms_keys = {"sent", "sent_at", "delivered", "email_sent", "outreach", "outreach_sent",
+                  "message_id", "recipient", "to_address"}
+    leaked = comms_keys & set(_keys(state))
+    assert not leaked, f"discovery state carries comms bookkeeping: {sorted(leaked)}"
