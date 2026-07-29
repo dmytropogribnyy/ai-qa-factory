@@ -336,7 +336,10 @@ def test_a_promoted_child_that_declares_another_purpose_is_caught(tmp_path):
 
 def _package(tmp_path, run_id, files, *, root="t1.example-qa-evidence-20260728",
              tamper=None, unlisted=None):
-    export = Path(tmp_path) / "scout" / "_client_exports" / run_id
+    # Hand-crafted hostile ZIPs, but at the CANONICAL export location — the directory the real
+    # builder resolves. A tampered package planted where the validator never looks proves nothing.
+    from core.scout.client_evidence import client_export_dir
+    export = client_export_dir(str(tmp_path), run_id)
     export.mkdir(parents=True, exist_ok=True)
     entries = [{"path": name, "bytes": len(body), "mime": "text/plain",
                 "sha256": hashlib.sha256(body).hexdigest()} for name, body in files.items()]
@@ -411,8 +414,9 @@ def test_a_package_carrying_a_local_path_is_caught(tmp_path):
 
 def test_a_package_that_scatters_its_files_is_caught(tmp_path):
     """One root folder, the one the manifest names: a flat ZIP unpacks over the client's desktop."""
+    from core.scout.client_evidence import client_export_dir
     _run(tmp_path)
-    export = Path(tmp_path) / "scout" / "_client_exports" / "adv-run"
+    export = client_export_dir(str(tmp_path), "adv-run")
     export.mkdir(parents=True, exist_ok=True)
     body = b"<p>ok</p>"
     manifest = {"root": "declared-root", "entries": [
@@ -425,6 +429,40 @@ def test_a_package_that_scatters_its_files_is_caught(tmp_path):
 
     assert check.status == FAIL
     assert check.observed["roots"] == ["elsewhere"]
+
+
+def test_the_package_the_real_builder_writes_is_the_package_validation_checks(tmp_path):
+    """The builder exports into client_export_dir() — a slug-and-hash directory — while a validator
+    that globs a folder named after the raw run id audits a place nothing ever writes to. Then every
+    real deliverable reads NOT_APPLICABLE and a tampered one still validates. The two sides must
+    resolve the SAME directory: the genuine package is seen (PASS), and corrupting one member of
+    that exact ZIP fails the run."""
+    from core.scout.campaign_service import CampaignService
+    from core.scout.client_evidence import client_export_dir
+
+    _run(tmp_path)
+    result = CampaignService(str(tmp_path)).export_client_evidence("t1.example", run="adv-run")
+    built = Path(result["path"])
+    assert built.parent == client_export_dir(str(tmp_path), "adv-run")
+
+    check = _check(validate_run(str(tmp_path), "adv-run"), "client_package")
+    assert check.status == PASS, check.to_dict()
+
+    # Corrupt one member in place; the manifest beside it still promises the original hash.
+    with zipfile.ZipFile(built) as archive:
+        blobs = {n: archive.read(n) for n in archive.namelist()}
+    victim = next(n for n in blobs if n.endswith("QA-Report.html"))
+    blobs[victim] = b"<p>quietly replaced after export</p>"
+    with zipfile.ZipFile(built, "w") as archive:
+        for name, body in blobs.items():
+            archive.writestr(name, body)
+
+    report = validate_run(str(tmp_path), "adv-run")
+    check = _check(report, "client_package")
+
+    assert check.status == FAIL
+    assert any(row.get("reason") == "hash mismatch" for row in check.observed)
+    assert report.status != "VALIDATED"
 
 
 # --- the build that ran is not the build that checked ---------------------------------------------

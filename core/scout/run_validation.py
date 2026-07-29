@@ -935,7 +935,12 @@ def _check_cleanup(ev: _Evidence) -> Check:
 
 def _check_client_package(ev: _Evidence) -> Check:
     """"Generated" with no ZIP and "not generated" beside one are equally wrong."""
-    export = Path(ev.output_dir) / "scout" / "_client_exports" / ev.run_id
+    # The ONE directory-resolution function the builder uses. A validator that spells the path
+    # itself — here it was the raw run id where the builder writes slug-hash12 — audits a folder
+    # nothing writes to, and every real deliverable reads "no package" while a tampered one
+    # still validates.
+    from core.scout.client_evidence import client_export_dir
+    export = client_export_dir(ev.output_dir, ev.run_id)
     zips = sorted(export.glob("*.zip")) if export.is_dir() else []
     if not zips:
         return Check("client_package", NOT_APPLICABLE, expected="a package only when exported",
