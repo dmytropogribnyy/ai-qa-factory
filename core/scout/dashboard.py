@@ -3989,6 +3989,27 @@ function startCampaign(){{
                     state = {}
             prospects = state.get("prospects", {}) or {}
             if not run_id or not prospects:
+                # A discovery campaign holds no prospect evidence of its own: each promoted
+                # candidate was analyzed in its own run, and everything found belongs to THAT run.
+                # "No results" here would be literally false — the results exist, one link away. So
+                # the parent names and links its promoted children; nothing is copied into the
+                # parent, and provenance stays with the run that earned it.
+                promoted = [c for c in (state.get("candidates") or [])
+                            if isinstance(c, dict) and c.get("promoted_scout_run")]
+                if promoted:
+                    links = "".join(
+                        f'<li><a href="/scout/run?id={_esc(str(c.get("promoted_scout_run")))}">'
+                        f'{_esc(str(c.get("registrable_domain") or c.get("promoted_scout_run")))}'
+                        f'</a> <span class="muted">(run '
+                        f'<code>{_esc(str(c.get("promoted_scout_run")))}</code>)</span></li>'
+                        for c in promoted)
+                    body = (
+                        '<h1>Run results</h1>'
+                        f'<div class="card"><p><b>This discovery campaign holds no results of its '
+                        f'own.</b></p><p>It promoted {len(promoted)} candidate site(s) into '
+                        'dedicated analysis run(s). The results belong to those runs and open '
+                        f'there:</p><ul>{links}</ul></div>')
+                    return _page("AI QA Factory — Run results", "/scout", body)
                 return _page("AI QA Factory — Run results", "/scout",
                              f'<h1>Run results</h1><div class="card empty muted">No results for run '
                              f'<code>{_esc(run_id)}</code>.</div>')
