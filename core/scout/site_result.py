@@ -89,15 +89,15 @@ class SiteResult:
                 "can_draft_outreach": self.can_draft_outreach}
 
 
-def _is_actionable(finding: Dict[str, Any]) -> bool:
-    return str(finding.get("severity") or "").strip().lower() not in ("info", "informational", "")
-
-
 def site_result(detail: Dict[str, Any]) -> SiteResult:
     """Turn one ``target_detail`` read model into the verdict shown wherever the site appears."""
     detail = detail or {}
-    findings = list(detail.get("findings") or [])
-    actionable = [f for f in findings if _is_actionable(f)]
+    # ONE canonical split, shared with the fix offer and the outreach draft. Counting here with a
+    # private rule is exactly how "1 confirmed issue" came to sit above "we can fix 2".
+    from core.scout.actionable import actionable_set
+    canonical = actionable_set(detail.get("findings") or [])
+    findings = canonical.actionable + canonical.informational
+    actionable = canonical.actionable
     media = [str(m) for m in (detail.get("media") or [])]
     screenshots = sum(1 for m in media if m.lower().endswith(_IMAGE_SUFFIXES))
     has_video = any(m.lower().endswith(_VIDEO_SUFFIXES) for m in media)
@@ -105,7 +105,9 @@ def site_result(detail: Dict[str, Any]) -> SiteResult:
     first = records[0] if records else {}
     prospect_status = str(detail.get("prospect_status") or "")
     entry = detail.get("entry") or {}
-    registry_status = str(entry.get("analysis_status") or "")
+    # The registry persists these lower-cased ("analyzed"/"failed"); prospect statuses are upper.
+    # Comparing the two vocabularies without normalising is how "analyzed" fell through to Failed.
+    registry_status = str(entry.get("analysis_status") or "").strip().upper()
     manual = detail.get("manual_action") or {}
     reason = str(manual.get("reason") or entry.get("reason") or "")
 
@@ -122,6 +124,13 @@ def site_result(detail: Dict[str, Any]) -> SiteResult:
             verdict = READY_TO_CONTACT if first.get("email") else NEEDS_REVIEW
         else:
             verdict = NO_ACTIONABLE
+    elif detail.get("evidence_status") in ("prospect_not_found", "error"):
+        # The scan happened — the registry records it — but the run we resolved holds no prospect
+        # for this domain, so its evidence cannot be reached. Calling that "Failed" would assert a
+        # scan failure that never occurred. It is a human's problem to look at, not a bad outcome.
+        verdict = NEEDS_REVIEW if registry_status == "ANALYZED" else FAILED
+        reason = reason or ("the analysis is recorded, but its evidence could not be located in "
+                            "the run resolved for this site")
     elif prospect_status in ("PENDING", "") and not detail.get("scout_run"):
         verdict = NOT_ANALYZED
     elif prospect_status in ("PENDING", "SKIPPED"):

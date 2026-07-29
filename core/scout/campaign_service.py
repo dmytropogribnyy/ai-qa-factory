@@ -31,6 +31,7 @@ from core.scout.presets import (
 )
 from core.scout.preflight import run_preflight
 from core.scout.priority import classify, load_verified_findings
+from core.scout.run_purpose import RunPurposeIndex
 from core.scout.run_control import (
     ANALYZING,
     TRIAGING,
@@ -72,8 +73,10 @@ def analysis_incomplete(prospect_status: str) -> bool:
 # video clip. They may only be reached for a COMPLETED analysis — a screen that reports 0 confirmed
 # findings must not offer the result one click away, and the user-facing /scout/artifact URL is
 # guessable, so the rule cannot live in the page alone.
-_RESULT_BEARING_NAMES = frozenset({"findings.json", "scorecard.json", "reproduction.json"})
-_RESULT_BEARING_PREFIXES = ("reproduction.",)   # reproduction.webm / .mp4 and any future container
+_RESULT_BEARING_NAMES = frozenset({"findings.json", "scorecard.json", "reproduction.json",
+                                   "interaction_scenario.json"})
+# reproduction.webm / interaction.webm / .mp4 and any future container
+_RESULT_BEARING_PREFIXES = ("reproduction.", "interaction.")
 
 
 def is_result_bearing_artifact(name: str) -> bool:
@@ -93,6 +96,7 @@ _STRUCTURED_EVIDENCE_ARTIFACTS: tuple = (
     ("scorecard.json", "Priority scorecard"),
     ("coverage.json", "Coverage record"),
     ("reproduction.json", "Reproduction record"),
+    ("interaction_scenario.json", "Recorded interaction (baseline, action, result, cleanup)"),
     ("manual_action.json", "Stop-reason record"),
 )
 
@@ -120,6 +124,11 @@ def _project_target_finding(f: Dict[str, Any]) -> Dict[str, Any]:
         "evidence_refs": f.get("evidence_refs", []),
         "confidence": f.get("confidence"),
         "reproduction_steps": f.get("reproduction_steps", []),
+        # The decision the canonical split already made about this finding. Carried because the
+        # fields that DISTINGUISH two findings do not survive this projection: two accessibility
+        # findings on one page share a title and a URL and differ only by signature, so anything
+        # that re-splits the projected list merges them and loses one between a count and its list.
+        "kind": f.get("kind"),
     }
 
 
@@ -376,13 +385,47 @@ class CampaignService:
 
     # -- progress / control ----------------------------------------------------------------------
     def progress(self, campaign_id: str) -> Dict[str, Any]:
+        """Campaign progress — and an explicit refusal when the id does not name a campaign.
+
+        A DIRECT run has no run-control record, so building one for it returned the run-control
+        DEFAULT: queued, empty counters, no timestamps. A finished run therefore read as never
+        started here while Activity and its own target pages showed it complete. The counters a
+        discovery funnel produces do not exist for a supplied list of targets, and reporting them as
+        zero states that nothing was discovered rather than that nothing was ever discoverable.
+        """
+        from core.scout.canonical_runs import (KIND_CAMPAIGN, KIND_DIRECT, NOT_APPLICABLE,
+                                               canonical_run_state)
+        canonical = canonical_run_state(self.output_dir, campaign_id)
+        if canonical["kind"] == KIND_DIRECT:
+            return {
+                "campaign_id": campaign_id,
+                "applicable": False,
+                "not_applicable_reason": (
+                    "this id names a direct Scout run over supplied targets, not a discovery "
+                    "campaign; the discovery funnel counters do not exist for it"),
+                "run_kind": KIND_DIRECT,
+                # The REAL state, from the store that owns it. Never the run-control default.
+                "run_state": canonical["state"],
+                "state_source": canonical["source"],
+                "stop_reason": "",
+                "requested_control": "",
+                "current_company": "",
+                "counters": {k: NOT_APPLICABLE
+                             for k in ("discovered", "eligible", "qa_analyzed", "actionable",
+                                       "already_analyzed", "rejected", "failed")},
+                "budget": {}, "allocation": {}, "decisions": [],
+                "updated_at": canonical["updated_at"],
+            }
         rc = CampaignRunControl(campaign_id, self.output_dir)
         state = self._read(campaign_id, "STATE.json") or self._discovery_state(campaign_id)
         counts = (state or {}).get("counts", {})
         brain = self._read(campaign_id, "BRAIN_DECISIONS.json") or {}
         return {
             "campaign_id": campaign_id,
+            "applicable": True,
+            "run_kind": KIND_CAMPAIGN if canonical["kind"] == KIND_CAMPAIGN else canonical["kind"],
             "run_state": rc.state.state,
+            "state_source": canonical["source"],
             "stop_reason": rc.state.stop_reason or (state or {}).get("stop_reason", ""),
             "requested_control": rc.state.requested_control,
             "current_company": rc.state.checkpoint.current_company,
@@ -423,6 +466,16 @@ class CampaignService:
             rows = [r for r in rows
                     if not (set(r.get("campaign_ids") or [])
                             and set(r.get("campaign_ids") or []) <= trashed_runs)]
+        # Acceptance/diagnostic/manual-test data is real data — it is simply not the operator's
+        # work. A site reached ONLY by disposable runs leaves the default view; a site production
+        # also scanned stays, because the production run is what History is about. Purpose is read
+        # from each run's own declaration, never inferred from the domain or the campaign name.
+        purposes = RunPurposeIndex(self.output_dir)
+        wanted_purpose = (f.get("purpose") or "").strip()
+        rows = [r for r in rows
+                if purposes.matches_filter(r.get("campaign_ids") or [], wanted_purpose)]
+        for row in rows:
+            row["purposes"] = sorted(purposes.purposes_of(row.get("campaign_ids") or []))
         archived_filter = (f.get("archived") or "").strip().lower()
         if archived_filter in ("1", "true", "yes", "only"):
             rows = [r for r in rows if r.get("archived")]
@@ -495,6 +548,7 @@ class CampaignService:
         entry = reg.get(domain)
         brain = self._brain_for_domain(domain)
         findings: List[Dict[str, Any]] = []
+        interaction: Optional[Dict[str, Any]] = None
         contacts: List[str] = []
         contact_records: List[Dict[str, Any]] = []
         media: List[str] = []                 # rel paths under the run, servable via /scout/artifact
@@ -651,6 +705,12 @@ class CampaignService:
                         fdata = st.load_prospect_artifact(prospect_id, "findings.json") or {}
                         findings = list(fdata.get("verified", []))
                         reproduction = st.load_prospect_artifact(prospect_id, "reproduction.json") or None
+                        # The recorded reversible interaction, whatever it turned out to prove. It
+                        # is surfaced even when the outcome was "nothing was wrong" — that IS the
+                        # result, and hiding it would leave the clip on disk with nothing saying
+                        # what it shows.
+                        interaction = st.load_prospect_artifact(
+                            prospect_id, "interaction_scenario.json") or None
                         # The priority the run itself assigned. Gated with the findings it is derived
                         # from, and left absent when no scorecard was written — an invented "C" would
                         # say the run ranked this site low when it never ranked it at all.
@@ -697,12 +757,18 @@ class CampaignService:
                                    understanding=understanding, findings=findings,
                                    contact=(contacts[0] if contacts else ""),
                                    router=None)
+        from core.scout.actionable import actionable_set
         from core.scout.outreach.fixability import classify_fixability
         # Cold prospect: no repo/staging access yet, so nothing is 'fix_ready' (honest scoping).
+        # Scoped to the SAME canonical actionable set the verdict counts: offering to fix an
+        # informational observation is how the page came to promise more repairs than it found
+        # problems.
+        canonical = actionable_set(findings)
         fixability = classify_fixability(
             [{"severity": f.get("severity"), "category": f.get("category"),
-              "title": f.get("title"), "business_impact": f.get("business_impact")}
-             for f in findings], access_available=False)
+              "title": f.get("title"), "business_impact": f.get("business_impact"),
+              "signature": f.get("signature")}
+             for f in canonical.actionable], access_available=False)
         return {"domain": domain, "entry": entry.to_dict() if entry else None, "brain": brain,
                 "scout_run": scout_run, "run": scout_run, "prospect_id": prospect_id,
                 "prospect_status": prospect_status, "analysis_complete": analysis_complete,
@@ -710,8 +776,17 @@ class CampaignService:
                 "manual_action": manual_action, "source_kind": source_kind,
                 "video_mode": video_mode, "evidence_files": evidence_files, "coverage": coverage,
                 "evidence_status": evidence_status, "media": media, "network": network,
-                "reproduction": reproduction, "scorecard": scorecard,
-                "findings": [_project_target_finding(f) for f in findings],
+                "reproduction": reproduction, "interaction": interaction,
+                "scorecard": scorecard,
+                # The counts every surface must agree with, computed once and carried with the
+                # findings they describe.
+                "actionable_summary": canonical.to_dict(),
+                # The LIST is the same collection the COUNTS describe — actionable first, then
+                # informational, duplicates already suppressed, each row carrying the decision made
+                # about it. Handing out the raw list beside a deduplicated count is how a page comes
+                # to show more rows than it says it found; handing out a projected list that has to
+                # be re-split is how it comes to show fewer.
+                "findings": [_project_target_finding(f) for f in canonical.labelled()],
                 "contacts": contacts, "contact_records": contact_records,
                 "draft": draft, "fixability": fixability}
 

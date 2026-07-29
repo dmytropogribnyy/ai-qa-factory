@@ -21,21 +21,26 @@ RUN_B = "seam-run-B"
 RUN_ARCHIVED = "seam-run-archived"
 
 
-def _finding(domain: str, tag: str, severity: str) -> dict:
-    return ScoutFinding(signature=f"{tag}_{severity}", category="seo", check_family="seo",
+def _finding(domain: str, tag: str, severity: str, index: int) -> dict:
+    # The index is what makes two same-severity findings two findings. Building the signature from
+    # tag+severity alone gave the second "medium" the same identity as the first, so the canonical
+    # split suppressed it as a duplicate and a stand advertising "3 defects" quietly held 2.
+    return ScoutFinding(signature=f"{tag}_{severity}_{index}", category="seo", check_family="seo",
                         severity=severity, confidence="high",
-                        title=f"{domain}: {tag} ({severity})",
+                        title=f"{domain}: {tag} {index} ({severity})",
                         actual=f"observed on https://{domain}/").to_dict()
 
 
 def _save_findings(store: RunStore, pid: str, domain: str, tag: str,
                    severities: list[str]) -> tuple[int, int]:
-    verified = [_finding(domain, tag, sev) for sev in severities]
+    from core.scout.actionable import actionable_set
+    verified = [_finding(domain, tag, sev, i) for i, sev in enumerate(severities, 1)]
     store.save_prospect_artifact(pid, "findings.json", {"verified": verified, "rejected": []})
     store.save_prospect_artifact(pid, "observation.json",
                                  {"status": 200, "final_url": f"https://{domain}/"})
-    defects = [f for f in verified if f["severity"] != "info"]
-    return len(verified), len(defects)
+    # Counted the way the engine counts, so the stand cannot pass a seam the product would fail.
+    canonical = actionable_set(verified)
+    return canonical.total, canonical.confirmed_issue_count
 
 
 def _build_primary_run(out: str) -> None:

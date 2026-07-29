@@ -12,7 +12,6 @@ import hashlib
 import html
 import io
 import json
-import os
 import re
 import tempfile
 import zipfile
@@ -24,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 from core.orchestration.content_safety import ContentSecretScanner
 from core.scout.discovery.domain_intel import canonical_domain
 from core.scout.store import RunStore, StoreError
+from core.atomic_io import atomic_replace
 
 _MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
 _MAX_MEMBER_BYTES = 12 * 1024 * 1024
@@ -42,6 +42,13 @@ _REPRODUCTION_FIELDS = (
     "start_url", "action_url", "action_log", "precondition_ok", "final_url",
     "actual_status", "expected", "actual", "cleanup_ok", "reproduced",
     "reproduction_status", "video_decision", "video_ref",
+)
+# What a recorded interaction is allowed to tell a client: what was touched, what came of it, and
+# proof the page was put back. Never the raw measurements — they are our instrumentation, not the
+# client's evidence, and a clip with no account of its outcome is the thing this prevents.
+_INTERACTION_FIELDS = (
+    "scenario", "outcome", "reason", "url", "control_label", "action",
+    "action_performed", "cleanup_ok", "steps",
 )
 
 
@@ -133,6 +140,33 @@ def _build_identity() -> str:
         return "unknown"
 
 
+def _run_execution_build(output_dir: str, run_id: str) -> str:
+    """The build that PRODUCED this run, read from the run's own stamp — never today's checkout.
+
+    A run recorded before stamping existed carries none, and says so rather than borrowing the
+    packaging build, which would be the same false attribution in a quieter form.
+    """
+    try:
+        from pathlib import Path
+        from core.build_identity import stamped_build
+        state = json.loads((Path(output_dir) / "scout" / str(run_id) / "state.json")
+                           .read_text(encoding="utf-8"))
+        return stamped_build(state.get("execution_build")) or "unknown"
+    except Exception:      # noqa: BLE001 - never let provenance break the deliverable
+        return "unknown"
+
+
+def _finding_kind(finding: Dict[str, Any]) -> str:
+    """What a client is looking at: a defect to fix, or an observation about the site.
+
+    Reads the decision the canonical split already made and carried here. It does not decide again:
+    by this point the fields that tell two findings apart have been dropped for the client's sake,
+    and re-deciding over what is left merges findings that were never the same.
+    """
+    from core.scout.actionable import KIND_ACTIONABLE, kind_of
+    return "Actionable" if kind_of(finding) == KIND_ACTIONABLE else "Informational"
+
+
 def _findings_csv(findings: List[Dict[str, Any]]) -> str:
     """The finding list as a spreadsheet, because that is what a client forwards to their developer.
 
@@ -142,10 +176,11 @@ def _findings_csv(findings: List[Dict[str, Any]]) -> str:
     """
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\r\n")
-    writer.writerow(["Severity", "Category", "Title", "Impact", "Page", "How to reproduce",
+    writer.writerow(["Type", "Severity", "Category", "Title", "Impact", "Page", "How to reproduce",
                      "Evidence", "Confidence"])
     for finding in findings:
         writer.writerow([
+            _finding_kind(finding),
             str(finding.get("severity") or ""),
             str(finding.get("category") or ""),
             str(finding.get("title") or ""),
@@ -159,8 +194,8 @@ def _findings_csv(findings: List[Dict[str, Any]]) -> str:
     return "﻿" + buffer.getvalue()
 
 
-def _readme_html(domain: str, *, findings: int, screenshots: int, videos: int,
-                 omitted: List[Dict[str, Any]]) -> str:
+def _readme_html(domain: str, *, findings: int, informational: int, screenshots: int, videos: int,
+                 omitted: List[Dict[str, Any]], interactions: int = 0) -> str:
     """The first thing the client opens: what is in here and which file to read first."""
     dropped = "".join(
         f"<li>{html.escape(str(item.get('name') or 'a file'))} — "
@@ -189,9 +224,14 @@ them.</li>
 </ul>
 <h2>What is in the package</h2>
 <ul>
-<li><strong>{findings}</strong> confirmed finding(s)</li>
+<li><strong>{findings}</strong> actionable finding(s) — problems we suggest fixing</li>
+<li><strong>{informational}</strong> informational note(s) — observations, not defects</li>
 <li><strong>{screenshots}</strong> screenshot(s) in <code>Evidence/Screenshots/</code></li>
-<li><strong>{videos}</strong> reproduction video(s) in <code>Evidence/Videos/</code></li>
+<li><strong>{videos}</strong> reproduction video(s) in <code>Evidence/Videos/</code> — a defect
+being reproduced</li>
+<li><strong>{interactions}</strong> recorded interaction(s) — a control being used, with
+<code>Evidence/Technical/interaction.json</code> saying what each one showed. A recorded
+interaction is not a defect unless the report lists one.</li>
 <li>Accessibility, performance, console and network summaries in
 <code>Evidence/Technical/</code></li>
 <li><code>manifest.json</code> — a SHA-256 for every file, so either side can prove nothing was
@@ -267,6 +307,10 @@ def _public_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
         for key in (
             "severity", "category", "title", "business_impact", "url", "confidence",
             "reproduction_steps",
+            # The decision, carried through one more lossy step. Without it this projection is the
+            # last place the split could still be reconstructed from — and it cannot be, because
+            # `signature` is deliberately not here: it identifies our checks, not the client's site.
+            "kind",
         )
         if finding.get(key) not in (None, "", [])
     }
@@ -312,20 +356,38 @@ def _html_summary(domain: str, detail: Dict[str, Any], *, images: List[str],
                   videos: List[str]) -> str:
     """Standalone, offline client report with relative links to packaged evidence."""
     findings = [_public_finding(f) for f in list(detail.get("findings") or [])]
-    rows = []
-    for finding in findings:
-        steps = finding.get("reproduction_steps") or []
-        steps_html = "<ol>" + "".join(
-            f"<li>{html.escape(str(step))}</li>" for step in steps
-        ) + "</ol>" if steps else "Not recorded"
-        rows.append(
-            "<tr>"
-            f"<td><span class=\"sev\">{html.escape(str(finding.get('severity') or 'unknown').upper())}</span></td>"
-            f"<td><strong>{html.escape(str(finding.get('title') or 'Untitled finding'))}</strong>"
-            f"<p>{html.escape(str(finding.get('business_impact') or 'Impact not recorded.'))}</p></td>"
-            f"<td>{steps_html}</td>"
-            "</tr>"
-        )
+    # Partitioned by the label each finding carries, never by asking the question again.
+    actionable_items = [f for f in findings if _finding_kind(f) == "Actionable"]
+    informational_items = [f for f in findings if _finding_kind(f) != "Actionable"]
+
+    def _rows(items: List[Dict[str, Any]]) -> str:
+        out = []
+        for finding in items:
+            steps = finding.get("reproduction_steps") or []
+            steps_html = "<ol>" + "".join(
+                f"<li>{html.escape(str(step))}</li>" for step in steps
+            ) + "</ol>" if steps else "Not recorded"
+            out.append(
+                "<tr>"
+                f"<td><span class=\"sev\">{html.escape(str(finding.get('severity') or 'unknown').upper())}</span></td>"
+                f"<td><strong>{html.escape(str(finding.get('title') or 'Untitled finding'))}</strong>"
+                f"<p>{html.escape(str(finding.get('business_impact') or 'Impact not recorded.'))}</p></td>"
+                f"<td>{steps_html}</td>"
+                "</tr>"
+            )
+        return "".join(out)
+
+    # Two sections rather than one list with a column: a client reading a defect report should not
+    # have to check a cell to learn whether the row is something we are saying is broken.
+    rows = _rows(actionable_items)
+    info_rows = _rows(informational_items)
+    info_section = (
+        '<section class="card"><h2>Informational observations</h2>'
+        '<p class="muted">Recorded because they describe the site, not because we consider them '
+        'defects. They are not counted as actionable findings.</p>'
+        "<table><thead><tr><th>Severity</th><th>Observation</th><th>Where seen</th></tr></thead>"
+        f"<tbody>{info_rows}</tbody></table></section>"
+    ) if info_rows else ""
     # Label each frame by the page it shows. "Open screenshot 2" told the client nothing about what
     # they were about to open, and said "2" even when both links led to the same picture.
     media = "".join(
@@ -334,8 +396,14 @@ def _html_summary(domain: str, detail: Dict[str, Any], *, images: List[str],
         f'{html.escape(str(img.get("role") or "page"))}</a>'
         for img in images
     )
-    media += "".join(
-        f'<a href="{html.escape(name, quote=True)}">Open reproduction video {index}</a>'
+    # A relative <video> element, not only a link: the point of an offline package is that the
+    # recording plays where it was unpacked, without the recipient hunting for a player.
+    players = "".join(
+        f'<figure style="margin:0 0 12px"><video src="{html.escape(name, quote=True)}" controls '
+        f'preload="metadata" style="max-width:100%;border-radius:8px"></video>'
+        f'<figcaption class="muted">{html.escape(_video_caption(name, index))} &mdash; '
+        f'<a href="{html.escape(name, quote=True)}">open the file directly</a></figcaption>'
+        f'</figure>'
         for index, name in enumerate(videos, 1)
     )
     video_note = "" if videos else (
@@ -356,14 +424,16 @@ border-bottom:1px solid #e8ecf2;text-align:left;vertical-align:top}}.sev{{font-w
 </style></head><body><main>
 <header><p class="muted">Client-ready QA evidence</p><h1>{html.escape(domain)}</h1>
 <p>Completed bounded analysis of public pages. Review the package before sending.</p>
-<div class="metrics"><div class="metric"><strong>{len(findings)}</strong><br>confirmed findings</div>
+<div class="metrics"><div class="metric"><strong>{len(actionable_items)}</strong><br>actionable findings</div>
+<div class="metric"><strong>{len(informational_items)}</strong><br>informational notes</div>
 <div class="metric"><strong>{len(images)}</strong><br>unique screenshots</div>
-<div class="metric"><strong>{len(videos)}</strong><br>reproduction videos</div></div></header>
-<section class="card"><h2>Findings</h2>
+<div class="metric"><strong>{len(videos)}</strong><br>recordings</div></div></header>
+<section class="card"><h2>Actionable findings</h2>
 <table><thead><tr><th>Severity</th><th>Issue and impact</th><th>How to reproduce</th></tr></thead>
-<tbody>{''.join(rows) or '<tr><td colspan="3">No confirmed issue was recorded.</td></tr>'}</tbody></table>
-</section><section class="card"><h2>Evidence files</h2>
+<tbody>{rows or '<tr><td colspan="3">No actionable issue was recorded.</td></tr>'}</tbody></table>
+</section>{info_section}<section class="card"><h2>Evidence files</h2>
 <div class="links">{media or '<span class="muted">No visual evidence was captured.</span>'}</div>
+{players}
 {video_note}
 <p class="muted">Each screenshot is a distinct page or state; byte-identical captures are not
 packaged twice. Technical JSON is included for verification. The browser event trace is a
@@ -371,11 +441,43 @@ redacted structured record, not a native Playwright trace.zip.</p></section>
 </main></body></html>"""
 
 
+def _video_caption(name: str, index: int) -> str:
+    """Say which kind of recording this is. A reproduction replays a confirmed finding; an
+    interaction recording shows a control being used, and its outcome may be that nothing was
+    wrong — calling both "reproduction" would put a claim in the client's hands that the clip
+    does not support."""
+    if "interaction-" in name:
+        return f"Recorded interaction {index}"
+    return f"Reproduction of a confirmed finding ({index})"
+
+
+def _interaction_note(detail: Dict[str, Any]) -> str:
+    """What the recorded interaction actually showed, in the client's words rather than ours.
+
+    A clip of a control being used says nothing on its own. Shipping it beside a defect list, with
+    no outcome, invites the reading that it IS the defect list moving.
+    """
+    record = detail.get("interaction")
+    if not isinstance(record, dict) or not record:
+        return "a control was recorded being used; see `Evidence/Technical/interaction.json`"
+    reason = str(record.get("reason") or "").strip()
+    control = str(record.get("control_label") or "a control").strip()
+    outcome = str(record.get("outcome") or "").strip()
+    if outcome == "defect":
+        return f"{control}: {reason or 'the control did not do what it says'}"
+    return (f"{control}: this recording is not a defect — "
+            f"{reason or 'the control behaved correctly'}")
+
+
 def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]], videos: int,
-             trace_available: bool, omitted: List[Dict[str, Any]]) -> str:
+             trace_available: bool, omitted: List[Dict[str, Any]], interactions: int = 0) -> str:
     findings = list(detail.get("findings") or [])
-    actionable = [f for f in findings
-                  if str(f.get("severity") or "").strip().lower() != "info"]
+    # Partitioned by the carried decision. A local `severity != "info"` rule used to let
+    # "informational", "none" and "" through as defects; re-running the canonical split here would
+    # fix that and introduce the opposite error, merging findings the projection can no longer tell
+    # apart. Reading the label does neither.
+    actionable = [f for f in findings if _finding_kind(f) == "Actionable"]
+    informational = [f for f in findings if _finding_kind(f) != "Actionable"]
     lines = [
         f"# QA Evidence Summary — {domain}",
         "",
@@ -387,21 +489,29 @@ def _summary(domain: str, detail: Dict[str, Any], *, images: List[Dict[str, str]
         "## Result",
         "",
         f"- Confirmed actionable findings: **{len(actionable)}**",
-        f"- Informational notes: **{len(findings) - len(actionable)}**",
+        f"- Informational notes: **{len(informational)}**",
         f"- Unique screenshots included: **{len(images)}**",
         *[f"  - `{img['name']}` — {img.get('role') or 'page'}"
           + (f" ({img['url']})" if img.get("url") else "")
           for img in images],
         f"- Reproduction videos included: **{videos}**",
         *([] if videos else [f"  - {_video_absence_note(detail)}"]),
+        f"- Recorded interactions included: **{interactions}**",
+        *([f"  - {_interaction_note(detail)}"] if interactions else []),
         f"- Structured browser event trace included: **{'yes' if trace_available else 'no'}**",
         "",
-        "## Findings",
+        "## Actionable findings",
         "",
-        *(_finding_lines(findings) or [
-            "No confirmed problem items were recorded in this bounded analysis."
+        *(_finding_lines(actionable) or [
+            "No actionable problem was recorded in this bounded analysis."
         ]),
         "",
+        *(["## Informational observations",
+           "",
+           "Recorded because they describe the site; they are not counted as actionable findings.",
+           "",
+           *_finding_lines(informational),
+           ""] if informational else []),
         "## Evidence notes",
         "",
         "- Each screenshot is a distinct page or state actually visited; a byte-identical capture",
@@ -437,15 +547,24 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
     if not pdir.is_dir() or store.root not in pdir.parents:
         raise ClientEvidenceError("target evidence directory not found")
 
+    from core.scout.actionable import KIND_ACTIONABLE, count_kinds
     public_findings = [_public_finding(f) for f in list(detail.get("findings") or [])]
+    # Counted from the labels the read model carried in, never by splitting again. Every number the
+    # README, the report, the CSV, the JSON and the manifest print comes from this one tally, so a
+    # field this projection drops can no longer change any of them.
+    kinds = count_kinds(public_findings)
+    actionable_total = kinds[KIND_ACTIONABLE]
+    informational_total = len(public_findings) - actionable_total
     # Split by what a reader is looking for rather than by which artifact we happened to store it
     # in. "network-console-accessibility.json" required knowing our internals to guess what was in
     # it; a client hunting a slow page opens performance-summary.json.
     raw_network = detail.get("network") or {}
     structured: Dict[str, str] = {
         "Evidence/Technical/findings.json": json.dumps(
-            {"schema": "scout-client-findings/v1", "domain": dom,
-             "findings": public_findings},
+            {"schema": "scout-client-findings/v2", "domain": dom,
+             "actionable_count": actionable_total,
+             "informational_count": informational_total,
+             "findings": [{**f, "kind": _finding_kind(f)} for f in public_findings]},
             indent=2, ensure_ascii=False, sort_keys=True),
         "Evidence/Technical/accessibility-summary.json": json.dumps(
             {"schema": "scout-client-accessibility/v1", "domain": dom,
@@ -477,6 +596,14 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
     if isinstance(reproduction, dict) and reproduction:
         structured["Evidence/Technical/reproduction.json"] = json.dumps(
             _project_fields(reproduction, _REPRODUCTION_FIELDS),
+            indent=2, ensure_ascii=False, sort_keys=True)
+    # A recorded interaction ships with an account of what it showed, or it does not ship. The clip
+    # alone is ambiguous by construction — the same footage backs "the control is broken" and "the
+    # control worked", and only the outcome separates them.
+    interaction = detail.get("interaction")
+    if isinstance(interaction, dict) and interaction:
+        structured["Evidence/Technical/interaction.json"] = json.dumps(
+            _project_fields(interaction, _INTERACTION_FIELDS),
             indent=2, ensure_ascii=False, sort_keys=True)
     client_trace = _client_trace(pdir)
     if client_trace:
@@ -530,7 +657,11 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
             image_meta[name] = {"role": role, "url": str(meta.get("url") or "")}
         else:
             video_count += 1
-            name = f"Evidence/Videos/reproduction-{video_count:02d}{suffix}"
+            # Named for what it IS. A recorded interaction whose outcome was "the control worked"
+            # packaged as "reproduction-01" tells the client a defect was reproduced, which is the
+            # opposite of what the clip shows.
+            kind = "interaction" if path.stem.lower().startswith("interaction") else "reproduction"
+            name = f"Evidence/Videos/{kind}-{video_count:02d}{suffix}"
         binary.append((name, path))
         total += size
 
@@ -542,14 +673,22 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
     while True:
         image_names = [name for name, _path in binary if "/Screenshots/" in name]
         video_names = [name for name, _path in binary if "/Videos/" in name]
+        # Counted apart, because they are different claims. A reproduction replays a confirmed
+        # defect; a recorded interaction shows a control being used and may have proved nothing was
+        # wrong. Adding them together let a package announce "1 reproduction video" over footage of
+        # a control working correctly.
+        repro_count = sum(1 for name in video_names if "/reproduction-" in name)
+        interaction_count = len(video_names) - repro_count
         images = [{"name": name, **image_meta.get(name, {})} for name in image_names]
         summary = _summary(
-            dom, detail, images=images, videos=len(video_names),
+            dom, detail, images=images, videos=repro_count, interactions=interaction_count,
             trace_available=trace_available, omitted=omitted)
         candidate = {
-            "00-README.html": _readme_html(dom, findings=len(public_findings),
+            "00-README.html": _readme_html(dom, findings=actionable_total,
+                                           informational=informational_total,
                                            screenshots=len(image_names),
-                                           videos=len(video_names), omitted=omitted),
+                                           videos=repro_count,
+                                           interactions=interaction_count, omitted=omitted),
             "QA-Report.html": _html_summary(dom, detail, images=images, videos=video_names),
             "Findings.csv": _findings_csv(public_findings),
             "Evidence/Technical/scan-summary.md": summary,
@@ -611,6 +750,14 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                     "captured_at": datetime.fromtimestamp(
                         source.stat().st_mtime, tz=timezone.utc).isoformat(),
                 }
+                if source.suffix.lower() in _VIDEO_SUFFIXES:
+                    # Enough for a recipient to confirm the clip they received is the clip that was
+                    # recorded — and that it is a recording rather than a still frame.
+                    from core.scout.media_probe import probe_video
+                    probe = probe_video(source)
+                    entry.update({"duration_s": probe.get("duration_s"),
+                                  "width": probe.get("width"), "height": probe.get("height"),
+                                  "playable": probe.get("playable")})
                 entries.append(entry)
             manifest = {
                 "schema": "scout-client-evidence/v2",
@@ -620,6 +767,12 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                 "domain": dom,
                 "target_id": dom,
                 "run_id": run_id,
+                # TWO builds, because they answer different questions and are routinely different
+                # values. Re-exporting a months-old run stamps today's code on the package; printing
+                # that single number beside the findings attributed them to code that never produced
+                # them. `build` stays as the packaging build so an existing reader keeps working.
+                "execution_build": _run_execution_build(output_dir, run_id),
+                "package_build": _build_identity(),
                 "build": _build_identity(),
                 "generated_at": generated_at,
                 "root": root,
@@ -630,7 +783,12 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                 # Building a package is not deciding it may be sent. This stays false in the
                 # artifact itself so a forwarded ZIP cannot imply an approval nobody gave.
                 "approved_for_client_delivery": False,
+                # The same two numbers the README, the report, the CSV and the JSON print. A
+                # manifest that disagrees with the pages it indexes is worse than no manifest.
+                "actionable_findings": actionable_total,
+                "informational_findings": informational_total,
                 "findings": [{"title": f.get("title"), "severity": f.get("severity"),
+                              "kind": _finding_kind(f),
                               "url": f.get("url"),
                               "evidence": [str(ref).rsplit("/", 1)[-1]
                                            for ref in (f.get("evidence_refs") or [])]}
@@ -645,7 +803,7 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                 raise ClientEvidenceError(
                     "client evidence manifest blocked by content secret scan")
             archive.writestr(f"{root}/manifest.json", manifest_text.encode("utf-8"))
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
     except Exception:
         try:
             tmp.unlink()

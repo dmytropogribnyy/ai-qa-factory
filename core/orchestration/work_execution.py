@@ -28,19 +28,15 @@ _PROGRESS = {"READY_TO_EXECUTE": 60, "EXECUTING": 75, "EXECUTION_PARTIAL": 75, "
              "CANCELLED": 100}
 
 
-def _atomic_replace(tmp: Path, path: Path, *, attempts: int = 12, delay: float = 0.02) -> None:
-    """``os.replace`` that is robust on Windows, where the call fails with ``PermissionError`` if the
-    destination is momentarily open by a concurrent READER (e.g. the Dashboard polling worker-status
-    while a background worker saves state). Retry briefly instead of losing the state write."""
-    import time
-    for attempt in range(attempts):
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if attempt == attempts - 1:
-                raise
-            time.sleep(delay)
+def _atomic_replace(tmp: Path, path: Path) -> None:
+    """The shared bounded retry (see :mod:`core.atomic_io`).
+
+    This module proved the failure first — the Dashboard polling worker status while a background
+    worker saved state — and the Scout stores then hit the identical one. Keeping two retry loops
+    meant two definitions of "transient", so there is now one.
+    """
+    from core.atomic_io import atomic_replace
+    atomic_replace(tmp, path)
 
 
 class WorkExecutionError(Exception):

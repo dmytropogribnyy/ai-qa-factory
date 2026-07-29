@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from core.atomic_io import atomic_replace
 
 QUEUED = "queued"
 DISCOVERING = "discovering"
@@ -129,7 +130,7 @@ class CampaignRunControl:
         self.state.updated_at = _now_iso()
         tmp = self._path.with_name(self._path.name + ".tmp")
         tmp.write_text(json.dumps(self.state.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, self._path)
+        atomic_replace(tmp, self._path)
 
     # -- transitions -----------------------------------------------------------------------------
     def _transition(self, target: str) -> None:

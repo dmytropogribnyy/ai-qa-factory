@@ -42,7 +42,8 @@ Claude Code / Claude Desktop / VS Code (`mcpServers`):
 | `observer_get_system_readiness` | readiness probes (`deep=true` launches Chromium + network) |
 | `observer_get_release_readiness` | release-readiness summary |
 | `observer_get_storage_status` | evidence storage usage |
-| `observer_list_campaigns` | paginated campaigns + run state + counters |
+| `observer_list_campaigns` | paginated campaigns + run state + counters + the serving process's exact `build` |
+| `observer_campaign_counts` | production vs diagnostic totals + the serving process's exact `build` (matches the Dashboard read model) |
 | `observer_get_campaign` / `observer_get_run_progress` | campaign snapshot / progress |
 | `observer_get_run_stop_reason` | exact stop reason |
 | `observer_get_updates_since` | **incremental event feed** since a cursor index |

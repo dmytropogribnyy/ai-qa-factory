@@ -8,7 +8,6 @@ evidence.
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -17,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from core.scout.discovery.domain_intel import canonical_domain
 from core.scout.store import RunStore, StoreError
+from core.atomic_io import atomic_replace
 
 _WAIT_TIMEOUT_S = 15 * 60
 _TERMINAL = frozenset({"completed", "deferred", "skipped", "failed", "timed_out"})
@@ -295,7 +295,7 @@ class ChallengeSessionManager:
         }
         tmp = self._path.with_name(self._path.name + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, self._path)
+        atomic_replace(tmp, self._path)
 
 
 def _blocked_targets(output_dir: str) -> List[Dict[str, Any]]:

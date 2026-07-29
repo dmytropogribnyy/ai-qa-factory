@@ -54,6 +54,17 @@ class ObserverError(RuntimeError):
     pass
 
 
+def _observer_build() -> str:
+    """What code THIS Observer process is serving, under its honest name (a process started from a
+    working tree reports ``<sha> + local changes``, never the bare commit)."""
+    try:
+        from core.build_identity import current_identity
+        ident = current_identity()
+        return str(ident.get("running_build") or ident.get("running_sha") or "unknown")
+    except Exception:      # noqa: BLE001 - an unknown build is reported as unknown, never invented
+        return "unknown"
+
+
 # A campaign id must be a single safe path segment (no separators/traversal). Real ids are
 # generated as campaign-<slug>-<stamp>-<hex>, so this never rejects a legitimate id.
 _VALID_CAMPAIGN_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -165,27 +176,46 @@ class ObserverAPI:
                        include_diagnostics: bool = True) -> Dict[str, Any]:
         """Canonical campaigns from _runcontrol. Each row is tagged production/diagnostic via the
         SAME classifier the Dashboard uses (so counts agree). ``include_diagnostics=False`` returns
-        only production campaigns; the production/diagnostic totals are always reported."""
-        from core.scout.canonical_runs import is_diagnostic_run
+        only production campaigns; the production/diagnostic totals are always reported.
+
+        The build travels WITH the totals, exactly as in :meth:`campaign_counts`: this is the
+        operation a connected MCP reviewer actually pages through, and numbers that arrive without
+        the name of the code that produced them make a stale process invisible — the 10/1-vs-5/6
+        disagreement was undiagnosable precisely because neither surface said which vintage of the
+        classifier had answered."""
+        from core.scout.canonical_runs import is_diagnostic
         ids = self._campaign_ids()
-        diagnostic_total = sum(1 for cid in ids if is_diagnostic_run(cid))
-        shown = ids if include_diagnostics else [c for c in ids if not is_diagnostic_run(c)]
+        # Classified by what each run DECLARED itself to be, the same way the Dashboard's counters
+        # and Data management do. Classifying by id alone here is how one run got two answers.
+        diagnostic = {cid: is_diagnostic(self.output_dir, cid) for cid in ids}
+        diagnostic_total = sum(1 for cid in ids if diagnostic[cid])
+        shown = ids if include_diagnostics else [c for c in ids if not diagnostic[c]]
         page = shown[offset:offset + max(1, min(limit, 500))]
         rows = []
         for cid in page:
             prog = self.svc.progress(cid)
             rows.append({"campaign_id": cid, "run_state": prog["run_state"],
                          "stop_reason": prog["stop_reason"], "counters": prog["counters"],
-                         "diagnostic": is_diagnostic_run(cid)})
-        return {"api_version": OBSERVER_API_VERSION, "total": len(shown), "offset": offset,
+                         "diagnostic": diagnostic[cid]})
+        return {"api_version": OBSERVER_API_VERSION, "build": _observer_build(),
+                "total": len(shown), "offset": offset,
                 "limit": limit, "production_total": len(ids) - diagnostic_total,
                 "diagnostic_total": diagnostic_total, "campaigns": redact(rows)}
 
     def campaign_counts(self) -> Dict[str, Any]:
         """Production vs diagnostic canonical campaign counts — the SAME read model the Dashboard
-        uses (core.scout.canonical_runs.campaign_counts), so Observer and Dashboard never disagree."""
+        uses (core.scout.canonical_runs.campaign_counts), so Observer and Dashboard never disagree.
+
+        Sharing the classifier makes the two agree only while both processes are running the same
+        code. This one is long-lived and started from a terminal, so it can outlive its own source
+        by hours: an Observer left over from before the classifier read a run's declared purpose
+        answered 10/1 where the Dashboard, restarted, answered 5/6 — same disk, same rule, different
+        vintage of it. Neither number looked wrong on its own. So the build is reported here, beside
+        the counts it produced, and a disagreement can be explained instead of investigated.
+        """
         from core.scout.canonical_runs import campaign_counts
-        return {"api_version": OBSERVER_API_VERSION, **campaign_counts(str(self._root))}
+        return {"api_version": OBSERVER_API_VERSION, "build": _observer_build(),
+                **campaign_counts(str(self._root))}
 
     def get_campaign(self, campaign_id: str) -> Dict[str, Any]:
         campaign_id = self._cid(campaign_id)
@@ -243,6 +273,16 @@ class ObserverAPI:
 
     # -- findings + evidence (campaign-scoped, path-confined) -------------------------------------
     def _promoted_runs(self, campaign_id: str) -> List[str]:
+        """The runs whose prospect evidence belongs to this id.
+
+        A discovery campaign holds none of its own — it promotes candidates into their own runs, and
+        following that link is how its evidence is found. A DIRECT run holds its evidence itself,
+        and asking it for promoted children returned an empty list: the evidence manifest reported
+        zero artifacts for a run whose own target page was listing screenshots.
+        """
+        from core.scout.canonical_runs import KIND_DIRECT, run_kind
+        if run_kind(self.output_dir, campaign_id) == KIND_DIRECT:
+            return [campaign_id]
         state = self.svc._discovery_state(campaign_id) or {}
         return [c.get("promoted_scout_run") for c in state.get("candidates", [])
                 if c.get("promoted_scout_run")]

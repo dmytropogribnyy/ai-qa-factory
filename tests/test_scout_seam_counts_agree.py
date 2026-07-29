@@ -87,10 +87,10 @@ def test_pinning_a_run_shows_that_runs_numbers_not_the_latest(tmp_path, monkeypa
     finally:
         server.shutdown()
 
-    assert "alpha.example: alpha (high)" in card_a
-    assert "alpha.example: alpha-rescan (high)" not in card_a
-    assert "alpha.example: alpha-rescan (high)" in card_b
-    assert "alpha.example: alpha (high)" not in card_b
+    assert "alpha.example: alpha 1 (high)" in card_a
+    assert "alpha.example: alpha-rescan 1 (high)" not in card_a
+    assert "alpha.example: alpha-rescan 1 (high)" in card_b
+    assert "alpha.example: alpha 1 (high)" not in card_b
 
 
 def test_missing_coverage_renders_as_unavailable_not_zero(tmp_path, monkeypatch):

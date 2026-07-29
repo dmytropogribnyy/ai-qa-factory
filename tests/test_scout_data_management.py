@@ -18,7 +18,8 @@ import json
 import pytest
 
 from core.scout.data_management import (PURPOSE_ACCEPTANCE, PURPOSE_PRODUCTION,
-                                        PURPOSE_UNCLASSIFIED, DataManagementStore)
+                                        PURPOSE_UNCLASSIFIED, REMOVABLE_PURPOSES,
+                                        DataManagementStore)
 from core.scout.discovery.analyzed_registry import ANALYZED, AnalyzedSiteRegistry
 from core.scout.store import RunStore
 
@@ -246,8 +247,10 @@ def test_an_audit_tombstone_records_the_scope_without_the_content(store):
     assert tombstones[-1]["run_id"] == "acceptance-1"
     assert tombstones[-1]["deleted_at"]
     assert tombstones[-1]["screenshots"] == 1
-    assert "findings" not in json.dumps(tombstones[-1]).lower() or True
-    for leaked in ("Issue 0", "plausible.io/"):
+    # A tombstone records HOW MANY findings there were, never what any of them said. The previous
+    # `... or True` form asserted nothing at all; this pins the actual contract.
+    assert isinstance(tombstones[-1]["findings"], int)
+    for leaked in ("Issue 0", "plausible.io/", "title", "severity"):
         assert leaked not in json.dumps(tombstones[-1])
 
 
@@ -261,10 +264,11 @@ def test_moving_to_trash_twice_does_not_double_count(store):
 # --- how a run gets its purpose in the first place ----------------------------------------------
 
 def test_the_launcher_records_an_acceptance_purpose_when_the_harness_asks(tmp_path):
-    """The tag comes from the launch context, never from a control on the daily form."""
+    """The tag comes from the launch context — and only from a server that hosts a harness."""
     from core.scout.campaign_start import CampaignLauncher
+    from core.scout.run_purpose import TEST_PURPOSE_ENV
 
-    launcher = CampaignLauncher(_FakeService(str(tmp_path)))
+    launcher = CampaignLauncher(_FakeService(str(tmp_path)), env={TEST_PURPOSE_ENV: "1"})
     cfg = launcher._build_config({"campaign": "acceptance", "run_purpose": PURPOSE_ACCEPTANCE},
                                  ["https://plausible.io/"])
 
@@ -272,24 +276,40 @@ def test_the_launcher_records_an_acceptance_purpose_when_the_harness_asks(tmp_pa
     assert cfg.to_dict()["run_purpose"] == PURPOSE_ACCEPTANCE
 
 
-def test_an_ordinary_run_stays_unclassified_and_is_therefore_never_swept(tmp_path):
+def test_an_ordinary_run_is_production_and_is_therefore_never_swept(tmp_path):
+    """The daily form asks nothing, and what it does not ask for is real work.
+
+    "Unclassified" used to be the answer here, which made every ordinary run indistinguishable from
+    a run written before the field existed. Both were protected, so nothing broke — but History
+    could not tell operator work from an acceptance fixture either.
+    """
     from core.scout.campaign_start import CampaignLauncher
 
     cfg = CampaignLauncher(_FakeService(str(tmp_path)))._build_config(
         {"campaign": "operator-scan"}, ["https://plausible.io/"])
 
-    assert cfg.run_purpose == ""
+    assert cfg.run_purpose == PURPOSE_PRODUCTION
+    assert PURPOSE_PRODUCTION not in REMOVABLE_PURPOSES      # still fail-closed against a sweep
 
 
-def test_a_request_cannot_label_itself_production(tmp_path):
-    """Otherwise an untrusted request could buy itself protection it was never granted."""
+def test_a_request_cannot_make_its_own_data_disposable(tmp_path):
+    """The dangerous direction: a POST field that buys the right to be deleted later.
+
+    Labelling a run "production" is harmless — it is the default. Labelling it "acceptance" is what
+    moves it into the removable set, so that requires a server deliberately started to host a
+    harness, not a field an arbitrary caller can add.
+    """
     from core.scout.campaign_start import CampaignLauncher
     from core.scout.config import ScoutConfigError
 
-    launcher = CampaignLauncher(_FakeService(str(tmp_path)))
-    with pytest.raises(ScoutConfigError):
-        launcher._build_config({"campaign": "x", "run_purpose": PURPOSE_PRODUCTION},
-                               ["https://plausible.io/"])
+    launcher = CampaignLauncher(_FakeService(str(tmp_path)), env={})
+    for purpose in sorted(REMOVABLE_PURPOSES):
+        with pytest.raises(ScoutConfigError):
+            launcher._build_config({"campaign": "x", "run_purpose": purpose},
+                                   ["https://plausible.io/"])
+    # Asking for production is allowed, and grants exactly the default.
+    assert launcher._build_config({"campaign": "x", "run_purpose": PURPOSE_PRODUCTION},
+                                  ["https://plausible.io/"]).run_purpose == PURPOSE_PRODUCTION
 
 
 class _FakeService:

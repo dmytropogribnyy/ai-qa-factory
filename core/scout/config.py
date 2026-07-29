@@ -13,6 +13,7 @@ from typing import Any, Dict, FrozenSet, List
 from core.scout import SCOUT_VERSION
 from core.scout.coverage import COVERAGE_MODES, OPERATOR_COVERAGE, derive_page_ceiling
 from core.scout.evidence_policy import VIDEO_MANUAL, VIDEO_MODES, VIDEO_QUALIFIED_AUTO
+from core.scout.run_purpose import KNOWN_PURPOSES, PURPOSE_PRODUCTION, PURPOSE_UNCLASSIFIED
 from core.scout.url_safety import UrlPolicy
 
 MAX_SEEDS = 10
@@ -29,6 +30,41 @@ BROWSER_MODES: FrozenSet[str] = frozenset({"static", "playwright"})
 
 class ScoutConfigError(ValueError):
     """Raised when a Scout run configuration is invalid."""
+
+
+# How a run's target list arrived. "unknown" is only ever a READING of a config written before
+# provenance existed — nothing new may enter it.
+INTAKE_KINDS = frozenset({"paste", "upload", "discovery", "api", "unknown"})
+# Every row read ends in exactly one of these. `rows_capped` exists because the operator's list may
+# be longer than the run's site limit: without it, truncation looks like rows vanishing.
+_INTAKE_COUNTS = ("rows_read", "rows_accepted", "rows_rejected", "duplicates", "rows_capped")
+_MAX_INTAKE_TEXT = 200
+
+
+def normalise_intake(value: Any) -> Dict[str, Any]:
+    """Validate and bound an intake provenance record. Unknown keys are dropped, never stored.
+
+    Free text from an untrusted request is the last thing that should end up in a client-facing
+    artifact, so only a fixed set of keys survives and each is length- or type-bounded.
+    """
+    if not isinstance(value, dict) or not value:
+        return {}
+    kind = str(value.get("kind") or "").strip().lower()
+    if kind not in INTAKE_KINDS:
+        raise ScoutConfigError(f"unknown intake kind: {value.get('kind')!r}")
+    out: Dict[str, Any] = {"kind": kind}
+    for name in ("source_name", "query"):
+        text = value.get(name)
+        if isinstance(text, str) and text.strip():
+            out[name] = text.strip()[:_MAX_INTAKE_TEXT]
+    for name in _INTAKE_COUNTS:
+        count = value.get(name)
+        if isinstance(count, bool) or count is None:
+            continue
+        if not isinstance(count, int) or count < 0:
+            raise ScoutConfigError(f"intake {name} must be a non-negative integer, got {count!r}")
+        out[name] = count
+    return out
 
 
 @dataclass
@@ -58,9 +94,15 @@ class ScoutRunConfig:
     video_mode: str = VIDEO_QUALIFIED_AUTO
     # Why this run exists: production work, or acceptance/diagnostic/manual-test data that must not
     # distort production counters and may later be cleaned up. NOT an operator-facing scan mode --
-    # it is set by the harness or internal launch context. Absent means genuinely unrecorded, and
-    # Data management treats that as "unclassified" rather than guessing from the run id.
-    run_purpose: str = ""
+    # it is set by the harness or internal launch context. A new run is production unless something
+    # deliberate says otherwise, so "unclassified" now means only "written before this field
+    # existed" -- a reading of old data rather than a state anything new can enter.
+    run_purpose: str = PURPOSE_PRODUCTION
+    # WHERE this run's targets came from, recorded at intake. A finished run could say what it
+    # scanned and never what it was handed: an uploaded list and a pasted one produced identical
+    # config on disk, so "did we scan the file the client sent?" had no answer a person could check.
+    # Bounded and arithmetic-checkable, never free text.
+    intake: Dict[str, Any] = field(default_factory=dict)
     output_dir: str = "outputs"
     resume: bool = False
     run_id: str = ""
@@ -69,6 +111,7 @@ class ScoutRunConfig:
     resolve_dns: bool = True
 
     def __post_init__(self) -> None:
+        self.intake = normalise_intake(self.intake)
         if not isinstance(self.seeds, list) or not all(isinstance(s, str) for s in self.seeds):
             raise ScoutConfigError("seeds must be a list of URL strings")
         if not (MIN_SEEDS <= len(self.seeds) <= MAX_SEEDS):
@@ -105,6 +148,8 @@ class ScoutRunConfig:
             raise ScoutConfigError(f"unknown browser_mode: {self.browser_mode!r}")
         if self.video_mode not in VIDEO_MODES:
             raise ScoutConfigError(f"unknown video_mode: {self.video_mode!r}")
+        if self.run_purpose not in KNOWN_PURPOSES:
+            raise ScoutConfigError(f"unknown run_purpose: {self.run_purpose!r}")
         self.check_families = sorted(set(self.check_families))
         self.allowed_local_hosts = frozenset(self.allowed_local_hosts)
 
@@ -150,6 +195,7 @@ class ScoutRunConfig:
             "coverage": self.coverage,
             "video_mode": self.video_mode,
             "run_purpose": self.run_purpose,
+            "intake": dict(self.intake),
             "output_dir": self.output_dir,
             "resume": self.resume,
             "run_id": self.run_id,
@@ -162,7 +208,7 @@ class ScoutRunConfig:
         known = {
             "campaign_name", "seeds", "max_sites", "max_pages_per_site", "request_timeout_s",
             "max_response_bytes", "concurrency", "check_families", "browser_mode", "coverage",
-            "video_mode", "run_purpose", "output_dir", "resume", "run_id", "resolve_dns",
+            "video_mode", "run_purpose", "intake", "output_dir", "resume", "run_id", "resolve_dns",
         }
         kwargs = {k: v for k, v in data.items() if k in known}
         if "allowed_local_hosts" in data:
@@ -171,6 +217,11 @@ class ScoutRunConfig:
         # current default is. Reading it back as "automatic" would re-describe a finished run as
         # something it never was, so a missing key keeps the historical behaviour.
         kwargs.setdefault("video_mode", VIDEO_MANUAL)
+        # Same reasoning for purpose: a run that recorded nothing genuinely declared nothing, and
+        # reading it back as "production" would hand old test data protection it was never given
+        # (or, worse, claim an unknown run was real work). Unclassified is the honest reading.
+        if not str(kwargs.get("run_purpose") or "").strip():
+            kwargs["run_purpose"] = PURPOSE_UNCLASSIFIED
         return cls(**kwargs)
 
 

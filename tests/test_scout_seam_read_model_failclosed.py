@@ -100,7 +100,7 @@ def test_read_api_does_not_leak_a_pending_targets_findings(tmp_path, monkeypatch
     assert status == 200
     payload = json.loads(body)
     assert payload["findings"] == []
-    assert "delta.example: delta (high)" not in body       # not anywhere in the response, either
+    assert "delta.example: delta 1 (high)" not in body       # not anywhere in the response, either
 
 
 def test_unpinned_target_page_does_not_render_a_pending_targets_findings(tmp_path, monkeypatch):
@@ -123,7 +123,7 @@ def test_unpinned_target_page_does_not_render_a_pending_targets_findings(tmp_pat
         server.shutdown()
 
     assert status == 200
-    assert "delta.example: delta (high)" not in html
+    assert "delta.example: delta 1 (high)" not in html
     # Withholding the rows is not enough: before the renderer was routed by the shared completeness
     # predicate, this same page still certified the interrupted target as "Analysis complete" with a
     # healthy "no actionable defect" conclusion — a leak replaced by an affirmative clean bill.

@@ -285,6 +285,7 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._json(200, {"rows": self._campaign_service().history(
                     filters={"text": (q.get("text") or [""])[0],
                              "status": (q.get("status") or [""])[0],
+                             "purpose": (q.get("purpose") or [""])[0],
                              "archived": (q.get("archived") or [""])[0]})})
             if path == "/api/scout/target":
                 return self._json(200, self._campaign_service().target_detail(
@@ -302,6 +303,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     (q.get("domain") or [""])[0], run=(q.get("run") or [""])[0]))
             if path == "/scout/run":
                 return self._html(200, self._scout_run_results_page((q.get("id") or [""])[0]))
+            if path == "/api/scout/validation":
+                return self._json(200, self._run_validation((q.get("run") or [""])[0]))
             if path == "/scout/attention":
                 return self._html(200, self._scout_attention_page())
             if path == "/docs":
@@ -532,10 +535,97 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 result = parse_text(text, **common)
             return self._json(200, {"ok": True, **result.to_dict()})
 
+        def _run_setup_card(self, run_id: str) -> str:
+            """Requested, effective and observed for one run, plus the reconciliation verdict.
+
+            The three columns exist because two of them are settings and only the third is a result.
+            "Deep capture" in a config is a permission; the browser receipt is the evidence. Merging
+            them into one "Deep capture ✓" is how a static run came to be described as a browser one.
+            """
+            try:
+                from core.scout.run_validation import PASS, validate_run
+                report = validate_run(service.output_dir, run_id, write=False,
+                                      read_model=self._campaign_service())
+            except Exception:  # noqa: BLE001 - an unreadable run shows no card rather than a false one
+                return ""
+            if not report.checks:
+                return ""
+
+            def _cell(value) -> str:
+                if value is None:
+                    return '<span class="muted">Unknown</span>'
+                if isinstance(value, (list, tuple)):
+                    return _esc(", ".join(str(v) for v in value) or "none")
+                if isinstance(value, dict):
+                    return _esc(" · ".join(f"{k}: {v}" for k, v in value.items()))
+                return _esc(str(value))
+
+            rows = "".join(
+                f'<tr><th scope="row">{_esc(name.replace("_", " ").capitalize())}</th>'
+                f'<td>{_cell(layer.get("requested"))}</td>'
+                f'<td>{_cell(layer.get("effective"))}</td>'
+                f'<td>{_cell(layer.get("observed"))}</td></tr>'
+                for name, layer in (report.layers or {}).items())
+            problems = report.problems()
+            verdict_kind = {"VALIDATED": "good", "FAILED": "bad"}.get(report.status, "warn")
+            problem_rows = "".join(
+                f'<li><code>{_esc(c.check_id)}</code> — <b>{_esc(c.status)}</b>: '
+                f'{_esc(c.explanation)}</li>' for c in problems)
+            counts = report.counts
+            return (
+                f'<div class="card"><h2>Run setup and execution</h2>'
+                f'{_badge(report.status.replace("_", " ").title(), verdict_kind)}'
+                f'<p class="muted">{counts.get(PASS, 0)} check(s) passed, '
+                f'{len(problems)} unresolved, '
+                f'{counts.get("NOT_APPLICABLE", 0)} not applicable. Purpose '
+                f'<code>{_esc(report.purpose)}</code>.</p>'
+                # Two builds, never one. They are the same value only when a run is validated by the
+                # code that produced it; showing a single "Build" left the operator reading the
+                # CHECKING build as the one that made the result. A build carrying "+ local changes"
+                # is shown exactly as recorded — a dirty tree is not the commit it started from.
+                f'<p class="muted">Executed by '
+                f'<code>{_esc(report.execution_build or "unknown")}</code> &middot; '
+                f'Validated by <code>{_esc(report.validation_build or "unknown")}</code></p>'
+                f'<div class="scrollx"><table><caption>What was asked for, accepted, and done'
+                f'</caption><thead><tr><th>Setting</th><th>Requested</th><th>Effective</th>'
+                f'<th>Observed</th></tr></thead><tbody>{rows}</tbody></table></div>'
+                + (f'<h3>Not proven</h3><ul class="muted">{problem_rows}</ul>' if problems else
+                   '<p class="muted">Every applicable check is backed by a receipt, a file, or a '
+                   'hash on disk.</p>')
+                + f'<p class="muted"><a href="/api/scout/validation?run={_esc(run_id)}">'
+                  f'Machine-readable validation report</a></p></div>')
+
+        def _run_validation(self, run_id: str) -> dict:
+            """Reconcile a run against its own evidence, on demand.
+
+            Recomputed rather than served from the file the run wrote: a package exported after the
+            run finished, or evidence that has since gone missing, both change the answer, and a
+            stale report is exactly the kind of reassurance this is meant to remove.
+            """
+            run = str(run_id or "").strip()
+            if not run:
+                return {"ok": False, "error": "a run id is required"}
+            try:
+                from core.scout.run_validation import validate_run
+                report = validate_run(service.output_dir, run, write=True,
+                                      read_model=self._campaign_service())
+            except Exception as exc:  # noqa: BLE001 - an unreadable run is reported, never guessed
+                return {"ok": False, "error": f"{type(exc).__name__}", "run_id": run}
+            return {"ok": True, **report.to_dict()}
+
         def _data_store(self):
             from core.scout.data_management import DataManagementStore
+            # ``service.run_id`` survives the run that set it, so it names the LAST run, not a
+            # running one. Pass whether a run is actually in flight as well, or the most recent
+            # finished run stays permanently unmanageable behind a "still running" refusal.
+            running = False
+            try:
+                running = bool(service.is_running())
+            except Exception:      # noqa: BLE001 - an unavailable probe must fail SAFE (protect)
+                running = True
             return DataManagementStore(service.output_dir,
-                                       active_run_id=str(getattr(service, "run_id", "") or ""))
+                                       active_run_id=str(getattr(service, "run_id", "") or ""),
+                                       run_active=running)
 
         def _scout_data_action(self, action: str):
             """Preview / Trash / Restore / permanent delete, each behind the shared mutation guard.
@@ -566,10 +656,20 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
 
         def _data_page(self, q=None) -> str:
             """Everything that takes up space, what it is for, and a staged way to let it go."""
-            view = ((q or {}).get("view") or [""])[0].strip().lower()
+            query = q or {}
+            view = (query.get("view") or [""])[0].strip().lower()
             in_trash = view == "trash"
-            inv = self._data_store().inventory()
-            rows_source = [r for r in inv.runs if r.trashed == in_trash]
+
+            def _one(name: str) -> str:
+                return (query.get(name) or [""])[0].strip()[:120]
+
+            # The filters an operator can combine. Each one only ever NARROWS, so a preview built
+            # from the visible selection can never reach a run the table was not showing.
+            filters = {"purpose": _one("purpose"), "text": _one("q"),
+                       "since": _one("since"), "until": _one("until"),
+                       "trash": "only" if in_trash else "exclude"}
+            inv = self._data_store().inventory(filters=filters)
+            rows_source = list(inv.runs)
             from core.scout.data_management import (PURPOSE_ACCEPTANCE, PURPOSE_DIAGNOSTIC,
                                                     PURPOSE_LABELS, PURPOSE_MANUAL_TEST,
                                                     PURPOSE_PRODUCTION, PURPOSE_UNCLASSIFIED)
@@ -600,8 +700,32 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                      f'<th>{"Moved to Trash" if in_trash else "Recorded"}</th></tr></thead>'
                      f'<tbody>{rows}</tbody></table>'
                      if rows else
-                     f'<div class="card empty muted">'
-                     f'{"Trash is empty." if in_trash else "No Scout runs are stored yet."}</div>')
+                     f'<div class="card empty muted">{_esc(_data_empty_note(filters, in_trash))}</div>')
+            active_purpose = filters["purpose"].lower()
+            options = "".join(
+                f'<option value="{_esc(key)}"'
+                f'{" selected" if active_purpose == key else ""}>{_esc(label)}</option>'
+                for key, label in (("", "Any purpose"),
+                                   (PURPOSE_PRODUCTION, PURPOSE_LABELS[PURPOSE_PRODUCTION]),
+                                   (PURPOSE_ACCEPTANCE, PURPOSE_LABELS[PURPOSE_ACCEPTANCE]),
+                                   (PURPOSE_DIAGNOSTIC, PURPOSE_LABELS[PURPOSE_DIAGNOSTIC]),
+                                   (PURPOSE_MANUAL_TEST, PURPOSE_LABELS[PURPOSE_MANUAL_TEST]),
+                                   (PURPOSE_UNCLASSIFIED, PURPOSE_LABELS[PURPOSE_UNCLASSIFIED])))
+            filter_bar = (
+                f'<form class="row filters" method="get" action="/data">'
+                f'{"<input type=hidden name=view value=trash>" if in_trash else ""}'
+                f'<label class="sr-only" for="f_purpose">Purpose</label>'
+                f'<select id="f_purpose" name="purpose">{options}</select>'
+                f'<label class="sr-only" for="f_q">Run or site</label>'
+                f'<input id="f_q" name="q" value="{_esc(filters["text"])}" '
+                f'placeholder="run id or site" maxlength="120">'
+                f'<label class="sr-only" for="f_since">Recorded from</label>'
+                f'<input id="f_since" name="since" type="date" value="{_esc(filters["since"][:10])}">'
+                f'<label class="sr-only" for="f_until">Recorded to</label>'
+                f'<input id="f_until" name="until" type="date" value="{_esc(filters["until"][:10])}">'
+                f'<button class="chip" type="submit">Filter</button>'
+                f'<a class="chip" href="/data{"?view=trash" if in_trash else ""}">Clear</a>'
+                f'</form>')
             actions = (
                 '<button class="chip" onclick="act(\'restore\')">Restore selected</button>'
                 '<button class="chip danger" onclick="destroy()">Delete permanently…</button>'
@@ -629,6 +753,9 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 'recorded are never swept automatically.</p>'
                 f'<div class="row">{tabs}</div>'
                 f'<div class="summary-grid">{tiles}</div>'
+                f'{filter_bar}'
+                f'<p class="muted">The tiles above count everything stored. The table below shows '
+                f'what your filters selected — and a removal can only ever reach what is in it.</p>'
                 f'<div class="scrollx">{table}</div>'
                 '<div class="card" id="previewout" role="status" aria-live="polite" hidden></div>'
                 f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
@@ -2622,6 +2749,19 @@ function startCampaign(){{
                 return self._json(*refusal)
             body = body or {}
             overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else None
+            # ``overrides`` is forwarded field-by-field into the campaign config, so run_purpose
+            # would otherwise ride in as an ordinary override and let a request declare its own
+            # discovery — and every per-target run it promotes — disposable. Resolve it here, at the
+            # untrusted boundary, through the same server-side gate the seeded launcher uses.
+            from core.scout.run_purpose import (PurposeNotPermitted, resolve_requested_purpose,
+                                                test_purposes_enabled)
+            requested_purpose = (overrides or {}).get("run_purpose", body.get("run_purpose"))
+            try:
+                purpose = resolve_requested_purpose(requested_purpose,
+                                                    allow_test=test_purposes_enabled())
+            except PurposeNotPermitted as exc:
+                return self._json(422, {"ok": False, "error": str(exc)})
+            overrides = {**(overrides or {}), "run_purpose": purpose}
             try:
                 res = self._campaign_service().launch(
                     campaign_preset=str(body.get("campaign_preset") or "balanced-production"),
@@ -2816,13 +2956,19 @@ function startCampaign(){{
             elif days > 0:
                 since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
             result_filter = (q.get("result") or [""])[0].strip()
+            # History is the operator's own work by default. Acceptance/diagnostic/manual-test runs
+            # are real and are kept, but they are shown only when explicitly asked for — otherwise a
+            # release check quietly becomes four more companies to follow up.
+            purpose_filter = (q.get("purpose") or [""])[0].strip().lower()[:24]
             rows = self._campaign_service().history_results(filters={
                 "text": qtext, "since": since, "until": until, "result": result_filter,
+                "purpose": purpose_filter,
                 "archived": "only" if show_archived else "",
             })
             active_days = days if (days > 0 and not (frm or to)) else 0
             filtered = bool(qtext or since or until or result_filter)
             total = len(self._campaign_service().history(filters={
+                "purpose": purpose_filter,
                 "archived": "only" if show_archived else ""}))
             count_label = (f"{len(rows)} shown of {total} total"
                            if filtered and len(rows) != total else f"{total} total")
@@ -2895,6 +3041,9 @@ function startCampaign(){{
                     f'<label class="sr-only" for="history_result">Filter by result</label>'
                     f'<select id="history_result" name="result">'
                     f'{_result_options(result_filter)}</select>'
+                    f'<label class="sr-only" for="history_purpose">Show runs recorded for</label>'
+                    f'<select id="history_purpose" name="purpose">'
+                    f'{_purpose_options(purpose_filter)}</select>'
                     f'<details class="inline-filter"><summary>Date range</summary>'
                     f'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">'
                     f'<label class="muted">Last <input name="days" type="number" min="1" max="3650" '
@@ -3439,7 +3588,11 @@ function startCampaign(){{
                 f'<p class="muted">This trace is a redacted structured event record, not a native '
                 f'Playwright <code>trace.zip</code>. Playwright Inspector is a live developer tool '
                 f'and is intentionally not exposed in the operator UI.</p></div>'
-                f'<div class="card"><h2>Coverage</h2>{_coverage_card_html(coverage)}</div>')
+                f'<div class="card"><h2>Coverage</h2>{_coverage_card_html(coverage)}</div>'
+                # What the recording actually shows, beside the recording. A clip on its own invites
+                # the reader to supply the conclusion; this states it — including when the conclusion
+                # is "the control worked, and this proves only that we can record it".
+                + _interaction_card(det.get("interaction"), _art_url))
 
             if actionable:
                 contact_rows = "".join(
@@ -3836,6 +3989,27 @@ function startCampaign(){{
                     state = {}
             prospects = state.get("prospects", {}) or {}
             if not run_id or not prospects:
+                # A discovery campaign holds no prospect evidence of its own: each promoted
+                # candidate was analyzed in its own run, and everything found belongs to THAT run.
+                # "No results" here would be literally false — the results exist, one link away. So
+                # the parent names and links its promoted children; nothing is copied into the
+                # parent, and provenance stays with the run that earned it.
+                promoted = [c for c in (state.get("candidates") or [])
+                            if isinstance(c, dict) and c.get("promoted_scout_run")]
+                if promoted:
+                    links = "".join(
+                        f'<li><a href="/scout/run?id={_esc(str(c.get("promoted_scout_run")))}">'
+                        f'{_esc(str(c.get("registrable_domain") or c.get("promoted_scout_run")))}'
+                        f'</a> <span class="muted">(run '
+                        f'<code>{_esc(str(c.get("promoted_scout_run")))}</code>)</span></li>'
+                        for c in promoted)
+                    body = (
+                        '<h1>Run results</h1>'
+                        f'<div class="card"><p><b>This discovery campaign holds no results of its '
+                        f'own.</b></p><p>It promoted {len(promoted)} candidate site(s) into '
+                        'dedicated analysis run(s). The results belong to those runs and open '
+                        f'there:</p><ul>{links}</ul></div>')
+                    return _page("AI QA Factory — Run results", "/scout", body)
                 return _page("AI QA Factory — Run results", "/scout",
                              f'<h1>Run results</h1><div class="card empty muted">No results for run '
                              f'<code>{_esc(run_id)}</code>.</div>')
@@ -3938,7 +4112,10 @@ function startCampaign(){{
                         f'<strong>{count}</strong></div>'
                         for label, count in _run_status_summary(prospects))
                     + f'</div><div class="scrollx" style="margin-top:12px">{table}</div></div>'
-                    f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
+                    # What was asked for, what the system accepted, and what it actually did --
+                    # side by side, because a setting reads exactly like a result until they are.
+                    + self._run_setup_card(run_id)
+                    + f'<div class="card bulkbar" id="bulkbar" hidden><b><span id="selected">0</span> '
                     f'selected</b><div class="row">'
                     f'<button class="chip" onclick="selectedAction(\'skip_queued\')">Skip queued</button>'
                     f'<button class="chip" onclick="selectedAction(\'archive_targets\')">'
@@ -4158,8 +4335,10 @@ function startCampaign(){{
             try:
                 attached_id = str(service.status().get("run_id") or "")
                 if attached_id and (not project or project == attached_id):
-                    from core.scout.canonical_runs import is_diagnostic_run
-                    if include_diagnostics or not is_diagnostic_run(attached_id):
+                    # The run's OWN declared purpose, not a reading of its name: an acceptance run
+                    # with a production-shaped id was counted here as real work.
+                    from core.scout.canonical_runs import is_diagnostic
+                    if include_diagnostics or not is_diagnostic(service.output_dir, attached_id):
                         scout_run_ids.append(attached_id)
             except Exception:
                 pass
@@ -4168,8 +4347,8 @@ function startCampaign(){{
             scout_events = 0
             scout_runs_without_history = 0
             for run_id in scout_run_ids:
-                from core.scout.canonical_runs import is_diagnostic_run
-                diagnostic = is_diagnostic_run(run_id)
+                from core.scout.canonical_runs import is_diagnostic
+                diagnostic = is_diagnostic(service.output_dir, run_id)
                 try:
                     run_events = RunStore(service.output_dir, run_id).read_events()
                 except Exception:
@@ -4558,18 +4737,19 @@ function checks(name){return Array.from(document.querySelectorAll(
 function csv(s){return String(s||'').split(',').map(function(x){return x.trim();}).filter(Boolean);}
 function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){
 return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
-var PENDING={targets:[],counts:null};
+var PENDING={targets:[],counts:null,kind:'',file:''};
 function showPanels(){var s=source();
 ['find','paste','file'].forEach(function(k){$('p-'+k).hidden=(k!==s);});
 $('intake').hidden=(s==='find');
-if(s==='find'){PENDING={targets:[],counts:null};}
+if(s==='find'){PENDING={targets:[],counts:null,kind:'',file:''};}
 summary();}
 function summary(){var n=parseInt($('maxsites').value,10)||10;
 var s=source();var what=(s==='find')?('up to '+n+' sites'):
 ((PENDING.counts?PENDING.counts.unique_sites:0)+' site(s)');
 $('safetysummary').textContent='Read-only scan · '+what+
 ' · evidence saved automatically · no forms, purchases or messages.';}
-function renderIntake(j){PENDING={targets:(j.targets||[]),counts:(j.counts||null)};
+function renderIntake(j,kind,file){PENDING={targets:(j.targets||[]),counts:(j.counts||null),
+kind:(kind||''),file:(file||'')};
 var c=j.counts||{};var out=$('intake');out.hidden=false;
 var lines=[c.unique_sites+' site(s) will be scanned'];
 if(c.duplicates)lines.push(c.duplicates+' duplicate line(s) ignored');
@@ -4580,7 +4760,8 @@ if((j.rejected||[]).length){html+='<ul>'+j.rejected.map(function(r){
 return '<li><code>'+esc(r.value)+'</code> — '+esc(r.reason)+'</li>';}).join('')+'</ul>';}
 out.innerHTML=html;summary();}
 function previewText(){J('/api/scout/intake/preview',{text:$('seeds').value||''})
-.then(renderIntake).catch(function(e){$('intake').hidden=false;
+.then(function(j){renderIntake(j,'paste','');})
+.catch(function(e){$('intake').hidden=false;
 $('intake').textContent='Could not read those addresses: '+e;});}
 function previewFile(){var f=$('listfile').files[0];if(!f)return;
 var reader=new FileReader();reader.onload=function(){
@@ -4589,7 +4770,8 @@ J('/api/scout/import',{filename:f.name,content_b64:b64}).then(function(j){
 if(!j.ok){$('intake').hidden=false;$('intake').textContent='Could not read that file: '+
 (j.error||'unknown error');return;}
 var rows=((j.result||{}).rows||[]).map(function(r){return [r.original];});
-return J('/api/scout/intake/preview',{rows:rows}).then(renderIntake);})
+return J('/api/scout/intake/preview',{rows:rows})
+.then(function(p){renderIntake(p,'upload',f.name);});})
 .catch(function(e){$('intake').hidden=false;
 $('intake').textContent='Could not read that file: '+e;});};
 reader.readAsDataURL(f);}
@@ -4610,8 +4792,15 @@ var seeds=PENDING.targets.map(function(t){return t.url;});
 if(!seeds.length){btn.disabled=false;
 msg.textContent='No valid website addresses yet — add some and check the preview.';return;}
 var key=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();
-J('/api/campaign/start',{confirm:true,idempotency_key:key,seeds:seeds.slice(0,n),
-campaign:'operator-scan',browser_mode:'auto',coverage:'adaptive',max_sites:n})
+var queued=seeds.slice(0,n);var pc=PENDING.counts||{};
+// Where this list came from, recorded with the run. Every row read ends in exactly one bucket,
+// including the ones the site limit cut off — otherwise truncation reads as rows vanishing.
+var intake={kind:(PENDING.kind||'paste'),rows_read:(pc.lines_read||0),
+rows_accepted:queued.length,rows_rejected:(pc.rejected||0),duplicates:(pc.duplicates||0),
+rows_capped:Math.max(0,(pc.unique_sites||0)-queued.length)};
+if(PENDING.file)intake.source_name=PENDING.file;
+J('/api/campaign/start',{confirm:true,idempotency_key:key,seeds:queued,
+campaign:'operator-scan',browser_mode:'auto',coverage:'adaptive',max_sites:n,intake:intake})
 .then(function(j){if(j.ok||j.run_id){location.href='/scout/run?id='+encodeURIComponent(j.run_id);}
 else{btn.disabled=false;msg.textContent='Scout could not start: '+
 (j.message||j.error||'unknown error');}})
@@ -5014,6 +5203,11 @@ _TOKENS_CSS = """
 *{box-sizing:border-box}
 body{font-family:var(--font);margin:0;background:var(--bg);color:var(--text);line-height:1.5}
 a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+/* A link sitting inside a sentence must be distinguishable without colour (WCAG 1.4.1) — our own
+   axe run flags exactly this, and we sell those findings. Links that are already distinguishable by
+   shape (nav, chips, buttons, tabs) are excluded: underlining them would be noise, not information. */
+main p a,main li a,main td a,.quiet-state a,.muted a,figcaption a{text-decoration:underline;text-underline-offset:2px}
+main p a.btn,main p a.chip,main li a.btn,main li a.chip,main td a.chip,main td a.btn{text-decoration:none}
 /* An in-page action that should read as a link but behave (and be announced) as a button. */
 .linklike{background:none;border:0;padding:0;font:inherit;color:var(--link);cursor:pointer}
 .linklike:hover{text-decoration:underline}
@@ -5030,6 +5224,12 @@ header.top .wrap{flex-wrap:wrap} header.top nav{flex-wrap:wrap}
    theme button past the header's right padding and body overflow-x:hidden then clipped it. */
 header.top nav{flex:1 1 auto;min-width:0}
 header.top .theme-toggle{flex:0 0 auto}
+/* A dropdown is a list. Its links are inline by default and had no rule to stack them, so the
+   items flowed as a paragraph and wrapped mid-list once there were five of them. */
+.nav-menu{display:flex;flex-direction:column;gap:2px;padding:6px}
+.nav-menu a{display:block;padding:7px 10px;border-radius:6px;color:var(--text);white-space:nowrap}
+.nav-menu a:hover{background:var(--surface-2)}
+.nav-menu a[aria-current="page"]{background:var(--surface-2);font-weight:600}
 /* "Nothing is happening" is a line, not a panel: as a card it competed with the blocks that DID
    have something in them, and several of them on one screen taught the eye to skip that region. */
 .quiet-state{margin:.2rem 0 1rem;color:var(--muted);padding:10px 12px;border:1px solid var(--border);
@@ -5169,7 +5369,9 @@ dialog::backdrop{background:#000a}dialog h2{margin-top:0}
 @media (max-width:640px){ .only-desktop{display:none} .only-mobile{display:block} }
 /* Campaign form: stack each field (label above a full-width control); checkboxes stay inline. */
 .formstack label{display:block;margin:0 0 14px;color:var(--text);font-weight:600;font-size:13px}
-.formstack label>select,.formstack label>input:not([type=checkbox]){display:block;width:100%;
+/* Full width is right for a text field and wrong for a radio: inside an option tile the radio
+   filled the whole tile and pushed its label out past the border into the next choice. */
+.formstack label>select,.formstack label>input:not([type=checkbox]):not([type=radio]){display:block;width:100%;
   max-width:440px;margin-top:5px;font-weight:400}
 .formstack label>select[multiple]{max-width:100%}
 .formstack>label:has(>input[type=checkbox]){font-weight:400;color:var(--muted)}
@@ -5188,7 +5390,8 @@ dialog::backdrop{background:#000a}dialog h2{margin-top:0}
  font-size:13px;cursor:pointer}
 .formstack .option-tile:has(input:checked){border-color:var(--accent);
  background:var(--surface-2);color:var(--text)}
-.formstack .option-tile input{margin:0;flex:0 0 auto}
+.formstack .option-tile input{margin:0;flex:0 0 auto;width:auto;display:inline-block}
+.formstack .option-tile>span{flex:1 1 auto;min-width:0}
 .campaign-advanced{max-width:720px;margin:6px 0 16px}
 .advanced-intro{margin:0 0 14px}
 .advanced-section{padding:14px 0;border-top:1px solid var(--border)}
@@ -5567,6 +5770,81 @@ def _client_package_html(service, domain: str, run_id: str, detail: dict) -> str
         f'it. Building the package is not approval to send it: review the contents first.</p></div>')
 
 
+_INTERACTION_HEADLINE = {
+    "defect": ("A control that does not do what it says", "bad"),
+    "interaction_trace": ("A recorded interaction — the control behaved correctly", "muted"),
+    "not_run": ("No interaction was recorded", "muted"),
+}
+
+
+def _interaction_card(record, art_url) -> str:
+    """Render the recorded interaction: what was true before, what was done, what happened, and
+    whether the page was put back.
+
+    The outcome is stated in words rather than left to the video, because a trace and a defect look
+    identical on screen — the same click, the same page — and only one of them is something a client
+    should ever hear about.
+    """
+    if not isinstance(record, dict) or not record.get("scenario"):
+        return ""
+    outcome = str(record.get("outcome") or "not_run")
+    headline, kind = _INTERACTION_HEADLINE.get(outcome, _INTERACTION_HEADLINE["not_run"])
+    video = record.get("video") if isinstance(record.get("video"), dict) else {}
+    ref = str(record.get("video_ref") or "")
+    run = str(record.get("run_id") or "")
+    pid = str(record.get("prospect_id") or "")
+    player = ""
+    if ref and run and pid:
+        src = art_url(f"prospects/{pid}/{ref}")
+        player = (f'<video src="{src}" controls preload="metadata" '
+                  f'style="max-width:520px;width:100%;margin:8px 0"></video>')
+    elif outcome in ("defect", "interaction_trace"):
+        player = (f'<p class="muted">{_esc(str(record.get("video_rejected_reason") or "No clip was kept for this interaction."))}</p>')
+    facts = []
+    for label, key in (("Before", "baseline"), ("After the action", "observed"),
+                       ("After cleanup", "after_cleanup")):
+        state = record.get(key) if isinstance(record.get(key), dict) else {}
+        if not state:
+            continue
+        bits = []
+        if state.get("result_count") is not None:
+            bits.append(f'{state["result_count"]} results stated')
+        if state.get("item_signature"):
+            bits.append(f'{state["item_signature"][0]} listed')
+        if state.get("selected_label") is not None:
+            bits.append(f'selected: {state["selected_label"]}')
+        if state.get("removable_count") is not None:
+            bits.append(f'{state["removable_count"]} removable element(s)')
+        facts.append(f'<tr><th scope="row">{_esc(label)}</th>'
+                     f'<td class="muted">{_esc(" · ".join(bits) or "nothing measurable")}</td></tr>')
+    if video:
+        facts.append(
+            f'<tr><th scope="row">Recording</th><td class="muted">'
+            f'{_esc(str(video.get("mime") or "video"))} · {_human_bytes(video.get("bytes"))} · '
+            f'{_esc(str(video.get("duration_s")))}s · {_esc(str(video.get("width")))}&times;'
+            f'{_esc(str(video.get("height")))} · SHA-256 '
+            f'<code>{_esc(str(video.get("sha256") or "")[:16])}&hellip;</code></td></tr>')
+    steps = "".join(f'<li>{_esc(str(s))}</li>' for s in (record.get("steps") or [])[:8])
+    cleanup = ("the page was put back" if record.get("cleanup_ok")
+               else "the page could not be verified as restored")
+    return (f'<div class="card"><h2>Recorded interaction</h2>'
+            f'{_badge(headline, kind)}'
+            f'<p class="muted">{_esc(str(record.get("reason") or ""))}</p>'
+            f'{player}'
+            f'<div class="scrollx"><table>{"".join(facts)}</table></div>'
+            f'{f"<ol class=muted>{steps}</ol>" if steps else ""}'
+            f'<p class="muted">Cleanup: {_esc(cleanup)}.</p></div>')
+
+
+def _data_empty_note(filters, in_trash: bool) -> str:
+    """Say WHY the table is empty. "Trash is empty" under an active filter is simply wrong, and it
+    reads as reassurance at the moment an operator is looking for something they cannot find."""
+    narrowed = [name for name in ("purpose", "text", "since", "until") if (filters or {}).get(name)]
+    if narrowed:
+        return "No stored run matches these filters. Clear them to see everything again."
+    return "Trash is empty." if in_trash else "No Scout runs are stored yet."
+
+
 def _human_bytes(size) -> str:
     try:
         value = float(size)
@@ -5577,6 +5855,21 @@ def _human_bytes(size) -> str:
             return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
         value /= 1024
     return f"{value:.1f} MiB"
+
+
+def _purpose_options(selected: str = "") -> str:
+    """The purpose filter. Blank means the operator's own work, which is what History is for —
+    so the first option says so rather than reading as "no filter applied"."""
+    from core.scout.run_purpose import (PURPOSE_ACCEPTANCE, PURPOSE_DIAGNOSTIC, PURPOSE_LABELS,
+                                        PURPOSE_MANUAL_TEST)
+
+    choices = [("", "Production work"), ("all", "Everything, including test runs"),
+               (PURPOSE_ACCEPTANCE, PURPOSE_LABELS[PURPOSE_ACCEPTANCE]),
+               (PURPOSE_DIAGNOSTIC, PURPOSE_LABELS[PURPOSE_DIAGNOSTIC]),
+               (PURPOSE_MANUAL_TEST, PURPOSE_LABELS[PURPOSE_MANUAL_TEST])]
+    return "".join(f'<option value="{_esc(key)}"'
+                   f'{" selected" if key == selected else ""}>{_esc(label)}</option>'
+                   for key, label in choices)
 
 
 def _result_options(selected: str = "") -> str:
@@ -5810,6 +6103,18 @@ def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 
     # the commit this dashboard actually started serving (stale detection works before the 1st request).
     from core.build_identity import freeze_running_identity
     freeze_running_identity()
+    # Finish any deletion a crash interrupted, on the real startup path rather than only when the
+    # next deletion happens to run. A run staged for removal is one the operator already confirmed
+    # away; leaving it in staging means disk stays occupied by data everyone believes is gone, and
+    # the recovery routine existed with no caller at all.
+    try:
+        from core.scout.data_management import DataManagementStore
+        outcome = DataManagementStore(service.output_dir).reconcile(repair=True)
+        for entry in outcome["repaired"]:
+            print(f"[scout] recovered after an interrupted deletion: "
+                  f"{entry['run_id']} — {entry['action']}")
+    except Exception as exc:      # noqa: BLE001 - never block the dashboard on housekeeping
+        print(f"[scout] interrupted-deletion recovery could not run: {type(exc).__name__}")
     launcher = launcher or CampaignLauncher(service)
     token = secrets.token_urlsafe(32) if csrf_token is None else csrf_token
     from core.scout.challenge_session import ChallengeSessionManager

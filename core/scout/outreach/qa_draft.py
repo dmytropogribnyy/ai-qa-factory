@@ -84,7 +84,10 @@ def extract_public_contact_records(
 
 def problem_bullets(findings: List[Dict[str, Any]], *, limit: int = 8) -> List[str]:
     """Concise, highest-impact-first problem bullets from verified findings (no secrets/PII)."""
-    items = [f for f in (findings or []) if f.get("severity") in ("high", "medium", "low")]
+    # The same canonical set the verdict counts and the fix offer scopes. An informational
+    # observation, an interaction trace and a duplicate are all absent from every one of them.
+    from core.scout.actionable import actionable_set
+    items = list(actionable_set(findings or []).actionable)
     items.sort(key=lambda f: _SEVERITY_ORDER.get(f.get("severity"), 9))
     bullets: List[str] = []
     for f in items[:limit]:
@@ -106,7 +109,7 @@ def _looks_unsafe(text: str) -> bool:
 
 def _llm_polish_body(router: Any, *, domain: str, name: str, archetype: str,
                      bullets: List[str], deterministic_body: str,
-                     required_offer: str) -> tuple[str, str]:
+                     required_offer: str, required_note: str = "") -> tuple[str, str]:
     """Optionally rewrite the draft prose with a cheap model. Returns (body, generated_by).
 
     The model may ONLY reword using the exact `bullets` supplied - it must not invent findings.
@@ -126,6 +129,8 @@ def _llm_polish_body(router: Any, *, domain: str, name: str, archetype: str,
         f"Business: {name} ({domain}). Type: {archetype or 'website'}.\n"
         f"Issues found (verbatim, keep as a short bulleted list):\n" +
         "\n".join(f"- {b}" for b in bullets) +
+        (f"\n\nThis list is shortened. State exactly, verbatim: \"{required_note}\"\n"
+         if required_note else "") +
         "\n\nWrite the email body only (start with 'Hi,'). Make the primary call-to-action a "
         "deeper PAID QA audit (reproducible evidence + prioritized fix list); offer to share the "
         "evidence either way. Keep it honest and low-pressure. No specific price.")
@@ -143,6 +148,10 @@ def _llm_polish_body(router: Any, *, domain: str, name: str, archetype: str,
         return deterministic_body, "deterministic"
     if required_offer and required_offer.lower() not in text.lower():
         text = text.rstrip() + "\n\n" + required_offer
+    # A model asked to be brief is exactly the thing that will drop the sentence saying the list is
+    # incomplete. Enforced here rather than trusted: a shortened list without it is the defect.
+    if required_note and "showing the top" not in text.lower():
+        text = text.rstrip() + "\n\n" + required_note
     return text, model
 
 
@@ -168,7 +177,8 @@ def _offer_line(archetype: str = "") -> str:
 
 def _fix_offer(findings: List[Dict[str, Any]]) -> tuple[str, Dict[str, Any]]:
     from core.scout.outreach.fixability import classify_fixability
-    fixability = classify_fixability(findings, access_available=False)
+    from core.scout.actionable import actionable_set
+    fixability = classify_fixability(actionable_set(findings).actionable, access_available=False)
     count = int(fixability.get("offerable") or 0)
     if count:
         noun = "issue" if count == 1 else "issues"
@@ -193,8 +203,13 @@ def build_review_draft(*, domain: str, business_name: str = "",
     If `router` is a live (non-mock) LLMRouter, a cheap model (Haiku by default) rewrites the prose
     for tone only, using the exact factual bullets; it can never send, invent findings, or break the
     pipeline (deterministic template is the fallback). Bullets stay deterministic."""
+    from core.scout.actionable import actionable_set
     name = (business_name or domain).strip()
+    # ONE read of the canonical split. Everything numeric below comes from `canonical`; `bullets` is
+    # a VIEW of it, capped for length, and `display` is what keeps the two from being confused.
+    canonical = actionable_set(findings or [])
     bullets = problem_bullets(findings or [])
+    display = canonical.display(len(bullets))
     archetype = (understanding or {}).get("archetype")
     if not bullets:
         return {
@@ -207,33 +222,46 @@ def build_review_draft(*, domain: str, business_name: str = "",
                 "actionable issue. This is not a conclusion that the site is defect-free."
             ),
             "offer": "", "fix_offer": "", "fixability": _fix_offer([])[1],
+            "confirmed_issue_count": 0, "bullets_shown": 0, "bullets_total": 0,
+            "bullets_capped": False,
             "generated_by": "deterministic", "contact": contact, "sent": False,
             "available": False,
             "disclaimer": (
                 "DRAFT unavailable - the system never sends outreach without a confirmed issue."
             ),
         }
-    issue_word = "issue" if len(bullets) == 1 else "issues"
-    subject = f"Quick QA review of {name} — {len(bullets)} confirmed {issue_word}"
+    # The COUNT is the canonical total; the LIST is capped for length. Reporting the cap as the
+    # count is the whole of the defect this reads against: eleven confirmed problems announced as
+    # eight in the subject line, three centimetres above an offer to fix eleven.
+    total = canonical.confirmed_issue_count
+    issue_word = "issue" if total == 1 else "issues"
+    subject = f"Quick QA review of {name} — {total} confirmed {issue_word}"
     intro = (
         f"I ran a bounded, read-only QA check of your public website ({domain}) and confirmed "
-        f"the following {issue_word} that may affect conversion, accessibility, or user trust:"
+        f"{total} {issue_word} that may affect conversion, accessibility, or user trust:"
     )
     offer = _offer_line(archetype)
     fix_offer, fixability = _fix_offer(findings or [])
     required_offer = offer + " " + fix_offer
     closing = ("These are from public pages only - no logins, form submissions, or orders. " +
                required_offer + " No obligation - happy to share the evidence either way.")
-    deterministic_body = "\n".join(["Hi,", "", intro, ""] + [f"- {b}" for b in bullets] +
-                                   ["", closing])
+    body_lines = ["Hi,", "", intro, ""] + [f"- {b}" for b in bullets]
+    if display.capped:
+        body_lines += ["", display.caption]
+    deterministic_body = "\n".join(body_lines + ["", closing])
     body, generated_by = _llm_polish_body(router, domain=domain, name=name, archetype=archetype,
                                           bullets=bullets, deterministic_body=deterministic_body,
-                                          required_offer=required_offer)
+                                          required_offer=required_offer,
+                                          required_note=display.caption)
     return {
         "schema": "qa-review-draft/v1", "domain": domain, "business_name": name,
         "archetype": archetype,
         "subject": subject, "problem_bullets": bullets, "body": body, "offer": offer,
         "fix_offer": fix_offer, "fixability": fixability,
+        # Carried, not recomputed: a consumer that needs the count must never have to re-derive it
+        # from the length of the list it happens to have been handed.
+        "confirmed_issue_count": total, "bullets_shown": display.shown,
+        "bullets_total": display.total, "bullets_capped": display.capped,
         "generated_by": generated_by,
         "contact": contact, "sent": False, "available": True,
         "disclaimer": ("DRAFT only - the system does not send this. Copy and send it yourself after "

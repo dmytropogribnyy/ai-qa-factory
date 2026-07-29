@@ -33,9 +33,13 @@ _LOCAL_SUFFIX = " + local changes"
 
 def _git_head(cwd: Optional[str] = None) -> str:
     """Best-effort ``git rev-parse HEAD``; returns "" when git/repo is unavailable (never raises)."""
+    # stdin must be explicitly closed off: when this runs inside the MCP stdio server, an inherited
+    # stdin is the client's overlapped pipe, and git-for-Windows blocks forever probing it at
+    # startup. Its real-git grandchild survives kill() still holding the output pipes, so once that
+    # happens even the timeout below cannot unwedge the call — the server stops answering entirely.
     try:
-        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True,
-                             text=True, timeout=3)
+        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=3)
         if out.returncode == 0:
             return (out.stdout or "").strip()
     except Exception:
@@ -94,8 +98,11 @@ def code_fingerprint(repo_dir: Optional[str] = None) -> str:
 def _local_code_changes(repo_dir: Optional[str] = None) -> Optional[bool]:
     """Does the checkout carry uncommitted changes to executable code? None when git cannot say."""
     try:
+        # stdin closed off for the same reason as in _git_head: an inherited MCP-server stdin
+        # deadlocks git-for-Windows before it does any work.
         out = subprocess.run(["git", "status", "--porcelain", "--", *_CODE_ROOTS],
-                             cwd=repo_dir, capture_output=True, text=True, timeout=5)
+                             cwd=repo_dir, stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=5)
         if out.returncode == 0:
             return bool((out.stdout or "").strip())
     except Exception:
@@ -118,6 +125,37 @@ def freeze_running_identity(repo_dir: Optional[str] = None) -> Dict[str, Any]:
         _RUNNING["code"] = code_fingerprint(repo_dir)
         _RUNNING["dirty"] = _local_code_changes(repo_dir)
     return dict(_RUNNING)
+
+
+def execution_identity() -> Dict[str, Any]:
+    """The build that is EXECUTING, stamped into a run so the run can always say what made it.
+
+    Written once, when a run is created, and never rewritten. Re-validating a finished run on
+    today's code must not restamp it: a disputed finding is traced to the code that produced it, and
+    "whatever is checked out now" answers a different question. A run created before this existed
+    carries nothing and is honestly UNKNOWN — never today's SHA standing in for an unknown one.
+    """
+    identity = current_identity()
+    return {
+        "sha": str(identity.get("running_sha") or ""),
+        "build": str(identity.get("running_build") or ""),
+        "product_version": str(identity.get("product_version") or ""),
+        "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def stamped_build(stamp: Any) -> str:
+    """Read a recorded execution stamp as the build's HONEST name, or "" when it records none.
+
+    The stamp keeps two values: the commit, and what the process was actually serving. They differ
+    exactly when the tree had uncommitted edits, which is the case the marker exists for — so every
+    reader must prefer ``build``. Reaching for ``sha`` because it is the tidier value is how a run
+    produced by modified code came to name a clean commit that never produced it, and a reader who
+    checked that commit out could not reproduce the finding.
+    """
+    if not isinstance(stamp, dict):
+        return ""
+    return str(stamp.get("build") or stamp.get("sha") or "")
 
 
 def _running() -> Dict[str, Any]:

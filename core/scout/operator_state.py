@@ -8,13 +8,13 @@ and path-confined; the default action is always reversible archive.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from core.scout.store import RunStore, StoreError
+from core.atomic_io import atomic_replace
 
 _HEAVY_SUFFIXES = frozenset({
     ".png", ".jpg", ".jpeg", ".webp", ".gif", ".webm", ".mp4", ".har", ".zip",
@@ -220,4 +220,4 @@ class OperatorStateStore:
         }
         tmp = self.path.with_name(self.path.name + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, self.path)
+        atomic_replace(tmp, self.path)

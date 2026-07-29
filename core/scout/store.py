@@ -13,6 +13,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.atomic_io import atomic_replace
+
 
 _EVENT_WRITE_LOCK = threading.Lock()
 
@@ -32,7 +34,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
         fh.write(text)
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    atomic_replace(tmp, path)
 
 
 class RunStore:
@@ -176,7 +178,7 @@ class RunStore:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
         return str(path.relative_to(self.root)).replace("\\", "/")
 
     # --- final report (atomic, secret-scanned set) ------------------------

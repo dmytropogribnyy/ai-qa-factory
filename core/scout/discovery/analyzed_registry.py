@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.atomic_io import atomic_replace
 from core.scout.discovery.domain_intel import canonical_domain
 
 # analysis_status values
@@ -101,7 +102,7 @@ class AnalyzedSiteRegistry:
                    "sites": [e.to_dict() for e in self._entries.values()]}
         tmp = self._path.with_name(self._path.name + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, self._path)
+        atomic_replace(tmp, self._path)
 
     # -- observation / dedup -----------------------------------------------------------------------
     def observe(self, url: str, *, campaign_id: str, provider: str) -> Tuple[SiteEntry, bool]:
@@ -242,6 +243,22 @@ class AnalyzedSiteRegistry:
             return False
         self.release(domain)
         self._entries.pop(domain, None)
+        self._save()
+        return True
+
+    def release_campaign(self, url_or_domain: str, campaign_id: str) -> bool:
+        """Drop ONE run's claim on a site the run no longer exists to justify.
+
+        A deleted run whose id stayed in ``campaign_ids`` leaves the entry pointing at a run that
+        cannot be opened: History offers a link to nothing, and the site looks as though more work
+        stands behind it than does. Claims belonging to runs that still exist are untouched — this
+        is the shared-domain case, where forgetting the whole entry would erase real history.
+        """
+        domain = canonical_domain(url_or_domain)
+        entry = self._entries.get(domain)
+        if entry is None or campaign_id not in (entry.campaign_ids or []):
+            return False
+        entry.campaign_ids = [c for c in entry.campaign_ids if c != campaign_id]
         self._save()
         return True
 

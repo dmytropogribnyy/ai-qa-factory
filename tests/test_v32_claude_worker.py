@@ -184,7 +184,10 @@ def test_argv_preserves_spaces_and_multiline_prompt():
     cmd = build_worker_command(order, exe=r"C:\Program Files\claude\claude.exe")
     assert cmd[0] == r"C:\Program Files\claude\claude.exe"
     assert cmd[1] == "-p" and "\n\n" in cmd[2] and "line two with spaces" in cmd[2]
-    assert cmd[2] == cmd[2].strip() or True   # the prompt is a single argv element, never re-split
+    # ONE argv element, never re-split: the whole point of not going through the .CMD shim. The
+    # previous `... or True` form could not fail, so it proved nothing about either property.
+    assert len([a for a in cmd if "line two with spaces" in a]) == 1
+    assert cmd[2].count("Fix add()") == 1
 
 
 def test_worker_readiness_shape():

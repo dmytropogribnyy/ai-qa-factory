@@ -68,6 +68,7 @@ class IntakeTarget:
     url: str                    # canonical entry URL
     domain: str                 # canonical identity used for dedup, History and evidence
     pinned: bool = True         # named by the operator, so triage may score but not silently drop
+    already_analyzed: bool = False   # seen in history before; still queued, re-scanning is the point
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
@@ -111,9 +112,11 @@ class IntakeResult:
         return {
             "lines_read": self.lines_read,
             "unique_sites": len(self.targets),
+            # Lines genuinely dropped, and only those. A site already in history is counted below
+            # instead: it is queued, so calling it an ignored duplicate would be a plain lie.
             "duplicates": len(self.duplicates),
             "rejected": len(self.rejected),
-            "already_analyzed": sum(1 for d in self.duplicates if d.already_analyzed),
+            "already_analyzed": sum(1 for t in self.targets if t.already_analyzed),
         }
 
     def to_dict(self) -> Dict[str, Any]:
@@ -233,10 +236,11 @@ def parse_targets(values: Iterable[str], *, policy: Optional[UrlPolicy] = None,
                 value=value, domain=domain, duplicate_of=seen[domain]))
             continue
         seen[domain] = value
-        if domain in known_domains:
-            result.duplicates.append(IntakeDuplicate(
-                value=value, domain=domain, duplicate_of=domain, already_analyzed=True))
-        result.targets.append(IntakeTarget(raw=value, url=url, domain=domain, pinned=pinned))
+        # Already analyzed is a property of a target that WILL be scanned, not a dropped line.
+        # Recording it among the duplicates made the preview say "2 duplicate lines ignored" for one
+        # ignored line, and put two contradicting numbers in the same sentence.
+        result.targets.append(IntakeTarget(raw=value, url=url, domain=domain, pinned=pinned,
+                                           already_analyzed=domain in known_domains))
     return result
 
 

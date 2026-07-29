@@ -182,6 +182,10 @@ class ScoutEngine:
         self._guard_run_preconditions()
         self.store.write_config(cfg.to_dict())
         state = self._load_or_init_state()
+        # Stamped once and never rewritten — `setdefault`, so a resume or a restart keeps the build
+        # that actually did the work rather than the one that happened to pick the run back up.
+        from core.build_identity import execution_identity
+        state.setdefault("execution_build", execution_identity())
         state["status"] = RUN_RUNNING
         state["updated_at"] = self.clock()
         self.store.save_state(state)
@@ -242,6 +246,20 @@ class ScoutEngine:
         state["finished_at"] = self.clock()
         self.store.save_state(state)
         self._event("run_finished", status=state["status"])
+        # Reconcile the run against its own evidence while everything it produced is still on disk,
+        # and write the result down. A validation computed later, on request, is still correct — but
+        # a report that exists from the moment the run ends is one an operator can be handed rather
+        # than one they have to know to ask for.
+        try:
+            from core.scout.campaign_service import CampaignService
+            from core.scout.run_validation import validate_run
+            out = str(Path(self.store.root).parent.parent)
+            # WITH the read model: a report that never compares the operator's screen to the store
+            # can reach VALIDATED while the two disagree, and this is the copy nobody asks for.
+            validate_run(out, self.store.root.name, write=True,
+                         read_model=CampaignService(out))
+        except Exception:  # noqa: BLE001 - a reconciliation failure never rewrites a finished run
+            pass
         return state
 
     # ------------------------------------------------------------------
@@ -349,6 +367,14 @@ class ScoutEngine:
                                 max_response_bytes=cfg.max_response_bytes)
             second_sigs = {f.signature for f in run_checks(obs2, ctx2, cfg.check_families)}
 
+            # One bounded reversible interaction, recorded. A confirmed defect joins the other
+            # findings HERE, before verification, so it passes through exactly the same two-pass
+            # gate rather than arriving afterwards as a specially-privileged result.
+            scenario_video, scenario_finding = self._record_interaction_scenario(pid, url)
+            if scenario_finding is not None:
+                first_pass = list(first_pass) + [scenario_finding]
+                second_sigs.add(scenario_finding.signature)
+
             evidence = self.sanitizer.build_evidence(obs)
             evidence_ref = self.store.save_prospect_artifact(pid, "evidence.json", evidence)
 
@@ -371,23 +397,34 @@ class ScoutEngine:
             coverage_record.update(self._flow_coverage(flow_result, "business_flow" in cfg.check_families))
             self.store.save_prospect_artifact(pid, "coverage.json", coverage_record)
 
-            defects = [f for f in verified if f.severity != "info"]
+            # The compact state is what the run-results ROW counts from, while the target card
+            # counts from the canonical split. Writing a private rule over the raw list here made
+            # the two disagree for any target holding a duplicate finding: the row said three, the
+            # card said two, and both were reading the same run.
+            from core.scout.actionable import actionable_set
+            canonical = actionable_set([f.to_dict() for f in verified])
             prospects[pid].update({
                 "status": P_DONE, "priority": scorecard.priority,
-                "verified_findings": len(verified), "verified_defects": len(defects),
+                "verified_findings": canonical.total,
+                "verified_defects": canonical.confirmed_issue_count,
                 "rejected_findings": len(rejected), "evidence_ref": evidence_ref,
-                "video_ref": video_ref,
+                # Either kind of recording is the prospect's video. A reproduction of a confirmed
+                # finding is the stronger one and wins when both exist.
+                "video_ref": video_ref or scenario_video,
+                "interaction_video_ref": scenario_video,
                 "coverage": coverage_record["coverage"],
                 "meaningful_pages_tested": coverage_record["meaningful_pages_tested"],
                 "page_stop_reason": coverage_record["page_stop_reason"],
             })
-            self._event("prospect_done", prospect=pid, verified=len(verified),
-                        defects=len(defects), rejected=len(rejected), priority=scorecard.priority)
+            self._event("prospect_done", prospect=pid, verified=canonical.total,
+                        defects=canonical.confirmed_issue_count, rejected=len(rejected),
+                        priority=scorecard.priority)
         finally:
             # Guarantee no temp recording is ever left behind — on an early manual/unreachable/stop
             # return, an exception, or normal completion (a kept clip was already moved out of _vidtmp).
             _rmtree(Path(self.store.prospect_dir(pid)) / "_vidtmp")
             _rmtree(Path(self.store.prospect_dir(pid)) / "_reprotmp")
+            _rmtree(Path(self.store.prospect_dir(pid)) / "_scenariotmp")
             # Manual/unreachable paths still get an honest one-pass trace; completed paths get both.
             try:
                 if obs is not None:
@@ -449,16 +486,21 @@ class ScoutEngine:
             with path.open("rb") as fh:
                 for chunk in iter(lambda: fh.read(64 * 1024), b""):
                     digest.update(chunk)
-            entries.append({
-                "ref": path.name,
-                "kind": {
-                    ".json": "structured",
-                    ".png": "screenshot",
-                    ".webm": "reproduction_video",
-                }[path.suffix.lower()],
-                "bytes": path.stat().st_size,
-                "sha256": digest.hexdigest(),
-            })
+            kind = {".json": "structured", ".png": "screenshot",
+                    ".webm": "reproduction_video"}[path.suffix.lower()]
+            if path.name == "interaction.webm":
+                # Named apart from a reproduction on purpose: one replays a confirmed finding, the
+                # other records an interaction whose outcome may be that nothing was wrong.
+                kind = "interaction_video"
+            entry = {"ref": path.name, "kind": kind, "bytes": path.stat().st_size,
+                     "sha256": digest.hexdigest()}
+            if path.suffix.lower() == ".webm":
+                from core.scout.media_probe import probe_video
+                probe = probe_video(path)
+                entry.update({"duration_s": probe.get("duration_s"),
+                              "width": probe.get("width"), "height": probe.get("height"),
+                              "mime": probe.get("mime"), "playable": probe.get("playable")})
+            entries.append(entry)
         return self.store.save_prospect_artifact(pid, "evidence_manifest.json", {
             "schema_version": 1,
             "redaction_applied_to_structured_evidence": True,
@@ -535,6 +577,107 @@ class ScoutEngine:
             _rmtree(pdir / "_reprotmp")            # temp reproduction recording dir
             _rmtree(pdir / "_vidtmp")              # never keep a page-load clip
         return kept
+
+    def _record_interaction_scenario(self, pid: str, url: str):
+        """Perform and record ONE reversible interaction, and describe exactly what it proved.
+
+        This is the general case the reproduction path could not reach. ``_reproduce_prospect_findings``
+        replays a finding Scout already has, and the only interaction finding the engine can produce
+        today is a broken flow entry — so a run of a perfectly working site finished with no video and
+        a paragraph explaining the absence, every time.
+
+        What comes back is deliberately not "a video". It is an outcome with a name:
+
+        - a ``defect`` becomes a finding, and the clip is its evidence;
+        - an ``interaction_trace`` is kept as evidence that the recording pipeline works, and is
+          never a finding, a talking point, or part of an offer to fix anything;
+        - anything else keeps no clip at all.
+
+        Returns ``(video_ref, finding_or_None)``.
+        """
+        from core.scout.interaction_scenario import OUTCOME_DEFECT, OUTCOME_TRACE, finding_from
+        from core.scout.media_probe import probe_video
+
+        pdir = Path(self.store.prospect_dir(pid))
+        if (self._evidence.video_mode != VIDEO_QUALIFIED_AUTO
+                or self._videos_recorded >= self._evidence.max_videos_per_campaign
+                or not hasattr(self.backend, "record_interaction_scenario")):
+            return "", None
+        record: Dict[str, Any] = {}
+        kept = ""
+        try:
+            raw = self.backend.record_interaction_scenario(url, str(pdir))
+            record = dict(raw or {})
+            clip = pdir / str(record.get("video_ref") or "_nope_")
+            probe: Dict[str, Any] = {}
+            if record.get("video_ref") and clip.exists():
+                target = pdir / "interaction.webm"
+                clip.replace(target)
+                probe = probe_video(target)
+                # A file that exists is not a recording. Only a clip that parses, has a picture
+                # size, a positive duration and frames spread over time is offered to anyone.
+                if probe.get("playable"):
+                    kept, self._videos_recorded = "interaction.webm", self._videos_recorded + 1
+                    record["video_ref"] = "interaction.webm"
+                else:
+                    target.unlink(missing_ok=True)
+                    record["video_ref"] = ""
+                    record["video_rejected_reason"] = probe.get("error") or "the clip is not playable"
+            record["video"] = probe or None
+            # Everything a reader needs to check this against the file on disk, without trusting the
+            # sentence next to it.
+            record.update({
+                "schema": "scout-interaction-scenario/v1",
+                "run_id": self.store.root.name,
+                "prospect_id": pid,
+                "campaign_name": self.config.campaign_name,
+                "run_purpose": getattr(self.config, "run_purpose", ""),
+                "recorded_at": self.clock(),
+                "url": self.sanitizer.safe_url(record.get("url") or url),
+                "final_url": self.sanitizer.safe_url(record.get("final_url") or ""),
+            })
+        except Exception as exc:  # noqa: BLE001 - a recording failure never fails a finished prospect
+            record = {"schema": "scout-interaction-scenario/v1", "run_id": self.store.root.name,
+                      "prospect_id": pid, "outcome": "not_run", "url": self.sanitizer.safe_url(url),
+                      "reason": "the interaction could not be recorded",
+                      "error": f"{type(exc).__name__}", "video_ref": "", "video": None}
+        finally:
+            _rmtree(pdir / "_scenariotmp")
+        finding = None
+        if record.get("outcome") == OUTCOME_DEFECT:
+            # One observation is not a defect. The same independent-second-pass rule every other
+            # finding obeys applies here too: a page that behaved oddly once and correctly the next
+            # time was not broken, it was busy — and a recording makes that mistake persuasive.
+            agreed, second = self._confirm_interaction_defect(pid, url)
+            record["confirmation"] = {"passes": 2, "agreed": agreed,
+                                      "second_outcome": second.get("outcome", ""),
+                                      "second_reason": second.get("reason", "")}
+            if agreed:
+                from core.scout.interaction_scenario import ScenarioResult
+                restored = ScenarioResult(**{k: v for k, v in record.items()
+                                             if k in ScenarioResult.__dataclass_fields__})
+                finding = finding_from(restored, run_id=self.store.root.name, prospect_ref=pid,
+                                       video_ref=kept)
+            else:
+                record["outcome"] = OUTCOME_TRACE
+                record["reason"] = ("the same interaction behaved correctly on an independent "
+                                    "second pass, so this is a recording of an interaction, not "
+                                    "evidence of a defect")
+        self.store.save_prospect_artifact(pid, "interaction_scenario.json", record)
+        return kept, finding
+
+    def _confirm_interaction_defect(self, pid: str, url: str):
+        """Repeat the scenario once in a fresh browser context. No clip is kept from this pass —
+        it exists only to agree or disagree with the first."""
+        from core.scout.interaction_scenario import OUTCOME_DEFECT
+        pdir = Path(self.store.prospect_dir(pid))
+        try:
+            second = dict(self.backend.record_interaction_scenario(url, str(pdir)) or {})
+        except Exception:  # noqa: BLE001 - an unrepeatable check confirms nothing
+            return False, {"outcome": "not_run", "reason": "the second pass could not be completed"}
+        finally:
+            _rmtree(pdir / "_scenariotmp")
+        return second.get("outcome") == OUTCOME_DEFECT, second
 
     def _pick_reproducible(self, verified: List[ScoutFinding], flow_result):
         """The best qualifying INTERACTION finding that has a genuinely replayable safe action, plus

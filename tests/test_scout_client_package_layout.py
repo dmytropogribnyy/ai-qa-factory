@@ -154,9 +154,12 @@ def test_findings_csv_opens_in_a_spreadsheet(packaged):
     assert b"\r\n" in blob, "CSV rows must be CRLF-terminated for Excel"
     rows = list(csv.reader(io.StringIO(blob.decode("utf-8-sig"))))
 
-    assert rows[0] == ["Severity", "Category", "Title", "Impact", "Page", "How to reproduce",
-                       "Evidence", "Confidence"]
-    assert any("Checkout button does nothing on mobile" in row[2] for row in rows[1:])
+    # "Type" leads the row: a client sorting this in a tracker must be able to tell a defect from
+    # an observation without reading the severity vocabulary and guessing.
+    assert rows[0] == ["Type", "Severity", "Category", "Title", "Impact", "Page",
+                       "How to reproduce", "Evidence", "Confidence"]
+    assert all(row[0] in ("Actionable", "Informational") for row in rows[1:])
+    assert any("Checkout button does nothing on mobile" in row[3] for row in rows[1:])
 
 
 def test_no_absolute_local_path_escapes_into_the_package(packaged):

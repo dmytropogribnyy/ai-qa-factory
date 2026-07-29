@@ -112,12 +112,22 @@ class DiscoveryEngine:
                 f"campaign {cfg.campaign_id!r} already exists; refusing to overwrite it "
                 "(use a fresh campaign id, or reset the campaign directory explicitly)")
         plan = self.plan()
+        from core.build_identity import execution_identity
         state: Dict[str, Any] = {
             "campaign_id": cfg.campaign_id, "status": RUN_RUNNING,
             "started_at": self.clock(), "config": cfg.to_dict(),
+            # The campaign's OWN build. A promoted child records its own separately, because a
+            # long campaign can promote a run after the checkout underneath it has moved.
+            "execution_build": execution_identity(),
             "matrix": plan["CAMPAIGN_MATRIX.json"], "budget": dict(self._budget),
         }
-        self.store.write_config(cfg.to_dict())
+        # A campaign is not handed a target list — it is handed a question. Recording that question
+        # is this surface's intake provenance, and without it a finished campaign could not say what
+        # it went looking for.
+        self.store.write_config({**cfg.to_dict(), "intake": {
+            "kind": "discovery",
+            "query": ", ".join(list(cfg.keywords) + list(cfg.site_types)
+                               + list(cfg.countries))[:200] or cfg.campaign_id}})
         self.store.save_state(state)
         self._event("campaign_started", campaign_id=cfg.campaign_id)
 
@@ -158,6 +168,18 @@ class DiscoveryEngine:
         self._persist_artifacts(plan, records, norm_report, supp_report)
         self._event("campaign_finished", campaign_id=cfg.campaign_id,
                     promoted=self._budget["promoted"])
+        # A campaign that finished without a validation report is a campaign whose claims nobody
+        # checked. Scout runs have written one at terminal completion since the layer existed;
+        # discovery campaigns never did, so the surface most likely to over-claim was the one
+        # surface with no report on disk to contradict it.
+        try:
+            from pathlib import Path
+            from core.scout.campaign_service import CampaignService
+            from core.scout.run_validation import validate_run
+            out = str(Path(self.store.root).parent.parent)
+            validate_run(out, self.store.root.name, write=True, read_model=CampaignService(out))
+        except Exception:      # noqa: BLE001 - a missing report never invalidates a real campaign
+            pass
         return state
 
     # ------------------------------------------------------------------
@@ -293,9 +315,14 @@ class DiscoveryEngine:
             scout_cfg = ScoutRunConfig(
                 campaign_name=cfg.campaign_id, seeds=[rec.normalized_url],
                 allowed_local_hosts=cfg.allowed_local_hosts, browser_mode=cfg.browser_mode,
-                video_mode=cfg.video_mode,
+                video_mode=cfg.video_mode, run_purpose=cfg.run_purpose,
                 output_dir=cfg.output_dir, run_id=scout_run_id, resolve_dns=cfg.resolve_dns,
-                max_pages_per_site=cfg.max_pages_per_site)
+                max_pages_per_site=cfg.max_pages_per_site,
+                # A promoted run was not handed a list by anybody: it exists because this campaign
+                # found one candidate. Naming the campaign is what lets the child be traced back.
+                intake={"kind": "discovery", "source_name": cfg.campaign_id,
+                        "rows_read": 1, "rows_accepted": 1, "rows_rejected": 0,
+                        "duplicates": 0, "rows_capped": 0})
             scout_store = RunStore(cfg.output_dir, scout_run_id)
             try:
                 # The Scout engine independently re-validates URL safety — a discovery candidate
