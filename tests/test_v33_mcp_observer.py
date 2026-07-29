@@ -107,6 +107,26 @@ def test_pagination_bounded(tmp_path, monkeypatch):
     assert page["limit"] == 1 and len(page["campaigns"]) <= 1
 
 
+def test_the_connected_surface_carries_the_exact_build_beside_its_counts(tmp_path, monkeypatch):
+    """The reviewer that caught the 10/1-vs-5/6 split was connected over MCP and used
+    observer_list_campaigns — where no build travelled with the numbers, so a stale process was
+    indistinguishable from a live one. Every counts-bearing MCP operation must name the exact code
+    that produced its answer IN that answer: the git build identity, never the product version.
+    This is the adapter surface a connected reviewer actually calls, not a direct API unit test."""
+    from core import build_identity
+    from core.scout.observer_api import _observer_build
+
+    _launch(tmp_path, monkeypatch)
+    page = OBSERVER_HANDLERS["observer_list_campaigns"]({"limit": 5})
+    counts = OBSERVER_HANDLERS["observer_campaign_counts"]({})
+
+    ident = build_identity.current_identity()
+    assert page["build"] == counts["build"] == _observer_build() == ident["running_build"]
+    assert page["build"]
+    # An application version ("6.3.0") is not a build identity: it survives a stale process.
+    assert page["build"] != ident.get("product_version")
+
+
 def test_server_dispatch_and_original_tools_regression_safe():
     # the server dispatches an observer tool by name
     out = json.loads(_call_handler("observer_get_release_readiness", {}))

@@ -176,7 +176,13 @@ class ObserverAPI:
                        include_diagnostics: bool = True) -> Dict[str, Any]:
         """Canonical campaigns from _runcontrol. Each row is tagged production/diagnostic via the
         SAME classifier the Dashboard uses (so counts agree). ``include_diagnostics=False`` returns
-        only production campaigns; the production/diagnostic totals are always reported."""
+        only production campaigns; the production/diagnostic totals are always reported.
+
+        The build travels WITH the totals, exactly as in :meth:`campaign_counts`: this is the
+        operation a connected MCP reviewer actually pages through, and numbers that arrive without
+        the name of the code that produced them make a stale process invisible — the 10/1-vs-5/6
+        disagreement was undiagnosable precisely because neither surface said which vintage of the
+        classifier had answered."""
         from core.scout.canonical_runs import is_diagnostic
         ids = self._campaign_ids()
         # Classified by what each run DECLARED itself to be, the same way the Dashboard's counters
@@ -191,7 +197,8 @@ class ObserverAPI:
             rows.append({"campaign_id": cid, "run_state": prog["run_state"],
                          "stop_reason": prog["stop_reason"], "counters": prog["counters"],
                          "diagnostic": diagnostic[cid]})
-        return {"api_version": OBSERVER_API_VERSION, "total": len(shown), "offset": offset,
+        return {"api_version": OBSERVER_API_VERSION, "build": _observer_build(),
+                "total": len(shown), "offset": offset,
                 "limit": limit, "production_total": len(ids) - diagnostic_total,
                 "diagnostic_total": diagnostic_total, "campaigns": redact(rows)}
 
