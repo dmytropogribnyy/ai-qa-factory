@@ -33,9 +33,13 @@ _LOCAL_SUFFIX = " + local changes"
 
 def _git_head(cwd: Optional[str] = None) -> str:
     """Best-effort ``git rev-parse HEAD``; returns "" when git/repo is unavailable (never raises)."""
+    # stdin must be explicitly closed off: when this runs inside the MCP stdio server, an inherited
+    # stdin is the client's overlapped pipe, and git-for-Windows blocks forever probing it at
+    # startup. Its real-git grandchild survives kill() still holding the output pipes, so once that
+    # happens even the timeout below cannot unwedge the call — the server stops answering entirely.
     try:
-        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True,
-                             text=True, timeout=3)
+        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=3)
         if out.returncode == 0:
             return (out.stdout or "").strip()
     except Exception:
@@ -94,8 +98,11 @@ def code_fingerprint(repo_dir: Optional[str] = None) -> str:
 def _local_code_changes(repo_dir: Optional[str] = None) -> Optional[bool]:
     """Does the checkout carry uncommitted changes to executable code? None when git cannot say."""
     try:
+        # stdin closed off for the same reason as in _git_head: an inherited MCP-server stdin
+        # deadlocks git-for-Windows before it does any work.
         out = subprocess.run(["git", "status", "--porcelain", "--", *_CODE_ROOTS],
-                             cwd=repo_dir, capture_output=True, text=True, timeout=5)
+                             cwd=repo_dir, stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=5)
         if out.returncode == 0:
             return bool((out.stdout or "").strip())
     except Exception:
