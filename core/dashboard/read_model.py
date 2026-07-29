@@ -44,6 +44,14 @@ _ATTENTION = {
     "DELIVERY_PREPARED": "Prepared package waiting to be sent",
 }
 _ACTIVE_WORK = {"EXECUTING", "EXECUTION_PARTIAL", "VERIFYING", "READY_TO_EXECUTE"}
+# Scout campaign states that are waiting on the operator, with the title and reason each is shown
+# under. Kept apart from _ATTENTION above: these have their own count and their own destination.
+_SCOUT_ATTENTION = {
+    "FAILED": ("Scout campaign failed", "the campaign ended in a failed state"),
+    "ERROR": ("Scout campaign failed", "the campaign ended in a failed state"),
+    "RECOVERABLE": ("Scout campaign stopped reporting",
+                    "its worker is gone; the saved work is waiting for you to resume or stop it"),
+}
 
 
 def stage_label(status: str) -> str:
@@ -205,16 +213,21 @@ class DashboardReadModel:
                 status=p.lifecycle_state,
                 reason=(p.blockers[0] if p.blockers else p.operator_next_action),
                 next_action=p.operator_next_action, href=f"/work/{p.project_id}"))
-        # Failed campaigns are surfaced on their own terms, with their own count and their own
-        # destination (/scout/campaigns) - never folded into the work-attention number.
+        # Campaigns that ended without finishing are surfaced on their own terms, with their own
+        # count and their own destination (/scout/campaigns) - never folded into the work-attention
+        # number. A RECOVERABLE run belongs here for the same reason a failed one does: it is
+        # waiting on a decision only the operator can take. Leaving it out would have made the fix
+        # trade a visible lie ("still working") for a silent disappearance from this screen.
         scout_attention: List[AttentionItem] = [
             AttentionItem(
-                kind="scout", title="Scout campaign failed", project_id=c.project_id,
+                kind="scout", title=_SCOUT_ATTENTION[str(c.lifecycle_state).upper()][0],
+                project_id=c.project_id,
                 project_title=(c.title or c.project_id),
                 project_type="scout_campaign", status=c.lifecycle_state,
-                reason="the campaign ended in a failed state", next_action=c.operator_next_action,
+                reason=_SCOUT_ATTENTION[str(c.lifecycle_state).upper()][1],
+                next_action=c.operator_next_action,
                 href="/scout/campaigns")
-            for c in scouts if str(c.lifecycle_state).upper() in ("FAILED", "ERROR")]
+            for c in scouts if str(c.lifecycle_state).upper() in _SCOUT_ATTENTION]
         active_work = [self._to_list_item(p).to_dict() for p in clients
                        if p.lifecycle_state in _ACTIVE_WORK]
         active_campaigns = [self._to_scout_item(c).to_dict() for c in scouts

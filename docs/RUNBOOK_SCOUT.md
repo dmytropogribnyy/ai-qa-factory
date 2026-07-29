@@ -215,7 +215,24 @@ package is not deciding it may be sent.
 ## 5. Control or clean up runs
 
 - **Pause / Resume / Stop** from the campaign view (or `main.py scout control --signal pause|resume|cancel`).
-  State is honest and cooperative (finishes the current op, starts no new one).
+  State is honest and cooperative (finishes the current op, starts no new one). **Stop & Save**
+  records why the run stopped and writes a `run_stopped` entry to Activity, so a stopped row can
+  always say what stopped it.
+- **A run whose worker stopped reporting reads as `Recoverable`** — on the Dashboard, in the Observer
+  and in the shared read model alike — instead of claiming to be in progress indefinitely. The reason
+  is shown with it (`worker_gone: ...`). Nothing is resumed, deleted or relabelled: the checkpoint,
+  the pending queue and the run's own record are untouched, and the decision stays yours — **Resume**
+  continues the saved work, **Stop & Save** keeps it and ends the run. The state is *derived* from the
+  last heartbeat, so a worker that reports in again is believed again on the very next read; the
+  Dashboard additionally writes the correction down once at startup, where it appears in Activity as
+  `run_recovered`. The window is deliberately long (15 minutes), because a deep analysis of a single
+  site can legitimately run for several minutes without an event. Such a run leaves the Overview's
+  Active count and appears in the campaigns block that needs your decision — honest and still in
+  front of you — and its campaign page offers exactly **Resume** and **Stop & Save**, never Pause.
+- **Whether a campaign is still working is run-control's answer to give**, including on the Overview
+  "Active" count: a run that was stopped, recovered, paused or finished is not counted as active
+  there, even when the last thing its worker managed to write to its own `state.json` still said
+  `RUNNING`. A live run keeps the worker's own richer wording.
 - In **Run results**, select queued targets and use **Skip queued**. The current operation finishes;
   selected targets that have not started are marked skipped before the next operation.
 - In **History** or **Run results**, select rows and use **Archive**. Archive hides records from the

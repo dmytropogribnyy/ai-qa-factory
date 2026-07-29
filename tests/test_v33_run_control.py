@@ -93,24 +93,26 @@ def test_checkpoint_persists_across_fresh_process(tmp_path):
 
 
 def test_restart_recovery_orphaned_active_becomes_recoverable(tmp_path):
-    # a run owned by a process whose heartbeat is stale
-    rc = _rc(tmp_path, heartbeat_stale_s=0.0)
+    # a run owned by a process whose heartbeat is stale. `recovery_stale_s` is the window that
+    # governs recovery — deliberately separate from the shorter no-overlap window, because telling
+    # an operator their live work has died is the more expensive mistake of the two.
+    rc = _rc(tmp_path, heartbeat_stale_s=0.0, recovery_stale_s=0.0)
     rc.run_now()
     rc.advance(TRIAGING)
     rc.advance(ANALYZING)
-    rc2 = _rc(tmp_path, heartbeat_stale_s=0.0)
+    rc2 = _rc(tmp_path, heartbeat_stale_s=0.0, recovery_stale_s=0.0)
     assert rc2.recover_on_startup() == RECOVERABLE
     assert rc2.resume() == ANALYZING
 
 
 def test_paused_does_not_auto_resume_on_restart(tmp_path):
-    rc = _rc(tmp_path, heartbeat_stale_s=0.0)
+    rc = _rc(tmp_path, heartbeat_stale_s=0.0, recovery_stale_s=0.0)
     rc.run_now()
     rc.advance(TRIAGING)
     rc.advance(ANALYZING)
     rc.request_pause()
     rc.enter_paused(Checkpoint(pending_queue=["z.com"]))
-    rc2 = _rc(tmp_path, heartbeat_stale_s=0.0)
+    rc2 = _rc(tmp_path, heartbeat_stale_s=0.0, recovery_stale_s=0.0)
     # recovery leaves paused work paused (never auto-resumes)
     assert rc2.recover_on_startup() == PAUSED
 

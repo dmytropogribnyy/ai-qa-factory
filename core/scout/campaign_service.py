@@ -37,6 +37,7 @@ from core.scout.run_control import (
     TRIAGING,
     CampaignRunControl,
     Checkpoint,
+    offered_controls,
 )
 from core.scout.scout_brain import (
     brain_summary,
@@ -254,7 +255,9 @@ class CampaignService:
                 self._persist_brain(cfg, state)
                 rc.complete(state.get("stop_reason", "completed"))
             except _StopRequested:
-                rc.stop_and_save(Checkpoint())
+                rc.stop_and_save(Checkpoint(), reason=(
+                    "stop requested by the operator; the worker finished its current step and "
+                    "saved the checkpoint"))
             except Exception as exc:                   # honest failure, never a fake success
                 rc.fail(f"{type(exc).__name__}: {str(exc)[:160]}")
 
@@ -428,6 +431,9 @@ class CampaignService:
             "state_source": canonical["source"],
             "stop_reason": rc.state.stop_reason or (state or {}).get("stop_reason", ""),
             "requested_control": rc.state.requested_control,
+            # Which controls this state actually supports, answered by the state machine that owns
+            # the states — so the page can never offer an action the run cannot take.
+            "controls": offered_controls(rc.state.state),
             "current_company": rc.state.checkpoint.current_company,
             "counters": {k: counts.get(k) for k in ("discovered", "eligible", "qa_analyzed",
                          "actionable", "already_analyzed", "rejected", "failed")},

@@ -19,6 +19,7 @@ import urllib.request
 from pathlib import Path
 
 from core.scout.dashboard import start_dashboard
+from core.scout.run_control import offered_controls
 from core.scout.service import ScoutService
 
 
@@ -67,11 +68,19 @@ def test_progress_page_links_domains_and_hides_invalid_controls(tmp_path):
         _, body = _get(url + "/scout/progress?id=none")
         # Pause / Resume / Stop carry stable ids so the client can switch them by state.
         assert 'id="bp"' in body and 'id="br"' in body and 'id="bs"' in body
-        # Terminal states hide every command; paused states replace Pause with Resume.
-        assert "stopped_with_checkpoint" in body
-        assert "bp.hidden=term||paused" in body
-        assert "br.hidden=term||!paused" in body
-        assert "bs.hidden=term" in body
+        # Terminal states hide every command; paused states replace Pause with Resume. That rule
+        # used to be written out in this page's own script, and was asserted here as source text —
+        # which is exactly why nobody noticed the page's copy of the state names never learned
+        # about RECOVERABLE. The rule now belongs to the state machine and is asserted against it;
+        # what remains the page's business is applying the answer it is given.
+        assert "ctl.pause" in body and "ctl.resume" in body and "ctl.stop" in body
+        assert "bp.hidden=!ctl.pause" in body
+        assert "br.hidden=!ctl.resume" in body
+        assert "bs.hidden=!ctl.stop" in body
+        for terminal in ("stopped_with_checkpoint", "completed", "failed"):
+            assert offered_controls(terminal) == {"pause": False, "resume": False, "stop": False}
+        assert offered_controls("paused") == {"pause": False, "resume": True, "stop": True}
+        assert offered_controls("analyzing") == {"pause": True, "resume": False, "stop": True}
         # each analyzed domain row is rendered as a link to its target detail card (progress-specific
         # client builder; the pre-hotfix progress page rendered the domain as plain text)
         assert "encodeURIComponent(x.domain" in body and "/scout/target?domain=" in body

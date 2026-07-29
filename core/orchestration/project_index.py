@@ -12,6 +12,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List
 
+from core.scout.canonical_runs import canonical_run_state
+from core.scout.run_control import (
+    BLOCKED,
+    COMPLETED,
+    FAILED,
+    PAUSED,
+    RECOVERABLE,
+    STOPPED_CHECKPOINT,
+)
+
+# The run-control states that mean "no work is in progress", in this view's vocabulary. Only these
+# are read back from run-control (see `_scout_entry`): an ACTIVE run keeps whatever the worker's own
+# `state.json` calls it, so nothing about a live campaign changes.
+_NOT_RUNNING_STATUS = {
+    RECOVERABLE: "RECOVERABLE",
+    STOPPED_CHECKPOINT: "STOPPED",
+    COMPLETED: "COMPLETED",
+    FAILED: "FAILED",
+    BLOCKED: "BLOCKED",
+    PAUSED: "PAUSED",
+}
+
 # Coarse progress from the client-work lifecycle state.
 _CLIENT_PROGRESS = {
     "RECEIVED": 10, "INTAKE_COMPLETE": 25, "PLANNED": 40, "WAITING_FOR_INFORMATION": 40,
@@ -190,6 +212,16 @@ class ProjectIndex:
         evidence = len(list(report.glob("*.json"))) if report.is_dir() else 0
         counts = st.get("counts", {}) if isinstance(st.get("counts"), dict) else {}
         status = st.get("status") or ("COMPLETED" if report.is_dir() else "UNKNOWN")
+        # `state.json` is written BY the worker, so it is the one file a stopped or dead worker
+        # cannot correct: it kept saying RUNNING while run-control — and the Observer reading it —
+        # already knew the run was over. Two rows on this machine proved it, one recovered and one
+        # stopped through the supported control a day earlier, both still counted as active work.
+        #
+        # So whether work is IN PROGRESS is run-control's answer to give whenever it has one; the
+        # worker's own file keeps its richer word for everything else, including how a live run is
+        # labelled, which is why only the states that mean "not running" are mapped here.
+        canonical = str(canonical_run_state(str(self._out), cid).get("state", "")).lower()
+        status = _NOT_RUNNING_STATUS.get(canonical, status)
         campaign_name = str(cfg.get("campaign_name") or "").strip()
         # Prefer the operator-chosen campaign name. Internal ids remain available in diagnostics,
         # but should not be the title of every ordinary campaign row.
@@ -213,4 +245,8 @@ class ProjectIndex:
             return "review companies, findings, evidence, and drafts in the dashboard"
         if status in ("RUNNING", "ACTIVE", "EXECUTING"):
             return "watch progress; pause/resume/stop from the dashboard"
+        if status == "RECOVERABLE":
+            # The one state the operator did not ask for: say what it means and leave the decision
+            # to them. Recovery deliberately stops short of resuming anything by itself.
+            return "the worker stopped reporting - resume the saved work or stop and keep it"
         return "open the campaign in the dashboard"

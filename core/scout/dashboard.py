@@ -2082,10 +2082,13 @@ function startCampaign(){{
                 return (f'<li><strong>{_esc(s["project_title"])}</strong> — '
                         f'{_esc(s["reason"])}</li>')
             failed_scout = ("".join(_srow(s) for s in ov.scout_attention))
+            # The heading counts a list that is no longer only failures — a recovered run has lost
+            # nothing and is waiting on a decision. Each row states its own reason, so the heading
+            # says what they have in common and never puts a failure's severity on one of them.
             scout_failed_block = (
                 f'<div class="card" style="border-color:var(--attention)">'
-                f'<strong>&#9888; {len(ov.scout_attention)} Scout campaign(s) ended in a failed '
-                f'state</strong><ul>{failed_scout}</ul>'
+                f'<strong>&#9888; {len(ov.scout_attention)} Scout campaign(s) need your '
+                f'decision</strong><ul>{failed_scout}</ul>'
                 f'<p><a class="btn" href="/scout/campaigns">Review Scout campaigns</a></p></div>'
                 if failed_scout else '')
             camps = "".join(_crow(c) for c in ov.active_campaigns)
@@ -2912,12 +2915,14 @@ function startCampaign(){{
                 "function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
                 "function load(){fetch('/api/scout/progress?id='+encodeURIComponent(CID)).then(r=>r.json())"
                 ".then(function(j){var c=j.counters||{};var d=(j.decisions||[]);"
-                # Show only actions that make sense in the current state.
+                # Show only the actions this state actually supports. The answer comes from the run
+                # state machine (`offered_controls`), never from a second copy of the state names
+                # kept here — that copy predated RECOVERABLE and so offered Pause on a run with no
+                # worker left to pause, while hiding the Resume this very page recommends.
                 "var state=String(j.run_state||'').toLowerCase();"
-                "var term=['completed','stopped_with_checkpoint','failed','cancelled'].indexOf(state)>=0;"
-                "var paused=['paused','pause_requested'].indexOf(state)>=0;"
+                "var ctl=j.controls||{};"
                 "var bp=document.getElementById('bp'),br=document.getElementById('br'),bs=document.getElementById('bs');"
-                "if(bp)bp.hidden=term||paused;if(br)br.hidden=term||!paused;if(bs)bs.hidden=term;"
+                "if(bp)bp.hidden=!ctl.pause;if(br)br.hidden=!ctl.resume;if(bs)bs.hidden=!ctl.stop;"
                 # Each analyzed domain links to its target detail (findings/evidence); same tab.
                 "var rows=d.map(function(x){var enc=encodeURIComponent(x.domain||'');"
                 "var run=encodeURIComponent(x.scout_run||'');var href='/scout/target?domain='+enc+"
@@ -2927,7 +2932,7 @@ function startCampaign(){{
                 "'</td></tr>';}).join('');"
                 "var labels={running:'Running',paused:'Paused',pause_requested:'Pausing',"
                 "completed:'Completed',stopped_with_checkpoint:'Stopped and saved',failed:'Failed',"
-                "cancelled:'Cancelled'};"
+                "cancelled:'Cancelled',recoverable:'Recoverable - the worker stopped'};"
                 "document.getElementById('p').innerHTML='<div class=row><span class=chip>Status: '+"
                 "esc(labels[state]||String(j.run_state||'Unknown').replaceAll('_',' '))+'</span>'+"
                 "(j.stop_reason?'<span class=chip>Stopped because: '+esc(j.stop_reason)+'</span>':'')+'</div>'+"
@@ -6115,6 +6120,17 @@ def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 
                   f"{entry['run_id']} — {entry['action']}")
     except Exception as exc:      # noqa: BLE001 - never block the dashboard on housekeeping
         print(f"[scout] interrupted-deletion recovery could not run: {type(exc).__name__}")
+    # Write down what every read of an unattended run already derives. A campaign whose worker died
+    # kept its ACTIVE row on disk, so the stored record contradicted the screens until somebody
+    # pressed Stop by hand. Startup is where that correction is safe to persist: no worker of ours is
+    # running yet. Nothing is resumed or removed — only the claim that work is in progress.
+    try:
+        from core.scout.run_control import recover_orphaned_runs
+        for row in recover_orphaned_runs(service.output_dir):
+            print(f"[scout] run recovered after its worker stopped reporting: "
+                  f"{row['campaign_id']} — was {row['previous_state']}, now recoverable")
+    except Exception as exc:      # noqa: BLE001 - never block the dashboard on housekeeping
+        print(f"[scout] orphaned-run recovery could not run: {type(exc).__name__}")
     launcher = launcher or CampaignLauncher(service)
     token = secrets.token_urlsafe(32) if csrf_token is None else csrf_token
     from core.scout.challenge_session import ChallengeSessionManager
