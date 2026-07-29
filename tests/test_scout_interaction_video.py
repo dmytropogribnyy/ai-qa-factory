@@ -99,13 +99,13 @@ def test_a_file_that_is_not_a_container_fails_honestly(tmp_path):
 # --- what the outcome is allowed to be ------------------------------------------------------------
 
 _BASE = {"result_count": 25, "item_signature": ["25", "iPhone"], "control_label": "Apple",
-         "url": "https://shop.example/phones"}
+         "url": "https://shop.example/phones", "facet_count": 6}
 
 
 @pytest.mark.parametrize("observed,expected", [
-    # The site itself said the filter took effect — it moved to a filtered URL — and returned the
-    # identical list. Without that signal an unchanged list proves nothing: see
-    # tests/test_scout_interaction_oracle.py.
+    # The site said the filter took effect (a filtered URL), its own facet count promises 6
+    # matching items, and 25 stayed listed — the surplus provably fails the facet. Application
+    # alone, or an unchanged list alone, proves nothing: see tests/test_scout_interaction_oracle.py.
     ({"result_count": 25, "item_signature": ["25", "iPhone"], "control_engaged": True,
       "url": "https://shop.example/phones?brand=apple"},
      OUTCOME_DEFECT),

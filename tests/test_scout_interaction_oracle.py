@@ -36,7 +36,8 @@ _ITEMS = ["24", "Blue mug", "Red mug", "Green mug"]
 def _measure(**over):
     """One measurement of the page: what a filter would be judged on."""
     base = {"control_engaged": True, "result_count": 24, "item_signature": list(_ITEMS),
-            "url": f"https://{_DOMAIN}/shop", "apply_control": "", "clear_control": ""}
+            "url": f"https://{_DOMAIN}/shop", "apply_control": "", "clear_control": "",
+            "facet_count": None}
     base.update(over)
     return base
 
@@ -83,22 +84,75 @@ def test_a_filter_that_never_signalled_it_applied_is_not_a_defect():
     assert "not" in reason.lower()
 
 
-def test_a_filter_the_site_applied_that_changed_nothing_is_still_a_defect():
-    """The guard against fixing this by never reporting anything: when the site moves to a filtered
-    URL and the identical list comes back, the one thing the control promises did not happen."""
+def test_an_applied_filter_that_changed_nothing_claims_nothing_without_a_witness():
+    """The site moved to a filtered URL and the identical list came back — and that is still not a
+    defect, because every visible item may legitimately match the chosen facet (filter "In stock"
+    on a page where everything is). Application proves application. A defect needs machine proof
+    that at least one listed item fails the facet, and this page offers none."""
     outcome, reason = _classify(
         _measure(control_engaged=False),
         _measure(url=f"https://{_DOMAIN}/shop?colour=blue"))
 
-    assert outcome == OUTCOME_DEFECT
-    assert "24" in reason
+    assert outcome == OUTCOME_NOT_APPLICABLE
+    assert "match" in reason.lower()
 
 
-def test_a_clear_filter_affordance_appearing_is_also_the_site_saying_so():
+def test_a_clear_control_appearing_without_a_witness_still_claims_nothing():
+    """Same rule for the other application signal: a "Clear filters" affordance proves the filter
+    is in effect, not that any listed item fails it."""
     outcome, _ = _classify(_measure(control_engaged=False),
                            _measure(clear_control="Clear all filters"))
 
+    assert outcome == OUTCOME_NOT_APPLICABLE
+
+
+# --- 3. and a defect claim needs the page's own arithmetic to conflict ----------------------------
+
+def test_a_filter_showing_more_results_than_its_facet_promises_is_a_defect():
+    """The one generic machine-checkable witness: the facet's own count. The page says 5 items
+    match "Blue", confirms the filter applied, and keeps listing 24 — by the site's own two
+    numbers at least 19 listed results cannot match the facet."""
+    outcome, reason = _classify(
+        _measure(control_engaged=False, facet_count=5),
+        _measure(url=f"https://{_DOMAIN}/shop?colour=blue", facet_count=5))
+
     assert outcome == OUTCOME_DEFECT
+    assert "24" in reason and "5" in reason
+
+
+def test_a_clear_filter_affordance_with_a_witness_is_also_the_site_saying_so():
+    outcome, _ = _classify(_measure(control_engaged=False, facet_count=5),
+                           _measure(clear_control="Clear all filters", facet_count=5))
+
+    assert outcome == OUTCOME_DEFECT
+
+
+def test_a_facet_that_covers_every_listed_item_is_not_a_defect():
+    """"In stock (24)" over 24 results that stay 24: the filter changed nothing because nothing
+    needed to change. The numbers agree, so there is no witness and no claim."""
+    outcome, reason = _classify(
+        _measure(control_engaged=False, facet_count=24),
+        _measure(url=f"https://{_DOMAIN}/shop?instock=1", facet_count=24))
+
+    assert outcome == OUTCOME_NOT_APPLICABLE
+
+
+def test_the_finding_states_the_sites_own_numbers_not_an_assumption():
+    """The old finding text asserted "the same non-matching items remain listed" — a claim nothing
+    machine-checked. The finding must carry the proven arithmetic instead."""
+    baseline = _measure(control_engaged=False, facet_count=5)
+    observed = _measure(url=f"https://{_DOMAIN}/shop?colour=blue", facet_count=5)
+    outcome, reason = _classify(baseline, observed)
+    result = ScenarioResult(scenario=SCENARIO_FILTER, outcome=outcome, reason=reason,
+                            url=f"https://{_DOMAIN}/shop", control_label="Blue",
+                            action_performed=True, cleanup_ok=True,
+                            baseline=baseline, observed=observed)
+
+    finding = finding_from(result, run_id="r", prospect_ref="p")
+
+    assert finding is not None
+    assert "5" in finding.actual and "24" in finding.actual
+    assert "non-matching items remain" not in finding.actual
 
 
 # --- 3. the package calls the recording what it is ------------------------------------------------

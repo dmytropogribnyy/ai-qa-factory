@@ -6,7 +6,9 @@ in-memory paths (path-safe: no filesystem access, no traversal).
 
 Scenarios: clean control, broken link, accessibility violations, missing/incorrect metadata,
 malformed structured data, safe pre-submit validation defect, public business flow, simulated
-CAPTCHA, explicit access prohibition, plus a redirect and a 404 target.
+CAPTCHA, explicit access prohibition, the three filter-oracle shapes (Apply-gated group,
+auto-applied all-matching, provably broken by the page's own facet count), plus a redirect and
+a 404 target.
 """
 from __future__ import annotations
 
@@ -146,6 +148,69 @@ FIXTURE_PAGES: Dict[str, Tuple[int, str, str]] = {
         "<main><h1>Checking your browser before you continue</h1>"
         "<div class='cf-turnstile' data-sitekey='0x4AAAAAAAGATE'></div></main>"
         "<footer>Protected by a verification service</footer>")),
+
+    # --- filter-oracle fixtures: the three shapes that decide what a filter clip may claim -------
+    # 1. The commonest filter on the web: a facet group with its own Apply button. Ticking a box
+    #    is SUPPOSED to change nothing until the button is pressed — zero findings here, ever.
+    "/filter_apply/index.html": (200, "text/html", _page(
+        "<title>Mug Shop — Catalogue</title>"
+        "<meta name='description' content='Mugs by colour, filtered with an Apply button.'>",
+        "<main><h1>Mug Shop</h1><p>6 results</p>"
+        "<fieldset class='filters'><legend>Colour</legend>"
+        "<label><input type='checkbox'> Blue (2)</label>"
+        "<label><input type='checkbox'> Red (3)</label>"
+        "<label><input type='checkbox'> Green (1)</label>"
+        "<button type='button'>Apply filters</button></fieldset>"
+        "<ul class='grid'>"
+        "<li class='item'>Blue mug — classic</li><li class='item'>Blue mug — large</li>"
+        "<li class='item'>Red mug — classic</li><li class='item'>Red mug — matte</li>"
+        "<li class='item'>Red mug — mini</li><li class='item'>Green mug — forest</li>"
+        "</ul></main>")),
+
+    # 2. An auto-applied filter that legitimately changes nothing: everything listed IS in stock.
+    #    The URL moves (the site's own "applied" signal) and no facet count exists, so there is no
+    #    machine-checkable witness of a non-matching item — nothing may be claimed.
+    "/filter_all_match/index.html": (200, "text/html", _page(
+        "<title>Mug Shop — In stock</title>"
+        "<meta name='description' content='Every mug listed ships today.'>",
+        "<main><h1>Mug Shop</h1><p>6 results</p>"
+        "<div class='filters'>"
+        "<label><input type='checkbox' class='auto'> In stock</label>"
+        "<label><input type='checkbox' class='auto'> Ships from EU</label>"
+        "</div>"
+        "<ul class='grid'>"
+        "<li class='item'>Blue mug — classic</li><li class='item'>Blue mug — large</li>"
+        "<li class='item'>Red mug — classic</li><li class='item'>Red mug — matte</li>"
+        "<li class='item'>Red mug — mini</li><li class='item'>Green mug — forest</li>"
+        "</ul></main>"
+        "<script>document.querySelectorAll('input.auto').forEach(function(b){"
+        "b.addEventListener('change',function(){"
+        "var any=Array.prototype.some.call(document.querySelectorAll('input.auto'),"
+        "function(x){return x.checked});"
+        "history.pushState({},'',location.pathname+(any?'?instock=1':''));});});</script>")),
+
+    # 3. The defect shape, provable from the page's own numbers: the facet label promises 2
+    #    matching mugs, the URL confirms the filter applied, and all 6 results stay listed — at
+    #    least 4 listed results cannot match, by the site's own arithmetic. Un-ticking restores
+    #    the URL, so cleanup and a second identical pass are both verifiable.
+    "/filter_broken/index.html": (200, "text/html", _page(
+        "<title>Mug Shop — Colour filter</title>"
+        "<meta name='description' content='A colour filter that filters nothing.'>",
+        "<main><h1>Mug Shop</h1><p>6 results</p>"
+        "<div class='filters'>"
+        "<label><input type='checkbox' class='auto'> Blue (2)</label>"
+        "<label><input type='checkbox' class='auto'> Red (4)</label>"
+        "</div>"
+        "<ul class='grid'>"
+        "<li class='item'>Blue mug — classic</li><li class='item'>Blue mug — large</li>"
+        "<li class='item'>Red mug — classic</li><li class='item'>Red mug — matte</li>"
+        "<li class='item'>Red mug — mini</li><li class='item'>Green mug — forest</li>"
+        "</ul></main>"
+        "<script>document.querySelectorAll('input.auto').forEach(function(b){"
+        "b.addEventListener('change',function(){"
+        "var any=Array.prototype.some.call(document.querySelectorAll('input.auto'),"
+        "function(x){return x.checked});"
+        "history.pushState({},'',location.pathname+(any?'?colour=blue':''));});});</script>")),
 
     "/access_prohibition/index.html": (403, "text/html", _page(
         "<title>Access Denied</title>",

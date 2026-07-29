@@ -15,8 +15,9 @@ From those three it derives an outcome, and the outcome decides what the recordi
 used for:
 
 ``defect``
-    An expectation was violated: a filter was applied, and neither the stated result count nor the
-    visible result set changed. That is a functional defect, and the clip is its evidence.
+    An expectation was violated AND the page itself proves it: the filter was applied, nothing
+    changed, and the site's own facet count promises fewer matching items than it keeps listing —
+    so at least one listed result provably fails the facet. The clip is the evidence.
 ``interaction_trace``
     The control behaved correctly. The recording proves the pipeline records — it is NOT a finding,
     never a talking point, and never part of an offer to fix anything.
@@ -184,6 +185,25 @@ def _site_applied_the_filter(baseline: Dict[str, Any], observed: Dict[str, Any])
     return ""
 
 
+def _non_matching_witness(baseline: Dict[str, Any], observed: Dict[str, Any]) -> Optional[int]:
+    """Machine-proven count of listed results that cannot match the facet, or ``None``.
+
+    Application is not violation: a filter can apply, change nothing, and be entirely correct —
+    every visible item may already satisfy the chosen facet ("In stock" on a page where everything
+    is). So an unchanged list convicts nobody. The one generic witness a page can supply against
+    itself is the facet's own advertised count — "Blue (5)" — measured before anything was touched:
+    if the site says five items match and, with the filter confirmed applied, still lists
+    twenty-four, then by the site's own two numbers at least nineteen listed results do not match.
+    No guess about what the facet means is involved; both numbers are the page's own statements.
+    """
+    facet = baseline.get("facet_count")
+    shown = observed.get("result_count")
+    if (isinstance(facet, int) and not isinstance(facet, bool)
+            and isinstance(shown, int) and not isinstance(shown, bool) and shown > facet):
+        return shown - facet
+    return None
+
+
 def classify(scenario: str, baseline: Dict[str, Any], observed: Dict[str, Any],
              *, action_performed: bool, cleanup_ok: bool, navigated_away: bool = False,
              blocked_writes: int = 0):
@@ -240,10 +260,20 @@ def classify(scenario: str, baseline: Dict[str, Any], observed: Dict[str, Any],
             return OUTCOME_NOT_APPLICABLE, (
                 "the page gave no sign that the filter took effect — no filtered URL and no way to "
                 "clear it — so there is nothing to say it should have changed the results")
+        # The site said the filter is active. That proves APPLICATION, not violation: an unchanged
+        # list is only a defect once something machine-checkable proves a listed item fails the
+        # facet, and the only generic such witness is the page's own facet count.
+        witness = _non_matching_witness(baseline, observed)
+        if witness is None:
+            return OUTCOME_NOT_APPLICABLE, (
+                f"the filter was applied and accepted ({applied}) and the results did not change — "
+                "but every listed item may legitimately match the chosen facet, and the page "
+                "states no per-facet count that would prove otherwise, so no defect is claimed")
         return OUTCOME_DEFECT, (
             f"the {baseline.get('control_label') or 'filter'} filter was applied and accepted "
-            f"({applied}), but the result count stayed at {count_after} and the visible results did "
-            "not change")
+            f"({applied}); the page's own facet count promises {baseline.get('facet_count')} "
+            f"matching item(s), yet the result count stayed at {count_after} — at least {witness} "
+            "listed result(s) cannot match the selected facet by the site's own numbers")
 
     if scenario == SCENARIO_SELECT:
         if baseline.get("selected_label") == observed.get("selected_label"):
@@ -276,6 +306,17 @@ def finding_from(result: ScenarioResult, *, run_id: str, prospect_ref: str, vide
 
     control = result.control_label or "filter"
     count = result.observed.get("result_count")
+    witness = _non_matching_witness(result.baseline, result.observed)
+    if witness is not None:
+        # Only claims the arithmetic supports: both numbers are the page's own statements.
+        actual = (f"the filter is accepted but the result count stays at {count}, although the "
+                  f"page's own facet count promises {result.baseline.get('facet_count')} matching "
+                  f"item(s) — at least {witness} listed result(s) cannot match the selected facet")
+    else:
+        # A defect restored from a record that lost its witness numbers may not invent one: state
+        # only what was observed, never "non-matching items" nothing machine-checked.
+        actual = (f"the filter is accepted but neither the stated result count ({count}) nor the "
+                  "visible results changed")
     return ScoutFinding(
         finding_id=f"{prospect_ref}-interaction-filter",
         run_id=run_id,
@@ -288,8 +329,7 @@ def finding_from(result: ScenarioResult, *, run_id: str, prospect_ref: str, vide
         confidence="high",
         reproduction_steps=list(result.steps),
         expected=(f"selecting the {control} filter narrows the results to matching items"),
-        actual=(f"the filter is accepted but the result count stays at {count} and the same "
-                f"non-matching items remain listed"),
+        actual=actual,
         business_impact=("Visitors who narrow a catalogue and see it unchanged lose confidence in "
                          "the listing and commonly leave rather than scroll."),
         evidence_refs=[ref for ref in (video_ref, "interaction_scenario.json") if ref],
@@ -463,6 +503,19 @@ MEASURE_JS = r"""
                clear_control: clearing ? labelOfControl(clearing) : ''};
   if (el) {
     if (el.type === 'checkbox') out.control_engaged = !!el.checked;
+    // The facet's OWN advertised count — "Blue (5)" — read from the control's label. This is the
+    // one generic machine-checkable witness that a non-matching item exists: a page that keeps
+    // listing more results than it says match this facet convicts itself by its own arithmetic.
+    // Absent, null: the classifier then has no witness and claims nothing.
+    const facetLabel = (() => {
+      const id = el.getAttribute('id');
+      const lab = (id ? document.querySelector('label[for="' + CSS.escape(id) + '"]') : null)
+                  || el.closest('label');
+      return ((lab ? lab.textContent : '') || el.getAttribute('aria-label') || '')
+        .replace(/\s+/g, ' ').trim();
+    })();
+    const facetMatch = facetLabel.match(/\((\d[\d,]*)\)\s*$/);
+    out.facet_count = facetMatch ? parseInt(facetMatch[1].replace(/,/g, ''), 10) : null;
     // The submit-style control this checkbox belongs WITH, if any. Scoped to the control's own
     // form or filter region so a "Search" box in the site header is not mistaken for this
     // filter's Apply button.
