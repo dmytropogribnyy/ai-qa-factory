@@ -154,6 +154,8 @@ class ChallengeSessionManager:
             from core.scout.config import ScoutRunConfig
             from core.scout.engine import ScoutEngine
 
+            from core.scout.run_purpose import PURPOSE_MANUAL_TEST
+
             cfg = ScoutRunConfig(
                 campaign_name="manual-challenge",
                 seeds=[f"https://{dom}/"],
@@ -162,6 +164,11 @@ class ChallengeSessionManager:
                 output_dir=self.output_dir,
                 run_id=run_id,
                 resolve_dns=self.resolve_dns,
+                # An operator solving a challenge by hand is a manual test, and it must say so:
+                # the dataclass default is production, which Data management refuses to trash and
+                # refuses to relabel, so the rescue attempt would outlive the operator's ability to
+                # clean it up. A server-side constant — the untrusted-input gate is untouched.
+                run_purpose=PURPOSE_MANUAL_TEST,
             )
             store = RunStore(self.output_dir, run_id)
             if self.backend_factory is not None:
