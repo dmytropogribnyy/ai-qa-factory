@@ -26,7 +26,7 @@ param(
   [ValidateSet("doctor", "list", "test", "start", "stop", "http", "http-test")]
   [string]$Action = "doctor",
   [string]$OutputRoot = $env:AIQA_OUTPUT_ROOT,
-  [int]$Port = 8765
+  [int]$Port = 8770
 )
 
 $ErrorActionPreference = "Stop"

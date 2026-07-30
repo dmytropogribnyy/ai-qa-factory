@@ -63,7 +63,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--http", action="store_true", default=False,
                         help="Serve over authenticated streamable-HTTP (needs AIQA_MCP_TOKEN)")
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host (default loopback)")
-    parser.add_argument("--port", type=int, default=8765, help="HTTP port (default 8765)")
+    # Deliberately NOT the Dashboard's 8765. This endpoint is the one meant to be reachable through
+    # a tunnel; the Dashboard authenticates nothing on its read paths. Sharing a default let
+    # "point your tunnel at 8765" read as sensible advice while publishing the Dashboard instead.
+    parser.add_argument("--port", type=int, default=8770,
+                        help="HTTP port (default 8770; never the Dashboard's 8765)")
     args = parser.parse_args(argv)
 
     if args.version:

@@ -41,8 +41,15 @@ Code / Cursor) **spawn this themselves** — there is no long-lived daemon.
 # set a bearer token for this session (this script never prints it):
 $env:AIQA_MCP_TOKEN = [Convert]::ToBase64String((1..24 | % { Get-Random -Max 256 }))
 powershell -ExecutionPolicy Bypass -File tools\observer_mcp.ps1 -Action http-test   # verify
-powershell -ExecutionPolicy Bypass -File tools\observer_mcp.ps1 -Action http         # serve on 127.0.0.1:8765/mcp
+powershell -ExecutionPolicy Bypass -File tools\observer_mcp.ps1 -Action http         # serve on 127.0.0.1:8770/mcp
 ```
+
+> **The Observer MCP endpoint is 8770. The operator Dashboard is 8765, and it is never the tunnel
+> target.** The Dashboard authenticates nothing on its read paths — `_guard_mutation` covers
+> state-changing endpoints only, so every GET is protected solely by the loopback bind. A tunnel
+> terminates that bind locally, so exposing the Dashboard's port would serve findings, evidence,
+> contacts and client packages to the internet with no credential in front of them.
+> `AIQA_MCP_TOKEN` guards the MCP server; it cannot guard the Dashboard, which never reads it.
 
 ## D. Prerequisites
 
@@ -133,12 +140,31 @@ Never paste secrets into ChatGPT or this repo. The server reads no secrets for t
 
 The authenticated HTTP endpoint already works locally (section C/C1). Only **three owner steps** remain:
 
-**1. Publish a public HTTPS URL for the loopback endpoint (a tunnel).** No tunnel is installed;
-Claude will not auto-install or expose one (it publishes your read-only QA data). Install one you
-trust and point it at `http://127.0.0.1:8765`. Get the exact command from that tool's **official docs
-/ `--help`** (do not copy tunnel commands from memory), e.g. a cloudflared *quick tunnel* (label it
-clearly **temporary** — not a permanent production endpoint). Keep `AIQA_MCP_TOKEN` set so the public
-URL still requires the bearer token.
+**1. Publish a public HTTPS URL for the MCP endpoint (a tunnel).** No tunnel is installed; Claude
+will not auto-install or expose one (it publishes your read-only QA data).
+
+**Point it at the MCP server's own port — the default is `8770` — and never at the Dashboard.**
+Confirm what is actually listening before you expose anything:
+
+```powershell
+# the MCP server must answer here, and the Dashboard must NOT be what you publish
+Get-NetTCPConnection -LocalPort 8770 -State Listen | Select-Object OwningProcess
+```
+
+Get the exact tunnel command from that tool's **official docs / `--help`** (do not copy tunnel
+commands from memory), e.g. a cloudflared *quick tunnel* (label it clearly **temporary** — not a
+permanent production endpoint). Keep `AIQA_MCP_TOKEN` set: it is what makes the public URL require a
+bearer token, and the MCP server refuses to start without it.
+
+> **Why the port matters.** `8765` is the operator Dashboard, and it is **never the tunnel target**.
+> The Dashboard has no authentication on read paths — its one guard covers state-changing endpoints,
+> so every GET relies on the loopback bind alone. A tunnel terminates that bind locally, so anyone
+> with the URL would receive findings, evidence, contacts and client packages.
+> `AIQA_MCP_TOKEN` cannot protect it: the Dashboard never reads that variable.
+>
+> If you only need the reviewer to reach the Observer, prefer the outbound route in section J1 — the
+> tunnel client spawns the MCP server over stdio and opens **no inbound port at all**, so there is
+> nothing exposed to get wrong.
 
 **2. Add the connector in ChatGPT.** In your ChatGPT account (labels vary by plan — use what you
 actually see): **Settings → Apps / Connectors**, possibly under *Advanced Settings* / *Developer
