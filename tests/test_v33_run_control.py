@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from core.scout.canonical_runs import canonical_run_state
 from core.scout.run_control import (
     ANALYZING,
     DISCOVERING,
@@ -92,27 +93,44 @@ def test_checkpoint_persists_across_fresh_process(tmp_path):
     assert rc2.state.checkpoint.completed == ["q.com"]
 
 
-def test_restart_recovery_orphaned_active_becomes_recoverable(tmp_path):
-    # a run owned by a process whose heartbeat is stale
-    rc = _rc(tmp_path, heartbeat_stale_s=0.0)
+def _abandon(tmp_path, cid="camp-1"):
+    """Leave behind exactly what a killed worker leaves: its last state and an old heartbeat."""
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from core.scout.run_control import RECOVERY_STALE_S
+    path = tmp_path / "scout" / "_runcontrol" / f"{cid}.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["heartbeat_at"] = (datetime.now(timezone.utc)
+                              - timedelta(seconds=RECOVERY_STALE_S * 2)).isoformat()
+    path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def test_restart_recovery_orphaned_active_reads_as_recoverable(tmp_path):
+    """Recovery is a reading, not a correction: the record keeps what the worker last asserted, so
+    a worker that comes back can still finish its run."""
+    rc = _rc(tmp_path)
     rc.run_now()
     rc.advance(TRIAGING)
     rc.advance(ANALYZING)
-    rc2 = _rc(tmp_path, heartbeat_stale_s=0.0)
-    assert rc2.recover_on_startup() == RECOVERABLE
-    assert rc2.resume() == ANALYZING
+    _abandon(tmp_path)
+    view = canonical_run_state(str(tmp_path), "camp-1")
+    assert (view["state"], view["persisted_state"], view["derived"]) == (
+        RECOVERABLE, ANALYZING, True)
+    _rc(tmp_path).complete()      # the transition a persisted RECOVERABLE made illegal
+    assert canonical_run_state(str(tmp_path), "camp-1")["state"] == "completed"
 
 
-def test_paused_does_not_auto_resume_on_restart(tmp_path):
-    rc = _rc(tmp_path, heartbeat_stale_s=0.0)
+def test_paused_work_is_never_reported_as_lost(tmp_path):
+    rc = _rc(tmp_path)
     rc.run_now()
     rc.advance(TRIAGING)
     rc.advance(ANALYZING)
     rc.request_pause()
     rc.enter_paused(Checkpoint(pending_queue=["z.com"]))
-    rc2 = _rc(tmp_path, heartbeat_stale_s=0.0)
-    # recovery leaves paused work paused (never auto-resumes)
-    assert rc2.recover_on_startup() == PAUSED
+    _abandon(tmp_path)
+    # Parked work stays parked however old the heartbeat is — it is not waiting on a worker.
+    assert canonical_run_state(str(tmp_path), "camp-1")["state"] == PAUSED
 
 
 def test_no_overlap_second_active_run_refused(tmp_path):

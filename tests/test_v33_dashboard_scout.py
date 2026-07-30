@@ -68,7 +68,12 @@ def test_scout_catalog_and_progress_read_models(tmp_path):
         assert any(p["key"] == "safe-live-acceptance" for p in cat["campaign_presets"])
         _, prog, _ = _get(url + "/api/scout/progress?id=does-not-exist")
         data = json.loads(prog)
-        assert data["run_state"] == "queued"          # default for an unknown campaign
+        # An id that names nothing has no state, and says so. This used to answer "queued" because
+        # the payload read a freshly-constructed CampaignRunControl, whose default state is QUEUED —
+        # so a campaign that had never existed was reported as waiting to start.
+        assert data["run_state"] == ""
+        assert data["persisted_state"] == ""
+        assert data["derived"] is False
         assert "counters" in data
     finally:
         server.shutdown()

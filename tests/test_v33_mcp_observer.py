@@ -82,7 +82,10 @@ def test_secret_redaction_and_no_leak(tmp_path, monkeypatch):
 def test_unknown_campaign_and_target_return_structured(tmp_path, monkeypatch):
     _launch(tmp_path, monkeypatch)
     prog = OBSERVER_HANDLERS["observer_get_run_progress"]({"campaign_id": "nope"})
-    assert prog["run_state"] == "queued"                     # default, not a crash
+    # Structured and not a crash — but an id that names nothing now reports no state instead of the
+    # run-control default. "queued" said a campaign that had never existed was waiting to start.
+    assert prog["run_state"] == ""
+    assert "counters" in prog
     finding = OBSERVER_HANDLERS["observer_get_finding"]({"campaign_id": "nope", "finding_id": "x"})
     assert finding.get("error") == "finding_not_found"
 
