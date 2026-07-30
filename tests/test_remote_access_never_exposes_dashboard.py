@@ -3,17 +3,16 @@
 The Dashboard authenticates nothing on its read paths: ``_guard_mutation`` covers state-changing
 endpoints only, so every GET is protected solely by the loopback bind. A tunnel terminates that bind
 locally, so pointing one at the Dashboard's port publishes findings, evidence, contacts and client
-packages to the internet with no credential in front of them.
+packages to the internet with no credential in front of them. The MCP server is the surface meant to
+be reachable — it refuses to start without ``AIQA_MCP_TOKEN``.
 
-The MCP server is the surface that *is* meant to be reachable — it refuses to start without
-``AIQA_MCP_TOKEN``. These tests pin the two properties that keep the two apart:
-
-1. the MCP HTTP server's default port is not the Dashboard's default port, so an operator who omits
-   ``--port`` cannot silently land on the Dashboard's; and
-2. no operator-facing document tells anyone to point a tunnel or public URL at the Dashboard's port.
-
-Ports are read out of the source rather than hard-coded here, so the guard follows a future change
-of either default instead of pinning today's numbers.
+**These guards read values, not prose.** An earlier version of this file scanned for exposure words
+near a port and skipped any window containing "never", which meant a dangerous instruction could be
+waved through by writing "never" beside it. Prose can say anything; what an operator actually
+executes is a port number, and a port number can be compared. Every check below therefore derives
+its expected value from the source that defines it — the argparse default, the PowerShell parameter
+default, the listener command the guide tells you to run — so the guards follow a future change of
+any of them instead of pinning today's numbers, and no wording defeats them.
 """
 from __future__ import annotations
 
@@ -22,36 +21,57 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _DOCS = _ROOT / "docs"
+_GUIDE = _DOCS / "CHATGPT_OBSERVER_MCP_CONNECTION.md"
 
-# Words that turn a bare address into an instruction to expose it.
-_EXPOSURE = re.compile(
-    r"(tunnel|public|publish|expose|ngrok|cloudflared|internet|remote)", re.IGNORECASE
+# An imperative that puts something on the network, with its port within the same clause. This is
+# the shape of the defect: "…point it at `http://127.0.0.1:8765`". Nearby prose cannot suppress it.
+# The leading \b matters: without it "checkpoint-id … --timeout 3600" matches on the "point" inside
+# "checkpoint" and the guard cries wolf on unrelated documents.
+_EXPOSURE_IMPERATIVE = re.compile(
+    r"\b(?:point|forward|expose|publish|tunnel)\w*\b[^.\n]{0,80}?(\d{4,5})", re.IGNORECASE
 )
+_FENCED = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_URL = re.compile(r"`[^`]*?https?://[^\s`]*?:(\d{4,5})[^`]*?`")
+_LISTENER_CHECK = re.compile(r"Get-NetTCPConnection\s+-LocalPort\s+(\d{4,5})")
 
 
-def _default_port(path: Path, needle: str) -> int:
-    """Read an argparse default port straight out of the source that defines it."""
-    text = path.read_text(encoding="utf-8")
-    for line in text.splitlines():
-        if needle in line and "default=" in line:
-            match = re.search(r"default=(\d{2,5})", line)
-            if match:
-                return int(match.group(1))
-    raise AssertionError(f"no default port found for {needle!r} in {path.name}")
+def _argparse_default(path: Path, flag: str) -> int:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if flag in line and "default=" in line:
+            found = re.search(r"default=(\d{2,5})", line)
+            if found:
+                return int(found.group(1))
+    raise AssertionError(f"no argparse default for {flag!r} in {path.name}")
 
 
 def dashboard_port() -> int:
-    return _default_port(_ROOT / "main.py", '"--port"')
+    return _argparse_default(_ROOT / "main.py", '"--port"')
 
 
 def mcp_http_port() -> int:
-    return _default_port(_ROOT / "tools" / "run_mcp_server.py", '"--port"')
+    return _argparse_default(_ROOT / "tools" / "run_mcp_server.py", '"--port"')
+
+
+def powershell_helper_port() -> int:
+    text = (_ROOT / "tools" / "observer_mcp.ps1").read_text(encoding="utf-8")
+    found = re.search(r"\[int\]\$Port\s*=\s*(\d{4,5})", text)
+    assert found, "observer_mcp.ps1 no longer declares a default $Port"
+    return int(found.group(1))
+
+
+# 3. The two implementations of "the MCP port" must not drift apart.
+def test_powershell_helper_and_python_default_agree():
+    assert powershell_helper_port() == mcp_http_port(), (
+        f"observer_mcp.ps1 serves port {powershell_helper_port()} while run_mcp_server.py defaults "
+        f"to {mcp_http_port()}; an operator following the helper and an operator following the "
+        "guide would expose different surfaces"
+    )
 
 
 def test_mcp_http_default_port_is_not_the_dashboard_port():
     """The tunnelled surface and the unauthenticated one must not share a default.
 
-    They did: both defaulted to 8765, which is what made 'point your tunnel at 8765' read as
+    They did: both defaulted to 8765, which is what made "point your tunnel at 8765" read as
     sensible advice while actually publishing the Dashboard.
     """
     assert mcp_http_port() != dashboard_port(), (
@@ -60,74 +80,84 @@ def test_mcp_http_default_port_is_not_the_dashboard_port():
     )
 
 
-_CONTEXT = 3
-# A passage that forbids something is a warning, not an instruction. The check has to tell them
-# apart, because the fix for this defect necessarily prints the dangerous port in order to name it.
-_PROHIBITION = re.compile(r"\bnever\b", re.IGNORECASE)
+# 1. No instruction anywhere may aim an exposure mechanism at anything but the MCP port.
+def test_no_exposure_imperative_targets_any_port_but_the_mcp_one():
+    """Value check, not a word check — this is what the "never" heuristic failed to do.
 
-
-def _doc_lines_exposing(port: int):
-    """Every documentation line that names the port inside an *instructional* exposure context.
-
-    The context is a window, not the single line: the instruction that made this a real defect read
-    "Publish a public HTTPS URL … (a tunnel). … point it at `http://127.0.0.1:8765`", with the word
-    'tunnel' two lines above the address. A line-local check passes on that text while the operator
-    still follows it to the same place.
-
-    Known and accepted limit: a window containing "never" is treated as a warning and skipped, so
-    the guard could be defeated by writing "never" beside a genuine instruction. That trade is
-    deliberate — the alternative is a test that cannot distinguish the defect from its own fix, and
-    a guard nobody can satisfy gets deleted. The original dangerous passage contained no "never",
-    which is why it is still caught.
+    "Point the tunnel at the Dashboard's default 8765 — never at 8770" is caught here: the port
+    inside the imperative is compared against the MCP default and does not match.
     """
-    hits = []
+    expected = mcp_http_port()
+    offenders = []
     for path in sorted(_DOCS.rglob("*.md")):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for index, line in enumerate(lines):
-            if str(port) not in line:
-                continue
-            window = lines[max(0, index - _CONTEXT): index + _CONTEXT + 1]
-            if any(_PROHIBITION.search(neighbour) for neighbour in window):
-                continue
-            if any(_EXPOSURE.search(neighbour) for neighbour in window):
-                hits.append(f"{path.relative_to(_ROOT)}:{index + 1}: {line.strip()}")
-    return hits
-
-
-def test_no_document_tells_the_operator_to_expose_the_dashboard_port():
-    """A procedure that publishes the Dashboard is a safety defect, not a documentation nit."""
-    hits = _doc_lines_exposing(dashboard_port())
-    assert not hits, (
-        "these documentation lines put the Dashboard's port in an exposure context — the Dashboard "
-        "has no authentication on read paths, so following them publishes client data:\n  "
-        + "\n  ".join(hits)
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for port in _EXPOSURE_IMPERATIVE.findall(line):
+                if int(port) != expected:
+                    offenders.append(f"{path.relative_to(_ROOT)}:{number}: {line.strip()}")
+    assert not offenders, (
+        f"these instructions aim an exposure mechanism at a port that is not the authenticated MCP "
+        f"port ({expected}). The Dashboard ({dashboard_port()}) has no authentication on read "
+        f"paths, so publishing it serves client data to anyone with the URL:\n  "
+        + "\n  ".join(offenders)
     )
 
 
-def test_the_remote_access_guide_still_documents_a_working_route():
-    """Guard against 'fixing' the danger by deleting the capability.
+# 1 (second shape). Prose may name the dangerous port in order to warn about it; nothing the
+# operator can copy and run may contain it.
+def test_no_executable_snippet_names_the_dashboard_port():
+    text = _GUIDE.read_text(encoding="utf-8")
+    executable = "\n".join(_FENCED.findall(text))
+    offenders = [
+        line.strip()
+        for line in executable.splitlines()
+        if str(dashboard_port()) in line
+    ]
+    offenders += [
+        f"inline URL with port {port}"
+        for port in _INLINE_URL.findall(text)
+        if int(port) == dashboard_port()
+    ]
+    assert not offenders, (
+        "the remote-access guide contains runnable text naming the Dashboard's port; a reader "
+        "copies commands, they do not weigh the surrounding prose:\n  " + "\n  ".join(offenders)
+    )
 
-    The outbound stdio tunnel is the route that actually works; the guide must keep describing it.
+
+# 2. The check the guide tells the operator to run before exposing anything must inspect the port
+#    that is actually going to be exposed.
+def test_the_documented_listener_check_targets_the_mcp_port():
+    text = _GUIDE.read_text(encoding="utf-8")
+    checks = [int(p) for p in _LISTENER_CHECK.findall(text)]
+    assert checks, (
+        "the guide no longer tells the operator to confirm what is listening before exposing it"
+    )
+    wrong = [p for p in checks if p != mcp_http_port()]
+    assert not wrong, (
+        f"the pre-exposure listener check inspects {wrong} while the MCP server serves "
+        f"{mcp_http_port()}; the operator would verify one port and publish another"
+    )
+
+
+# 4. The authenticated route must remain genuinely executable — not merely mentioned.
+def test_the_guide_keeps_an_executable_authenticated_route():
+    """Guard against "fixing" the danger by hollowing out the capability.
+
+    Two unrelated substrings elsewhere in the document are not a procedure. This requires a runnable
+    command that actually starts the authenticated server, and a connector URL that ends at the MCP
+    path.
     """
-    guide = _DOCS / "CHATGPT_OBSERVER_MCP_CONNECTION.md"
-    text = guide.read_text(encoding="utf-8")
-    assert "run_mcp_server.py" in text, "the guide no longer names the MCP server it connects"
-    assert "AIQA_MCP_TOKEN" in text, "the guide no longer states the bearer-token requirement"
-
-
-_WARNING_CANARY = "never the tunnel target"
-
-
-def test_the_guide_warns_that_the_dashboard_must_not_be_tunnelled():
-    """The trap is subtle enough that silence is not enough — the guide must say it outright.
-
-    This pins one short phrase deliberately. Removing the danger by deleting the sentence that names
-    it would otherwise pass every other test here, and the next operator would rediscover the trap.
-    """
-    guide = _DOCS / "CHATGPT_OBSERVER_MCP_CONNECTION.md"
-    text = guide.read_text(encoding="utf-8")
-    assert _WARNING_CANARY in text, (
-        f"the remote-access guide must state in so many words that the Dashboard is "
-        f"{_WARNING_CANARY!r}; a reader who only sees the safe procedure will not know why the "
-        "obvious alternative is unsafe"
+    text = _GUIDE.read_text(encoding="utf-8")
+    executable = "\n".join(_FENCED.findall(text))
+    starts_server = re.search(
+        r"(observer_mcp\.ps1[^\n]*-Action\s+http\b|run_mcp_server\.py[^\n]*--http\b)", executable
+    )
+    assert starts_server, (
+        "no runnable snippet in the guide starts the authenticated MCP HTTP server; the route is "
+        "described but not executable"
+    )
+    assert "AIQA_MCP_TOKEN" in executable, (
+        "no runnable snippet sets the bearer token the server refuses to start without"
+    )
+    assert re.search(r"https://[^\s`]*/mcp\b", text), (
+        "the guide no longer shows the connector URL ending at the /mcp path"
     )

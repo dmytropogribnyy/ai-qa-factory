@@ -47,9 +47,9 @@ powershell -ExecutionPolicy Bypass -File tools\observer_mcp.ps1 -Action http    
 > **The Observer MCP endpoint is 8770. The operator Dashboard is 8765, and it is never the tunnel
 > target.** The Dashboard authenticates nothing on its read paths — `_guard_mutation` covers
 > state-changing endpoints only, so every GET is protected solely by the loopback bind. A tunnel
-> terminates that bind locally, so publishing 8765 publishes findings, evidence, contacts and client
-> packages to the internet with no credential in front of them. `AIQA_MCP_TOKEN` guards the MCP
-> server; it cannot guard the Dashboard, which never reads it.
+> terminates that bind locally, so exposing the Dashboard's port would serve findings, evidence,
+> contacts and client packages to the internet with no credential in front of them.
+> `AIQA_MCP_TOKEN` guards the MCP server; it cannot guard the Dashboard, which never reads it.
 
 ## D. Prerequisites
 
@@ -158,9 +158,9 @@ bearer token, and the MCP server refuses to start without it.
 
 > **Why the port matters.** `8765` is the operator Dashboard, and it is **never the tunnel target**.
 > The Dashboard has no authentication on read paths — its one guard covers state-changing endpoints,
-> so every GET relies on the loopback bind alone. A tunnel terminates that bind locally, so
-> publishing `8765` would serve findings, evidence, contacts and client packages to anyone with the
-> URL. `AIQA_MCP_TOKEN` cannot protect it: the Dashboard never reads that variable.
+> so every GET relies on the loopback bind alone. A tunnel terminates that bind locally, so anyone
+> with the URL would receive findings, evidence, contacts and client packages.
+> `AIQA_MCP_TOKEN` cannot protect it: the Dashboard never reads that variable.
 >
 > If you only need the reviewer to reach the Observer, prefer the outbound route in section J1 — the
 > tunnel client spawns the MCP server over stdio and opens **no inbound port at all**, so there is
