@@ -74,6 +74,27 @@ def _project_scout_activity_events(run_id: str, raw_events: list[dict]
 # the per-request WorkExecutionService instances in this process.
 import threading as _threading  # noqa: E402
 
+def headed_replay_config(output_dir: str, run_id: str, domain: str):
+    """The run a "Watch headed replay" press creates.
+
+    Module level on purpose: the handler that uses it lives inside a closure, and a regression test
+    that re-stated this construction would only be testing its own copy of it.
+
+    ``run_purpose`` is declared rather than left to default. Watching one target in a visible browser
+    is the operator looking at something, not client work; without the declaration the dataclass
+    default (production) is persisted, and Data management then refuses both to trash the run and to
+    relabel it — leaving no product path to remove what this button created. It is a server-side
+    constant, never a request-supplied value, so the ``resolve_requested_purpose`` gate on untrusted
+    input is untouched.
+    """
+    from core.scout.config import ScoutRunConfig
+    from core.scout.run_purpose import PURPOSE_DIAGNOSTIC
+
+    return ScoutRunConfig(campaign_name="headed-replay", seeds=[f"https://{domain}/"],
+                          max_sites=1, browser_mode="playwright", output_dir=output_dir,
+                          run_id=run_id, run_purpose=PURPOSE_DIAGNOSTIC)
+
+
 _WORK_LOCKS: dict = {}
 _WORK_LOCKS_GUARD = _threading.Lock()
 
@@ -1399,15 +1420,12 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
             import time as _time
 
             from core.scout.backends import PlaywrightBackend
-            from core.scout.config import ScoutRunConfig
             from core.scout.discovery.domain_intel import canonical_domain
             from core.scout.engine import ScoutEngine
             dom = canonical_domain(domain) or domain
             run_id = f"replay-{dom}-{int(_time.time())}".replace("/", "-").replace("\\", "-")
             try:
-                cfg = ScoutRunConfig(campaign_name="headed-replay", seeds=[f"https://{dom}/"],
-                                     max_sites=1, browser_mode="playwright",
-                                     output_dir=service.output_dir, run_id=run_id)
+                cfg = headed_replay_config(service.output_dir, run_id, dom)
                 store = RunStore(service.output_dir, run_id)
                 backend = PlaywrightBackend(policy=cfg.url_policy(), headful=True)
                 engine = ScoutEngine(cfg, store, backend=backend)
