@@ -15,6 +15,7 @@ pre-hotfix dashboard), so they are genuine regressions guards, not incidental ma
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 from pathlib import Path
 
@@ -67,11 +68,19 @@ def test_progress_page_links_domains_and_hides_invalid_controls(tmp_path):
         _, body = _get(url + "/scout/progress?id=none")
         # Pause / Resume / Stop carry stable ids so the client can switch them by state.
         assert 'id="bp"' in body and 'id="br"' in body and 'id="bs"' in body
-        # Terminal states hide every command; paused states replace Pause with Resume.
+        # The page no longer decides which controls are valid: it is handed the state machine's own
+        # answer per state, so the rule cannot drift from the states it draws.
         assert "stopped_with_checkpoint" in body
-        assert "bp.hidden=term||paused" in body
-        assert "br.hidden=term||!paused" in body
-        assert "bs.hidden=term" in body
+        assert "bp.hidden=!off.pause" in body
+        assert "br.hidden=!off.resume" in body
+        assert "bs.hidden=!off.stop" in body
+        rules = json.loads(re.search(r"const RULES=(\{.*?\});\n", body).group(1))
+        # Terminal states offer nothing; paused replaces Pause with Resume; a run whose worker is
+        # gone offers neither, because neither is something this release can actually do.
+        assert rules["completed"] == {"pause": False, "resume": False, "stop": False}
+        assert rules["analyzing"] == {"pause": True, "resume": False, "stop": True}
+        assert rules["paused"] == {"pause": False, "resume": True, "stop": True}
+        assert rules["recoverable"] == {"pause": False, "resume": False, "stop": True}
         # each analyzed domain row is rendered as a link to its target detail card (progress-specific
         # client builder; the pre-hotfix progress page rendered the domain as plain text)
         assert "encodeURIComponent(x.domain" in body and "/scout/target?domain=" in body

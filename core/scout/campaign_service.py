@@ -406,6 +406,9 @@ class CampaignService:
                 "run_kind": KIND_DIRECT,
                 # The REAL state, from the store that owns it. Never the run-control default.
                 "run_state": canonical["state"],
+                "persisted_state": canonical["persisted_state"],
+                "derived": canonical["derived"],
+                "derived_reason": canonical["derived_reason"],
                 "state_source": canonical["source"],
                 "stop_reason": "",
                 "requested_control": "",
@@ -416,7 +419,8 @@ class CampaignService:
                 "budget": {}, "allocation": {}, "decisions": [],
                 "updated_at": canonical["updated_at"],
             }
-        rc = CampaignRunControl(campaign_id, self.output_dir)
+        # No second CampaignRunControl here: every run-control field below comes from the one record
+        # `canonical_run_state()` already loaded, so the payload describes a single instant.
         state = self._read(campaign_id, "STATE.json") or self._discovery_state(campaign_id)
         counts = (state or {}).get("counts", {})
         brain = self._read(campaign_id, "BRAIN_DECISIONS.json") or {}
@@ -424,17 +428,26 @@ class CampaignService:
             "campaign_id": campaign_id,
             "applicable": True,
             "run_kind": KIND_CAMPAIGN if canonical["kind"] == KIND_CAMPAIGN else canonical["kind"],
-            "run_state": rc.state.state,
-            "state_source": canonical["source"],
-            "stop_reason": rc.state.stop_reason or (state or {}).get("stop_reason", ""),
-            "requested_control": rc.state.requested_control,
-            "current_company": rc.state.checkpoint.current_company,
+            # The canonical view's answer, not a second reading of the same file. Computing the
+            # canonical state and then returning `rc.state.state` is how this API kept disagreeing
+            # with the Observer while appearing to share a source with it.
+            "run_state": canonical["state"],
+            "persisted_state": canonical["persisted_state"],
+            "derived": canonical["derived"],
+            "derived_reason": canonical["derived_reason"],
+            "state_source": canonical["state_source"],
+            # From the same snapshot: a `complete()` between two reads would otherwise pair
+            # `analyzing` with `stop_reason: completed`. Still only what was actually recorded — a
+            # derived state has no reason, and inventing one would claim something happened.
+            "stop_reason": canonical["stop_reason"] or (state or {}).get("stop_reason", ""),
+            "requested_control": canonical["requested_control"],
+            "current_company": canonical["current_company"],
             "counters": {k: counts.get(k) for k in ("discovered", "eligible", "qa_analyzed",
                          "actionable", "already_analyzed", "rejected", "failed")},
             "budget": (state or {}).get("budget", {}),
             "allocation": brain.get("allocator", {}),
             "decisions": brain.get("decisions", []),
-            "updated_at": rc.state.updated_at,
+            "updated_at": canonical["updated_at"],
         }
 
     def control(self, campaign_id: str, action: str) -> Dict[str, Any]:

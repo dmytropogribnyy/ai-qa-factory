@@ -131,9 +131,10 @@ class ObserverAPI:
         return redact({
             "api_version": OBSERVER_API_VERSION, "at": _now(),
             "campaign_count": len(camps),
-            "active_campaigns": [c["campaign_id"] for c in camps
-                                 if c["run_state"] in ("discovering", "triaging", "analyzing",
-                                                       "pausing", "paused")],
+            # The shared predicate, not a literal of its own. This list counted `paused` as active,
+            # which ACTIVE_STATES never did — so a parked run was active here and parked everywhere
+            # else.
+            "active_campaigns": [c["campaign_id"] for c in camps if c["active"]],
             "analyzed_sites": reg.counts(),
         })
 
@@ -183,7 +184,7 @@ class ObserverAPI:
         the name of the code that produced them make a stale process invisible — the 10/1-vs-5/6
         disagreement was undiagnosable precisely because neither surface said which vintage of the
         classifier had answered."""
-        from core.scout.canonical_runs import is_diagnostic
+        from core.scout.canonical_runs import is_active_run, is_diagnostic
         ids = self._campaign_ids()
         # Classified by what each run DECLARED itself to be, the same way the Dashboard's counters
         # and Data management do. Classifying by id alone here is how one run got two answers.
@@ -193,8 +194,14 @@ class ObserverAPI:
         page = shown[offset:offset + max(1, min(limit, 500))]
         rows = []
         for cid in page:
+            # ONE canonical read per row, reusing the provenance `progress()` already carries. Asking
+            # disk again for `derived`/`active` let a returning worker heartbeat between the reads,
+            # and the row then said `recoverable`, `derived: false` and `active: true` at once.
             prog = self.svc.progress(cid)
             rows.append({"campaign_id": cid, "run_state": prog["run_state"],
+                         "persisted_state": prog["persisted_state"], "derived": prog["derived"],
+                         "active": is_active_run({"state": prog["run_state"],
+                                                  "kind": prog["run_kind"]}),
                          "stop_reason": prog["stop_reason"], "counters": prog["counters"],
                          "diagnostic": diagnostic[cid]})
         return {"api_version": OBSERVER_API_VERSION, "build": _observer_build(),

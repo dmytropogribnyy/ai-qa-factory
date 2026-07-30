@@ -220,3 +220,40 @@ any anti-bot/CAPTCHA/proxy-evasion capability.
   (`--run-id`) hides controls and its `/api/control` fail-closes with HTTP 409 (no fake success),
   guarded by a same-origin check. No HTTP start/scan endpoint is exposed — starting is CLI-owned.
 - Concurrency is fail-closed to `1` (sequential runtime; parallel execution is deferred).
+
+## One campaign-state answer (derived-only recovery)
+
+`canonical_runs.canonical_run_state()` is the **single outward-facing** answer for a campaign's
+state; `is_active_run()` is the only rule for "is this running". Overview / the campaigns list
+(`ProjectIndex`), the campaign API (`CampaignService.progress`) and the Observer all read them. Two
+of those kept their own rule before: `ProjectIndex` read the worker-written `scout/<id>/state.json`,
+whose `RUNNING` a killed worker leaves behind for ever, and the Observer used a literal counting
+`paused` as active — so a safely stopped campaign and one whose worker had been gone a day both
+showed as active with "watch progress".
+
+Recovery is **derived on read, never persisted**:
+
+| field | meaning |
+|---|---|
+| `persisted_state` | the last state a writer asserted; the only thing on disk |
+| `state` | what is true now — `recoverable` when an active record's owner stopped reporting |
+| `derived` | whether those two differ for this row |
+| `state_source` | the file the answer came from |
+
+**One row, one snapshot.** Every state field an API row reports — `run_state`, `persisted_state`,
+`derived`, `active`, `stop_reason`, `updated_at` — comes from a single canonical read. Filling some of
+them from a second read let a returning worker heartbeat in between, so one row claimed `recoverable`,
+`derived: false` and `active: true` at once.
+
+`heartbeat_stale_s` (120 s) guards run overlap; `RECOVERY_STALE_S` (900 s) decides whether anyone is
+still there. Reads write nothing — no timestamps, requested control, checkpoint or Activity event —
+so a returning worker is authoritative on its next heartbeat and can still `complete()`. Persisting
+`RECOVERABLE` was tried and rejected: the record then holds a state the surviving worker never
+asserted, its next `complete()` is an illegal transition, and a wrong guess becomes a permanent wrong
+fact instead of a self-correcting display. Rows an earlier release persisted stay readable and
+resumable; nothing migrates them.
+
+`run_control.offered_controls()` is likewise the one rule for which controls are truthful, shipped to
+the progress page as a table so the UI cannot drift from the state machine. A `recoverable` campaign
+offers Stop & Save but **neither Pause nor Resume**: no worker exists to pause, and relaunching a
+dead one is not implemented, so offering it would be a false affordance.

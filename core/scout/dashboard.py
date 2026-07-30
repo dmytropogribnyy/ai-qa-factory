@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
-from core.dashboard.read_model import health_label, stage_label
+from core.dashboard.read_model import health_label, scout_status_label, stage_label
 from core.orchestration.project_index import _INTAKE_STATES
 from core.scout import SCOUT_PRODUCT_NAME, SCOUT_VERSION
 from core.scout.campaign_start import CampaignLauncher
@@ -2074,18 +2074,21 @@ function startCampaign(){{
                         '<a href="/work?create=1#client-brief">Analyze a client brief</a> to create '
                         'a reviewable plan.</p>')
             def _crow(c):
-                return (f'<tr><td>{_esc(c["title"])}</td><td>{_badge(c["status"])}</td>'
+                return (f'<tr><td>{_esc(c["title"])}</td>'
+                        f'<td>{_badge(scout_status_label(c["status"]))}</td>'
                         f'<td>{_esc(c["next_action"])}</td></tr>')
-            # Failed campaigns need the operator too, but they live on a different surface, so they
-            # get their own honest block instead of being counted into the work-attention tile.
+            # Campaigns needing the operator live on a different surface, so they keep their own
+            # block instead of being counted into the work-attention tile. The heading no longer says
+            # "failed": a campaign whose worker vanished did not fail, and saying so would replace
+            # one wrong state with another.
             def _srow(s):
                 return (f'<li><strong>{_esc(s["project_title"])}</strong> — '
                         f'{_esc(s["reason"])}</li>')
             failed_scout = ("".join(_srow(s) for s in ov.scout_attention))
             scout_failed_block = (
                 f'<div class="card" style="border-color:var(--attention)">'
-                f'<strong>&#9888; {len(ov.scout_attention)} Scout campaign(s) ended in a failed '
-                f'state</strong><ul>{failed_scout}</ul>'
+                f'<strong>&#9888; {len(ov.scout_attention)} Scout campaign(s) need your '
+                f'decision</strong><ul>{failed_scout}</ul>'
                 f'<p><a class="btn" href="/scout/campaigns">Review Scout campaigns</a></p></div>'
                 if failed_scout else '')
             camps = "".join(_crow(c) for c in ov.active_campaigns)
@@ -2687,7 +2690,7 @@ function startCampaign(){{
             rows = "".join(
                 f'<tr><td><a href="/scout/progress?id={_esc(c.project_id)}">'
                 f'{_esc(_friendly_record_label(c.title, c.project_id, "Scout campaign"))}</a></td>'
-                f'<td>{_badge(c.lifecycle_state)}</td>'
+                f'<td>{_badge(scout_status_label(c.lifecycle_state))}</td>'
                 f'<td>{c.progress}%</td><td>{c.evidence_count}</td>'
                 f'<td class="muted">{_esc(c.operator_next_action)}</td>'
                 f'<td><a class="chip" href="/scout/progress?id={_esc(c.project_id)}">Open</a></td></tr>'
@@ -2901,8 +2904,16 @@ function startCampaign(){{
                     'client-ready attachment. Download a client ZIP from a completed target card.</p>'
                     '</details>'
                     '<div id="msg" class="muted"></div></div>')
+            from core.scout.run_control import ALL_STATES, offered_controls
+            # Shipped as a table from the state machine. The page used to re-derive this from its own
+            # list of state names, so `recoverable` would have been drawn with a Pause button for a
+            # worker that no longer exists.
+            control_rules = {s: offered_controls(s) for s in ALL_STATES}
+            state_labels = {s: scout_status_label(s) for s in ALL_STATES}
             script = (
                 "const CSRF=" + json.dumps(csrf_token) + ";const CID=" + json.dumps(cid) + ";\n"
+                "const RULES=" + json.dumps(control_rules) + ";\n"
+                "const LABELS=" + json.dumps(state_labels) + ";\n"
                 "function ctl(a){fetch('/api/scout/control?id='+encodeURIComponent(CID)+'&action='+a,"
                 "{method:'POST',headers:{'X-Scout-CSRF':CSRF}}).then(r=>r.json()).then(load);}\n"
                 "function exp(){fetch('/api/scout/export?id='+encodeURIComponent(CID),{method:'POST',"
@@ -2914,10 +2925,9 @@ function startCampaign(){{
                 ".then(function(j){var c=j.counters||{};var d=(j.decisions||[]);"
                 # Show only actions that make sense in the current state.
                 "var state=String(j.run_state||'').toLowerCase();"
-                "var term=['completed','stopped_with_checkpoint','failed','cancelled'].indexOf(state)>=0;"
-                "var paused=['paused','pause_requested'].indexOf(state)>=0;"
+                "var off=RULES[state]||{pause:false,resume:false,stop:false};"
                 "var bp=document.getElementById('bp'),br=document.getElementById('br'),bs=document.getElementById('bs');"
-                "if(bp)bp.hidden=term||paused;if(br)br.hidden=term||!paused;if(bs)bs.hidden=term;"
+                "if(bp)bp.hidden=!off.pause;if(br)br.hidden=!off.resume;if(bs)bs.hidden=!off.stop;"
                 # Each analyzed domain links to its target detail (findings/evidence); same tab.
                 "var rows=d.map(function(x){var enc=encodeURIComponent(x.domain||'');"
                 "var run=encodeURIComponent(x.scout_run||'');var href='/scout/target?domain='+enc+"
@@ -2925,11 +2935,8 @@ function startCampaign(){{
                 "return '<tr><td><a href=\"'+href+'\">'+esc(x.domain)+'</a></td><td>'+esc(x.priority)+"
                 "'</td><td>'+esc((x.allocation||{}).depth)+'</td><td>'+esc((x.brain||{}).business_model||'')+"
                 "'</td></tr>';}).join('');"
-                "var labels={running:'Running',paused:'Paused',pause_requested:'Pausing',"
-                "completed:'Completed',stopped_with_checkpoint:'Stopped and saved',failed:'Failed',"
-                "cancelled:'Cancelled'};"
                 "document.getElementById('p').innerHTML='<div class=row><span class=chip>Status: '+"
-                "esc(labels[state]||String(j.run_state||'Unknown').replaceAll('_',' '))+'</span>'+"
+                "esc(LABELS[state]||String(j.run_state||'Unknown').replaceAll('_',' '))+'</span>'+"
                 "(j.stop_reason?'<span class=chip>Stopped because: '+esc(j.stop_reason)+'</span>':'')+'</div>'+"
                 "'<table><tr><th>Discovered</th><th>Eligible</th><th>QA analyzed</th><th>Actionable</th>'+"
                 "'<th>Already</th><th>Rejected</th><th>Failed</th></tr><tr><td>'+[c.discovered,c.eligible,"
