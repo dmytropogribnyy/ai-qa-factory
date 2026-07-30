@@ -228,6 +228,24 @@ package is not deciding it may be sent.
   removes the cross-run dedup/history entry so the domain can be discovered again.
 - Data and history are **file-based** under `outputs/` and **persist across a Dashboard restart**.
 
+### "Worker gone" — a campaign whose worker stopped reporting
+
+A campaign shows as **Worker gone** (`recoverable`) when it was last recorded as running but nothing
+has reported progress for 15 minutes. It appears under *needs your decision* on Overview rather than
+among running campaigns, because nothing is running for it.
+
+- Stop & Save is offered and keeps everything already collected.
+- **Resume is deliberately not offered.** Re-marking ownership does not relaunch a worker that no
+  longer exists, so the button would be a promise the product cannot keep. Start a new run when you
+  want the remaining work done.
+- Nothing is deleted, resumed or relabelled, and no provenance changes.
+
+The state is **derived while reading, never written**: the record still says what the worker last
+asserted (e.g. `analyzing`), and every surface displays `recoverable` because they all ask the same
+function. So the JSON under `outputs/scout/_runcontrol/` can legitimately disagree with the screen —
+the campaign API shows both layers as `persisted_state` and `derived`. The gain is that a worker
+which comes back needs no repair step: its next heartbeat makes the campaign running again.
+
 ### More → Data management (`/data`)
 
 Everything Scout has stored, what each run was for, and a staged way to let test data go.
