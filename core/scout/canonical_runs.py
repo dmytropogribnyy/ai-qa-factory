@@ -92,6 +92,24 @@ NOT_APPLICABLE = "NOT_APPLICABLE"
 _TERMINAL_STATES = frozenset({"COMPLETED", "FAILED", "STOPPED", "CANCELLED"})
 
 
+# A direct run carries the worker's own uppercase status; a campaign carries run-control states.
+_ACTIVE_DIRECT_STATES = frozenset({"RUNNING", "ACTIVE", "EXECUTING"})
+
+
+def is_active_run(view: Dict[str, Any]) -> bool:
+    """The ONE active rule, over a canonical view from :func:`canonical_run_state`.
+
+    Three literals existed and they disagreed: the Observer's counted `paused` as active where
+    ACTIVE_STATES does not, and the Dashboard's compared against the worker file's uppercase
+    vocabulary. Answering both vocabularies here lets a caller stay ignorant of which it holds.
+    """
+    state = str(view.get("state") or "").strip()
+    if view.get("kind") == KIND_CAMPAIGN:
+        from core.scout.run_control import ACTIVE_STATES
+        return state.lower() in ACTIVE_STATES
+    return state.upper() in _ACTIVE_DIRECT_STATES
+
+
 def run_kind(output_dir: str, run_id: str) -> str:
     """Classify an id by what actually exists on disk for it, never by its shape.
 
@@ -120,17 +138,40 @@ def run_kind(output_dir: str, run_id: str) -> str:
 def canonical_run_state(output_dir: str, run_id: str) -> Dict[str, Any]:
     """The ONE state answer for a run, read from whichever store actually owns it.
 
-    Returns ``kind``, the ``state`` that store recorded, whether it is ``terminal``, and ``source``
-    so a disagreement can be traced to the file it came from rather than argued about.
+    The single outward-facing campaign-state answer: Dashboard, campaign API and Observer all read
+    it, so none can disagree. Returns ``kind``, the ``state`` to report, the ``persisted_state``
+    actually on disk, whether that state was ``derived``, a ``derived_reason``, whether it is
+    ``terminal``, and ``state_source`` so a disagreement is traceable to a file, not argued about.
+
+    The two states differ in exactly one case: an active record whose owner stopped reporting reads
+    as ``recoverable`` while disk still holds what the worker asserted. **This never writes.** Both
+    layers stay visible so someone reading the JSON can see why the screen says something else.
     """
     import json
     kind = run_kind(output_dir, run_id)
     if kind == KIND_CAMPAIGN:
-        from core.scout.run_control import CampaignRunControl
+        from core.scout.run_control import (RECOVERABLE, TERMINAL_STATES, CampaignRunControl,
+                                            heartbeat_age_s, is_unattended, recovery_reason)
         control = CampaignRunControl(run_id, output_dir)
-        state = str(control.state.state or "")
-        return {"kind": kind, "state": state, "terminal": state.upper() in _TERMINAL_STATES,
-                "source": f"scout/_runcontrol/{run_id}.json",
+        persisted = str(control.state.state or "")
+        unattended = is_unattended(persisted, control.state.heartbeat_at)
+        state = RECOVERABLE if unattended else persisted
+        reason = ""
+        if unattended:
+            reason = recovery_reason(persisted, heartbeat_age_s(control.state.heartbeat_at))
+        source = f"scout/_runcontrol/{run_id}.json"
+        # Terminality follows the state machine owning these values; the uppercase set below never
+        # held `stopped_with_checkpoint` or `blocked`, so a stopped run called itself non-terminal.
+        return {"kind": kind, "state": state, "persisted_state": persisted,
+                "derived": unattended, "derived_reason": reason,
+                "stop_reason": control.state.stop_reason,
+                # Carried from the record already loaded above so a caller never needs a second read
+                # to describe the same instant. The operator's pending control is not a state, but it
+                # is part of the same snapshot.
+                "requested_control": control.state.requested_control,
+                "current_company": control.state.checkpoint.current_company,
+                "terminal": state.lower() in TERMINAL_STATES,
+                "source": source, "state_source": source,
                 "updated_at": control.state.updated_at}
     if kind == KIND_DIRECT:
         try:
@@ -139,11 +180,19 @@ def canonical_run_state(output_dir: str, run_id: str) -> Dict[str, Any]:
         except (OSError, ValueError):
             raw = {}
         state = str(raw.get("status") or "")
-        return {"kind": kind, "state": state, "terminal": state.upper() in _TERMINAL_STATES,
-                "source": f"scout/{run_id}/state.json",
+        source = f"scout/{run_id}/state.json"
+        return {"kind": kind, "state": state, "persisted_state": state,
+                "derived": False, "derived_reason": "",
+                "stop_reason": str(raw.get("stop_reason") or ""),
+                "requested_control": "", "current_company": "",
+                "terminal": state.upper() in _TERMINAL_STATES,
+                "source": source, "state_source": source,
                 "updated_at": raw.get("finished_at") or raw.get("updated_at")
                 or raw.get("started_at") or ""}
-    return {"kind": kind, "state": "", "terminal": False, "source": "", "updated_at": ""}
+    return {"kind": kind, "state": "", "persisted_state": "", "derived": False,
+            "derived_reason": "", "stop_reason": "", "requested_control": "",
+            "current_company": "", "terminal": False, "source": "", "state_source": "",
+            "updated_at": ""}
 
 
 def _runcontrol_ids(output_dir: str) -> List[str]:

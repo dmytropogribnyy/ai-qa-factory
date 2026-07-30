@@ -44,10 +44,36 @@ _ATTENTION = {
     "DELIVERY_PREPARED": "Prepared package waiting to be sent",
 }
 _ACTIVE_WORK = {"EXECUTING", "EXECUTION_PARTIAL", "VERIFYING", "READY_TO_EXECUTE"}
+# Scout campaign states that owe the operator a decision. RECOVERABLE belongs here: once it stops
+# being counted as active it would otherwise appear on no screen at all, and a run that quietly
+# vanishes is not more honest than one that lies about running.
+_SCOUT_ATTENTION = {
+    "FAILED": ("Scout campaign failed", "the campaign ended in a failed state"),
+    "ERROR": ("Scout campaign failed", "the campaign ended in a failed state"),
+    "RECOVERABLE": ("Scout campaign lost its worker",
+                    "the worker stopped reporting, so nothing is running for this campaign"),
+    "BLOCKED": ("Scout campaign is blocked", "the campaign stopped on a blocker"),
+}
 
 
 def stage_label(status: str) -> str:
     return _STAGE.get(status, status or "Unknown")
+
+
+# Scout campaigns now carry run-control states outward, because that is where the truth about them
+# lives. The operator should still never read a raw enum.
+_SCOUT_STATUS_LABEL = {
+    "QUEUED": "Queued", "DISCOVERING": "Running (discovering)", "TRIAGING": "Running (triaging)",
+    "ANALYZING": "Running (analyzing)", "PAUSING": "Pausing", "PAUSED": "Paused",
+    "RECOVERABLE": "Worker gone", "STOPPED_WITH_CHECKPOINT": "Stopped and saved",
+    "COMPLETED": "Completed", "BLOCKED": "Blocked", "FAILED": "Failed",
+    "RUNNING": "Running", "DONE": "Completed",
+}
+
+
+def scout_status_label(status: str) -> str:
+    key = str(status or "").strip().upper()
+    return _SCOUT_STATUS_LABEL.get(key, str(status or "Unknown").replace("_", " "))
 
 
 def health_of(status: str) -> str:
@@ -209,16 +235,18 @@ class DashboardReadModel:
         # destination (/scout/campaigns) - never folded into the work-attention number.
         scout_attention: List[AttentionItem] = [
             AttentionItem(
-                kind="scout", title="Scout campaign failed", project_id=c.project_id,
-                project_title=(c.title or c.project_id),
+                kind="scout", title=_SCOUT_ATTENTION[str(c.lifecycle_state).upper()][0],
+                project_id=c.project_id, project_title=(c.title or c.project_id),
                 project_type="scout_campaign", status=c.lifecycle_state,
-                reason="the campaign ended in a failed state", next_action=c.operator_next_action,
-                href="/scout/campaigns")
-            for c in scouts if str(c.lifecycle_state).upper() in ("FAILED", "ERROR")]
+                reason=_SCOUT_ATTENTION[str(c.lifecycle_state).upper()][1],
+                next_action=c.operator_next_action, href="/scout/campaigns")
+            for c in scouts if str(c.lifecycle_state).upper() in _SCOUT_ATTENTION]
         active_work = [self._to_list_item(p).to_dict() for p in clients
                        if p.lifecycle_state in _ACTIVE_WORK]
-        active_campaigns = [self._to_scout_item(c).to_dict() for c in scouts
-                            if str(c.lifecycle_state).upper() in ("RUNNING", "ACTIVE", "EXECUTING")]
+        # The shared predicate's answer over the canonical view. Comparing lifecycle_state against a
+        # literal here is what let a stopped run and an ownerless one both count as active on the
+        # screen the operator uses to judge what is running.
+        active_campaigns = [self._to_scout_item(c).to_dict() for c in scouts if c.active]
         recent = [self._to_scout_item(c).to_dict() for c in scouts
                   if str(c.lifecycle_state).upper() in ("COMPLETED", "DONE")][:5]
         # How many diagnostic items are hidden from this (production) view — so the UI can offer an

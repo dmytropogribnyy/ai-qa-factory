@@ -2,16 +2,21 @@
 
 Complements the in-process cooperative `RunControl` (threading pause/stop) with a *persisted*
 campaign-level lifecycle that survives a Windows/Dashboard restart. It enforces valid
-transitions, records the operator's requested control, persists a checkpoint after every atomic
-step, and — on a fresh process — flips an orphaned active run to RECOVERABLE (never auto-resuming
-paused work, never overlapping a scheduled and an active run).
+transitions, records the operator's requested control, and persists a checkpoint after every atomic
+step (never auto-resuming paused work, never overlapping a scheduled and an active run).
+
+Every state here is one a writer *asserted*. RECOVERABLE is the exception: nothing writes it any
+more. An active run whose owner stopped reporting is reported as recoverable at read time by
+`canonical_runs.canonical_run_state()`, from `is_unattended()` below — so the record keeps saying
+what the worker last said, and a worker that comes back is authoritative again on its next heartbeat
+with nothing to restore. Rows an earlier release persisted as RECOVERABLE stay readable and resumable.
 
 States:
     QUEUED -> DISCOVERING -> TRIAGING -> ANALYZING -> COMPLETED
     (any active) -> PAUSING -> PAUSED -> (resume) -> ANALYZING/DISCOVERING
     (any active/paused/recoverable) -> STOPPED_CHECKPOINT   (Stop & Save)
     (any active) -> BLOCKED | FAILED
-    orphaned active on restart -> RECOVERABLE -> (resume) -> ANALYZING
+    active + no reporting owner -> reads as RECOVERABLE (derived; disk unchanged)
 
 Controls: run_now / pause / resume / stop_and_save / continue_remaining.
 """
@@ -40,6 +45,75 @@ FAILED = "failed"
 ACTIVE_STATES = frozenset({DISCOVERING, TRIAGING, ANALYZING, PAUSING})
 TERMINAL_STATES = frozenset({STOPPED_CHECKPOINT, COMPLETED, BLOCKED, FAILED})
 RESUMABLE_STATES = frozenset({PAUSED, RECOVERABLE, STOPPED_CHECKPOINT})
+
+# Two questions, two windows: `heartbeat_stale_s` (120s) guards run overlap, where a stalled owner
+# must not block the operator for long; this one asks "is anyone still there?" and must tolerate a
+# genuinely slow page op without calling live work lost.
+RECOVERY_STALE_S = 900.0
+RECOVERY_REASON_CODE = "worker_gone"
+
+ALL_STATES: tuple = (QUEUED, DISCOVERING, TRIAGING, ANALYZING, PAUSING, PAUSED,
+                     STOPPED_CHECKPOINT, RECOVERABLE, COMPLETED, BLOCKED, FAILED)
+
+
+def heartbeat_age_s(heartbeat_at: Any) -> float:
+    """Seconds since a heartbeat, or +inf when it cannot be trusted to mean anything.
+
+    The type is checked before parsing: `fromisoformat` raises TypeError on a list and ValueError on
+    a bad string, so catching only the latter made a malformed row crash the read path.
+    """
+    if not isinstance(heartbeat_at, str) or not heartbeat_at:
+        return float("inf")
+    try:
+        last = datetime.fromisoformat(heartbeat_at)
+    except ValueError:
+        return float("inf")
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)      # legacy rows were written naive, always UTC
+    return (datetime.now(timezone.utc) - last).total_seconds()
+
+
+def is_unattended(state: str, heartbeat_at: Any, *,
+                  recovery_stale_s: float = RECOVERY_STALE_S) -> bool:
+    """True when an ACTIVE record's owner has stopped reporting for `recovery_stale_s`.
+
+    Membership is tested BEFORE the timestamp, so a parked or finished row is never parsed however
+    malformed its heartbeat is. `>=` pins the boundary: a 0.0 window means "any age is stale".
+    """
+    if state not in ACTIVE_STATES:
+        return False
+    return heartbeat_age_s(heartbeat_at) >= recovery_stale_s
+
+
+def offered_controls(state: str) -> Dict[str, bool]:
+    """Which operator controls are truthful for a state — the one rule, not a copy in JavaScript.
+
+    `recoverable` gets neither Pause nor Resume: there is no worker to pause, and continuing a run
+    whose worker is gone needs a relaunch this release does not have, so a Resume button would be a
+    promise it cannot keep. Stop & Save stays — keeping what was collected is real.
+    """
+    s = str(state or "").strip().lower()
+    if s in TERMINAL_STATES:
+        return {"pause": False, "resume": False, "stop": False}
+    if s == RECOVERABLE:
+        return {"pause": False, "resume": False, "stop": True}
+    if s == PAUSED:
+        return {"pause": False, "resume": True, "stop": True}
+    if s == PAUSING:
+        return {"pause": False, "resume": False, "stop": True}
+    if s in ACTIVE_STATES:
+        return {"pause": True, "resume": False, "stop": True}
+    return {"pause": False, "resume": False, "stop": s == QUEUED}
+
+
+def recovery_reason(prior_state: str, age_s: float) -> str:
+    """Why a row reads as recoverable. Derived text — never written into `stop_reason`, which
+    records what something actually did."""
+    tail = f"while the run was {prior_state!r}; nothing was resumed, deleted or relabelled"
+    if age_s == float("inf"):
+        return f"{RECOVERY_REASON_CODE}: the worker left no usable heartbeat {tail}"
+    return f"{RECOVERY_REASON_CODE}: the worker stopped reporting {int(age_s)}s ago {tail}"
+
 
 ALLOWED: Dict[str, frozenset] = {
     QUEUED: frozenset({DISCOVERING, BLOCKED, FAILED, STOPPED_CHECKPOINT}),
@@ -141,7 +215,8 @@ class CampaignRunControl:
 
     def run_now(self) -> None:
         """Start a new run. Refuses to overlap an already-active (live) run."""
-        if self.state.state in ACTIVE_STATES and not self._is_orphaned():
+        if self.state.state in ACTIVE_STATES and not is_unattended(
+                self.state.state, self.state.heartbeat_at, recovery_stale_s=self._stale_s):
             raise RunControlError("a run is already active for this campaign (no overlap)")
         self.state = RunControlState(campaign_id=self.campaign_id, state=QUEUED,
                                      owner_pid=self._pid, heartbeat_at=_now_iso())
@@ -224,23 +299,6 @@ class CampaignRunControl:
     def should_stop(self) -> bool:
         return self.state.requested_control == "stop" or self.state.state == STOPPED_CHECKPOINT
 
-    # -- restart recovery ------------------------------------------------------------------------
-    def _is_orphaned(self) -> bool:
-        """An active run whose owner heartbeat is stale (crashed/closed process)."""
-        if self.state.state not in ACTIVE_STATES:
-            return False
-        hb = self.state.heartbeat_at
-        if not hb:
-            return True
-        try:
-            last = datetime.fromisoformat(hb)
-        except ValueError:
-            return True
-        age = (datetime.now(timezone.utc) - last).total_seconds()
-        # Use >= so a heartbeat exactly at the stale threshold counts as stale (deterministic:
-        # a 0.0 stale window means "any age is stale", not "must be strictly newer than now").
-        return age >= self._stale_s
-
     def reload(self) -> None:
         """Re-read the persisted state (another thread/process may have set a control)."""
         self.state = self._load()
@@ -258,11 +316,7 @@ class CampaignRunControl:
             _time.sleep(poll)
             waited += poll
 
-    def recover_on_startup(self) -> str:
-        """On a fresh process: flip an orphaned ACTIVE run to RECOVERABLE. PAUSED work is left
-        PAUSED (never auto-resumed). Returns the resulting state."""
-        if self._is_orphaned():
-            self.state.state = RECOVERABLE           # direct set: recovery is not a normal edge
-            self.state.requested_control = ""
-            self._save()
-        return self.state.state
+    # There is deliberately NO startup sweep writing RECOVERABLE. Persisting it was tried and is a
+    # one-way door: the record then carries a state the surviving worker never asserted, so its next
+    # complete() is an illegal RECOVERABLE -> COMPLETED transition, and a wrong staleness guess
+    # becomes a permanent wrong fact instead of a display the next heartbeat corrects.

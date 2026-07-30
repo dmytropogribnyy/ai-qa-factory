@@ -84,6 +84,9 @@ class ProjectEntry:
     selected_tools: List[str] = field(default_factory=list)
     operator_next_action: str = ""
     diagnostic: bool = False       # True for smoke/acceptance/replay/promo/demo artifacts
+    # Decided once by the shared predicate (canonical_runs.is_active_run), so no consumer re-derives
+    # "is this running" from a state string and gets a different answer.
+    active: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
@@ -183,13 +186,20 @@ class ProjectIndex:
         return out
 
     def _scout_entry(self, cid: str, *, diagnostic: bool) -> ProjectEntry:
+        from core.scout.canonical_runs import canonical_run_state, is_active_run
         base = self._out / "scout" / cid
         st = self._read_json(base / "state.json")
         cfg = self._read_json(base / "config.json")
         report = base / "report"
         evidence = len(list(report.glob("*.json"))) if report.is_dir() else 0
         counts = st.get("counts", {}) if isinstance(st.get("counts"), dict) else {}
-        status = st.get("status") or ("COMPLETED" if report.is_dir() else "UNKNOWN")
+        # Lifecycle comes from the canonical view, never from `state.json`: the worker writes RUNNING
+        # there at start and rewrites it only on a graceful finish, so a killed worker leaves RUNNING
+        # behind for ever. That file stays the right source for what the worker counted — never for
+        # whether it is still running.
+        view = canonical_run_state(str(self._out), cid)
+        status = view["state"] or st.get("status") or ("COMPLETED" if report.is_dir() else "UNKNOWN")
+        active = is_active_run(view)
         campaign_name = str(cfg.get("campaign_name") or "").strip()
         # Prefer the operator-chosen campaign name. Internal ids remain available in diagnostics,
         # but should not be the title of every ordinary campaign row.
@@ -200,17 +210,41 @@ class ProjectIndex:
             created_at=st.get("started_at", ""),
             updated_at=st.get("updated_at", st.get("started_at", "")),
             lifecycle_state=status,
-            progress=(100 if status in ("COMPLETED", "DONE") else 50 if status else 0),
+            progress=self._scout_progress(status),
             blockers=[], workspace_path=str(base), evidence_count=evidence,
             deliverables=[], selected_capabilities=[], selected_tools=[],
-            operator_next_action=self._scout_next_action(status, counts), diagnostic=diagnostic)
+            operator_next_action=self._scout_next_action(status, counts, active=active),
+            diagnostic=diagnostic, active=active)
 
     _client_next_action = staticmethod(client_next_action)   # one shared source of truth
 
     @staticmethod
-    def _scout_next_action(status: str, counts: Dict[str, Any]) -> str:
-        if status in ("COMPLETED", "DONE"):
+    def _scout_progress(status: str) -> int:
+        state = str(status or "").lower()
+        if state in ("completed", "done"):
+            return 100
+        if not state or state in ("unknown", "queued"):
+            return 0
+        return 50
+
+    @staticmethod
+    def _scout_next_action(status: str, counts: Dict[str, Any], *, active: bool = False) -> str:
+        """What the operator should do next. `active` comes from the shared predicate, so a run that
+        is not running can never be told to "watch progress"."""
+        state = str(status or "").lower()
+        if state in ("completed", "done"):
             return "review companies, findings, evidence, and drafts in the dashboard"
-        if status in ("RUNNING", "ACTIVE", "EXECUTING"):
+        if active:
             return "watch progress; pause/resume/stop from the dashboard"
+        if state == "recoverable":
+            # Silent about resuming on purpose: an ownership write does not relaunch a dead worker,
+            # so advertising Resume would be the same kind of untruth this fix removes.
+            return ("the worker stopped reporting and nothing is running; review what was collected "
+                    "and start a new run when ready")
+        if state == "stopped_with_checkpoint":
+            return "stopped with a saved checkpoint; open the campaign to review what was collected"
+        if state in ("paused", "pausing"):
+            return "parked by the operator; open the campaign to decide what happens next"
+        if state in ("failed", "blocked"):
+            return "open the campaign to see why it stopped"
         return "open the campaign in the dashboard"
