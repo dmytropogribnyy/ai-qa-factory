@@ -157,7 +157,10 @@ def test_plan_skip_grants_no_budget_but_still_reports_the_run_it_describes():
     plan = plan_target(domain="d.com", profile=select_profile(SITE_TYPE_PERSONAL),
                        depth=DEPTH_SKIP)
     assert plan.max_duration_s == 0
-    assert plan.checks_selected == []          # nothing was configured, so nothing is claimed
+    # M6 round 4: no selection was supplied at all, so the record reports it as unknown rather than
+    # as an empty selection — the two are different facts and only one of them is verifiable.
+    assert plan.checks_selected == []
+    assert plan.selection_status == "unavailable"
 
     configured = plan_target(domain="d2.com", profile=select_profile(SITE_TYPE_ECOMMERCE),
                              depth=DEPTH_SKIP, selected_families=["links", "business_flow"])

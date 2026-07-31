@@ -170,12 +170,29 @@ def test_the_campaign_binds_the_plan_to_the_promoted_run_not_to_the_registry(tmp
     )
 
 
-def test_an_unreadable_run_claims_no_coverage(tmp_path):
-    """Fail closed: a plan that invents a selection when the config is missing is the same defect."""
-    from core.scout.campaign_service import CampaignService
+def test_an_unreadable_run_reports_an_unknown_selection_not_an_empty_one(tmp_path):
+    """M6 round 4 — this used to assert `== []` and stop there, which was the whole problem.
 
-    assert CampaignService(str(tmp_path))._run_check_families("no-such-run") == []
-    assert CampaignService(str(tmp_path))._run_check_families("") == []
+    An empty list is a selection that was read and turned out empty; an unreadable config is the
+    absence of any selection. Returning `[]` for both let a plan built from a config nobody could
+    read be published as verified coverage of nothing. The helper now distinguishes them, and the
+    product-level consequence is proved through `_persist_brain` -> Observer in
+    `test_m6_unknown_selection_fails_closed`.
+    """
+    from core.scout.campaign_service import CampaignService
+    from core.scout.store import RunStore
+
+    svc = CampaignService(str(tmp_path))
+    assert svc._run_check_families("no-such-run") is None
+    assert svc._run_check_families("") is None
+
+    run_id = "campaign-m6empty-20260731t180000z-aa11bb"
+    RunStore(str(tmp_path), run_id).write_config(
+        {"campaign_name": "m6", "browser_mode": "static", "check_families": []})
+    assert svc._run_check_families(run_id) == [], (
+        "a run that really did select nothing must stay distinguishable from one that could not be "
+        "read at all"
+    )
 
 
 @pytest.mark.parametrize("depth", ["skip", "selective", "deep"])

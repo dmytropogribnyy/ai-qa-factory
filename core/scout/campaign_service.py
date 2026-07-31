@@ -411,22 +411,29 @@ class CampaignService:
         return {"campaigns_scanned": campaigns_scanned, "domains_registered": sorted(registered),
                 "skipped_malformed": skipped_malformed}
 
-    def _run_check_families(self, scout_run_id: str) -> List[str]:
+    def _run_check_families(self, scout_run_id: str) -> Optional[List[str]]:
         """The check families the promoted run actually persisted — the plan binds to these.
 
         Deriving the plan from the whole registry instead would keep overstating a run configured
         with a subset: the names would resolve, and the claim would still be about coverage that did
-        not happen. An unreadable config yields nothing rather than a guess, because a plan that
-        invents its own selection is the defect being fixed.
+        not happen.
+
+        Returns ``None`` when the selection cannot be established at all — no run id, a missing or
+        corrupt ``config.json``, or a config with no usable ``check_families``. That is deliberately
+        distinct from ``[]``, which is a selection that WAS read and turned out to be empty.
+        Collapsing both into ``[]`` is what let a plan built from an unreadable config be published
+        as verified coverage of nothing.
         """
         if not scout_run_id:
-            return []
+            return None
         try:
             cfg = RunStore(self.output_dir, scout_run_id).load_config()
-        except Exception:      # noqa: BLE001 - an unreadable run config claims no coverage
-            return []
+        except Exception:      # noqa: BLE001 - an unreadable run config establishes nothing
+            return None
         families = cfg.get("check_families") if isinstance(cfg, dict) else None
-        return [str(f) for f in families] if isinstance(families, list) else []
+        if not isinstance(families, list):
+            return None
+        return [str(f) for f in families]
 
     def _load_findings(self, scout_run_id: str) -> List[Dict[str, Any]]:
         if not scout_run_id:
