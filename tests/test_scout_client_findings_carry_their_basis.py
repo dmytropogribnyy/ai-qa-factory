@@ -374,6 +374,54 @@ def test_the_same_finding_keeps_its_handle_in_a_later_export(tmp_path):
     )
 
 
+# A finding that records no expected/actual at all. This is not a contrived shape: `expected` is
+# present on 286 of the 433 stored findings and `actual` on 316, so roughly a third of real findings
+# reach a client with no recorded basis. The report omits those sections by design — which makes any
+# universal promise about them in the README false for exactly those findings.
+_SPARSE_FINDINGS = [
+    {"finding_id": "f-sparse-01", "severity": "medium", "category": "Accessibility",
+     "title": "Header control has no accessible name",
+     "business_impact": "Screen-reader users cannot tell what the control does.",
+     "url": f"https://{_DOMAIN}/", "confidence": "verified",
+     "reproduction_steps": ["Open /", "Move focus to the header control"]},
+]
+
+
+@pytest.fixture()
+def delivered_without_a_recorded_basis(tmp_path):
+    return _build_package(str(tmp_path), _SPARSE_FINDINGS)
+
+
+def test_the_readme_promises_only_the_basis_the_report_actually_carries(
+        delivered_without_a_recorded_basis):
+    """The first file a client opens must not promise context the report next to it omits.
+
+    Read as a consistency check between two delivered files rather than as a spelling test: the
+    package below genuinely has no Expected/Actual anywhere in its report, so a README that says
+    every finding comes "with what was expected, what was observed" is describing a different
+    package than the one it was shipped in.
+    """
+    report = _blob(delivered_without_a_recorded_basis, "QA-Report.html")
+    readme = " ".join(_blob(delivered_without_a_recorded_basis, "00-README.html").split())
+
+    # Pin the premise, so this can never pass by quietly becoming vacuous.
+    assert "<dt>Expected</dt>" not in report and "<dt>Actual</dt>" not in report, (
+        "this package was supposed to have no recorded basis; the test is no longer testing what "
+        "its name says"
+    )
+    for promise in ("each with what was expected, what was observed",
+                    "described by its Expected and Actual lines"):
+        assert promise not in readme, (
+            f"the README promises {promise!r}, but this package's report carries no Expected or "
+            "Actual for any finding — the promise is false for the ~1 in 3 real findings that "
+            "record neither"
+        )
+    assert "Finding ID" in readme, (
+        "the handle sentence was deleted rather than corrected; the client still needs to be told "
+        "what to quote back to us"
+    )
+
+
 def test_the_readme_does_not_promise_that_a_screenshot_proves_a_finding(delivered):
     readme = _blob(delivered, "00-README.html")
     assert "with the screenshots that show them" not in readme, (

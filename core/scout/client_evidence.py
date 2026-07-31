@@ -223,8 +223,8 @@ code{{background:#eef2f8;padding:1px 5px;border-radius:4px}}a{{color:#1557c0}}
 internet.</p>
 <h2>Start with</h2>
 <ul>
-<li><a href="QA-Report.html">QA-Report.html</a> — the findings, each with what was expected, what
-was observed, and the Finding ID to quote back to us.</li>
+<li><a href="QA-Report.html">QA-Report.html</a> — the findings, each with the Finding ID to quote
+back to us, and whatever expected/observed context that particular check recorded.</li>
 <li><a href="Findings.csv">Findings.csv</a> — the same list as a spreadsheet, for your tracker. The
 first column is the Finding ID, identical to the one in the report and in
 <code>manifest.json</code>.</li>
@@ -246,8 +246,8 @@ altered.</li>
 </ul>
 <p><strong>About the Evidence folders.</strong> They are supporting material for this target and this
 run as a whole. Unless a finding names an artefact itself, do not read a screenshot or summary as
-proof of a particular finding — the check that produced a finding is described by its Expected and
-Actual lines, and its Finding ID is how to refer to it.</p>
+proof of a particular finding. Where a check recorded them, its Expected and Actual lines are what
+describe it; its Finding ID is how to refer to it either way.</p>
 <h2>How this was produced</h2>
 <p>A bounded, read-only check of public pages. No form was submitted, no account was created, no
 order was placed and no login was attempted. Findings describe what was observed on the pages
