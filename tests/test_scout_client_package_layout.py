@@ -154,12 +154,15 @@ def test_findings_csv_opens_in_a_spreadsheet(packaged):
     assert b"\r\n" in blob, "CSV rows must be CRLF-terminated for Excel"
     rows = list(csv.reader(io.StringIO(blob.decode("utf-8-sig"))))
 
-    # "Type" leads the row: a client sorting this in a tracker must be able to tell a defect from
-    # an observation without reading the severity vocabulary and guessing.
-    assert rows[0] == ["Type", "Severity", "Category", "Title", "Impact", "Page",
-                       "How to reproduce", "Evidence", "Confidence"]
-    assert all(row[0] in ("Actionable", "Informational") for row in rows[1:])
-    assert any("Checkout button does nothing on mobile" in row[3] for row in rows[1:])
+    # "Finding ID" leads the row so a client can quote one finding back unambiguously; "Type" is
+    # next, because sorting in a tracker must separate a defect from an observation without reading
+    # the severity vocabulary and guessing. "Evidence" is gone: it read `evidence_refs` off the
+    # already-projected finding and was always empty, and wiring it would have repeated one
+    # target-wide path on every row.
+    assert rows[0] == ["Finding ID", "Type", "Severity", "Category", "Title", "Impact", "Page",
+                       "How to reproduce", "Expected", "Actual", "Confidence"]
+    assert all(row[1] in ("Actionable", "Informational") for row in rows[1:])
+    assert any("Checkout button does nothing on mobile" in row[4] for row in rows[1:])
 
 
 def test_no_absolute_local_path_escapes_into_the_package(packaged):

@@ -129,6 +129,15 @@ def _project_target_finding(f: Dict[str, Any]) -> Dict[str, Any]:
         # findings on one page share a title and a URL and differ only by signature, so anything
         # that re-splits the projected list merges them and loses one between a count and its list.
         "kind": f.get("kind"),
+        # The basis for the verdict, and the one handle that identifies this finding. The client
+        # package is built from this projection, so a field dropped here is a field the client can
+        # never receive no matter what the export layer allows. None of these carries a run id, an
+        # internal path or an operator reference.
+        "finding_id": f.get("finding_id"),
+        "expected": f.get("expected"),
+        "actual": f.get("actual"),
+        "coverage_limitation": f.get("coverage_limitation"),
+        "environment": f.get("environment"),
     }
 
 
