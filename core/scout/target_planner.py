@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
-from core.scout.adaptive import DEPTH_DEEP, DEPTH_SELECTIVE, DEPTH_SKIP
+from core.scout.adaptive import DEPTH_DEEP, DEPTH_SKIP
 from core.scout.checks import CHECK_REGISTRY
 from core.scout.public_action_policy import MODE_PASSIVE
 from core.scout.verticals import FLOW_PASSIVE, VerticalProfile
@@ -91,17 +91,25 @@ def describe_persisted_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
 
 def plan_target(*, domain: str, profile: VerticalProfile, depth: str,
                 selected_families: Sequence[str] = (),
-                qa_focus: Tuple[str, ...] = (), qa_exclude: Tuple[str, ...] = (),
                 max_target_duration_s: int = 180,
                 remaining_budget_s: int = 0) -> TargetTestPlan:
-    """Build a bounded Target Test Plan for one promoted target at the granted depth.
+    """Record what one promoted target's run covered, and what the allocator made of it afterwards.
 
-    `selected_families` is the promoted run's persisted `check_families`. It is required in spirit:
-    deriving the plan from the whole registry instead would still overstate a run configured with a
-    subset — a tidier claim about coverage that did not happen. Ids that no executor provides are
-    dropped here rather than published, because the plan is read as coverage.
+    This is emitted by `CampaignService._persist_brain()` on the line *after*
+    `DiscoveryEngine(...).run()` returns, so it is a description of a run that already finished.
+    `depth` comes from an `AdaptiveAllocator` built at that moment, which appears nowhere in either
+    engine and gated nothing. Coverage is therefore derived from `selected_families` — the promoted
+    run's persisted `check_families`, the same list the engine executed — and never from `depth`.
 
-    The plan remains a descriptive record. It does not, and must not, drive execution.
+    Deriving coverage from the depth is how this record came to deny work that had already happened:
+    a retrospective "baseline" filed `business_flow` under `checks_skipped` after the engine had run
+    it on both passes, and a retrospective "skip" did that to the entire selection.
+
+    `qa_focus` / `qa_exclude` used to narrow the result. They had no caller, and on a record written
+    after the fact their only possible effect was to subtract coverage that had already been
+    executed, so they are gone rather than left as a way to make this artifact lie.
+
+    The plan remains descriptive. It does not, and must not, drive execution.
     """
     plan = TargetTestPlan(domain=domain, archetype=profile.site_type, depth=depth)
     runnable = [f for f in dict.fromkeys(selected_families) if f in CHECK_REGISTRY]
@@ -110,37 +118,15 @@ def plan_target(*, domain: str, profile: VerticalProfile, depth: str,
         plan.decisions.append(
             f"excluded from the plan, no executor: {sorted(unrunnable)}")
 
-    if depth == DEPTH_SKIP:
-        plan.decisions.append("skip: allocator granted no browser budget for this target")
-        plan.checks_skipped = list(runnable)
-        plan.max_duration_s = 0
-        return plan
+    # --- what this run covered. Depth plays no part; it did not exist when the engine ran. --------
+    plan.checks_selected = list(runnable)
+    plan.decisions.append(
+        "selection: verbatim from the promoted run's persisted check_families, which is exactly "
+        "what `run_checks()` executed")
 
-    # Stage 1 — exactly what this run selected, never more.
-    selected = list(runnable)
-    # Optional focus/exclusion (never adds an unsupported check).
-    if qa_focus:
-        focus = set(qa_focus)
-        kept = [c for c in selected if any(f in c for f in focus)] or selected
-        plan.decisions.append(f"focus applied: {sorted(focus)}")
-        selected = kept
-    if qa_exclude:
-        excl = set(qa_exclude)
-        removed = [c for c in selected if any(x in c for x in excl)]
-        selected = [c for c in selected if c not in removed]
-        plan.checks_skipped.extend(removed)
-        if removed:
-            plan.decisions.append(f"excluded by operator focus: {removed}")
-    plan.decisions.append("stage1_baseline: lightweight checks on a sufficiently promising target")
-
-    # Stage 3 — selective browser exploration. Depth alone is not enough: `engine.py` calls
-    # `_explore_flow()` only when `business_flow` is in the run's `check_families`, so the flow
-    # fields are a coverage claim under exactly the same condition as any check id. Setting them
-    # from the profile whenever the depth allowed it described a scenario the runtime would never
-    # attempt — the same untruth as an unexecutable check name, one field over.
-    reaches_stage3 = depth in (DEPTH_SELECTIVE, DEPTH_DEEP)
-    runs_flow = "business_flow" in selected
-    if reaches_stage3 and runs_flow:
+    # `engine.py` gates the vertical flow on `"business_flow" in cfg.check_families` and on nothing
+    # else — no depth is consulted there — so the flow fields follow the same single condition.
+    if "business_flow" in runnable:
         plan.flow = profile.flow
         plan.allowed_interaction_mode = profile.interaction_mode
         plan.stop_boundaries = tuple(profile.stop_boundaries)
@@ -149,48 +135,37 @@ def plan_target(*, domain: str, profile: VerticalProfile, depth: str,
         # keyspace — the same untruth again, in a different disguise.
         plan.cleanup_required = profile.flow == "reversible_cart"
         plan.decisions.append(
-            f"stage3_selective: explore only the {profile.flow} flow; stop before "
+            f"vertical_scenario: the run selected business_flow, so the {profile.flow} flow was "
+            f"followed one step, stopping before "
             f"{', '.join(profile.stop_boundaries) or 'no irreversible action'}")
     else:
-        plan.flow = "passive"
+        plan.flow = FLOW_PASSIVE
         plan.allowed_interaction_mode = MODE_PASSIVE
-        if not reaches_stage3 and runs_flow:
-            # The executor was selected but this depth does not reach it. That is a real skip, and
-            # it is named by its real id: the old code appended the literal "browser_flow", which
-            # no executor provides, so the skip named something that could never have run either
-            # way.
-            selected.remove("business_flow")
-            plan.checks_skipped.append("business_flow")
-            plan.decisions.append("baseline_only: passive checks; no interactive flow at this depth")
-        elif reaches_stage3:
-            # A silently passive plan reads as "this vertical has no interactive scenario", which
-            # is a different claim from "the executor for it is not in this selection". Name the
-            # actual cause: an operator focus/exclusion that dropped `business_flow` is not the
-            # same fact as a run that never selected it, and asserting either one blindly would put
-            # a false explanation next to a true absence.
-            cause = ("the operator's focus/exclusion removed business_flow from this target"
-                     if "business_flow" in runnable
-                     else "this run's check_families did not select business_flow")
-            # `FLOW_PASSIVE` archetypes have no vertical scenario at all. Naming one anyway would
-            # imply something existed and was passed over, which is a third distinct fact.
-            scenario = ("no vertical scenario" if profile.flow == FLOW_PASSIVE
-                        else f"the {profile.flow} scenario")
-            plan.decisions.append(f"no_interactive_flow: {cause}, so {scenario} is claimed here")
-        else:
-            plan.decisions.append("baseline_only: passive checks; no interactive flow at this depth")
+        # A `FLOW_PASSIVE` archetype has no vertical scenario at all. Naming one anyway would imply
+        # something existed and was passed over, which is a different fact from not selecting it.
+        scenario = ("no vertical scenario" if profile.flow == FLOW_PASSIVE
+                    else f"the {profile.flow} scenario")
+        plan.decisions.append(
+            "no_interactive_flow: this run's check_families did not select business_flow, so "
+            f"{scenario} is claimed here")
 
-    # Stage 4/5 — evidence-driven deepening (DEEP only).
+    # --- the allocator's verdict, kept as a verdict ------------------------------------------------
+    plan.decisions.append(
+        f"retrospective_assessment: depth={depth} was decided by an allocator constructed after "
+        "this run finished; it grades how much attention the target merited and gated nothing that "
+        "actually executed")
+
     plan.evidence_requirements = ["screenshots", "console", "network", "dom_state"]
     if depth == DEPTH_DEEP:
         plan.evidence_requirements += ["playwright_trace", "reproduction_steps"]
         plan.decisions.append("stage4_deep: capture trace + reproduction steps for a valuable target")
 
-    plan.checks_selected = selected
-
-    # Time cap — bounded by the per-target ceiling and any remaining campaign budget.
+    # Time cap — a ceiling the assessment would have set, bounded by the per-target limit and any
+    # remaining campaign budget. It is not a measurement: at DEPTH_SKIP it is zero because the
+    # assessment would have granted no browser budget, which says nothing about what the run spent.
     cap = max_target_duration_s
     if remaining_budget_s > 0:
         cap = min(cap, remaining_budget_s)
-    plan.max_duration_s = max(cap, 1)
+    plan.max_duration_s = 0 if depth == DEPTH_SKIP else max(cap, 1)
     plan.decisions.append(f"time_cap={plan.max_duration_s}s")
     return plan

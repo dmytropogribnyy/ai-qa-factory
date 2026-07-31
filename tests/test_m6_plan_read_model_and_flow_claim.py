@@ -185,7 +185,7 @@ def _flow_is_claimed(plan: dict) -> bool:
         or plan.get("stop_boundaries")
         or plan.get("cleanup_required")
         or plan.get("allowed_interaction_mode") not in ("public_passive", "", None)
-        or any(str(d).startswith("stage3_selective") for d in plan.get("decisions", []))
+        or any(str(d).startswith("vertical_scenario") for d in plan.get("decisions", []))
     )
 
 
@@ -223,8 +223,8 @@ def test_a_selective_run_without_business_flow_claims_no_scenario():
     assert plan["stop_boundaries"] == []
     assert plan["cleanup_required"] is False
     assert plan["allowed_interaction_mode"] == "public_passive"
-    assert not [d for d in plan["decisions"] if str(d).startswith("stage3_selective")], (
-        f"the plan still narrates a stage-3 exploration: {plan['decisions']}"
+    assert not [d for d in plan["decisions"] if str(d).startswith("vertical_scenario")], (
+        f"the plan still narrates a vertical scenario: {plan['decisions']}"
     )
 
 
@@ -253,18 +253,10 @@ def test_a_passive_archetype_is_not_described_as_having_skipped_a_scenario():
     assert "no vertical scenario" in said, f"the real state is not stated: {plan['decisions']}"
 
 
-def test_an_operator_exclusion_is_not_reported_as_a_run_that_never_selected_the_flow():
-    """Two different facts produce the same absence; the explanation must not pick the wrong one."""
-    plan = plan_target(domain="example.test", profile=profile_for_industry("ecommerce"),
-                       depth="selective", selected_families=["links", "business_flow"],
-                       qa_exclude=("business_flow",)).to_dict()
-    assert not _flow_is_claimed(plan)
-    said = " ".join(str(d) for d in plan["decisions"])
-    assert "did not select business_flow" not in said, (
-        f"the run DID select business_flow and the operator excluded it, but the plan blames the "
-        f"run's configuration: {plan['decisions']}"
-    )
-    assert "focus/exclusion" in said, f"the real cause is not stated: {plan['decisions']}"
+# The round-2 case for an operator `qa_exclude` that removed `business_flow` is gone with the
+# parameter itself. On a record written after the run, subtracting a family the engine had already
+# executed could only make the artifact lie, and nothing in the product ever passed it — see
+# `plan_target`'s docstring and round 3's `test_m6_plan_is_a_post_run_record`.
 
 
 def test_a_selective_run_with_business_flow_still_gets_its_vertical_scenario():
@@ -275,5 +267,5 @@ def test_a_selective_run_with_business_flow_still_gets_its_vertical_scenario():
     assert plan["flow"] == profile.flow
     assert plan["stop_boundaries"] == list(profile.stop_boundaries)
     assert plan["allowed_interaction_mode"] == profile.interaction_mode
-    assert any(str(d).startswith("stage3_selective") for d in plan["decisions"])
+    assert any(str(d).startswith("vertical_scenario") for d in plan["decisions"])
     assert plan["cleanup_required"] is (profile.flow == "reversible_cart")
