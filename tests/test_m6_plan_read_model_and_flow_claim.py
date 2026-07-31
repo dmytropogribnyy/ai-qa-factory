@@ -237,6 +237,22 @@ def test_the_absent_flow_is_explained_rather_than_left_blank():
     )
 
 
+def test_a_passive_archetype_is_not_described_as_having_skipped_a_scenario():
+    """A third distinct cause. `FLOW_PASSIVE` verticals never had an interactive scenario at all."""
+    from core.scout.presets import SITE_TYPE_PERSONAL
+    from core.scout.verticals import select_profile
+
+    plan = plan_target(domain="example.test", profile=select_profile(SITE_TYPE_PERSONAL),
+                       depth="selective", selected_families=["links"]).to_dict()
+    assert not _flow_is_claimed(plan)
+    said = " ".join(str(d) for d in plan["decisions"])
+    assert "the passive scenario" not in said, (
+        f"the plan names a 'passive scenario' as though one existed and was passed over: "
+        f"{plan['decisions']}"
+    )
+    assert "no vertical scenario" in said, f"the real state is not stated: {plan['decisions']}"
+
+
 def test_an_operator_exclusion_is_not_reported_as_a_run_that_never_selected_the_flow():
     """Two different facts produce the same absence; the explanation must not pick the wrong one."""
     plan = plan_target(domain="example.test", profile=profile_for_industry("ecommerce"),

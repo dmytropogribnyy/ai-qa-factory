@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 from core.scout.adaptive import DEPTH_DEEP, DEPTH_SELECTIVE, DEPTH_SKIP
 from core.scout.checks import CHECK_REGISTRY
 from core.scout.public_action_policy import MODE_PASSIVE
-from core.scout.verticals import VerticalProfile
+from core.scout.verticals import FLOW_PASSIVE, VerticalProfile
 
 _PLAN_SCHEMA = "scout-target-test-plan/v2"
 
@@ -171,8 +171,11 @@ def plan_target(*, domain: str, profile: VerticalProfile, depth: str,
             cause = ("the operator's focus/exclusion removed business_flow from this target"
                      if "business_flow" in runnable
                      else "this run's check_families did not select business_flow")
-            plan.decisions.append(
-                f"no_interactive_flow: {cause}, so the {profile.flow} scenario is not claimed")
+            # `FLOW_PASSIVE` archetypes have no vertical scenario at all. Naming one anyway would
+            # imply something existed and was passed over, which is a third distinct fact.
+            scenario = ("no vertical scenario" if profile.flow == FLOW_PASSIVE
+                        else f"the {profile.flow} scenario")
+            plan.decisions.append(f"no_interactive_flow: {cause}, so {scenario} is claimed here")
         else:
             plan.decisions.append("baseline_only: passive checks; no interactive flow at this depth")
 
