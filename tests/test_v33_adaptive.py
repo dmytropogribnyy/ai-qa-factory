@@ -101,35 +101,71 @@ def test_no_outcome_targets_never_forces_early_stop():
 
 
 # --- per-target planner ------------------------------------------------------------------------
-def test_plan_baseline_is_passive_only():
+def test_plan_baseline_records_what_the_run_configured_not_what_the_depth_implies():
+    """M6 round 3 — this test used to be `test_plan_baseline_is_passive_only`, and its premise was
+    the defect. `depth` is decided by an allocator built AFTER `DiscoveryEngine.run()` returns, and
+    `engine.py:344` gates the flow on `business_flow in cfg.check_families` alone. So a run that
+    configured `business_flow` executed it, and a retrospective "baseline" may not file it under
+    `checks_skipped` — that denied work already done, twice, across both passes."""
     plan = plan_target(domain="a.com", profile=select_profile(SITE_TYPE_ECOMMERCE),
-                       depth=DEPTH_BASELINE)
-    assert plan.flow == "passive"
-    assert "browser_flow" in plan.checks_skipped
+                       depth=DEPTH_BASELINE,
+                       selected_families=["links", "seo", "business_flow"])
+    assert "business_flow" in plan.checks_selected
+    assert plan.checks_skipped == []
+    assert plan.flow == "reversible_cart"
     assert plan.max_duration_s > 0
-    assert "reachability" in plan.checks_selected
+    # M6: `reachability` is a precondition, not a selected check family.
+    assert "reachability" in plan.preconditions
+    assert "reachability" not in plan.checks_selected
 
 
 def test_plan_selective_adds_the_vertical_flow_with_stop_boundaries():
+    # M6: the run must actually select `business_flow`. This case used to pass no families at all —
+    # a run that selected nothing — and still demand a booking flow, which `engine.py` would never
+    # have explored. The planner was changed so the claim needs its executor; the test now
+    # describes a run that has one.
     plan = plan_target(domain="b.com", profile=select_profile(SITE_TYPE_BOOKING),
-                       depth=DEPTH_SELECTIVE)
+                       depth=DEPTH_SELECTIVE,
+                       selected_families=["links", "business_flow"])
     assert plan.flow == "booking_inspect"
     assert plan.stop_boundaries              # e.g. reserve/book/confirm/pay
-    assert any("stage3_selective" in d for d in plan.decisions)
+    assert any("vertical_scenario" in d for d in plan.decisions)
+
+
+def test_plan_selective_without_the_flow_executor_claims_no_scenario():
+    """The counterpart the old test hid: same depth, same profile, executor not selected."""
+    plan = plan_target(domain="b2.com", profile=select_profile(SITE_TYPE_BOOKING),
+                       depth=DEPTH_SELECTIVE, selected_families=["links"])
+    assert plan.flow == "passive"
+    assert plan.stop_boundaries == ()
+    assert not any("vertical_scenario" in d for d in plan.decisions)
 
 
 def test_plan_deep_requires_trace_evidence():
     plan = plan_target(domain="c.com", profile=select_profile(SITE_TYPE_ECOMMERCE),
-                       depth=DEPTH_DEEP)
+                       depth=DEPTH_DEEP, selected_families=["links", "business_flow"])
     assert "playwright_trace" in plan.evidence_requirements
+    # M6: cleanup is required because the cart flow runs, so it is claimed only when it does.
     assert plan.cleanup_required is True     # cart flow changes reversible state
 
 
-def test_plan_skip_tests_nothing():
+def test_plan_skip_grants_no_budget_but_still_reports_the_run_it_describes():
+    """M6 round 3 — renamed from `test_plan_skip_tests_nothing`, which read as though a skip
+    assessment meant nothing ran. It passed only because no families were configured here. The
+    empty selection below comes from the empty configuration; the zero cap is the assessment's
+    ceiling, not a measurement of the run."""
     plan = plan_target(domain="d.com", profile=select_profile(SITE_TYPE_PERSONAL),
                        depth=DEPTH_SKIP)
     assert plan.max_duration_s == 0
+    # M6 round 4: no selection was supplied at all, so the record reports it as unknown rather than
+    # as an empty selection — the two are different facts and only one of them is verifiable.
     assert plan.checks_selected == []
+    assert plan.selection_status == "unavailable"
+
+    configured = plan_target(domain="d2.com", profile=select_profile(SITE_TYPE_ECOMMERCE),
+                             depth=DEPTH_SKIP, selected_families=["links", "business_flow"])
+    assert sorted(configured.checks_selected) == ["business_flow", "links"]
+    assert configured.checks_skipped == []     # the run ran these before any depth was assessed
 
 
 def test_plan_time_cap_respects_remaining_budget():
