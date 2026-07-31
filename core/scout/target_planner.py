@@ -120,9 +120,15 @@ def plan_target(*, domain: str, profile: VerticalProfile, depth: str,
 
     # --- what this run covered. Depth plays no part; it did not exist when the engine ran. --------
     plan.checks_selected = list(runnable)
+    # Selection, not outcome. `PROMO_PROMOTED` is assigned while ranking, *before* the target is
+    # analysed, so a promoted target may still have turned out unreachable or MANUAL_ACTION_REQUIRED
+    # and never reached `run_checks()` at all. Saying "this executed" here would be the same defect
+    # pointing the other way, so the record states what the run selected and leaves the per-target
+    # outcome to the surface that actually observed it.
     plan.decisions.append(
-        "selection: verbatim from the promoted run's persisted check_families, which is exactly "
-        "what `run_checks()` executed")
+        "selection: verbatim from the promoted run's persisted check_families — the list "
+        "`run_checks()` is driven from. Whether this particular target completed is recorded by its "
+        "prospect status, not here")
 
     # `engine.py` gates the vertical flow on `"business_flow" in cfg.check_families` and on nothing
     # else — no depth is consulted there — so the flow fields follow the same single condition.
@@ -135,8 +141,8 @@ def plan_target(*, domain: str, profile: VerticalProfile, depth: str,
         # keyspace — the same untruth again, in a different disguise.
         plan.cleanup_required = profile.flow == "reversible_cart"
         plan.decisions.append(
-            f"vertical_scenario: the run selected business_flow, so the {profile.flow} flow was "
-            f"followed one step, stopping before "
+            f"vertical_scenario: the run selected business_flow, so the {profile.flow} flow is in "
+            f"scope for this target and stops before "
             f"{', '.join(profile.stop_boundaries) or 'no irreversible action'}")
     else:
         plan.flow = FLOW_PASSIVE
@@ -152,8 +158,8 @@ def plan_target(*, domain: str, profile: VerticalProfile, depth: str,
     # --- the allocator's verdict, kept as a verdict ------------------------------------------------
     plan.decisions.append(
         f"retrospective_assessment: depth={depth} was decided by an allocator constructed after "
-        "this run finished; it grades how much attention the target merited and gated nothing that "
-        "actually executed")
+        "this run finished; it grades how much attention the target merited and gated nothing in "
+        "this run")
 
     plan.evidence_requirements = ["screenshots", "console", "network", "dom_state"]
     if depth == DEPTH_DEEP:

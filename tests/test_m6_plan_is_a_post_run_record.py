@@ -158,6 +158,26 @@ def test_the_persisted_brain_record_is_written_once_and_not_relabelled_on_disk(t
         )
 
 
+def test_the_record_states_selection_and_leaves_the_outcome_to_the_prospect(tmp_path):
+    """The opposite-direction error this fix could have introduced.
+
+    `PROMO_PROMOTED` is assigned while ranking, before the target is analysed, so a promoted target
+    may have turned out unreachable or MANUAL_ACTION_REQUIRED and never reached `run_checks()`.
+    Correcting "these were skipped" into "these executed" would swap one false claim for another.
+    """
+    plan = _run_the_real_boundary(tmp_path)["baseline.test"]
+    said = " ".join(str(d) for d in (plan.get("decisions") or []))
+    for asserted_outcome in ("executed", "was followed", "were run"):
+        assert asserted_outcome not in said, (
+            f"the record asserts a per-target outcome it cannot know ({asserted_outcome!r}): "
+            f"{plan.get('decisions')}"
+        )
+    assert "prospect status" in said, (
+        f"nothing points the reader at the surface that does record the outcome: "
+        f"{plan.get('decisions')}"
+    )
+
+
 # --- the unit-level rule, independent of the campaign fixture -------------------------------------
 
 def test_no_depth_moves_a_configured_executor_into_skipped():
