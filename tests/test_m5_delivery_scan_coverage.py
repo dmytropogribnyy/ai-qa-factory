@@ -45,6 +45,28 @@ _OLD_CAP = 2_000_000
 _CHUNK_CANDIDATES = (64 * 1024, 256 * 1024, 1024 * 1024)
 
 
+def _minimal_png() -> bytes:
+    """A structurally valid 1x1 PNG — header, IHDR, IDAT and IEND with real CRCs.
+
+    Magic bytes plus zero padding is not a PNG. Using one as the "allowed binary" fixture would let
+    an admission rule that only checks eight bytes look correct.
+    """
+    import struct
+    import zlib
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + _chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + _chunk(b"IDAT", zlib.compress(b"\x00\xff\xff\xff"))
+            + _chunk(b"IEND", b""))
+
+
+_MINIMAL_PNG = _minimal_png()
+
+
 def _filler(size: int) -> str:
     reps = size // len(_FILLER_LINE) + 1
     return (_FILLER_LINE * reps)[:size]
@@ -60,6 +82,19 @@ def _text_over_cap(secret_at: int | None = None) -> str:
     # a block while giving the scanner nothing to find.
     head = _filler(secret_at - 1) + "\n"
     return head + SECRET + _filler(total - len(head) - len(SECRET))
+
+
+def _two_run_password_body(boundary: int = 256 * 1024) -> tuple[str, int]:
+    """The reviewer's carry bypass: two long whitespace runs, decided one character into the next read.
+
+    Returns the body and the length of the first read, so a guard can assert the two properties that
+    make the case meaningful — undecidable within the first chunk, decidable once joined.
+    """
+    # The leading newline matters: every production pattern is `\b`-anchored, and butting `password`
+    # against a filler letter produces a file with no detectable secret at all.
+    tail = "\npassword" + " " * 40_000 + "=" + " " * 40_000 + "abc"
+    head = _filler(boundary - len(tail))
+    return head + tail + "defghijkl" + _filler(600_000), boundary
 
 
 def _ready_for_delivery(tmp_path: Path, pid: str, members: dict[str, bytes]):
@@ -122,6 +157,19 @@ def test_the_fixture_really_contains_a_secret_the_production_scanner_finds():
         "the clean fixture trips the scanner, so the success cases prove nothing"
     )
 
+    # The carry-bypass fixture is only a bypass if it is genuinely undecidable within the first read
+    # and genuinely a secret once the reads are joined. Both halves are asserted, because this exact
+    # fixture silently lost its word boundary once already and the test then proved nothing.
+    body, first_read = _two_run_password_body()
+    scanner = ContentSecretScanner()
+    assert not scanner.scan_text("big.txt", body[:first_read]), (
+        "the bypass fixture is already decidable inside the first read, so it does not exercise "
+        "the carry at all"
+    )
+    assert scanner.scan_text("big.txt", body), (
+        "the bypass fixture contains no secret once joined, so demanding a refusal proves nothing"
+    )
+
 
 # --- what the client is promised -------------------------------------------------------------
 
@@ -137,6 +185,69 @@ def test_clean_text_above_the_old_cap_is_scanned_and_delivered(tmp_path):
         f"cannot say whether it was read: {sorted(disp)}"
     )
     assert disp["big.txt"].get("disposition") == "scanned_text", disp["big.txt"]
+    # The byte count must come from the stream that was actually read. A member can grow between a
+    # pre-read stat() and the read itself, and a manifest that reports the stale number attests to
+    # something nobody saw.
+    assert disp["big.txt"]["bytes"] == len(_text_over_cap().encode("utf-8"))
+
+
+def test_the_recorded_size_comes_from_the_stream_not_from_a_pre_read_stat(tmp_path):
+    """A member can grow between `stat()` and the read; the manifest must attest to what was read.
+
+    With the size taken from `stat()`, an under-reporting stat also slips past the ceiling check,
+    which is why this pins the streamed count rather than merely asserting a number.
+    """
+    content = _text_over_cap().encode("utf-8")
+    svc, _ = _ready_for_delivery(tmp_path, "stat", {"big.txt": content})
+    real_stat = Path.stat
+
+    class _UnderReporting:
+        st_size = 10
+
+        def __init__(self, st):
+            self._st = st
+
+        def __getattr__(self, name):
+            return getattr(self._st, name)
+
+    def _lying_stat(self, *a, **kw):
+        st = real_stat(self, *a, **kw)
+        return _UnderReporting(st) if self.name == "big.txt" else st
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "stat", _lying_stat)
+        manifest = svc.prepare_delivery("stat")
+
+    assert _dispositions(manifest)["big.txt"]["bytes"] == len(content), (
+        "the manifest reports the size a stat() claimed rather than the bytes actually streamed"
+    )
+
+
+def test_a_member_changed_between_the_validation_check_and_the_scan_is_refused(tmp_path):
+    """Closes the second TOCTOU window: validated, then swapped, then scanned and sealed.
+
+    The validated-snapshot comparison reads the files once; the scan reads them again. A member
+    replaced in between would be scanned and sealed while never having been validated.
+    """
+    svc, ws = _ready_for_delivery(tmp_path, "drift", {"big.txt": _text_over_cap().encode("utf-8")})
+    original = WorkExecutionService._hash_map
+
+    def _mutating(self, pid, rels):
+        result = original(self, pid, rels)
+        # Deliberately CLEAN replacement bytes. Swapping in a secret would be caught by the scan
+        # itself, and the test would pass without the validated-snapshot comparison existing at all.
+        # Different, clean, and never validated is the case that must refuse.
+        (ws / "big.txt").write_bytes((_text_over_cap() + "appended after validation\n")
+                                     .encode("utf-8"))
+        return result
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(WorkExecutionService, "_hash_map", _mutating)
+        with pytest.raises(WorkExecutionError) as exc:
+            svc.prepare_delivery("drift")
+    assert "big.txt" in str(exc.value), f"the refusal does not name the member: {exc.value}"
+    assert svc.status("drift").status == "READY_FOR_DELIVERY"
+    _seal_absent(ws)
 
 
 def test_a_secret_in_a_large_text_file_blocks_delivery(tmp_path):
@@ -205,10 +316,49 @@ def test_unknown_binary_fails_closed(tmp_path):
     _seal_absent(ws)
 
 
+def test_a_secret_split_by_two_long_whitespace_runs_still_blocks(tmp_path):
+    """The bypass a fixed carry cannot cover, and the reason the carry is now candidate-driven.
+
+    `password_assignment` is `\\bpass(?:word|wd)?\\s*[:=]\\s*['"]?[^\\s'"]{4,}` — two independently
+    unbounded whitespace runs before the four value characters. `password`, 40 KiB of spaces, `=`,
+    40 KiB more, then three value characters at the end of one read and the fourth in the next: the
+    first pass cannot match, and any fixed-length carry has already dropped the keyword. A carry
+    measured in characters loses this secret silently; one that keeps the pending candidate does not.
+    """
+    body, _ = _two_run_password_body()
+    svc, ws = _ready_for_delivery(tmp_path, "wsplit", {"big.txt": body.encode("utf-8")})
+
+    with pytest.raises(WorkExecutionError) as exc:
+        svc.prepare_delivery("wsplit")
+    assert "big.txt" in str(exc.value), f"the refusal does not name the file: {exc.value}"
+    _seal_absent(ws)
+
+
+def test_png_magic_in_a_text_artifact_fails_closed(tmp_path):
+    """A signature alone may not admit a file: prepending eight bytes would bypass the whole scan."""
+    blob = b"\x89PNG\r\n\x1a\n" + b"\xff\xfe" + SECRET.encode("utf-8") + bytes(64)
+    svc, ws = _ready_for_delivery(tmp_path, "pngtxt", {"notes.txt": blob})
+
+    with pytest.raises(WorkExecutionError) as exc:
+        svc.prepare_delivery("pngtxt")
+    assert "notes.txt" in str(exc.value)
+    _seal_absent(ws)
+
+
+def test_a_mismatched_signature_under_an_expected_extension_fails_closed(tmp_path):
+    """`.png` is an expected evidence type, but these are not the bytes of one."""
+    blob = b"PK\x03\x04" + b"\xff\xfe" + SECRET.encode("utf-8") + bytes(64)
+    svc, ws = _ready_for_delivery(tmp_path, "zippng", {"evidence/shot.png": blob})
+
+    with pytest.raises(WorkExecutionError) as exc:
+        svc.prepare_delivery("zippng")
+    assert "shot.png" in str(exc.value)
+    _seal_absent(ws)
+
+
 def test_a_verified_binary_evidence_is_named_in_the_successful_manifest(tmp_path):
     """A real PNG is an allowed limitation — but only when recorded explicitly, per path."""
-    png = b"\x89PNG\r\n\x1a\n" + bytes(512)
-    svc, _ = _ready_for_delivery(tmp_path, "png", {"evidence/shot.png": png})
+    svc, _ = _ready_for_delivery(tmp_path, "png", {"evidence/shot.png": _MINIMAL_PNG})
 
     manifest = svc.prepare_delivery("png")
     assert svc.status("png").status == "DELIVERY_PREPARED"
@@ -229,15 +379,42 @@ def test_a_read_error_fails_closed(tmp_path):
     svc, ws = _ready_for_delivery(tmp_path, "ioerr", {"big.txt": _text_over_cap().encode("utf-8")})
     real_open = builtins.open
 
+    class _FailsLargeReads:
+        """Lets the existing 64 KiB hasher through and fails only the scan's larger read.
+
+        Without that split the test passes on the old hasher's raw OSError and proves nothing about
+        the scan path.
+        """
+
+        def __init__(self, fh):
+            self._fh = fh
+
+        def read(self, *a, **kw):
+            if a and a[0] and a[0] > 65536:
+                raise OSError("injected read failure")
+            return self._fh.read(*a, **kw)
+
+        def __getattr__(self, name):
+            return getattr(self._fh, name)
+
+        def __enter__(self):
+            self._fh.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            return self._fh.__exit__(*exc)
+
     def _boom(file, *a, **kw):
-        if str(file).endswith("big.txt") and "b" in str(kw.get("mode", a[0] if a else "r")):
-            raise OSError("injected read failure")
-        return real_open(file, *a, **kw)
+        fh = real_open(file, *a, **kw)
+        return _FailsLargeReads(fh) if str(file).endswith("big.txt") else fh
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(builtins, "open", _boom)
-        with pytest.raises((WorkExecutionError, OSError)):
+        with pytest.raises(WorkExecutionError) as exc:
             svc.prepare_delivery("ioerr")
+    assert "big.txt" in str(exc.value), (
+        f"an unreadable member must be refused by path, not by a bare OSError: {exc.value}"
+    )
     assert svc.status("ioerr").status == "READY_FOR_DELIVERY"
     _seal_absent(ws)
 
@@ -284,8 +461,14 @@ def test_the_scan_reads_in_bounded_chunks(tmp_path):
     # mistaken for a streaming scanner.
     assert _dispositions(manifest)["big.txt"].get("disposition") == "scanned_text"
     assert sizes, "big.txt was never opened through a normal read path"
-    assert max(sizes) <= 4 * 1024 * 1024, (
+    # Well under the ~2.55 MiB fixture, so a whole-file read cannot satisfy it. The bound applies to
+    # every reader of this path, which is what makes it a memory guarantee rather than a claim about
+    # one function.
+    assert max(sizes) <= 512 * 1024, (
         f"a single read returned {max(sizes)} bytes — the file is being slurped, not streamed"
+    )
+    assert sum(sizes) >= len(_text_over_cap().encode("utf-8")), (
+        "fewer bytes were read than the file holds, so it was not scanned end to end"
     )
     assert len([s for s in sizes if s]) > 1, (
         "the file was read in one call; nothing bounds the memory an arbitrarily large artifact costs"

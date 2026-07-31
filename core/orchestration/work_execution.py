@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -25,17 +26,60 @@ from core.schemas.work_run_state import WorkRunState
 # member is read exactly once, and the same bytes produce the member's SHA-256, so what was scanned
 # and what gets sealed cannot drift apart.
 _SCAN_CHUNK_BYTES = 256 * 1024
-# The carry re-scanned with the next chunk, so a match crossing a read boundary is still seen. It is
-# a hard bound: the two ways a supported pattern could outrun it are detected and refused rather
-# than passed over (see `_scan_member`).
-_SCAN_CARRY_CHARS = 64 * 1024
+# How far back a still-possible match may begin. Beyond this the member is refused rather than
+# scanned with a prefix quietly dropped.
+_SCAN_PENDING_MAX_CHARS = 1024 * 1024
+# Always retained, so a pattern's opening literal split across two reads survives. The longest
+# opening literal is `-----BEGIN OPENSSH PRIVATE KEY-----`; 256 is far above it.
+_SCAN_MIN_TAIL_CHARS = 256
+
+# Recognition of a match that has STARTED but cannot yet be decided, for the three patterns whose
+# interior contains unbounded whitespace. A carry measured in fixed characters cannot cover these:
+# `password_assignment` is `\bpass(?:word|wd)?\s*[:=]\s*['"]?[^\s'"]{4,}`, so `password`, a long run
+# of spaces, `=`, another long run, and three value characters can push the keyword arbitrarily far
+# back while the value is still one character short of matching. Each expression below must reach the
+# end of the buffer, so `re.search` returns the leftmost — that is, the earliest — position from
+# which a match could still complete. Every other supported pattern is whitespace-free, so a pending
+# one can only sit inside the trailing non-whitespace run, which is handled separately.
+_PENDING_MATCH_PATTERNS: Tuple["re.Pattern[str]", ...] = (
+    re.compile(r"\bBearer\s*[A-Za-z0-9._\-]{0,15}$"),
+    re.compile(r"(?i)\b(?:set-)?cookie\s*(?:[:=]\s*\S{0,}?)?$"),
+    re.compile(r"(?i)\bpass(?:word|wd)?\s*(?:[:=]\s*(?:['\"]?[^\s'\"]{0,3})?)?$"),
+)
+
+
+def _carry_start(buf: str) -> int:
+    """The earliest index a still-possible match could begin at — never a fixed offset.
+
+    Returns -1 when a pending candidate is older than `_SCAN_PENDING_MAX_CHARS`, i.e. when the
+    caller must refuse the member instead of silently discarding the prefix.
+    """
+    window = buf[-_SCAN_PENDING_MAX_CHARS:] if len(buf) > _SCAN_PENDING_MAX_CHARS else buf
+    offset = len(buf) - len(window)
+    start = max(0, len(buf) - _SCAN_MIN_TAIL_CHARS)
+    # A whitespace-free pattern can only be pending inside the trailing non-whitespace run.
+    run = len(buf)
+    while run > 0 and not buf[run - 1].isspace():
+        run -= 1
+    start = min(start, run)
+    for pattern in _PENDING_MATCH_PATTERNS:
+        match = pattern.search(window)
+        if match is None:
+            continue
+        if offset and match.start() == 0:
+            return -1          # the candidate may reach back past the window: refuse, never guess
+        start = min(start, offset + match.start())
+    if len(buf) - start > _SCAN_PENDING_MAX_CHARS:
+        return -1
+    return start
 # Beyond this a member is refused rather than scanned, so the work stays bounded and nothing is
 # waved through for being inconveniently large.
 _SCAN_CEILING_BYTES = 512 * 1024 * 1024
 
-# Binary evidence whose content is not text-scannable. Membership requires a verified signature, not
-# merely "it failed to decode": otherwise one corrupt byte would promote any artifact into the
-# allowed-limitation set and the scan could be bypassed by damaging a file.
+# Binary evidence whose content is not text-scannable. Admission requires BOTH an expected evidence
+# extension and a signature that agrees with it. A signature alone is not enough: a `.txt` artifact
+# starting with PNG magic would otherwise be promoted to an allowed binary and the rest of it never
+# read, so the scan could be bypassed by prepending eight bytes.
 _VERIFIED_BINARY_SIGNATURES: Tuple[Tuple[str, bytes], ...] = (
     ("png", b"\x89PNG\r\n\x1a\n"),
     ("jpeg", b"\xff\xd8\xff"),
@@ -45,10 +89,15 @@ _VERIFIED_BINARY_SIGNATURES: Tuple[Tuple[str, bytes], ...] = (
     ("pdf", b"%PDF-"),
     ("zip", b"PK\x03\x04"),
 )
+_EXPECTED_BINARY_TYPES: Dict[str, Tuple[str, ...]] = {
+    ".png": ("png",), ".jpg": ("jpeg",), ".jpeg": ("jpeg",), ".gif": ("gif",),
+    ".webm": ("webm",), ".mp4": ("mp4",), ".mov": ("mp4",), ".m4v": ("mp4",),
+    ".pdf": ("pdf",), ".zip": ("zip",),
+}
 
 
-def _verified_binary_type(head: bytes) -> str:
-    """The evidence format `head` actually is, or "" — never a guess from the file extension."""
+def _detected_binary_type(head: bytes) -> str:
+    """The format `head` actually is, by signature alone — never inferred from the name."""
     for label, signature in _VERIFIED_BINARY_SIGNATURES:
         if head.startswith(signature):
             return label
@@ -56,6 +105,20 @@ def _verified_binary_type(head: bytes) -> str:
     if len(head) >= 12 and head[4:8] == b"ftyp":
         return "mp4"
     return ""
+
+
+def _verified_binary_type(rel: str, head: bytes) -> str:
+    """The allowed evidence type, only where the name's expectation and the bytes agree.
+
+    Disagreement in either direction fails closed: an unexpected extension (`notes.txt` holding PNG
+    magic) and a mismatched signature (`shot.png` holding a ZIP) are both refused rather than
+    admitted as an unscannable limitation.
+    """
+    expected = _EXPECTED_BINARY_TYPES.get(Path(rel).suffix.lower())
+    if not expected:
+        return ""
+    detected = _detected_binary_type(head)
+    return detected if detected in expected else ""
 
 
 _ARK = "40_ark_work"
@@ -462,6 +525,17 @@ class WorkExecutionService:
         # `_scan_package` raises on anything it cannot read, decode or recognise; it never returns a
         # partial verdict that a caller could mistake for "clean".
         scanned = self._scan_package(pid, files)
+        # Compare the bytes that were SCANNED against the validated snapshot, not a third reading of
+        # the same paths. The `_hash_map` comparison above opens and reads the files again, so a
+        # member replaced between that pass and this one would be scanned and sealed while never
+        # having been validated — the delivered package would carry bytes no validation ever saw.
+        scanned_hashes = {entry["path"]: entry["sha256"] for entry in scanned}
+        drifted = sorted(k for k in set(validated) | set(scanned_hashes)
+                         if validated.get(k) != scanned_hashes.get(k))
+        if drifted:
+            raise WorkExecutionError(
+                f"artifacts changed after validation ({', '.join(drifted[:5])}"
+                f"{'...' if len(drifted) > 5 else ''}); re-validate before delivery")
 
         produced = [a.get("filename") for a in prog.get("outcome", {}).get("artifacts", [])]
         # Partition the registered files into artifacts vs evidence by the actual evidence paths
@@ -512,7 +586,7 @@ class WorkExecutionService:
                     # place to log what was skipped.
                     "content_scan": {"scanner": "streaming-content-secret-scan/v1",
                                      "chunk_bytes": _SCAN_CHUNK_BYTES,
-                                     "carry_chars": _SCAN_CARRY_CHARS,
+                                     "pending_max_chars": _SCAN_PENDING_MAX_CHARS,
                                      "files": sorted(scanned, key=lambda e: e["path"])},
                     "manifest_digest": digest, "client_message_source": client_message_source,
                     "approved_for_delivery": True,
@@ -616,13 +690,15 @@ class WorkExecutionService:
         per-chunk ``bytes.decode`` would call it undecodable and refuse an ordinary non-English
         deliverable.
 
-        Why the carry bound is a proof and not a guess. Several patterns are unbounded
-        (``[0-9A-Za-z]{16,}``, ``Bearer\\s+``), so no fixed overlap can be justified by inspection.
-        Every supported pattern is one of two shapes, and each has one way to cross a read boundary
-        undetected: a whitespace-free pattern needs a single token at least ``_SCAN_CARRY_CHARS``
-        long, and a keyword-plus-whitespace pattern (``bearer_token``, ``cookie_header``) needs a
-        whitespace run that long. Both conditions are detected below and fail closed, so a match
-        cannot be lost silently — the prefix is never discarded quietly.
+        Why the carry is candidate-driven rather than a fixed length. A first version of this kept
+        the last N characters and argued that every pattern is either whitespace-free or
+        keyword-plus-one-whitespace-run. That argument was wrong: ``password_assignment`` is
+        ``\\bpass(?:word|wd)?\\s*[:=]\\s*['"]?[^\\s'"]{4,}`` — two independently unbounded whitespace
+        runs before the four value characters — so ``password``, 40 KiB of spaces, ``=``, 40 KiB
+        more and three value characters push the keyword out of any fixed carry while the match is
+        still one character from completing. See ``_carry_start``: the carry now begins wherever a
+        match could still be in progress, and refuses when that reaches further back than
+        ``_SCAN_PENDING_MAX_CHARS`` rather than dropping the prefix.
         """
         try:
             size = target.stat().st_size
@@ -636,6 +712,7 @@ class WorkExecutionService:
 
         import codecs
         import hashlib
+        streamed = 0
         digest = hashlib.sha256()
         decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
         carry = ""
@@ -647,6 +724,14 @@ class WorkExecutionService:
                     chunk = fh.read(_SCAN_CHUNK_BYTES)
                     if not chunk:
                         break
+                    streamed += len(chunk)
+                    if streamed > _SCAN_CEILING_BYTES:
+                        # Enforced on the bytes actually read, not on the earlier stat: a member can
+                        # grow between the two, and the ceiling must bind what is really scanned.
+                        raise WorkExecutionError(
+                            f"refusing to deliver: {rel} exceeds the scannable ceiling "
+                            f"({_SCAN_CEILING_BYTES} bytes) while streaming; it cannot be proven "
+                            f"free of secrets")
                     digest.update(chunk)
                     if len(head) < 16:
                         head = (head + chunk)[:16]
@@ -655,7 +740,7 @@ class WorkExecutionService:
                     try:
                         text = decoder.decode(chunk)
                     except UnicodeDecodeError:
-                        binary_type = _verified_binary_type(head)
+                        binary_type = _verified_binary_type(rel, head)
                         if not binary_type:
                             # One bad byte must not promote an arbitrary artifact to "allowed binary".
                             raise WorkExecutionError(
@@ -667,20 +752,13 @@ class WorkExecutionService:
                     if found:
                         raise WorkExecutionError(
                             f"refusing to deliver: secret-like content in {rel} ({found[0]})")
-                    if len(buf) > _SCAN_CARRY_CHARS:
-                        carry = buf[-_SCAN_CARRY_CHARS:]
-                        if not any(c.isspace() for c in carry):
-                            raise WorkExecutionError(
-                                f"refusing to deliver: {rel} contains an unbroken run longer than "
-                                f"the {_SCAN_CARRY_CHARS}-character scan carry, so a secret "
-                                f"spanning a read boundary could not be ruled out")
-                        if carry.isspace():
-                            raise WorkExecutionError(
-                                f"refusing to deliver: {rel} contains whitespace longer than the "
-                                f"{_SCAN_CARRY_CHARS}-character scan carry, so a keyed secret "
-                                f"spanning a read boundary could not be ruled out")
-                    else:
-                        carry = buf
+                    start = _carry_start(buf)
+                    if start < 0:
+                        raise WorkExecutionError(
+                            f"refusing to deliver: {rel} holds an undecided secret candidate "
+                            f"reaching further back than {_SCAN_PENDING_MAX_CHARS} characters, so a "
+                            f"match spanning a read boundary could not be ruled out")
+                    carry = buf[start:]
         except OSError as exc:
             raise WorkExecutionError(
                 f"refusing to deliver: cannot read {rel} to scan it ({exc})") from exc
@@ -697,7 +775,9 @@ class WorkExecutionService:
                 raise WorkExecutionError(
                     f"refusing to deliver: secret-like content in {rel} ({found[0]})")
 
-        entry: Dict[str, Any] = {"path": rel, "bytes": size, "sha256": digest.hexdigest()}
+        # `bytes` is the streamed count, not the earlier stat: what the manifest attests to must be
+        # what was actually read and hashed.
+        entry: Dict[str, Any] = {"path": rel, "bytes": streamed, "sha256": digest.hexdigest()}
         if binary_type:
             entry.update({"disposition": "verified_binary", "type": binary_type,
                           "reason": "recognised binary evidence format; content is not text-scanned"})
