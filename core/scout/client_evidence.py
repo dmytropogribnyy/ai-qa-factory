@@ -176,10 +176,15 @@ def _findings_csv(findings: List[Dict[str, Any]]) -> str:
     """
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\r\n")
-    writer.writerow(["Type", "Severity", "Category", "Title", "Impact", "Page", "How to reproduce",
-                     "Evidence", "Confidence"])
+    # "Finding ID" replaces the old "Evidence" column. That column read `evidence_refs` off the
+    # already-projected finding and so was always empty; and had it been wired, every row of a target
+    # would have carried the same `evidence.json` path — populated, identical, and evidence of
+    # nothing in particular. The id is the thing that is genuinely per-finding.
+    writer.writerow(["Finding ID", "Type", "Severity", "Category", "Title", "Impact", "Page",
+                     "How to reproduce", "Expected", "Actual", "Confidence"])
     for finding in findings:
         writer.writerow([
+            str(finding.get("finding_id") or ""),
             _finding_kind(finding),
             str(finding.get("severity") or ""),
             str(finding.get("category") or ""),
@@ -187,8 +192,8 @@ def _findings_csv(findings: List[Dict[str, Any]]) -> str:
             str(finding.get("business_impact") or ""),
             str(finding.get("url") or ""),
             " → ".join(str(step) for step in (finding.get("reproduction_steps") or [])),
-            ", ".join(str(ref).rsplit("/", 1)[-1]
-                      for ref in (finding.get("evidence_refs") or [])),
+            str(finding.get("expected") or ""),
+            str(finding.get("actual") or ""),
             str(finding.get("confidence") or ""),
         ])
     return "﻿" + buffer.getvalue()
@@ -218,9 +223,11 @@ code{{background:#eef2f8;padding:1px 5px;border-radius:4px}}a{{color:#1557c0}}
 internet.</p>
 <h2>Start with</h2>
 <ul>
-<li><a href="QA-Report.html">QA-Report.html</a> — the findings, with the screenshots that show
-them.</li>
-<li><a href="Findings.csv">Findings.csv</a> — the same list as a spreadsheet, for your tracker.</li>
+<li><a href="QA-Report.html">QA-Report.html</a> — the findings, each with what was expected, what
+was observed, and the Finding ID to quote back to us.</li>
+<li><a href="Findings.csv">Findings.csv</a> — the same list as a spreadsheet, for your tracker. The
+first column is the Finding ID, identical to the one in the report and in
+<code>manifest.json</code>.</li>
 </ul>
 <h2>What is in the package</h2>
 <ul>
@@ -237,6 +244,10 @@ interaction is not a defect unless the report lists one.</li>
 <li><code>manifest.json</code> — a SHA-256 for every file, so either side can prove nothing was
 altered.</li>
 </ul>
+<p><strong>About the Evidence folders.</strong> They are supporting material for this target and this
+run as a whole. Unless a finding names an artefact itself, do not read a screenshot or summary as
+proof of a particular finding — the check that produced a finding is described by its Expected and
+Actual lines, and its Finding ID is how to refer to it.</p>
 <h2>How this was produced</h2>
 <p>A bounded, read-only check of public pages. No form was submitted, no account was created, no
 order was placed and no login was attempted. Findings describe what was observed on the pages
@@ -311,8 +322,21 @@ def _public_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
             # last place the split could still be reconstructed from — and it cannot be, because
             # `signature` is deliberately not here: it identifies our checks, not the client's site.
             "kind",
+            # The basis for the verdict. Without these the client receives a severity and is asked
+            # to take it on trust: an axe rule ships as "high" with its qualifier removed, and a
+            # performance observation ships as "slow" with its threshold removed. None of the four
+            # carries a run id, an internal path or an operator reference — `environment` is
+            # {"backend": ..., "status": ...}, which is the "on what" any QA report owes its reader.
+            "expected", "actual", "coverage_limitation", "environment",
+            # One handle for one finding, identical in the CSV, the HTML report, the technical JSON
+            # and the manifest, so a client can say "finding f-3ad7fee96821" and be understood. It
+            # replaces the old Evidence column, which pointed every row at the same target-wide file
+            # and so was populated without being evidence of anything in particular.
+            "finding_id",
         )
-        if finding.get(key) not in (None, "", [])
+        # An empty dict is empty too: a blank `environment` would read as "we looked and there was
+        # nothing" rather than "we did not record this".
+        if finding.get(key) not in (None, "", [], {})
     }
 
 
@@ -367,12 +391,34 @@ def _html_summary(domain: str, detail: Dict[str, Any], *, images: List[str],
             steps_html = "<ol>" + "".join(
                 f"<li>{html.escape(str(step))}</li>" for step in steps
             ) + "</ol>" if steps else "Not recorded"
+            # The basis for the verdict belongs in the document a human reads, not only in the JSON
+            # beside it. Each part is printed only when it was recorded: a blank "Expected" would
+            # read as "nothing was expected" rather than "this check does not state an expectation".
+            basis = []
+            if finding.get("expected"):
+                basis.append("<dt>Expected</dt>"
+                             f"<dd>{html.escape(str(finding['expected']))}</dd>")
+            if finding.get("actual"):
+                basis.append(f"<dt>Actual</dt><dd>{html.escape(str(finding['actual']))}</dd>")
+            env = finding.get("environment") or {}
+            if env:
+                shown = ", ".join(f"{html.escape(str(k))}: {html.escape(str(v))}"
+                                  for k, v in sorted(env.items()))
+                basis.append(f"<dt>Observed on</dt><dd>{shown}</dd>")
+            if finding.get("coverage_limitation"):
+                basis.append("<dt>Limits of this check</dt>"
+                             f"<dd>{html.escape(str(finding['coverage_limitation']))}</dd>")
+            basis_html = f"<dl class=\"basis\">{''.join(basis)}</dl>" if basis else ""
+            fid = str(finding.get("finding_id") or "")
+            fid_html = (f"<p class=\"fid\"><small>Finding ID: <code>{html.escape(fid)}</code>"
+                        "</small></p>") if fid else ""
             out.append(
                 "<tr>"
                 f"<td><span class=\"sev\">{html.escape(str(finding.get('severity') or 'unknown').upper())}</span></td>"
                 f"<td><strong>{html.escape(str(finding.get('title') or 'Untitled finding'))}</strong>"
-                f"<p>{html.escape(str(finding.get('business_impact') or 'Impact not recorded.'))}</p></td>"
-                f"<td>{steps_html}</td>"
+                f"<p>{html.escape(str(finding.get('business_impact') or 'Impact not recorded.'))}</p>"
+                f"{fid_html}</td>"
+                f"<td>{steps_html}{basis_html}</td>"
                 "</tr>"
             )
         return "".join(out)
@@ -787,11 +833,14 @@ def build_client_evidence_bundle(output_dir: str, *, run_id: str, prospect_id: s
                 # manifest that disagrees with the pages it indexes is worse than no manifest.
                 "actionable_findings": actionable_total,
                 "informational_findings": informational_total,
-                "findings": [{"title": f.get("title"), "severity": f.get("severity"),
+                # No per-finding `evidence` key. It derived from `evidence_refs`, which is the same
+                # target-wide file for every finding, so the array was either empty or misleading.
+                # `finding_id` is the handle instead, identical here and in the CSV, the HTML report
+                # and the technical JSON.
+                "findings": [{"finding_id": f.get("finding_id"),
+                              "title": f.get("title"), "severity": f.get("severity"),
                               "kind": _finding_kind(f),
-                              "url": f.get("url"),
-                              "evidence": [str(ref).rsplit("/", 1)[-1]
-                                           for ref in (f.get("evidence_refs") or [])]}
+                              "url": f.get("url")}
                              for f in public_findings],
                 "entries": entries,
                 "omitted": omitted,
