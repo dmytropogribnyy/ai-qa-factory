@@ -311,9 +311,34 @@ def _finding_lines(findings: Iterable[Dict[str, Any]]) -> List[str]:
     return rows
 
 
+def _client_finding_handle(raw: Any) -> str:
+    """Derive the id a client quotes back to us, so no producer decides what leaves the building.
+
+    The stored `finding_id` is an internal key, and what a producer puts in it is that producer's
+    business: `interaction_scenario.finding_from()` builds `f"{prospect_ref}-interaction-filter"`,
+    which carries our prospect numbering inside the id. Delivering the stored value therefore made
+    every present and future producer part of the client-facing contract. Deriving the handle here —
+    at the one boundary all four client surfaces pass through — inverts that: whatever a producer
+    puts in the id, the client receives a value of this shape and nothing else.
+
+    Derived rather than sequential so that it survives re-export: a client quoting a handle from a
+    package sent weeks ago must still be understood, and a per-package counter would renumber as
+    soon as the finding list changed.
+
+    Honest limit: this hides the internal id, it does not make it unguessable. Someone who guesses
+    the exact raw string can confirm the guess by hashing it. The raw ids are internal numbering
+    rather than secrets, so that residual is acceptable here — but it is the reason this is called a
+    handle and not an anonymisation.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    return "cf-" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
 def _public_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
     """Keep only fields that explain the issue to a client; drop all run/operator references."""
-    return {
+    public = {
         key: finding.get(key)
         for key in (
             "severity", "category", "title", "business_impact", "url", "confidence",
@@ -329,7 +354,7 @@ def _public_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
             # {"backend": ..., "status": ...}, which is the "on what" any QA report owes its reader.
             "expected", "actual", "coverage_limitation", "environment",
             # One handle for one finding, identical in the CSV, the HTML report, the technical JSON
-            # and the manifest, so a client can say "finding f-3ad7fee96821" and be understood. It
+            # and the manifest, so a client can say "finding cf-9b1c04e2f6aa" and be understood. It
             # replaces the old Evidence column, which pointed every row at the same target-wide file
             # and so was populated without being evidence of anything in particular.
             "finding_id",
@@ -338,6 +363,15 @@ def _public_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
         # nothing" rather than "we did not record this".
         if finding.get(key) not in (None, "", [], {})
     }
+    # Never the stored value. See `_client_finding_handle`: at least one producer builds the id out
+    # of the internal prospect reference, so the id a client receives is derived here rather than
+    # forwarded. Done at the boundary, this covers every producer, including ones not written yet.
+    handle = _client_finding_handle(finding.get("finding_id"))
+    if handle:
+        public["finding_id"] = handle
+    else:
+        public.pop("finding_id", None)
+    return public
 
 
 def _project_fields(value: Any, allowed: Iterable[str]) -> Dict[str, Any]:

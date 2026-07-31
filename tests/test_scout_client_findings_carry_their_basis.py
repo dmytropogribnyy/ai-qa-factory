@@ -136,30 +136,37 @@ _RUN = "campaign-basis-20260730t120000z-aa11bb"
 _DOMAIN = "example-client.test"
 
 
-@pytest.fixture()
-def delivered(tmp_path):
-    """A package built by the production exporter, opened as a client would open it."""
-    out = str(tmp_path)
+_BASIS_FINDINGS = [
+    {"finding_id": "f-basis-01", "severity": "high", "category": "Navigation",
+     "title": "Broken link on the booking page",
+     "business_impact": "Visitors reach a dead end.",
+     "url": f"https://{_DOMAIN}/booking", "confidence": "verified",
+     "reproduction_steps": ["Open /booking", "Click Reserve"],
+     "expected": "Link resolves (2xx/3xx)", "actual": "Link returned no response",
+     "environment": {"backend": "playwright", "status": 200},
+     "coverage_limitation": "automated checks are not full accessibility coverage",
+     "evidence_refs": ["prospects/01/evidence.json"]},
+    {"finding_id": "f-basis-02", "severity": "info", "category": "Coverage",
+     "title": "Heuristic a11y checks yielded to axe-core",
+     "business_impact": "", "url": f"https://{_DOMAIN}/",
+     "confidence": "verified", "reproduction_steps": [],
+     "coverage_limitation": "axe-core ran; automated checks are not full coverage",
+     "evidence_refs": ["prospects/01/evidence.json"]},
+]
+
+
+def _build_package(out: str, findings):
+    """Build a real package through the production exporter and open it as a client would.
+
+    Everything below reads the delivered bytes. A projection can be green while the client receives
+    nothing — that has already happened twice in this slice.
+    """
     store = RunStore(out, _RUN)
     store.write_config({"campaign_name": "operator-scan", "browser_mode": "playwright"})
     store.save_state({"status": "COMPLETED",
                       "prospects": {"01": {"status": "DONE", "url": f"https://{_DOMAIN}/"}}})
-    store.save_prospect_artifact("01", "findings.json", {"verified": [
-        {"finding_id": "f-basis-01", "severity": "high", "category": "Navigation",
-         "title": "Broken link on the booking page",
-         "business_impact": "Visitors reach a dead end.",
-         "url": f"https://{_DOMAIN}/booking", "confidence": "verified",
-         "reproduction_steps": ["Open /booking", "Click Reserve"],
-         "expected": "Link resolves (2xx/3xx)", "actual": "Link returned no response",
-         "environment": {"backend": "playwright", "status": 200},
-         "coverage_limitation": "automated checks are not full accessibility coverage",
-         "evidence_refs": ["prospects/01/evidence.json"]},
-        {"finding_id": "f-basis-02", "severity": "info", "category": "Coverage",
-         "title": "Heuristic a11y checks yielded to axe-core",
-         "business_impact": "", "url": f"https://{_DOMAIN}/",
-         "confidence": "verified", "reproduction_steps": [],
-         "coverage_limitation": "axe-core ran; automated checks are not full coverage",
-         "evidence_refs": ["prospects/01/evidence.json"]}], "rejected": []})
+    store.save_prospect_artifact("01", "findings.json",
+                                 {"verified": list(findings), "rejected": []})
     store.save_prospect_artifact("01", "observation.json", {
         "status": 200, "final_url": f"https://{_DOMAIN}/", "links": [], "console_errors": [],
         "failed_resources": [], "axe_status": "ok", "axe_violations": [],
@@ -172,8 +179,13 @@ def delivered(tmp_path):
         _DOMAIN, status=ANALYZED, evidence_ref=f"scout/{_RUN}", campaign_id=_RUN)
     result = CampaignService(out).export_client_evidence(_DOMAIN, run=_RUN)
     with _zipfile.ZipFile(result["path"]) as archive:
-        blobs = {name: archive.read(name) for name in archive.namelist()}
-    return blobs
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+@pytest.fixture()
+def delivered(tmp_path):
+    """A package built by the production exporter, opened as a client would open it."""
+    return _build_package(str(tmp_path), _BASIS_FINDINGS)
 
 
 def _blob(blobs, suffix: str) -> str:
@@ -197,7 +209,9 @@ def test_the_csv_carries_a_finding_id_and_no_evidence_column(delivered):
 
 def test_the_csv_states_what_was_expected_and_observed(delivered):
     rows = list(_csv.DictReader(_io.StringIO(_blob(delivered, "Findings.csv").lstrip("﻿"))))
-    broken = next(r for r in rows if r["Finding ID"] == "f-basis-01")
+    # Looked up by the client-facing title, not by the id: which id the client receives is the
+    # subject of part 5 below, and a test of the basis must not also pin its representation.
+    broken = next(r for r in rows if r["Title"] == "Broken link on the booking page")
     assert broken["Expected"] == "Link resolves (2xx/3xx)"
     assert broken["Actual"] == "Link returned no response"
 
@@ -205,7 +219,12 @@ def test_the_csv_states_what_was_expected_and_observed(delivered):
 def test_the_human_report_shows_the_basis_not_only_the_json(delivered):
     """A client reads QA-Report.html; the basis living in a sibling JSON is not the same thing."""
     report = _blob(delivered, "QA-Report.html")
-    assert "f-basis-01" in report, "the report does not print the Finding ID"
+    rows = list(_csv.DictReader(_io.StringIO(_blob(delivered, "Findings.csv").lstrip("﻿"))))
+    handle = next(r["Finding ID"] for r in rows
+                  if r["Title"] == "Broken link on the booking page")
+    assert handle and handle in report, (
+        f"the report does not print the handle the CSV gives this finding ({handle!r})"
+    )
     for fragment in ("Link resolves (2xx/3xx)", "Link returned no response",
                      "playwright", "automated checks are not full"):
         assert fragment in report, f"the report omits {fragment!r} — the verdict is unchecked"
@@ -237,6 +256,122 @@ def test_the_manifest_makes_no_per_finding_evidence_claim(delivered):
         assert "evidence" not in finding, (
             f"the manifest still claims per-finding evidence: {finding}"
         )
+
+
+# --- M3 part 5: the handle is derived at the export boundary, never a raw internal id -------------
+#
+# Carrying the stored `finding_id` to the client is safe only for as long as every producer happens
+# to generate an opaque one. `core/scout/interaction_scenario.py:321` does not:
+#
+#     finding_id=f"{prospect_ref}-interaction-filter"
+#
+# That embeds the internal prospect reference in the id itself, so for that producer the delivered
+# package carries operator numbering out of the building. All 433 findings stored on this machine
+# today are an opaque `f-` + 12 hex, which is exactly why measuring the corpus argued the wrong way:
+# absence from the sample is not absence from the product.
+#
+# So the mapping is defined once, at the export boundary every client surface passes through, rather
+# than by enumerating the producers believed to be safe. A producer added next year is covered
+# because it cannot reach a client any other way.
+
+_UNSAFE_PROSPECT_REF = "prospects/07-acme-internal"
+# Character for character what that producer emits.
+_UNSAFE_RAW_ID = f"{_UNSAFE_PROSPECT_REF}-interaction-filter"
+_UNSAFE_FINDINGS = [
+    {"finding_id": _UNSAFE_RAW_ID, "severity": "high", "category": "Business flow",
+     "title": "Filter accepted but the result list does not change",
+     "business_impact": "Shoppers cannot narrow the catalogue.",
+     "url": f"https://{_DOMAIN}/catalogue", "confidence": "verified",
+     "reproduction_steps": ["Open /catalogue", "Select the In stock facet"],
+     "expected": "The result count changes to the promised facet count",
+     "actual": "The filter is accepted but the result count stays at 48",
+     "environment": {"backend": "playwright", "status": 200}},
+    {"finding_id": f"{_UNSAFE_PROSPECT_REF}-interaction-search", "severity": "medium",
+     "category": "Business flow", "title": "Search returns the unfiltered catalogue",
+     "business_impact": "Visitors cannot find a product by name.",
+     "url": f"https://{_DOMAIN}/search", "confidence": "verified",
+     "reproduction_steps": ["Open /search", "Search for a known product"],
+     "expected": "Only matching products are listed",
+     "actual": "Every catalogue item is listed"},
+]
+
+
+@pytest.fixture()
+def delivered_from_unsafe_ids(tmp_path):
+    """A real package whose findings carry raw ids that embed the internal prospect reference."""
+    return _build_package(str(tmp_path), _UNSAFE_FINDINGS)
+
+
+def _handles_by_title(blobs):
+    """The handle each of the four client surfaces gives each finding, keyed by its title."""
+    rows = list(_csv.DictReader(_io.StringIO(_blob(blobs, "Findings.csv").lstrip("﻿"))))
+    csv_handles = {r["Title"]: r["Finding ID"] for r in rows}
+    technical = _json.loads(_blob(blobs, "Evidence/Technical/findings.json"))
+    items = technical if isinstance(technical, list) else technical.get("findings", [])
+    json_handles = {f.get("title"): f.get("finding_id") for f in items}
+    manifest = _json.loads(_blob(blobs, "manifest.json"))
+    manifest_handles = {f.get("title"): f.get("finding_id") for f in manifest.get("findings", [])}
+    return csv_handles, json_handles, manifest_handles
+
+
+def test_a_raw_internal_finding_id_never_reaches_any_delivered_file(delivered_from_unsafe_ids):
+    """The leak itself, read off the delivered bytes rather than off a projection."""
+    leaked = {}
+    for marker in (_UNSAFE_RAW_ID, _UNSAFE_PROSPECT_REF, "07-acme-internal"):
+        hits = sorted(name for name, data in delivered_from_unsafe_ids.items()
+                      if marker.encode("utf-8") in data)
+        if hits:
+            leaked[marker] = hits
+    assert not leaked, (
+        "the internal prospect reference left the building inside the finding id: "
+        f"{leaked}. The id came from a real producer (interaction_scenario.py:321), so no list of "
+        "trusted producers can close this — the client boundary has to derive the handle itself."
+    )
+
+
+def test_one_derived_handle_identifies_a_finding_on_every_client_surface(delivered_from_unsafe_ids):
+    """Identical on CSV / HTML / technical JSON / manifest, and opaque on all of them."""
+    csv_handles, json_handles, manifest_handles = _handles_by_title(delivered_from_unsafe_ids)
+    report = _blob(delivered_from_unsafe_ids, "QA-Report.html")
+
+    assert csv_handles and csv_handles == json_handles == manifest_handles, (
+        f"the surfaces disagree: csv={csv_handles} json={json_handles} manifest={manifest_handles}"
+    )
+    for title, handle in csv_handles.items():
+        assert handle, f"{title!r} shipped without a handle, so it cannot be quoted back to us"
+        assert handle in report, f"the report omits the handle {handle!r} for {title!r}"
+        for forbidden in (_UNSAFE_PROSPECT_REF, "07-acme-internal", "prospects/", _RUN,
+                          "campaign-", "/", "\\"):
+            assert forbidden not in handle, (
+                f"the handle {handle!r} still carries {forbidden!r} — a client-facing id may not "
+                "contain a prospect reference, a run id, a path or any operator reference"
+            )
+
+
+def test_two_findings_receive_two_different_handles(delivered_from_unsafe_ids):
+    """Guard, not part of the red proof: it already passes with the raw ids.
+
+    Its job is to fail the cheap fix. Redacting every id to one constant would satisfy every safety
+    assertion above and quietly destroy the thing the handle exists for — telling two findings apart.
+    """
+    csv_handles, _, _ = _handles_by_title(delivered_from_unsafe_ids)
+    assert len(set(csv_handles.values())) == len(csv_handles), (
+        f"two findings share one handle, so neither can be quoted unambiguously: {csv_handles}"
+    )
+
+
+def test_the_same_finding_keeps_its_handle_in_a_later_export(tmp_path):
+    """Guard, not part of the red proof: it already passes with the raw ids.
+
+    A client quotes a handle out of a package they received weeks ago. If the handle were random per
+    export, or salted with the export time, that quote would refer to nothing.
+    """
+    first = _build_package(str(tmp_path / "first"), _UNSAFE_FINDINGS)
+    second = _build_package(str(tmp_path / "second"), _UNSAFE_FINDINGS)
+    assert _handles_by_title(first)[0] == _handles_by_title(second)[0], (
+        "the same finding received two different handles in two exports, so a client quoting the "
+        "older package cannot be understood"
+    )
 
 
 def test_the_readme_does_not_promise_that_a_screenshot_proves_a_finding(delivered):
