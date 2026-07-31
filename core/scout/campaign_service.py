@@ -310,7 +310,9 @@ class CampaignService:
                                     qa_value=prio.qa_value, evidence_conf=ev_conf,
                                     safety_conf=saf_conf)
             plan = plan_target(domain=cand.get("registrable_domain", ""), profile=profile,
-                               depth=dec.depth, max_target_duration_s=180)
+                               depth=dec.depth, max_target_duration_s=180,
+                               selected_families=self._run_check_families(
+                                   cand.get("promoted_scout_run", "")))
             alloc.record(dec, country=cand.get("country_hint", ""), industry=industry,
                          target_type=profile.site_type, actionable=(prio.priority == "A"))
             decisions.append({"domain": cand.get("registrable_domain", ""),
@@ -383,6 +385,23 @@ class CampaignService:
                     registered.update(persisted)
         return {"campaigns_scanned": campaigns_scanned, "domains_registered": sorted(registered),
                 "skipped_malformed": skipped_malformed}
+
+    def _run_check_families(self, scout_run_id: str) -> List[str]:
+        """The check families the promoted run actually persisted — the plan binds to these.
+
+        Deriving the plan from the whole registry instead would keep overstating a run configured
+        with a subset: the names would resolve, and the claim would still be about coverage that did
+        not happen. An unreadable config yields nothing rather than a guess, because a plan that
+        invents its own selection is the defect being fixed.
+        """
+        if not scout_run_id:
+            return []
+        try:
+            cfg = RunStore(self.output_dir, scout_run_id).load_config()
+        except Exception:      # noqa: BLE001 - an unreadable run config claims no coverage
+            return []
+        families = cfg.get("check_families") if isinstance(cfg, dict) else None
+        return [str(f) for f in families] if isinstance(families, list) else []
 
     def _load_findings(self, scout_run_id: str) -> List[Dict[str, Any]]:
         if not scout_run_id:

@@ -71,7 +71,11 @@ class VerticalProfile:
     stop_boundaries: tuple         # human-readable irreversible boundaries for this vertical
 
 
-_COMMON_CHECKS = ("availability", "links", "console", "accessibility", "seo", "performance",
+# Executor ids from `CHECK_REGISTRY`, and nothing else. This tuple was a third vocabulary that no
+# code read and nothing verified: it carried "availability" (a precondition, not a check) and
+# "console" (the executor is `console_resources`). Unused state that must stay in step with two
+# other lists is exactly how the plan's vocabulary drifted out of sight in the first place.
+_COMMON_CHECKS = ("links", "console_resources", "accessibility", "seo", "performance",
                   "mobile", "structured_data")
 
 _PROFILES: Dict[str, VerticalProfile] = {

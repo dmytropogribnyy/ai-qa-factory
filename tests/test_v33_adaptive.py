@@ -103,11 +103,17 @@ def test_no_outcome_targets_never_forces_early_stop():
 # --- per-target planner ------------------------------------------------------------------------
 def test_plan_baseline_is_passive_only():
     plan = plan_target(domain="a.com", profile=select_profile(SITE_TYPE_ECOMMERCE),
-                       depth=DEPTH_BASELINE)
+                       depth=DEPTH_BASELINE,
+                       selected_families=["links", "seo", "business_flow"])
     assert plan.flow == "passive"
-    assert "browser_flow" in plan.checks_skipped
+    # M6: the skip names the real executor that was not run. It used to say "browser_flow", a label
+    # no executor provides, so the claim was unfalsifiable in either direction.
+    assert "business_flow" in plan.checks_skipped
+    assert "business_flow" not in plan.checks_selected
     assert plan.max_duration_s > 0
-    assert "reachability" in plan.checks_selected
+    # M6: `reachability` is a precondition, not a selected check family.
+    assert "reachability" in plan.preconditions
+    assert "reachability" not in plan.checks_selected
 
 
 def test_plan_selective_adds_the_vertical_flow_with_stop_boundaries():
