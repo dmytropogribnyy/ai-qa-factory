@@ -54,23 +54,24 @@ def _carry_start(buf: str) -> int:
     Returns -1 when a pending candidate is older than `_SCAN_PENDING_MAX_CHARS`, i.e. when the
     caller must refuse the member instead of silently discarding the prefix.
     """
-    window = buf[-_SCAN_PENDING_MAX_CHARS:] if len(buf) > _SCAN_PENDING_MAX_CHARS else buf
-    offset = len(buf) - len(window)
     start = max(0, len(buf) - _SCAN_MIN_TAIL_CHARS)
     # A whitespace-free pattern can only be pending inside the trailing non-whitespace run.
     run = len(buf)
     while run > 0 and not buf[run - 1].isspace():
         run -= 1
     start = min(start, run)
+    # Searched over the WHOLE buffer, deliberately. An earlier version cropped to the last
+    # `_SCAN_PENDING_MAX_CHARS` first, which threw away the very anchor the ceiling exists to catch:
+    # a candidate reaching back further than the ceiling simply disappeared from the window, no
+    # refusal fired, and the prefix was dropped with the secret still pending. The buffer is one
+    # carry plus one chunk, and the carry is itself bounded by the ceiling (anything longer has
+    # already been refused), so this stays bounded work.
     for pattern in _PENDING_MATCH_PATTERNS:
-        match = pattern.search(window)
-        if match is None:
-            continue
-        if offset and match.start() == 0:
-            return -1          # the candidate may reach back past the window: refuse, never guess
-        start = min(start, offset + match.start())
+        match = pattern.search(buf)
+        if match is not None:
+            start = min(start, match.start())
     if len(buf) - start > _SCAN_PENDING_MAX_CHARS:
-        return -1
+        return -1          # the candidate outruns the policy: refuse by name, never crop and forget
     return start
 # Beyond this a member is refused rather than scanned, so the work stays bounded and nothing is
 # waved through for being inconveniently large.

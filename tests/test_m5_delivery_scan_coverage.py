@@ -97,6 +97,17 @@ def _two_run_password_body(boundary: int = 256 * 1024) -> tuple[str, int]:
     return head + tail + "defghijkl" + _filler(600_000), boundary
 
 
+def _two_run_password_body_over_ceiling(boundary: int = 256 * 1024) -> tuple[str, int]:
+    """The same two-run candidate, but reaching back further than the 1 MiB pending policy allows.
+
+    Below the ceiling the candidate must be preserved and the secret caught. Above it the member
+    must be REFUSED by name — the one thing that must never happen is cropping the window so the
+    anchor disappears, which silently converts an undecided secret into a clean verdict.
+    """
+    tail = "\npassword" + " " * 700_000 + "=" + " " * 700_000 + "abc"
+    return tail + "defghijkl" + _filler(600_000), boundary
+
+
 def _ready_for_delivery(tmp_path: Path, pid: str, members: dict[str, bytes]):
     """Drive the real lifecycle to READY_FOR_DELIVERY with `members` registered in the package.
 
@@ -168,6 +179,17 @@ def test_the_fixture_really_contains_a_secret_the_production_scanner_finds():
     )
     assert scanner.scan_text("big.txt", body), (
         "the bypass fixture contains no secret once joined, so demanding a refusal proves nothing"
+    )
+
+    # Same two properties for the over-ceiling variant. Without them "it refused" could mean the
+    # member was refused for some unrelated reason rather than because an undecided candidate
+    # outran the policy.
+    over, over_first = _two_run_password_body_over_ceiling()
+    assert not scanner.scan_text("big.txt", over[:over_first]), (
+        "the over-ceiling fixture is already decidable inside the first read"
+    )
+    assert scanner.scan_text("big.txt", over), (
+        "the over-ceiling fixture contains no real secret, so refusing it proves nothing"
     )
 
 
@@ -331,6 +353,24 @@ def test_a_secret_split_by_two_long_whitespace_runs_still_blocks(tmp_path):
     with pytest.raises(WorkExecutionError) as exc:
         svc.prepare_delivery("wsplit")
     assert "big.txt" in str(exc.value), f"the refusal does not name the file: {exc.value}"
+    _seal_absent(ws)
+
+
+def test_a_two_run_candidate_past_the_pending_ceiling_fails_closed(tmp_path):
+    """Above the policy the member is refused; the anchor is never cropped away first.
+
+    The previous implementation sliced the buffer to the last 1 MiB *before* looking for a pending
+    candidate, so a candidate reaching back further than the ceiling vanished from the window: no
+    refusal fired, the prefix was discarded, and the completed secret was never seen. Preserving a
+    candidate below the ceiling (the 40 KiB test above) does not prove enforcement above it.
+    """
+    body, _ = _two_run_password_body_over_ceiling()
+    svc, ws = _ready_for_delivery(tmp_path, "ceil", {"big.txt": body.encode("utf-8")})
+
+    with pytest.raises(WorkExecutionError) as exc:
+        svc.prepare_delivery("ceil")
+    assert "big.txt" in str(exc.value), f"the refusal does not name the member: {exc.value}"
+    assert svc.status("ceil").status == "READY_FOR_DELIVERY"
     _seal_absent(ws)
 
 
