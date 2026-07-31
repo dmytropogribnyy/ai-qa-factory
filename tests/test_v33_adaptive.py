@@ -117,17 +117,32 @@ def test_plan_baseline_is_passive_only():
 
 
 def test_plan_selective_adds_the_vertical_flow_with_stop_boundaries():
+    # M6: the run must actually select `business_flow`. This case used to pass no families at all —
+    # a run that selected nothing — and still demand a booking flow, which `engine.py` would never
+    # have explored. The planner was changed so the claim needs its executor; the test now
+    # describes a run that has one.
     plan = plan_target(domain="b.com", profile=select_profile(SITE_TYPE_BOOKING),
-                       depth=DEPTH_SELECTIVE)
+                       depth=DEPTH_SELECTIVE,
+                       selected_families=["links", "business_flow"])
     assert plan.flow == "booking_inspect"
     assert plan.stop_boundaries              # e.g. reserve/book/confirm/pay
     assert any("stage3_selective" in d for d in plan.decisions)
 
 
+def test_plan_selective_without_the_flow_executor_claims_no_scenario():
+    """The counterpart the old test hid: same depth, same profile, executor not selected."""
+    plan = plan_target(domain="b2.com", profile=select_profile(SITE_TYPE_BOOKING),
+                       depth=DEPTH_SELECTIVE, selected_families=["links"])
+    assert plan.flow == "passive"
+    assert plan.stop_boundaries == ()
+    assert not any("stage3_selective" in d for d in plan.decisions)
+
+
 def test_plan_deep_requires_trace_evidence():
     plan = plan_target(domain="c.com", profile=select_profile(SITE_TYPE_ECOMMERCE),
-                       depth=DEPTH_DEEP)
+                       depth=DEPTH_DEEP, selected_families=["links", "business_flow"])
     assert "playwright_trace" in plan.evidence_requirements
+    # M6: cleanup is required because the cart flow runs, so it is claimed only when it does.
     assert plan.cleanup_required is True     # cart flow changes reversible state
 
 

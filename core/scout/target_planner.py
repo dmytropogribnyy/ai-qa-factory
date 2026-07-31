@@ -133,14 +133,20 @@ def plan_target(*, domain: str, profile: VerticalProfile, depth: str,
             plan.decisions.append(f"excluded by operator focus: {removed}")
     plan.decisions.append("stage1_baseline: lightweight checks on a sufficiently promising target")
 
-    # Stage 3 — selective browser exploration (SELECTIVE and DEEP only).
-    if depth in (DEPTH_SELECTIVE, DEPTH_DEEP):
+    # Stage 3 — selective browser exploration. Depth alone is not enough: `engine.py` calls
+    # `_explore_flow()` only when `business_flow` is in the run's `check_families`, so the flow
+    # fields are a coverage claim under exactly the same condition as any check id. Setting them
+    # from the profile whenever the depth allowed it described a scenario the runtime would never
+    # attempt — the same untruth as an unexecutable check name, one field over.
+    reaches_stage3 = depth in (DEPTH_SELECTIVE, DEPTH_DEEP)
+    runs_flow = "business_flow" in selected
+    if reaches_stage3 and runs_flow:
         plan.flow = profile.flow
         plan.allowed_interaction_mode = profile.interaction_mode
         plan.stop_boundaries = tuple(profile.stop_boundaries)
-        # The flow is scenario metadata and lives in `flow`. It used to be appended here as
-        # `browser_flow:<name>`, which put a label with no executor into the family keyspace — the
-        # same untruth the rest of this change removes, in a different disguise.
+        # The flow is scenario metadata and lives in `flow`. It used to be appended to the check
+        # list as `browser_flow:<name>`, which put a label with no executor into the family
+        # keyspace — the same untruth again, in a different disguise.
         plan.cleanup_required = profile.flow == "reversible_cart"
         plan.decisions.append(
             f"stage3_selective: explore only the {profile.flow} flow; stop before "
@@ -148,13 +154,27 @@ def plan_target(*, domain: str, profile: VerticalProfile, depth: str,
     else:
         plan.flow = "passive"
         plan.allowed_interaction_mode = MODE_PASSIVE
-        # If this run selected the interactive executor, say honestly that it was NOT run at this
-        # depth — by its real id. The old code appended the literal "browser_flow", a label with no
-        # executor, so the skip named something that could never have run either way.
-        if "business_flow" in selected:
+        if not reaches_stage3 and runs_flow:
+            # The executor was selected but this depth does not reach it. That is a real skip, and
+            # it is named by its real id: the old code appended the literal "browser_flow", which
+            # no executor provides, so the skip named something that could never have run either
+            # way.
             selected.remove("business_flow")
             plan.checks_skipped.append("business_flow")
-        plan.decisions.append("baseline_only: passive checks; no interactive flow at this depth")
+            plan.decisions.append("baseline_only: passive checks; no interactive flow at this depth")
+        elif reaches_stage3:
+            # A silently passive plan reads as "this vertical has no interactive scenario", which
+            # is a different claim from "the executor for it is not in this selection". Name the
+            # actual cause: an operator focus/exclusion that dropped `business_flow` is not the
+            # same fact as a run that never selected it, and asserting either one blindly would put
+            # a false explanation next to a true absence.
+            cause = ("the operator's focus/exclusion removed business_flow from this target"
+                     if "business_flow" in runnable
+                     else "this run's check_families did not select business_flow")
+            plan.decisions.append(
+                f"no_interactive_flow: {cause}, so the {profile.flow} scenario is not claimed")
+        else:
+            plan.decisions.append("baseline_only: passive checks; no interactive flow at this depth")
 
     # Stage 4/5 — evidence-driven deepening (DEEP only).
     plan.evidence_requirements = ["screenshots", "console", "network", "dom_state"]

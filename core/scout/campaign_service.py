@@ -45,7 +45,7 @@ from core.scout.scout_brain import (
     understand_target,
 )
 from core.scout.store import RunStore, StoreError
-from core.scout.target_planner import plan_target
+from core.scout.target_planner import describe_persisted_plan, plan_target
 from core.scout.verticals import profile_for_industry
 
 
@@ -139,6 +139,31 @@ def _project_target_finding(f: Dict[str, Any]) -> Dict[str, Any]:
         "coverage_limitation": f.get("coverage_limitation"),
         "environment": f.get("environment"),
     }
+
+
+def _describe_brain_document(data: Any) -> Any:
+    """Label every stored Target Test Plan in a brain document without editing the document.
+
+    A plan written before the executable-keyspace change names checks in a vocabulary no executor
+    ever provided, and it is published read-only through Observer, where a reviewer reads it as
+    coverage. It must keep saying exactly what it said — persisted decisions are evidence, and
+    rewriting them to look correct would be a worse defect than the one being fixed — so the
+    verdict travels beside it instead: `legacy_vocabulary`, `coverage_verified` and the names that
+    cannot be resolved.
+
+    Returns copies at every level it touches; the argument is never mutated. Anything that is not
+    shaped like a brain document is passed through untouched rather than guessed at.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("decisions"), list):
+        return data
+    described_decisions = []
+    for decision in data["decisions"]:
+        plan = decision.get("plan") if isinstance(decision, dict) else None
+        if not isinstance(plan, dict):
+            described_decisions.append(decision)
+            continue
+        described_decisions.append({**decision, "plan": describe_persisted_plan(plan)})
+    return {**data, "decisions": described_decisions}
 
 
 def _resolve_prospect(prospects: Dict[str, Any], want_domain: str) -> str:
@@ -874,10 +899,10 @@ class CampaignService:
             return None
         best: Optional[tuple] = None
         for bp in sorted(base.glob("*/BRAIN_DECISIONS.json")):
-            try:
-                data = json.loads(bp.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
+            # Through `_read`, not a second private parse of the same file: that is what makes the
+            # legacy label structural rather than a habit each reader has to remember. The failure
+            # modes are unchanged — an unreadable or malformed file yields None and is skipped.
+            data = self._read(bp.parent.name, "BRAIN_DECISIONS.json")
             if not isinstance(data, dict) or not isinstance(data.get("decisions"), list):
                 continue
             raw_at = str(data.get("at") or "").strip()
@@ -986,11 +1011,25 @@ class CampaignService:
         p.write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
 
     def _read(self, campaign_id: str, name: str) -> Optional[Dict[str, Any]]:
+        """Load one campaign artifact.
+
+        `BRAIN_DECISIONS.json` is labelled on the way out (see `_describe_brain_document`): plans
+        written before the executable-keyspace change name checks in a vocabulary no executor ever
+        provided, and every outward surface that shows one — target detail, the Observer plan and
+        decision-history endpoints, the evidence bundle, the AI review bundle — arrives here. Doing
+        it at the single loader rather than at each caller is the point: a projection applied at
+        five call sites is one a sixth caller can forget.
+
+        The label exists only on the returned copy. This file is written exactly once, from a
+        freshly built payload in `_brain_pass()`, never read-modify-write, so a described document
+        can never be persisted back.
+        """
         p = self._campaign_dir(campaign_id) / name
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
+            data = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
+        return _describe_brain_document(data) if name == "BRAIN_DECISIONS.json" else data
 
     def _discovery_state(self, campaign_id: str) -> Optional[Dict[str, Any]]:
         try:
