@@ -21,6 +21,43 @@ from core.orchestration.work_state_manager import WorkStateManager
 from core.schemas.work_execution import ExecutionContext, ExecutionOutcome, ValidationOutcome
 from core.schemas.work_run_state import WorkRunState
 
+# Delivery content scanning. Read size is a memory bound, not a coverage bound: every byte of every
+# member is read exactly once, and the same bytes produce the member's SHA-256, so what was scanned
+# and what gets sealed cannot drift apart.
+_SCAN_CHUNK_BYTES = 256 * 1024
+# The carry re-scanned with the next chunk, so a match crossing a read boundary is still seen. It is
+# a hard bound: the two ways a supported pattern could outrun it are detected and refused rather
+# than passed over (see `_scan_member`).
+_SCAN_CARRY_CHARS = 64 * 1024
+# Beyond this a member is refused rather than scanned, so the work stays bounded and nothing is
+# waved through for being inconveniently large.
+_SCAN_CEILING_BYTES = 512 * 1024 * 1024
+
+# Binary evidence whose content is not text-scannable. Membership requires a verified signature, not
+# merely "it failed to decode": otherwise one corrupt byte would promote any artifact into the
+# allowed-limitation set and the scan could be bypassed by damaging a file.
+_VERIFIED_BINARY_SIGNATURES: Tuple[Tuple[str, bytes], ...] = (
+    ("png", b"\x89PNG\r\n\x1a\n"),
+    ("jpeg", b"\xff\xd8\xff"),
+    ("gif", b"GIF87a"),
+    ("gif", b"GIF89a"),
+    ("webm", b"\x1a\x45\xdf\xa3"),
+    ("pdf", b"%PDF-"),
+    ("zip", b"PK\x03\x04"),
+)
+
+
+def _verified_binary_type(head: bytes) -> str:
+    """The evidence format `head` actually is, or "" — never a guess from the file extension."""
+    for label, signature in _VERIFIED_BINARY_SIGNATURES:
+        if head.startswith(signature):
+            return label
+    # ISO base media (mp4/mov/m4v): the brand marker sits at offset 4, not 0.
+    if len(head) >= 12 and head[4:8] == b"ftyp":
+        return "mp4"
+    return ""
+
+
 _ARK = "40_ark_work"
 _PROGRESS = {"READY_TO_EXECUTE": 60, "EXECUTING": 75, "EXECUTION_PARTIAL": 75, "VERIFYING": 85,
              "REPAIR_REQUIRED": 70, "READY_FOR_REVIEW": 90, "READY_FOR_DELIVERY": 95,
@@ -421,10 +458,10 @@ class WorkExecutionService:
             raise WorkExecutionError(
                 f"artifacts changed after validation ({', '.join(changed[:5])}"
                 f"{'...' if len(changed) > 5 else ''}); re-validate before delivery")
-        # Scan the exact delivery file set for secret-like content (real file contents).
-        leaked = self._scan_delivery(pid, files)
-        if leaked:
-            raise WorkExecutionError(f"refusing to deliver: secret-like content in {leaked[0]}")
+        # Scan the registered members first, so a leak refuses before any document is generated.
+        # `_scan_package` raises on anything it cannot read, decode or recognise; it never returns a
+        # partial verdict that a caller could mistake for "clean".
+        scanned = self._scan_package(pid, files)
 
         produced = [a.get("filename") for a in prog.get("outcome", {}).get("artifacts", [])]
         # Partition the registered files into artifacts vs evidence by the actual evidence paths
@@ -449,11 +486,17 @@ class WorkExecutionService:
         delivery_docs = ["DELIVERY_REPORT.md", "CLIENT_MESSAGE.md"]
         # Secret-scan the delivery documents too, then hash the EXACT package (registered files +
         # the delivery documents) - not the whole workspace.
-        leaked_docs = self._scan_delivery(pid, delivery_docs)
-        if leaked_docs:
-            raise WorkExecutionError(f"refusing to deliver: secret-like content in {leaked_docs[0]}")
+        scanned += self._scan_package(pid, delivery_docs)
         package_files = files + delivery_docs
-        package_hashes = self._hash_map(pid, package_files)
+        # The sealed hashes ARE the ones computed from the scanned byte stream. Hashing the files
+        # again here would reopen the gap the single pass exists to close: a member could change
+        # between being read and being hashed, and the manifest would then attest to bytes nobody
+        # scanned.
+        package_hashes = {entry["path"]: entry["sha256"] for entry in scanned}
+        if sorted(package_hashes) != sorted(package_files):
+            raise WorkExecutionError(
+                "refusing to deliver: the scanned set does not match the set being sealed "
+                f"({sorted(set(package_files) ^ set(package_hashes))})")
         digest = self._manifest_digest(package_hashes)
         manifest = {"project_id": pid, "generated_at": self._clock.now_iso(),
                     "deliverables": fr.get("expected_deliverables", []),
@@ -463,6 +506,14 @@ class WorkExecutionService:
                     "included": {"artifacts": artifacts, "evidence": evidence_files,
                                  "delivery_docs": delivery_docs},
                     "included_files": package_files, "artifact_hashes": package_hashes,
+                    # Per-member content-scan disposition over exactly the sealed set. Only
+                    # successful dispositions can appear here: anything unreadable, undecodable or
+                    # unrecognised refuses the delivery outright, so this record never doubles as a
+                    # place to log what was skipped.
+                    "content_scan": {"scanner": "streaming-content-secret-scan/v1",
+                                     "chunk_bytes": _SCAN_CHUNK_BYTES,
+                                     "carry_chars": _SCAN_CARRY_CHARS,
+                                     "files": sorted(scanned, key=lambda e: e["path"])},
                     "manifest_digest": digest, "client_message_source": client_message_source,
                     "approved_for_delivery": True,
                     "note": "validated + operator-reviewed; exact delivery package prepared (not sent)"}
@@ -550,21 +601,121 @@ class WorkExecutionService:
         self._write(ws / "DELIVERY_HISTORY.json",
                     json.dumps({"events": events}, indent=2, sort_keys=True))
 
-    def _scan_delivery(self, pid: str, files: List[str]) -> List[str]:
-        """Return the relative paths whose actual content looks secret-like (delivery-content scan)."""
+    def _scan_member(self, rel: str, target: Path) -> Dict[str, Any]:
+        """Stream one delivery member once: the same bytes feed the SHA-256 and the secret scan.
+
+        Returns its content-scan disposition. Raises rather than returning a "could not read" value:
+        every caller writes a success artifact, and a success artifact may only describe success.
+
+        Why streaming rather than a size cap. The previous code skipped anything over 2 MB and
+        anything that failed strict UTF-8, in both cases with a bare ``continue``. An empty result
+        was then read as "clean", so an unread file shipped inside a manifest marked
+        ``approved_for_delivery``.
+
+        Why an incremental decoder. A multi-byte character split across two reads is valid text; a
+        per-chunk ``bytes.decode`` would call it undecodable and refuse an ordinary non-English
+        deliverable.
+
+        Why the carry bound is a proof and not a guess. Several patterns are unbounded
+        (``[0-9A-Za-z]{16,}``, ``Bearer\\s+``), so no fixed overlap can be justified by inspection.
+        Every supported pattern is one of two shapes, and each has one way to cross a read boundary
+        undetected: a whitespace-free pattern needs a single token at least ``_SCAN_CARRY_CHARS``
+        long, and a keyword-plus-whitespace pattern (``bearer_token``, ``cookie_header``) needs a
+        whitespace run that long. Both conditions are detected below and fail closed, so a match
+        cannot be lost silently — the prefix is never discarded quietly.
+        """
+        try:
+            size = target.stat().st_size
+        except OSError as exc:
+            raise WorkExecutionError(
+                f"refusing to deliver: cannot read {rel} to scan it ({exc})") from exc
+        if size > _SCAN_CEILING_BYTES:
+            raise WorkExecutionError(
+                f"refusing to deliver: {rel} is {size} bytes, above the scannable ceiling "
+                f"({_SCAN_CEILING_BYTES}); it cannot be proven free of secrets")
+
+        import codecs
+        import hashlib
+        digest = hashlib.sha256()
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+        carry = ""
+        head = b""
+        binary_type = ""
+        try:
+            with open(target, "rb") as fh:
+                while True:
+                    chunk = fh.read(_SCAN_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    if len(head) < 16:
+                        head = (head + chunk)[:16]
+                    if binary_type:
+                        continue           # identified evidence: hashed, deliberately not text-scanned
+                    try:
+                        text = decoder.decode(chunk)
+                    except UnicodeDecodeError:
+                        binary_type = _verified_binary_type(head)
+                        if not binary_type:
+                            # One bad byte must not promote an arbitrary artifact to "allowed binary".
+                            raise WorkExecutionError(
+                                f"refusing to deliver: {rel} is neither decodable text nor a "
+                                f"recognised evidence format, so its content cannot be scanned")
+                        continue
+                    buf = carry + text
+                    found = self._scanner.scan_text(rel, buf)
+                    if found:
+                        raise WorkExecutionError(
+                            f"refusing to deliver: secret-like content in {rel} ({found[0]})")
+                    if len(buf) > _SCAN_CARRY_CHARS:
+                        carry = buf[-_SCAN_CARRY_CHARS:]
+                        if not any(c.isspace() for c in carry):
+                            raise WorkExecutionError(
+                                f"refusing to deliver: {rel} contains an unbroken run longer than "
+                                f"the {_SCAN_CARRY_CHARS}-character scan carry, so a secret "
+                                f"spanning a read boundary could not be ruled out")
+                        if carry.isspace():
+                            raise WorkExecutionError(
+                                f"refusing to deliver: {rel} contains whitespace longer than the "
+                                f"{_SCAN_CARRY_CHARS}-character scan carry, so a keyed secret "
+                                f"spanning a read boundary could not be ruled out")
+                    else:
+                        carry = buf
+        except OSError as exc:
+            raise WorkExecutionError(
+                f"refusing to deliver: cannot read {rel} to scan it ({exc})") from exc
+
+        if not binary_type:
+            try:
+                tail = decoder.decode(b"", final=True)
+            except UnicodeDecodeError:
+                raise WorkExecutionError(
+                    f"refusing to deliver: {rel} ends mid-character and is not valid text, so its "
+                    f"content cannot be scanned") from None
+            found = self._scanner.scan_text(rel, carry + tail)
+            if found:
+                raise WorkExecutionError(
+                    f"refusing to deliver: secret-like content in {rel} ({found[0]})")
+
+        entry: Dict[str, Any] = {"path": rel, "bytes": size, "sha256": digest.hexdigest()}
+        if binary_type:
+            entry.update({"disposition": "verified_binary", "type": binary_type,
+                          "reason": "recognised binary evidence format; content is not text-scanned"})
+        else:
+            entry["disposition"] = "scanned_text"
+        return entry
+
+    def _scan_package(self, pid: str, files: List[str]) -> List[Dict[str, Any]]:
+        """Scan every member of the delivery set, or refuse. Never returns a partial verdict."""
         ws = self._ws(pid)
-        leaked: List[str] = []
+        out: List[Dict[str, Any]] = []
         for rel in files:
             target = self._confine(ws, rel)
-            if not target.is_file() or target.stat().st_size > 2_000_000:
-                continue
-            try:
-                text = target.read_text(encoding="utf-8", errors="strict")
-            except (OSError, UnicodeDecodeError):
-                continue   # binary/unreadable evidence (e.g. screenshots) is not text-scanned
-            if self._scanner.scan_text(Path(rel).name, text):
-                leaked.append(rel)
-        return leaked
+            if not target.is_file():
+                raise WorkExecutionError(
+                    f"refusing to deliver: {rel} is registered in the package but is not a file")
+            out.append(self._scan_member(rel, target))
+        return out
 
     def mark_delivered(self, pid: str, note: str = "") -> WorkRunState:
         """Record the operator's assertion that the PREPARED package was delivered manually.
