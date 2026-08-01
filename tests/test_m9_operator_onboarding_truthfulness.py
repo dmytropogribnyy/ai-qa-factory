@@ -176,19 +176,53 @@ def _registered_tool_counts() -> tuple[int, int]:
     return len(TOOL_NAMES), len(OBSERVER_TOOL_NAMES)
 
 
-def test_every_documented_tool_count_matches_the_real_registration():
-    """Fails in EITHER direction, so it cannot rot the next time a tool is added.
+def _stale_tool_counts(docs_root: pathlib.Path) -> list:
+    """Every documented count in `docs_root` that disagrees with the real registration.
 
-    A documented count is accepted when it equals the planning count, the observer count, or their
-    total — because "7 planning tools" and "20 observer tools" are both legitimate things to write.
-    An earlier version of this guard compared every number against the total alone and flagged two
-    correct sentences; a test that cries wolf about true statements teaches people to edit the test.
+    Taking the root as an argument is what lets the guard be exercised on synthetic documents, so
+    its strictness is demonstrated rather than asserted.
     """
     planning, observer = _registered_tool_counts()
     total = planning + observer
-    legitimate = {planning, observer, total}
     stale = []
-    for path in sorted(_DOCS.rglob("*.md")):
+
+    def _classify(match, line: str):
+        """Label a count from the words on BOTH sides of the number.
+
+        Looking only after the number misread `Observer MCP adapter (read-only, 20 tools)`, whose
+        label sits in front of it. And an earlier "any `--list-tools` on the line means this is the
+        catalogue total" heuristic flagged a troubleshooting line — "`--list-tools` shows only 7
+        tools -> old build" — which correctly describes a BROKEN state. A guard that fails on true
+        sentences gets edited instead of the documentation, so an unlabelled count is left
+        unadjudicated rather than guessed at.
+        """
+        after, ctx = match.group(2).lower(), line.lower()
+        # 1. The words between the number and "tools" are the most reliable label.
+        if "observer" in after:
+            return observer, "Observer"
+        if "planning" in after or "legacy" in after:
+            return planning, "planning"
+        # 2. Then an explicit total, before looking backwards — otherwise "the 7 legacy planning
+        #    tools = 27 tools total" reads the PREVIOUS count's label onto this one.
+        tail = line[match.end():match.end() + 12].lower()
+        breakdown = re.search(r"\d+\s+planning", ctx) and re.search(r"\d+\s+observer", ctx)
+        if "total" in tail or breakdown:
+            return total, "catalogue"
+        # 3. Only then the words in front, stopping at the previous number so one count's label can
+        #    never be borrowed by the next.
+        prefix = line[:match.start()]
+        cut = list(re.finditer(r"\d", prefix))
+        prefix = prefix[cut[-1].end():] if cut else prefix
+        before = " ".join(prefix.split()[-4:]).lower()
+        if "observer" in before:
+            return observer, "Observer"
+        if "planning" in before or "legacy" in before:
+            return planning, "planning"
+        if "read-only" in before and "observer" in ctx:
+            return observer, "Observer"
+        return None, "unlabelled"
+
+    for path in sorted(docs_root.rglob("*.md")):
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not re.search(r"(?i)mcp|observer|planning tool|list-tools|catalog", line):
                 continue
@@ -198,13 +232,23 @@ def test_every_documented_tool_count_matches_the_real_registration():
                     if int(match.group(1)) != expected:
                         stale.append(f"{path.name}:{lineno} quotes {key}={match.group(1)}, "
                                      f"registration is {expected}")
-            # Prose counts: "26 tools", "19 tools", "(read-only, 19 tools)".
-            for match in re.finditer(r"\b(\d+)\s+(?:legacy\s+|planning\s+|observer\s+|read-only\s+)?tools?\b",
-                                     line, re.I):
-                claimed = int(match.group(1))
-                if claimed not in legitimate:
-                    stale.append(f"{path.name}:{lineno} claims {claimed} tools; the registration is "
-                                 f"{planning} planning + {observer} observer = {total}")
+            # Prose counts, with ANY run of qualifying words between the number and "tools" —
+            # `26 tools`, `19 read-only Observer MCP tools`, `7 legacy planning tools`. Bounding the
+            # qualifier to a single optional word is what let `19 read-only Observer MCP tools` sit
+            # unseen next to a corrected line that contradicted it.
+            for match in re.finditer(r"\b(\d+)\s+((?:[A-Za-z][\w-]*\s+){0,4}?)tools?\b", line, re.I):
+                claimed, qualifier = int(match.group(1)), match.group(2)
+                expected, kind = _classify(match, line)
+                if expected is not None and claimed != expected:
+                    stale.append(
+                        f"{path.name}:{lineno} claims {claimed} {qualifier}tools ({kind} count); "
+                        f"the registration is {planning} planning + {observer} observer = {total}")
+    return stale
+
+
+def test_every_documented_tool_count_matches_the_real_registration():
+    """Fails in EITHER direction, so it cannot rot the next time a tool is added."""
+    stale = _stale_tool_counts(_DOCS)
     assert not stale, "documented tool counts disagree with the code that registers them:\n  " + \
                       "\n  ".join(stale)
 
@@ -215,3 +259,39 @@ def test_the_registration_is_the_source_of_truth_not_a_duplicated_constant():
     from integrations.mcp.tool_handlers import TOOL_NAMES
     assert len(OBSERVER_TOOL_NAMES) == len(OBSERVER_HANDLERS)
     assert len(TOOL_NAMES) > 0 and len(OBSERVER_TOOL_NAMES) > 0
+
+
+def test_the_catalogue_guard_rejects_a_wrong_count_in_either_direction(tmp_path):
+    """The property the previous guard lacked, demonstrated on synthetic docs.
+
+    That version accepted any of {planning, observer, total} whichever way the sentence was
+    labelled, so it only ever failed on the wrong numbers already present — a future
+    `7 Observer tools` would have passed it.
+    """
+    planning, observer = _registered_tool_counts()
+    total = planning + observer
+
+    must_fail = [
+        f"{observer + 1} Observer MCP tools",              # inflated Observer count
+        f"{planning} Observer MCP tools",                  # planning count wearing an Observer label
+        f"{observer} legacy planning tools",               # Observer count wearing a planning label
+        f"{total - 1} tools total",                        # wrong catalogue total
+        f"{observer + 3} read-only Observer MCP tools",    # wrong multi-word Observer claim
+    ]
+    must_pass = [
+        f"{observer} Observer MCP tools",
+        f"{planning} legacy planning tools",
+        f"{total} tools total",
+        "`--list-tools` shows only 7 tools -> old build",  # a symptom, not a catalogue claim
+    ]
+
+    def _write(claim: str) -> None:
+        (tmp_path / "d.md").write_text("- " + claim + " on the MCP server." + chr(10),
+                                       encoding="utf-8")
+
+    for claim in must_fail:
+        _write(claim)
+        assert _stale_tool_counts(tmp_path), f"the guard accepted a false claim: {claim!r}"
+    for claim in must_pass:
+        _write(claim)
+        assert not _stale_tool_counts(tmp_path), f"the guard flagged a true claim: {claim!r}"

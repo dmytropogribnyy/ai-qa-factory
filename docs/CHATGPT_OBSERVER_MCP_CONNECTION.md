@@ -10,7 +10,7 @@ exact PowerShell commands, and the **owner-only** ChatGPT steps.
 ## A. What is already implemented (verified)
 
 - `core/scout/observer_api.py` — read-only Observer over the same persisted state the Dashboard uses.
-- 19 read-only Observer MCP tools on the **existing** `qa-factory` MCP server (`integrations/mcp/`),
+- 20 read-only Observer MCP tools on the **existing** `qa-factory` MCP server (`integrations/mcp/`),
   alongside the 7 legacy planning tools = **27 tools** total.
 - Real **stdio transport verified**: `python tools/mcp_smoke.py` connects as a real MCP client and
   calls the tools (report: `outputs/mcp_acceptance/MCP_CONNECTION_ACCEPTANCE.md`). No secrets, no
