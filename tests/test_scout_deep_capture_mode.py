@@ -59,9 +59,24 @@ class _FakeService:
                 "controllable": self._running, "run_id": self.run_id, "state": {}, "control": {}}
 
 
-def _launcher(tmp_path, *, browser_probe=None):
+def _launcher(tmp_path, *, browser_probe=None, axe_probe=None):
+    """Both Deep Capture prerequisites are injectable, and a ready host must say so for both.
+
+    Passing `browser_probe` alone used to mean "a ready host". Once axe-core became a separate
+    prerequisite that left the second probe to the environment, so these cases passed on a developer
+    machine with an axe distribution installed and returned 503 on the light CI job, which installs
+    only requirements.txt. Deep-capture cases therefore default `axe_probe` to the browser answer;
+    a case that means "Chromium missing" or "axe missing" states which one it means.
+    """
     svc = _FakeService(str(tmp_path))
     kw = {} if browser_probe is None else {"browser_probe": browser_probe}
+    if axe_probe is not None:
+        kw["axe_probe"] = axe_probe
+    elif browser_probe is not None:
+        # The same callable, never invoked here: the static case injects a probe that raises if it is
+        # consulted at all, and calling it to decide a default would fire the very assertion that
+        # case exists to make.
+        kw["axe_probe"] = browser_probe
     launcher = CampaignLauncher(svc, registry_dir=str(tmp_path / "reg"),
                                 allowed_local_hosts=frozenset({_HOST}), resolve_dns=False,
                                 starter=svc.start, **kw)
@@ -117,10 +132,18 @@ def test_deep_refused_when_chromium_unavailable_no_silent_downgrade(tmp_path):
     assert "chromium" in r.message.lower() or "deep capture" in r.message.lower()   # actionable
 
 
-def test_static_never_runs_a_browser_preflight(tmp_path):
+def test_deep_refused_when_axe_unavailable_even_with_chromium(tmp_path):
+    """Deep Capture advertises axe-core, so a browser alone is not the prerequisite."""
+    launcher, svc = _launcher(tmp_path, browser_probe=lambda: True, axe_probe=lambda: False)
+    r = launcher.start(_req(browser_mode="playwright"))
+    assert not r.ok and r.status == 503 and not svc.started_configs
+    assert "axe" in r.message.lower()
+
+
+def test_static_never_runs_a_browser_or_axe_preflight(tmp_path):
     def _boom():
-        raise AssertionError("static must never probe Chromium")
-    launcher, svc = _launcher(tmp_path, browser_probe=_boom)
+        raise AssertionError("static must never probe Chromium or axe")
+    launcher, svc = _launcher(tmp_path, browser_probe=_boom, axe_probe=_boom)
     r = launcher.start(_req(browser_mode="static"))
     assert r.ok and svc.started_configs[-1].browser_mode == "static"
 

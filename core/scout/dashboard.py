@@ -2660,7 +2660,10 @@ function startCampaign(){{
                 "<option value=static>Static (faster)</option></select></label></p>"
                 "<p class=muted>Static = faster HTTP/HTML checks. Deep Capture = real browser: "
                 "screenshots, axe accessibility, perf timing and console/network evidence (needs "
-                "Chromium and axe-core: setup-local.ps1 -DeepCapture). Coverage bounds how many "
+                # &#92; is an HTML entity on purpose: this fragment is a JS string literal, where a
+                # lone backslash would be read as an escape and swallow the path separator.
+                "Chromium and axe-core: scripts&#92;setup-local.ps1 -DeepCapture). Coverage bounds "
+                "how many "
                 "same-site pages are explored (never a quota); "
                 "both profiles can stop early once further pages add no new coverage.</p>"
                 "<p><label><input type=checkbox id=impconfirm> I confirm this is an authorized, "

@@ -28,10 +28,18 @@ class _Service:
         return cfg.run_id
 
 
-def _launcher(tmp_path, *, browser_ready: bool):
+def _launcher(tmp_path, *, deep_capture_ready: bool):
+    """``deep_capture_ready`` means EVERY Deep Capture prerequisite, not Chromium alone.
+
+    These cases used to inject `browser_probe` only. Once axe-core became a separate prerequisite
+    they fell through to the real default probe, so on a host without an axe distribution — which is
+    what the light CI job installs — "a real browser is available" silently became a 503. The seam
+    now says what the scenario means instead of leaving the second prerequisite to the environment.
+    """
     service = _Service(tmp_path)
     launcher = CampaignLauncher(service, resolve_dns=False,
-                                browser_probe=lambda: browser_ready,
+                                browser_probe=lambda: deep_capture_ready,
+                                axe_probe=lambda: deep_capture_ready,
                                 starter=service.start)
     return service, launcher
 
@@ -44,7 +52,7 @@ def _start(launcher, **extra):
 
 
 def test_auto_uses_deep_capture_when_a_real_browser_is_available(tmp_path):
-    service, launcher = _launcher(tmp_path, browser_ready=True)
+    service, launcher = _launcher(tmp_path, deep_capture_ready=True)
 
     result = _start(launcher)
 
@@ -55,7 +63,7 @@ def test_auto_uses_deep_capture_when_a_real_browser_is_available(tmp_path):
 
 def test_auto_falls_back_to_static_and_says_so(tmp_path):
     """A downgrade is a fact about the evidence the operator will get, not an implementation detail."""
-    service, launcher = _launcher(tmp_path, browser_ready=False)
+    service, launcher = _launcher(tmp_path, deep_capture_ready=False)
 
     result = _start(launcher)
 
@@ -67,7 +75,7 @@ def test_auto_falls_back_to_static_and_says_so(tmp_path):
 
 def test_an_explicit_deep_request_still_refuses_rather_than_downgrading(tmp_path):
     """`auto` means "you choose"; `playwright` means "I need this" — and that promise is kept."""
-    _service, launcher = _launcher(tmp_path, browser_ready=False)
+    _service, launcher = _launcher(tmp_path, deep_capture_ready=False)
 
     result = _start(launcher, browser_mode="playwright")
 
@@ -77,7 +85,7 @@ def test_an_explicit_deep_request_still_refuses_rather_than_downgrading(tmp_path
 
 def test_an_arbitrary_mode_is_still_refused(tmp_path):
     """Adding `auto` must not turn this field into a free-text backend selector."""
-    _service, launcher = _launcher(tmp_path, browser_ready=True)
+    _service, launcher = _launcher(tmp_path, deep_capture_ready=True)
 
     for bogus in ("chrome", "auto ", "PLAYWRIGHT", "", 1, None, ["auto"]):
         result = _start(launcher, browser_mode=bogus, idempotency_key=f"k-{bogus!r}")
@@ -87,7 +95,7 @@ def test_an_arbitrary_mode_is_still_refused(tmp_path):
 
 @pytest.mark.parametrize("ready, expected", [(True, "playwright"), (False, "static")])
 def test_the_resolved_depth_is_what_actually_runs(tmp_path, ready, expected):
-    service, launcher = _launcher(tmp_path, browser_ready=ready)
+    service, launcher = _launcher(tmp_path, deep_capture_ready=ready)
 
     _start(launcher)
 

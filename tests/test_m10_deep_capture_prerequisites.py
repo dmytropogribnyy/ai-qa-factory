@@ -28,6 +28,7 @@ installing the axe wrapper alone resolves a different one.
 """
 from __future__ import annotations
 
+import html
 import json
 import pathlib
 import re
@@ -47,6 +48,9 @@ _SETUP = _ROOT / "scripts" / "setup-local.ps1"
 # Proven in this repository and again in a throwaway isolated venv; see the M10 checkpoint.
 _PINNED_AXE = "axe-playwright-python==0.1.8"
 _PINNED_PLAYWRIGHT = "playwright==1.61.0"
+
+# The one command every operator-facing surface must name, character for character.
+_SETUP_COMMAND = r"scripts\setup-local.ps1 -DeepCapture"
 
 _HOST = "127.0.0.1:8941"
 _SEED = "http://127.0.0.1:8941/"
@@ -384,6 +388,33 @@ def test_every_rendered_deep_capture_claim_names_axe_among_its_prerequisites(sco
             "a rendered Deep Capture claim advertises axe accessibility but names only "
             f"{prerequisites!r} as what the host needs"
         )
+
+
+def test_every_rendered_remediation_names_the_exact_repository_script(scout_page):
+    """The command is the part an operator types, so it is the part that has to be right.
+
+    Requiring only "axe" or "DeepCapture" inside the parenthesis let one claim point at a bare
+    `setup-local.ps1` that identifies nothing in this repository, while the refusal message and the
+    docs named `scripts\\setup-local.ps1` correctly. A guard that would pass on a command nobody can
+    run is not a guard. Entities are unescaped first because the operator reads the rendered text,
+    not the markup: both claims emit `&#92;` so a JS string literal cannot eat the separator.
+    """
+    rendered = html.unescape(scout_page)
+    claims = re.findall(r"Deep Capture = real browser:.{0,240}?\(needs ([^)]*)\)", rendered)
+    assert len(claims) == 2, f"the claim scan is stale: found {len(claims)}"
+    for prerequisites in claims:
+        assert _SETUP_COMMAND in prerequisites, (
+            f"a rendered Deep Capture remediation does not name {_SETUP_COMMAND!r}; an operator "
+            f"following it would run nothing: {prerequisites!r}"
+        )
+
+
+def test_the_refusal_and_the_rendered_claims_name_the_same_command(tmp_path, scout_page):
+    """Three surfaces, one command — divergence is how the wrong one survives."""
+    launcher, _, _ = _launcher(tmp_path, browser_probe=lambda: True, axe_probe=lambda: False)
+    message = launcher.start(_req("m10-same-command")).message
+    assert _SETUP_COMMAND in message, message
+    assert _SETUP_COMMAND in html.unescape(scout_page)
 
 
 # --- post-run: a browser that ran without axe must not read as a clean run ------------------------
