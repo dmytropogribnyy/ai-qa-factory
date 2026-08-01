@@ -393,19 +393,37 @@ def test_every_tool_count_claim_is_either_guarded_or_explicitly_diagnostic(tmp_p
                 claims.append((path, lineno, match.group(0)))
     assert claims, "no tool-count claims found at all — the scan is broken, not the docs"
 
+    # Copy the corpus ONCE and restore the single mutated file after each claim.
+    #
+    # The first version re-copied the tree every iteration, `rmtree(..., ignore_errors=True)`
+    # followed by `copytree` into the same destination. On Windows that makes correctness depend on
+    # deletion timing: when the removal does not complete (an open handle is enough), `rmtree`
+    # swallows it and `copytree` raises `FileExistsError` on the very next iteration. It passed in a
+    # worktree and on two green Windows CI runs, and failed deterministically in the canonical
+    # checkout — a green gate somewhere is not evidence of a test that survives anywhere.
+    work = tmp_path / "docs"
+    shutil.copytree(_DOCS, work)
+    pristine = {p: p.read_bytes() for p in work.rglob("*.md")}
+
     unguarded = []
     for path, lineno, text in claims:
-        work = tmp_path / "docs"
-        shutil.rmtree(work, ignore_errors=True)
-        shutil.copytree(_DOCS, work)
         target = work / path.relative_to(_DOCS)
-        lines = target.read_text(encoding="utf-8").splitlines()
-        n = int(re.match(r"(\d+)", text).group(1))
-        lines[lineno - 1] = lines[lineno - 1].replace(
-            text, text.replace(str(n), str(n + 5), 1), 1)
-        target.write_text(chr(10).join(lines), encoding="utf-8")
-        if not any(f"{path.name}:{lineno}" in f for f in _stale_tool_counts(work)):
-            unguarded.append((path.name, lineno, text))
+        original = pristine[target]
+        try:
+            lines = original.decode("utf-8").splitlines()
+            n = int(re.match(r"(\d+)", text).group(1))
+            lines[lineno - 1] = lines[lineno - 1].replace(
+                text, text.replace(str(n), str(n + 5), 1), 1)
+            target.write_bytes(chr(10).join(lines).encode("utf-8"))
+            if not any(f"{path.name}:{lineno}" in f for f in _stale_tool_counts(work)):
+                unguarded.append((path.name, lineno, text))
+        finally:
+            # Exact bytes, always — a half-mutated corpus would silently corrupt every later claim.
+            target.write_bytes(original)
+
+    # Residue check: "restored in `finally`" is worth nothing unless it is verified.
+    residue = [str(p.relative_to(work)) for p, b in pristine.items() if p.read_bytes() != b]
+    assert not residue, f"the mutation walk left the copied corpus modified: {residue}"
 
     unexplained = [u for u in unguarded if (u[0], u[1]) not in _DIAGNOSTIC_CLAIMS]
     assert not unexplained, (
