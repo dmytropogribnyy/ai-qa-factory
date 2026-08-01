@@ -213,13 +213,38 @@ def _stale_tool_counts(docs_root: pathlib.Path) -> list:
         prefix = line[:match.start()]
         cut = list(re.finditer(r"\d", prefix))
         prefix = prefix[cut[-1].end():] if cut else prefix
-        before = " ".join(prefix.split()[-4:]).lower()
+        # Eight words, not four: `**Observer tools exposed** — yes (20 read-only tools; ...)` puts
+        # its label further from the number than a short window reaches, and a claim whose sibling
+        # on the same line IS checked should not go unchecked by accident of spacing.
+        before = " ".join(prefix.split()[-8:]).lower()
         if "observer" in before:
             return observer, "Observer"
         if "planning" in before or "legacy" in before:
             return planning, "planning"
         if "read-only" in before and "observer" in ctx:
             return observer, "Observer"
+        # 4. A sentence that says the server SERVES or LISTS N tools is claiming the whole
+        #    catalogue, even without the word "total": `serves the SAME 27 tools`,
+        #    `client lists 27 tools`. Classifying by "does the line mention observer" would be wrong
+        #    here — line 32 contains `observer_get_project_overview` and yet claims the total.
+        #
+        #    The exception is a diagnostic sentence describing a BROKEN state, e.g.
+        #    "`--list-tools` shows only 7 tools -> old build". That is not a catalogue claim and
+        #    must stay unadjudicated, or the guard starts reporting a correct troubleshooting note
+        #    as a defect.
+        diagnostic = re.search(r"\bonly\b", before) and re.search(r"->|→|old build|ensure", ctx)
+        if not diagnostic and re.search(r"\b(serves|lists|exposes|shows|registers|provides)\b",
+                                        before):
+            return total, "catalogue"
+        # 5. The planning server names itself: `MCP tool list (7 tools)`, `7 MCP tools registered`,
+        #    `all 7 MCP tool handlers`, `ARK MCP server (7 tools)`, `callable ... via tool_handlers`.
+        #    These are the ARK/planning catalogue, and leaving them unadjudicated meant a repository
+        #    search could report "checked" for the totals while seven live planning claims could go
+        #    stale unnoticed.
+        if not diagnostic and re.search(
+                r"ark mcp server|mcp tool list|mcp tools? registered|mcp tool handlers?|"
+                r"tool_handlers|mcp tool\b", ctx):
+            return planning, "planning"
         return None, "unlabelled"
 
     for path in sorted(docs_root.rglob("*.md")):
@@ -295,3 +320,94 @@ def test_the_catalogue_guard_rejects_a_wrong_count_in_either_direction(tmp_path)
     for claim in must_pass:
         _write(claim)
         assert not _stale_tool_counts(tmp_path), f"the guard flagged a true claim: {claim!r}"
+
+
+def test_mutating_the_real_catalogue_claims_is_caught_in_both_directions(tmp_path):
+    """The reviewer's own mutation proof, kept as a standing test.
+
+    Round 2 passed because the guard caught the wrong numbers that were already in the documents.
+    That is not the same property as catching a wrong number *at all*: an independent reviewer
+    copied the tree, changed only the two live catalogue claims from 27 to 26, and
+    `_stale_tool_counts()` returned `[]` — `serves the SAME 27 tools` and `client lists 27 tools`
+    were both reaching the classifier and coming back unlabelled.
+
+    So the check is no longer "are today's numbers right" but "would a wrong number be reported".
+    """
+    import shutil
+
+    planning, observer = _registered_tool_counts()
+    total = planning + observer
+    src = _DOCS / "CHATGPT_OBSERVER_MCP_CONNECTION.md"
+    shutil.copytree(_DOCS, tmp_path / "docs")
+    target = tmp_path / "docs" / src.name
+    original = src.read_text(encoding="utf-8")
+
+    # The two live wordings the guard used to miss, mutated in both directions.
+    shapes = ("serves the SAME {n} tools", "client lists {n} tools")
+    for shape in shapes:
+        for wrong in (total - 1, total + 1):
+            target.write_text(
+                original.replace(shape.format(n=total), shape.format(n=wrong)), encoding="utf-8")
+            found = _stale_tool_counts(tmp_path / "docs")
+            assert any(str(wrong) in f for f in found), (
+                "a wrong catalogue total went unreported for "
+                + shape.format(n=wrong) + "; found=" + repr(found))
+
+    # Unmutated, the same documents must be clean — otherwise the test above proves nothing.
+    target.write_text(original, encoding="utf-8")
+    assert not _stale_tool_counts(tmp_path / "docs")
+
+    # And the diagnostic sentence must survive as a non-claim.
+    (tmp_path / "docs" / "diag.md").write_text(
+        "- `--list-tools` shows only 7 tools -> old build; ensure observer_handlers is importable."
+        + chr(10), encoding="utf-8")
+    assert not _stale_tool_counts(tmp_path / "docs"), (
+        "a troubleshooting sentence describing a BROKEN state was read as a catalogue claim")
+
+
+# The only tool-count sentences that may go unguarded: they describe a BROKEN state ("old build"),
+# so they are not claims about the catalogue and must not be validated as if they were.
+_DIAGNOSTIC_CLAIMS = {
+    ("CHATGPT_OBSERVER_MCP_CONNECTION.md", 135),
+    ("OBSERVER_MCP_V33.md", 98),
+}
+
+
+def test_every_tool_count_claim_is_either_guarded_or_explicitly_diagnostic(tmp_path):
+    """Completeness, measured by mutation rather than asserted.
+
+    Round 2 shipped a guard that validated the numbers already present and left several live claims
+    unadjudicated — a repository search could report "checked" while a future partial update went
+    unnoticed. This walks every tool-count sentence in `docs/`, mutates that one occurrence, and
+    requires the guard to report it; anything it cannot report must be on the diagnostic list above,
+    with a reason.
+    """
+    import shutil
+
+    claims = []
+    for path in sorted(_DOCS.rglob("*.md")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not re.search(r"(?i)mcp|observer|planning tool|list-tools|catalog", line):
+                continue
+            for match in re.finditer(r"\b(\d+)\s+((?:[A-Za-z][\w-]*\s+){0,4}?)tools?\b", line, re.I):
+                claims.append((path, lineno, match.group(0)))
+    assert claims, "no tool-count claims found at all — the scan is broken, not the docs"
+
+    unguarded = []
+    for path, lineno, text in claims:
+        work = tmp_path / "docs"
+        shutil.rmtree(work, ignore_errors=True)
+        shutil.copytree(_DOCS, work)
+        target = work / path.relative_to(_DOCS)
+        lines = target.read_text(encoding="utf-8").splitlines()
+        n = int(re.match(r"(\d+)", text).group(1))
+        lines[lineno - 1] = lines[lineno - 1].replace(
+            text, text.replace(str(n), str(n + 5), 1), 1)
+        target.write_text(chr(10).join(lines), encoding="utf-8")
+        if not any(f"{path.name}:{lineno}" in f for f in _stale_tool_counts(work)):
+            unguarded.append((path.name, lineno, text))
+
+    unexplained = [u for u in unguarded if (u[0], u[1]) not in _DIAGNOSTIC_CLAIMS]
+    assert not unexplained, (
+        "these tool-count claims could be changed to a wrong number without the guard reporting "
+        "it, and they are not on the diagnostic list: " + repr(unexplained))
