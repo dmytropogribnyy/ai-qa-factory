@@ -222,10 +222,18 @@ class TestSuppressionPolicy:
     def test_cooldown_requires_expiry(self):
         with pytest.raises(ValueError):
             SuppressionPolicy(enabled=True, mode="COOLDOWN", reason="rate")
+        # The positive case pins an ordered PAIR rather than a bare future date. It used to pass
+        # only `expires_at="2026-08-01"` and let `created_at` default to the wall clock, so on
+        # 2026-08-01 the expiry resolved to that morning's midnight, `created_at` overtook it, and
+        # the validator correctly refused a policy that had already expired. The validator was
+        # right; the fixture was a calendar bomb, and it detonated on every branch at once.
+        # Another future literal would be the same bomb with a longer fuse.
         s = SuppressionPolicy(
-            enabled=True, mode="COOLDOWN", reason="rate", expires_at="2026-08-01"
+            enabled=True, mode="COOLDOWN", reason="rate",
+            created_at="2026-01-01T00:00:00+00:00", expires_at="2026-01-02T00:00:00+00:00",
         )
         assert s.mode == "COOLDOWN"
+        assert s.expires_at > s.created_at
 
     def test_modes_are_distinct(self):
         assert SuppressionPolicy(enabled=True, mode="NO_OUTREACH", reason="r").mode != \
