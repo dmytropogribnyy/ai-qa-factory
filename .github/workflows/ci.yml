@@ -383,7 +383,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install playwright axe-core-python
+          # The documented Deep Capture path, pinned. This used to be an ad-hoc
+          # `pip install playwright axe-core-python`: an undeclared, unpinned legacy distribution,
+          # so a green acceptance run was evidence about a bespoke host rather than about the
+          # environment the product tells operators to build.
+          python -m pip install -r requirements-deep-capture.txt
           python -m playwright install --with-deps chromium
       - name: Provision the generated framework's runtime (npm @playwright/test + Chromium)
         run: |

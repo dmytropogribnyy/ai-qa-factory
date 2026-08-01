@@ -676,20 +676,32 @@ def _check_execution_mode(ev: _Evidence) -> Check:
                  evidence_refs=[ev.evidence_ref(p, "browser_trace.json") for p in receipts])
 
 
+# A module receipt that is not a completion. "not_executed" is an ABSENT receipt; "unavailable" is
+# the pipeline's explicit record that the module was attempted and could not run (backends.py writes
+# it when axe-core will not inject into a live page). Both leave the advertised coverage undelivered,
+# so both degrade the run — but the receipt keeps its own value, because "nothing was recorded" and
+# "it was tried and failed" are different facts and the second is the diagnosable one. Only
+# "not_executed" counted here before, which let a browser run with no accessibility evidence read
+# PASS while the operator's evidence page showed CAPTURE_FAILED for the same run.
+_MODULE_GAP_RECEIPTS = frozenset({"not_executed", "unavailable"})
+
+
 def _check_modules(ev: _Evidence) -> Check:
     receipts = _module_receipts(ev)
     if not receipts:
         return Check("module_receipts", UNKNOWN, expected="a receipt per QA module", observed=None,
                      explanation="no target recorded any module outcome")
-    gaps = {pid: sorted(name for name, value in modules.items() if value == "not_executed")
+    gaps = {pid: sorted(f"{name} ({value})" for name, value in modules.items()
+                        if value in _MODULE_GAP_RECEIPTS)
             for pid, modules in receipts.items()}
     gaps = {pid: missing for pid, missing in gaps.items() if missing}
     if gaps:
         return Check("module_receipts", PARTIAL,
                      expected="every module leaves a receipt on every target",
                      observed=receipts,
-                     explanation=("these targets left no receipt for a module and are reported as "
-                                  "not executed rather than as clean: "
+                     explanation=("these targets did not complete a module — either no receipt at "
+                                  "all (not_executed) or an explicit failure to run it "
+                                  "(unavailable) — and are reported as such rather than as clean: "
                                   + "; ".join(f"{pid}: {', '.join(missing)}"
                                               for pid, missing in sorted(gaps.items()))))
     return Check("module_receipts", PASS, expected="every module leaves a receipt on every target",

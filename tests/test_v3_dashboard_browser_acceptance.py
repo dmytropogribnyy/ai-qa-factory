@@ -23,9 +23,9 @@ import itertools
 import pytest
 
 pytest.importorskip("playwright", reason="playwright not installed")
-pytest.importorskip("axe_core_python", reason="axe-core-python not installed")
+pytest.importorskip("axe_playwright_python", reason="axe-playwright-python not installed")
 
-from axe_core_python.sync_playwright import Axe  # noqa: E402
+from axe_playwright_python.sync_playwright import Axe  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from core.orchestration.client_work import ClientWorkService  # noqa: E402
@@ -105,7 +105,7 @@ def test_all_dashboard_pages_are_accessible(dashboard):
             for path in paths:
                 resp = page.goto(base + path, wait_until="networkidle")
                 assert resp is not None and resp.status == 200, f"{path} did not render"
-                results = axe.run(page)
+                results = axe.run(page).response
                 assert "violations" in results, f"axe did not run on {path}"
                 assert not _serious(results), f"{path} accessibility violations: {_serious(results)}"
         finally:

@@ -116,10 +116,12 @@ def test_run_preflight_structure_without_browser_or_network(tmp_path):
                            probe_browser_launch=False, do_network=False,
                            env={"TAVILY_API_KEY": "tvly-x"})
     keys = {c.key for c in report.checks}
-    assert keys == {"tavily_key", "browser", "network", "evidence_dir", "runtime",
+    assert keys == {"tavily_key", "browser", "axe", "network", "evidence_dir", "runtime",
                     "safety_policy", "auth_dependency", "scheduling"}
     # evidence/runtime/safety/tavily are deterministically acceptable here
     by = {c.key: c for c in report.checks}
     assert by["evidence_dir"].status == READY
     assert by["safety_policy"].status == READY
     assert by["network"].status == "skipped"
+    # axe injection needs a page, so it follows the browser-launch flag rather than running anyway.
+    assert by["axe"].status == "skipped"

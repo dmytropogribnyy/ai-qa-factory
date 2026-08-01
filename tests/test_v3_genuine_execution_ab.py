@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("playwright", reason="playwright not installed")
-pytest.importorskip("axe_core_python", reason="axe-core-python not installed")
+pytest.importorskip("axe_playwright_python", reason="axe-playwright-python not installed")
 
 # The npm @playwright/test runtime (node_modules + installed browsers) provisioned by CI. Scenario A
 # runs the GENERATED framework with the real `playwright test` binary from this runtime.
@@ -40,7 +40,7 @@ _needs_npm_runtime = pytest.mark.skipif(
     not (_RUNTIME and (Path(_RUNTIME) / "node_modules" / "@playwright" / "test").exists()),
     reason="npm @playwright/test runtime not provisioned (set PLAYWRIGHT_TEST_RUNTIME)")
 
-from axe_core_python.sync_playwright import Axe  # noqa: E402
+from axe_playwright_python.sync_playwright import Axe  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from core.orchestration.client_work import ClientWorkService  # noqa: E402
@@ -317,7 +317,7 @@ class RealAuditExecutor:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             page.goto(self._url, wait_until="load")
-            axe = Axe().run(page)
+            axe = Axe().run(page).response
             page.screenshot(path=str(ev / "audit.png"))
             browser.close()
         violations = axe.get("violations", [])

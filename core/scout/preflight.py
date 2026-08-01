@@ -116,6 +116,74 @@ def probe_browser(launch: bool = True) -> PreflightCheck:
                               f"launch failed: {str(exc)[:120]}", True)
 
 
+_AXE_CALLABLE_JS = ("() => (typeof axe === 'object' && typeof axe.run === 'function') "
+                    "? (axe.version || 'unknown') : ''")
+
+
+def _default_axe_loader() -> str:
+    """The PRODUCTION loader, not a second copy of its search logic.
+
+    A probe that reimplemented the vendored-file/optional-package search could report ready while
+    the pipeline still raised — it would be evidence about itself. Imported lazily so a static scan
+    never pulls the browser stack in.
+    """
+    from core.scout.pipeline.browser_qa import load_axe_source
+    return load_axe_source()
+
+
+def _inject_axe(source: str) -> str:
+    """Launch Chromium, inject the real source into a blank page, return axe's version.
+
+    Returns "" when axe did not end up callable. Loading the bytes proves only that some file
+    exists: a truncated or wrong-format bundle reads perfectly and then fails at the moment a run
+    depends on it, which is the failure this probe exists to catch.
+    """
+    factory = _sync_playwright_factory()
+
+    def _run() -> str:
+        with factory() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.add_script_tag(content=source)
+                return str(page.evaluate(_AXE_CALLABLE_JS) or "")
+            finally:
+                browser.close()
+
+    # Same constraint as probe_browser: Playwright's sync API refuses to run on an asyncio loop
+    # thread, which Observer MCP handlers have.
+    if _inside_asyncio_loop():
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="aiqa-axe-probe") as pool:
+            return pool.submit(_run).result()
+    return _run()
+
+
+def probe_axe(*, load_source: Optional[Callable[[], str]] = None,
+              inject: Optional[Callable[[str], str]] = None) -> PreflightCheck:
+    """Deep Capture's accessibility module: source obtainable AND actually runnable in a page.
+
+    Both seams are injectable so the deterministic suite can pin every outcome without making
+    Chromium or an axe distribution a hard dependency of the whole test run.
+    """
+    label = "axe-core source + real injection"
+    try:
+        source = (load_source or _default_axe_loader)()
+    except Exception as exc:  # noqa: BLE001 - any loader failure is a not-ready answer, not a crash
+        return PreflightCheck("axe", label, NOT_READY,
+                              f"axe-core source not loadable: {str(exc)[:120]}", True)
+    if not source:
+        return PreflightCheck("axe", label, NOT_READY, "axe-core source loaded empty", True)
+    try:
+        version = (inject or _inject_axe)(source)
+    except Exception as exc:  # noqa: BLE001 - a failed injection is the answer this probe reports
+        return PreflightCheck("axe", label, NOT_READY,
+                              f"axe-core could not be injected: {str(exc)[:120]}", True)
+    if not version:
+        return PreflightCheck("axe", label, NOT_READY,
+                              "axe-core injected but axe.run is not callable", True)
+    return PreflightCheck("axe", label, READY, f"axe-core {version} injected; axe.run callable", True)
+
+
 def probe_network(host: str = "api.tavily.com", port: int = 443,
                   timeout: float = 4.0) -> PreflightCheck:
     """Bounded outbound reachability probe (real TCP connect)."""
@@ -208,6 +276,13 @@ def run_preflight(*, output_dir: str = "outputs", campaign_config: Any = None,
     checks = [
         probe_tavily(env),
         probe_browser(launch=probe_browser_launch),
+        # Deep Capture is what the start form selects by DEFAULT, and it advertises an accessibility
+        # module. A host with a browser but no usable axe-core is not ready for it, so the aggregate
+        # must say so here rather than let the operator discover it by spending a run. Gated on the
+        # same flag as the browser launch: this probe opens a page too.
+        probe_axe() if probe_browser_launch else PreflightCheck(
+            "axe", "axe-core source + real injection", SKIPPED,
+            "browser launches disabled, so axe injection was not probed", True),
         probe_network() if do_network else PreflightCheck(
             "network", "Outbound network readiness", SKIPPED, "network probe disabled", True),
         probe_evidence_dir(output_dir),

@@ -234,7 +234,11 @@ def test_ai_mvp(tmp_path):
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    from axe_core_python.sync_playwright import Axe
+    # The distribution the documented Deep Capture setup installs. This used to import the legacy
+    # axe-core-python, which nothing declares: the test passed only on machines where that package
+    # had been installed by hand, so following scripts\setup-local.ps1 -DeepCapture exactly left it
+    # unrunnable. The maintained package wraps the raw axe response one level deeper.
+    from axe_playwright_python.sync_playwright import Axe
     from playwright.sync_api import sync_playwright
     # A representative AI-generated MVP defect: "auth" enforced only in client-side JS.
     page_html = ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
@@ -272,7 +276,7 @@ def test_ai_mvp(tmp_path):
             if "TOP SECRET" in secret_present:
                 findings.append("auth_boundary: protected content is present in client DOM")
             # Accessibility pass.
-            violations = Axe().run(page).get("violations", [])
+            violations = Axe().run(page).response.get("violations", [])
             browser.close()
     finally:
         server.shutdown()

@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("playwright", reason="playwright not installed")
-pytest.importorskip("axe_core_python", reason="axe-core-python not installed")
+pytest.importorskip("axe_playwright_python", reason="axe-playwright-python not installed")
 
-from axe_core_python.sync_playwright import Axe  # noqa: E402
+from axe_playwright_python.sync_playwright import Axe  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from core.orchestration.client_work import ClientWorkService  # noqa: E402
@@ -208,7 +208,7 @@ def test_pro_dark_default_toggle_persist_and_axe_both_themes(tmp_path):
             page = browser.new_page()
             page.goto(url + "/", wait_until="load")
             assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "dark"
-            dark = _serious(axe.run(page).get("violations", []))
+            dark = _serious(axe.run(page).response.get("violations", []))
             assert not dark, [v["id"] for v in dark]
             # Toggle to Light. The button is named after the action it performs, so the name must
             # also flip once the theme has changed (an operator must never be offered "Switch to
@@ -216,7 +216,7 @@ def test_pro_dark_default_toggle_persist_and_axe_both_themes(tmp_path):
             page.get_by_role("button", name="Switch to light theme").click()
             assert page.evaluate("() => document.documentElement.getAttribute('data-theme')") == "light"
             assert page.get_by_role("button", name="Switch to dark theme").is_visible()
-            light = _serious(axe.run(page).get("violations", []))
+            light = _serious(axe.run(page).response.get("violations", []))
             assert not light, [v["id"] for v in light]
             # Persistence + no dark flash: a fresh navigation keeps Light set before paint.
             page.goto(url + "/work", wait_until="commit")
@@ -238,7 +238,7 @@ def test_all_primary_pages_have_no_serious_axe_violations(tmp_path):
             page = browser.new_page()
             for path in _PRIMARY_PAGES:
                 page.goto(url + path, wait_until="load")
-                result = axe.run(page)
+                result = axe.run(page).response
                 serious = _serious(result.get("violations", []))
                 if serious:
                     failures[path] = [v["id"] for v in serious]
@@ -270,7 +270,7 @@ def test_activity_survives_restart_and_filters_diagnostics_in_real_chromium(tmp_
             assert desktop.get_by_text("Beta Commerce", exact=False).count() == 3
             assert desktop.get_by_text(diagnostic, exact=True).count() == 0
             assert desktop.get_by_text("Target promoted to Scout", exact=True).is_visible()
-            serious = _serious(axe.run(desktop).get("violations", []))
+            serious = _serious(axe.run(desktop).response.get("violations", []))
             assert not serious, [v["id"] for v in serious]
             desktop.evaluate("()=>window.scrollTo(0,0)")
             assert desktop.evaluate("()=>window.scrollY") == 0
@@ -287,7 +287,7 @@ def test_activity_survives_restart_and_filters_diagnostics_in_real_chromium(tmp_
                 "is included below and should not be treated as production",
                 exact=False,
             ).is_visible()
-            serious = _serious(axe.run(desktop).get("violations", []))
+            serious = _serious(axe.run(desktop).response.get("violations", []))
             assert not serious, [v["id"] for v in serious]
             # Clicking the toggle can preserve the previous document's scroll position. Reset it
             # before capturing so CI evidence contains the complete header/navigation, not a
@@ -304,7 +304,7 @@ def test_activity_survives_restart_and_filters_diagnostics_in_real_chromium(tmp_
             assert mobile.locator("tbody tr").count() == 6
             assert mobile.evaluate(
                 "()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
-            serious = _serious(axe.run(mobile).get("violations", []))
+            serious = _serious(axe.run(mobile).response.get("violations", []))
             assert not serious, [v["id"] for v in serious]
             mobile.evaluate("()=>window.scrollTo(0,0)")
             assert mobile.evaluate("()=>window.scrollY") == 0
@@ -441,7 +441,7 @@ def test_scout_form_is_themed_and_axe_clean_both_themes(tmp_path):
                 "()=>getComputedStyle(document.querySelector('.card .btn.primary')).backgroundColor")
             assert ta_bg not in _WHITE and btn_bg not in _WHITE, (ta_bg, btn_bg)
             for _ in range(2):
-                serious = _serious(axe.run(page).get("violations", []))
+                serious = _serious(axe.run(page).response.get("violations", []))
                 assert not serious, [v["id"] for v in serious]
                 page.evaluate("()=>localStorage.setItem('aiqa_theme','light')")
                 page.reload(wait_until="load")
@@ -475,7 +475,7 @@ def test_operator_overview_stays_stable_with_attached_run_and_is_axe_clean(tmp_p
             bg = page.evaluate("()=>getComputedStyle(document.body).backgroundColor")
             assert bg not in ("rgba(0, 0, 0, 0)", "rgb(255, 255, 255)"), bg  # not default white
             for theme in ("dark", "light"):
-                serious = _serious(axe.run(page).get("violations", []))
+                serious = _serious(axe.run(page).response.get("violations", []))
                 assert not serious, (theme, [v["id"] for v in serious])
                 page.evaluate("(t)=>localStorage.setItem('aiqa_theme',t)", "light")
                 page.reload(wait_until="load")
@@ -550,7 +550,7 @@ def test_operator_scout_pages_are_responsive_accessible_and_bulk_archive_works(t
                 "/scout/attention",
             ):
                 desktop.goto(url + path, wait_until="load")
-                serious = _serious(axe.run(desktop).get("violations", []))
+                serious = _serious(axe.run(desktop).response.get("violations", []))
                 assert not serious, (path, [v["id"] for v in serious])
 
             desktop.goto(url + f"/scout/run?id={run_id}", wait_until="load")

@@ -288,7 +288,11 @@ def test_a_module_with_no_receipt_reports_not_executed_rather_than_clean(tmp_pat
     check = _check(validate_run(str(tmp_path), "acc-run"), "module_receipts")
 
     assert check.status == PARTIAL
-    assert "not executed rather than as clean" in check.explanation
+    # Semantic, not prose: the receipt value and the "rather than clean" contract are what this
+    # guards. Pinning one contiguous sentence made it fail when the explanation grew to distinguish
+    # an absent receipt from a module that was tried and could not run.
+    assert "not_executed" in str(check.observed), check.observed
+    assert "rather than" in check.explanation and "clean" in check.explanation, check.explanation
 
 
 def test_an_unresolved_check_blocks_the_validated_badge(tmp_path):
