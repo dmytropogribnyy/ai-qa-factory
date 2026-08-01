@@ -37,7 +37,11 @@ See [CLIENT_WORK_OPERATOR_GUIDE.md](CLIENT_WORK_OPERATOR_GUIDE.md).
 ## Cheat sheet - SCOUT (local dashboard)
 
 1. `scripts\start-local.ps1` and open the dashboard.
-2. Create a campaign with simple filters (country / industry / keywords / depth).
+2. Pick the screen that matches what you have:
+   - you already know the websites → **manual seed scan** at `/scout` (paste addresses or import a
+     CSV/XLSX, choose Coverage and Scan mode, press **Start campaign**);
+   - you want Scout to find them → **prospect discovery** at `/scout/new` (give Countries and
+     Signals to look for, optionally Maximum sites, press **Start Scout**).
 3. Start it; watch progress; pause / resume / stop safely as needed.
 4. Review found companies, verified findings, and evidence.
 5. Review the public contact and its provenance.

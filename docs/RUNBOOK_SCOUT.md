@@ -30,9 +30,12 @@ Open **Start Scout** (`/scout/new`). The only thing you choose is **where the we
 | **Paste URLs** | one address per line |
 | **Upload file** | a CSV/XLSX whose column holds the addresses |
 
-Then set an optional **Maximum sites** and press **Start Scout**. There is no scan mode, coverage
-profile, campaign preset, page cap or capture switch to choose: those describe the engine rather
-than the work, and answering them wrongly changed what evidence came back. Scout resolves depth
+Then set an optional **Maximum sites** and press **Start Scout**. **On this screen** there is no
+scan mode, coverage profile, campaign preset, page cap or capture switch to choose: those describe
+the engine rather than the work, and answering them wrongly changed what evidence came back. (The
+other start screen, the manual seed scan at **`/scout`**, does expose **Coverage** and **Scan
+mode** — it is a different surface for a different job, see
+[the Scout operator guide](SCOUT_OPERATOR_GUIDE.md).) Scout resolves depth
 against a real Chromium probe and says which it used ("deep evidence capture", or "static scan (no
 browser available…)") — a downgrade is never silent.
 
