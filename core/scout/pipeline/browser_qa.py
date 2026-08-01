@@ -209,8 +209,12 @@ def load_axe_source() -> str:
     vendored = Path(__file__).with_name("vendor").joinpath("axe.min.js")
     if vendored.exists():
         return vendored.read_text(encoding="utf-8")
-    # 2. an installed axe distribution that ships axe.min.js.
-    for pkg in ("axe_core_python", "axe_selenium_python", "axe_playwright_python"):
+    # 2. an installed axe distribution that ships axe.min.js. The MAINTAINED one comes first: it is
+    # what requirements-deep-capture.txt pins and what the documented setup installs, so it has to be
+    # what actually runs. Searching the 2022 axe-core-python first meant a machine carrying both -
+    # including this project's own development checkout - silently executed axe-core 4.4.3 while the
+    # pin claimed 4.12.1. The legacy names stay as compatibility fallbacks; they simply no longer win.
+    for pkg in ("axe_playwright_python", "axe_core_python", "axe_selenium_python"):
         spec = importlib.util.find_spec(pkg)
         if spec and spec.submodule_search_locations:
             for base in spec.submodule_search_locations:

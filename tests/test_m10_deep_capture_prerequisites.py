@@ -211,6 +211,72 @@ def test_the_axe_probe_defaults_to_the_production_loader():
     )
 
 
+# --- the loader must prefer the distribution the setup path installs ------------------------------
+#
+# `load_axe_source()` searched `axe_core_python` before `axe_playwright_python`. On a machine
+# carrying the 2022 `axe-core-python` (axe-core 4.4.3) — which the canonical development checkout
+# does — the newly pinned distribution LOST, so the pin held only on a perfectly clean host while the
+# machine that runs the final check executed a four-year-old ruleset. Legacy stays supported as a
+# fallback; it simply no longer wins.
+
+def _fake_axe_distribution(root: pathlib.Path, name: str, version: str) -> pathlib.Path:
+    package = root / name
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "axe.min.js").write_text(f"/*! axe v{version} */", encoding="utf-8")
+    return package
+
+
+def _loader_with(monkeypatch, available: dict) -> str:
+    """Run the real `load_axe_source()` against a controlled set of discoverable distributions."""
+    import importlib.util as importlib_util
+
+    real_find_spec = importlib_util.find_spec
+
+    class _Spec:
+        def __init__(self, location: pathlib.Path) -> None:
+            self.submodule_search_locations = [str(location)]
+
+    def _find_spec(name, *args, **kwargs):
+        if name in ("axe_core_python", "axe_selenium_python", "axe_playwright_python"):
+            location = available.get(name)
+            return _Spec(location) if location else None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib_util, "find_spec", _find_spec)
+    from core.scout.pipeline.browser_qa import load_axe_source
+    return load_axe_source()
+
+
+def test_the_maintained_distribution_wins_when_both_are_installed(tmp_path, monkeypatch):
+    available = {
+        "axe_core_python": _fake_axe_distribution(tmp_path, "axe_core_python", "4.4.3"),
+        "axe_playwright_python": _fake_axe_distribution(tmp_path, "axe_playwright_python", "4.12.1"),
+    }
+    source = _loader_with(monkeypatch, available)
+    assert "4.12.1" in source, (
+        "the loader picked the legacy distribution over the one the documented setup installs, so "
+        f"the pin does not decide what actually runs: {source!r}"
+    )
+
+
+def test_the_legacy_distribution_is_still_used_when_it_is_the_only_one(tmp_path, monkeypatch):
+    """Preference, not deprecation — an existing legacy-only host keeps working."""
+    available = {"axe_core_python": _fake_axe_distribution(tmp_path, "axe_core_python", "4.4.3")}
+    assert "4.4.3" in _loader_with(monkeypatch, available)
+
+
+def test_the_selenium_distribution_is_still_a_fallback(tmp_path, monkeypatch):
+    available = {
+        "axe_selenium_python": _fake_axe_distribution(tmp_path, "axe_selenium_python", "4.9.0"),
+    }
+    assert "4.9.0" in _loader_with(monkeypatch, available)
+
+
+def test_no_distribution_at_all_still_fails_honestly(monkeypatch):
+    with pytest.raises(RuntimeError, match="axe-core source not available"):
+        _loader_with(monkeypatch, {})
+
+
 # --- Deep Capture must refuse BEFORE a run record is spent ---------------------------------------
 
 class _FakeService:
