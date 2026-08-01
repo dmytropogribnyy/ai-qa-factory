@@ -184,12 +184,13 @@ Exact per-release totals belong in versioned [release notes](docs/releases/) rat
 |---|---|
 | [Operator Quickstart](docs/QUICKSTART_OPERATOR.md) | Fast local setup and daily workflow |
 | [Client Work Operator Guide](docs/CLIENT_WORK_OPERATOR_GUIDE.md) | Senior-led brief-to-delivery workflow |
-| [Scout Operator Guide](docs/SCOUT_OPERATOR_GUIDE.md) | Campaign and prospect-QA operation |
+| [Scout Operator Guide](docs/SCOUT_OPERATOR_GUIDE.md) | **Start here for a manual seed scan** (`/scout`) — you already know the websites |
+| [Scout Runbook — discovery intake](docs/RUNBOOK_SCOUT.md) | **Start here for prospect discovery** (`/scout/new`) — let Scout find the websites |
 | [Current Runtime Capability Matrix](docs/CAPABILITY_MATRIX.md) | Executable, conditional, planning-only, and unavailable capabilities |
 | [Commands](docs/COMMANDS.md) | CLI reference |
 | [Approval Model](docs/APPROVAL_MODEL.md) | Approval and risk levels |
 | [Safety Rules](docs/SAFETY_RULES.md) | Non-negotiable execution boundaries |
-| [Scout Runbook](docs/RUNBOOK_SCOUT.md) | Continuation, archive, evidence, and cleanup procedures |
+| [Scout Runbook — operations](docs/RUNBOOK_SCOUT.md#5-control-or-clean-up-runs) | Continuation, archive, evidence, and cleanup procedures |
 | [Prospect QA Radar specification](docs/architecture/PROSPECT_QA_RADAR_SPEC.md) | Scout architecture and product contracts |
 | [Release notes](docs/releases/) | Versioned implementation and verification history |
 

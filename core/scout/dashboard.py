@@ -4700,10 +4700,22 @@ function startCampaign(){{
             body = (
                 '<h1>Help</h1><p class="muted">Short answers for the most common operator tasks.</p>'
                 '<div class="help-grid">'
-                '<section class="card"><h2>Start a Scout campaign</h2>'
-                '<ol><li>Open <a href="/scout/new">New Scout campaign</a>.</li>'
-                '<li>Choose the run size, countries and industries.</li>'
-                '<li>Approve the bounded live run and select Run campaign.</li></ol>'
+                # Two start surfaces exist and they do different work. This card used to describe
+                # one of them inaccurately — naming an "industries" field and a "Run campaign"
+                # button, neither of which is rendered anywhere — which left the operator's own
+                # fallback disagreeing with the screen in front of them.
+                '<section class="card"><h2>Start a run: which screen?</h2>'
+                '<p>There are two, and they do different things.</p>'
+                '<ol>'
+                '<li><strong>You already know the websites</strong> &mdash; use the '
+                '<a href="/scout">manual seed scan</a> on <code>/scout</code>. Paste public https '
+                'addresses (or import a CSV/XLSX), name the campaign, pick <em>Coverage</em> and '
+                '<em>Scan mode</em>, then press <em>Start campaign</em>.</li>'
+                '<li><strong>You want Scout to find them</strong> &mdash; use '
+                '<a href="/scout/new">prospect discovery</a> on <code>/scout/new</code>. Give '
+                '<em>Countries</em>, <em>Signals to look for</em> and an optional '
+                '<em>Maximum sites</em>, then press <em>Start Scout</em>.</li>'
+                '</ol>'
                 '<p>Every run has hard limits and never sends messages, submits forms or makes '
                 'purchases automatically.</p></section>'
                 '<section class="card"><h2>Use from Claude Code in VS Code</h2>'

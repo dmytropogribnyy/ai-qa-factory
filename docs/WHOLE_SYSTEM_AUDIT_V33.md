@@ -28,7 +28,7 @@ deferred.
 | Scheduling modes (Manual/Daily/Weekdays/Weekly/Once) | CP | `tools/scout_schedule.py` | schedule status = FX | `test_v33_schedule_modes` | live Task Scheduler run = LIVE |
 | Cross-campaign memory (skip/rescan/resume) | CP | `discovery/analyzed_registry.py` | `/scout/history` | `test_v33_analyzed_registry` | — |
 | Observer API (read-only) + AI Review Bundle | CP | `observer_api.py` | export action | `test_v33_observer_api` | — |
-| Observer MCP adapter (read-only, 19 tools) | CP | `integrations/mcp/observer_handlers.py` | `--list-tools` | `test_v33_mcp_observer` | live stdio needs `pip install mcp`; ChatGPT connect = operator step |
+| Observer MCP adapter (read-only, 20 tools) | CP | `integrations/mcp/observer_handlers.py` | `--list-tools` | `test_v33_mcp_observer` | live stdio needs `pip install mcp`; ChatGPT connect = operator step |
 | Seedless discovery (Tavily) + engine | CP | `discovery/*` | — | `test_v33_live_wiring` (mock transport) | one live Tavily run = LIVE |
 | **One Dashboard-driven live acceptance (real US/DE sites)** | **LIVE** | end-to-end | `/scout/new` → Run | — | operator-run; runbook `LIVE_SCOUT_ACCEPTANCE_V33.md` |
 

@@ -12,8 +12,14 @@ scripts\start-local.ps1        # http://127.0.0.1:8765 (idle home; nothing scann
 
 ## Create + run a campaign
 
-**From the dashboard (guarded Start panel).** On the idle home page, the **Start a bounded read-only
-campaign** panel takes 1–10 **public https** seed URLs, a campaign name, and max pages/site, plus an
+> **Which screen is this?** This guide describes the **manual seed scan** at **`/scout`** — the one
+> you use when you already know the websites. If you want Scout to *find* prospects instead, that is
+> a different screen: **prospect discovery** at **`/scout/new`**, documented in
+> [the Scout runbook](RUNBOOK_SCOUT.md).
+
+**From the dashboard (guarded Start panel at `/scout`).** The **Start a bounded read-only
+campaign** panel takes 1–10 **public https** seed URLs, a campaign name, a **Coverage** profile
+(Adaptive or Deep) and a **Scan mode** (Deep Capture or Static), plus an
 explicit confirmation checkbox. It starts only the existing bounded, read-only Scout engine — it
 never sends email, submits forms, solves CAPTCHAs, or runs commands. The endpoint is fenced by four
 independent guards: it binds to loopback only, the `Host` header must be loopback (blocks

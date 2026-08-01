@@ -11,7 +11,7 @@ this increment.**
 ```powershell
 pip install mcp                       # transport dependency (optional; handlers work without it)
 $env:AIQA_OUTPUT_ROOT = "D:\1QA AI\ai-qa-factory\outputs"   # server-side root (NOT a tool arg)
-python tools/run_mcp_server.py --list-tools                 # 26 tools: 7 planning + 19 observer
+python tools/run_mcp_server.py --list-tools                 # 27 tools: 7 planning + 20 observer
 python tools/run_mcp_server.py                              # start stdio MCP server
 ```
 
@@ -88,7 +88,7 @@ to the project output dir.
 ## MCP status (honest)
 
 1. **MCP server implemented** — yes (existing `qa-factory` stdio server, extended additively).
-2. **Observer tools exposed** — yes (19 read-only tools; original 7 planning tools regression-safe).
+2. **Observer tools exposed** — yes (20 read-only tools; original 7 planning tools regression-safe).
 3. **Compatible MCP client smoke-tested** — handler/dispatch/catalog verified deterministically;
    full stdio transport requires `pip install mcp`.
 4. **ChatGPT connection** — still requires operator/client configuration (not automatable here).

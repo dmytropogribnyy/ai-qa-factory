@@ -11,7 +11,7 @@ exact PowerShell commands, and the **owner-only** ChatGPT steps.
 
 - `core/scout/observer_api.py` — read-only Observer over the same persisted state the Dashboard uses.
 - 19 read-only Observer MCP tools on the **existing** `qa-factory` MCP server (`integrations/mcp/`),
-  alongside the 7 legacy planning tools = **26 tools** total.
+  alongside the 7 legacy planning tools = **27 tools** total.
 - Real **stdio transport verified**: `python tools/mcp_smoke.py` connects as a real MCP client and
   calls the tools (report: `outputs/mcp_acceptance/MCP_CONNECTION_ACCEPTANCE.md`). No secrets, no
   absolute paths, no control/write tools.
@@ -27,9 +27,9 @@ Code / Cursor) **spawn this themselves** — there is no long-lived daemon.
 
 - **Local + Claude clients → stdio (works now).** Verified end-to-end.
 - **ChatGPT → authenticated streamable-HTTP (BUILT + verified locally).** The existing server now also
-  serves the SAME 26 tools over streamable-HTTP behind a **bearer token** (`AIQA_MCP_TOKEN`), bound to
+  serves the SAME 27 tools over streamable-HTTP behind a **bearer token** (`AIQA_MCP_TOKEN`), bound to
   `127.0.0.1` by default — one logical implementation, no second server. Verified: an authorized
-  client lists 26 tools and calls `observer_get_project_overview`; an unauthenticated request gets
+  client lists 27 tools and calls `observer_get_project_overview`; an unauthenticated request gets
   **401**. Report: `outputs/mcp_acceptance/MCP_HTTP_ACCEPTANCE.md`.
 - **What Claude will NOT do automatically:** install a tunnel, open a public port, change the
   firewall, or log into your ChatGPT account. Exposing the loopback endpoint over a public HTTPS URL
@@ -73,8 +73,8 @@ $env:AIQA_OUTPUT_ROOT = "D:\1QA AI\ai-qa-factory\outputs"
 
 ## F. Expected successful output
 
-- `doctor` → prints repo/python/output-root, `mcp installed`, and **26 tools (7 planning + 19 observer)**.
-- `test` → `[mcp-smoke] PASS ... tools=26 observer=19 leaks=none` and writes the acceptance report.
+- `doctor` → prints repo/python/output-root, `mcp installed`, and **27 tools (7 planning + 20 observer)**.
+- `test` → `[mcp-smoke] PASS ... tools=27 observer=20 leaks=none` and writes the acceptance report.
 
 ## G-J. Connect / health / stop / update (Claude clients — works today)
 
