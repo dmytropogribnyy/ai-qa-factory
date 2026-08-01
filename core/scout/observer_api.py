@@ -14,7 +14,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.scout.campaign_service import CampaignService
 from core.scout.discovery.analyzed_registry import AnalyzedSiteRegistry
@@ -294,35 +294,122 @@ class ObserverAPI:
         return [c.get("promoted_scout_run") for c in state.get("candidates", [])
                 if c.get("promoted_scout_run")]
 
-    def list_findings(self, campaign_id: str, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
-        campaign_id = self._cid(campaign_id)
+    def _campaign_findings(self, campaign_id: str) -> Tuple[List[Dict[str, Any]],
+                                                            List[Dict[str, Any]],
+                                                            Dict[str, Any]]:
+        """Load a campaign's findings once and return `(raw_rows, canonical_rows, summary)`.
+
+        The canonical split is applied **per exact persisted target**, keyed on the run id and the
+        finding's own `prospect_ref`, and only then aggregated. Running `actionable_set()` over a
+        campaign-wide flattened pile would be wrong in a way that reads as correct:
+        `actionable.py::_identity` keys on `signature`, and `checks.py` signatures are rule
+        identifiers with no site component (`missing_canonical`, `a11y_axe_active`, `axe:{rule}`).
+        Nothing bypasses the dedup either, because `ScoutFinding` never persists `kind`. Two sites
+        with the same missing canonical tag would therefore become one finding, and every other
+        site's copy would be filed as a duplicate — a systematic under-report delivered under the
+        word "canonical".
+
+        Raw rows keep their exact previous shape and meaning: `run_validation` compares that count
+        against raw persisted rows on purpose, and this method does not change what it sees.
+        """
+        from core.scout.actionable import actionable_set
         from core.scout.priority import load_verified_findings
         from core.scout.store import RunStore
-        rows: List[Dict[str, Any]] = []
+
+        raw: List[Dict[str, Any]] = []
+        by_target: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         for run_id in self._promoted_runs(campaign_id):
             try:
-                for f in load_verified_findings(RunStore(self.output_dir, run_id)):
-                    rows.append({"finding_id": f.get("finding_id"), "scout_run": run_id,
-                                 "url": f.get("url"), "severity": f.get("severity"),
-                                 "category": f.get("category"), "title": f.get("title")})
+                loaded = load_verified_findings(RunStore(self.output_dir, run_id))
             except Exception:
                 continue
-        total = len(rows)
-        page = rows[offset:offset + max(1, min(limit, 500))]
-        return {"api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id, "total": total,
-                "offset": offset, "findings": redact(page)}
+            for f in loaded:
+                raw.append(self._public_finding_row(f, run_id))
+                # The binding comes from persisted run data, never a best-effort domain lookup. A
+                # finding with no `prospect_ref` is its own target rather than being merged into a
+                # shared bucket, so an unattributable row can never suppress a real one.
+                target = str(f.get("prospect_ref") or f.get("finding_id") or "")
+                by_target.setdefault((run_id, target), []).append(f)
+
+        canonical: List[Dict[str, Any]] = []
+        confirmed = informational = suppressed = 0
+        severity: Dict[str, int] = {}
+        reasons: List[str] = []
+        for (run_id, _target), group in sorted(by_target.items()):
+            split = actionable_set(group)
+            canonical.extend(self._public_finding_row(f, run_id, kind=f.get("kind"))
+                             for f in split.labelled())
+            confirmed += split.confirmed_issue_count
+            informational += len(split.informational)
+            suppressed += len(split.suppressed)
+            for key, count in split.severity_breakdown().items():
+                severity[key] = severity.get(key, 0) + count
+            reasons.extend(str(s.get("suppressed_reason", "")) for s in split.suppressed)
+
+        summary = {"confirmed_issues": confirmed, "informational": informational,
+                   "suppressed": suppressed, "total": confirmed + informational,
+                   "severity_breakdown": severity, "suppressed_reasons": reasons}
+        return raw, canonical, summary
+
+    @staticmethod
+    def _public_finding_row(f: Dict[str, Any], run_id: str,
+                            kind: Optional[str] = None) -> Dict[str, Any]:
+        """The one projection both findings surfaces return, so they cannot drift apart."""
+        row = {"finding_id": f.get("finding_id"), "scout_run": run_id, "url": f.get("url"),
+               "severity": f.get("severity"), "category": f.get("category"),
+               "title": f.get("title")}
+        if kind:
+            row["kind"] = kind
+        return row
+
+    def list_findings(self, campaign_id: str, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """The campaign's findings as ONE explained contract.
+
+        This surface used to publish a flat raw list with `total = len(rows)` beside
+        `target_detail`'s canonical 10 / 8 actionable / 2 informational / 4 suppressed, and no row
+        carried `kind`. A reader could not tell which number described which collection, and the
+        difference between them was never stated anywhere.
+
+        Now every number says what it counts. `total` keeps its original raw meaning — it is a
+        documented legacy alias of `raw_total`, and `run_validation` still compares it against raw
+        persisted rows — while `canonical_total`, `page_count` and `summary` describe the canonical
+        collection. `offset`/`limit` page the canonical collection only.
+        """
+        campaign_id = self._cid(campaign_id)
+        raw, canonical, summary = self._campaign_findings(campaign_id)
+        page = canonical[offset:offset + max(1, min(limit, 500))]
+        return {
+            "api_version": OBSERVER_API_VERSION, "campaign_id": campaign_id,
+            # Raw cardinality, unchanged in value and meaning.
+            "total": len(raw), "raw_total": len(raw),
+            # The canonical collection this response's rows are drawn from.
+            "canonical_total": len(canonical), "page_count": len(page),
+            "offset": offset, "limit": limit,
+            "count_semantics": {
+                "total": "raw persisted finding rows (legacy alias of raw_total; NOT the size of "
+                         "the canonical findings list)",
+                "raw_total": "raw persisted finding rows, before the canonical per-target split",
+                "canonical_total": "the full canonical survivor collection (actionable + "
+                                   "informational) before pagination",
+                "page_count": "canonical rows returned in this page",
+                "pagination_applies_to": "canonical",
+            },
+            "summary": summary,
+            "findings": redact(page),
+        }
 
     def get_finding(self, campaign_id: str, finding_id: str) -> Dict[str, Any]:
+        """Resolve one finding from the SAME canonical collection `list_findings` publishes.
+
+        Reading the raw store here is how the two endpoints came to disagree: a row suppressed as a
+        duplicate of another finding on its own target could still be fetched by id, unlabelled, and
+        read as canonical coverage.
+        """
         campaign_id = self._cid(campaign_id)
-        from core.scout.priority import load_verified_findings
-        from core.scout.store import RunStore
-        for run_id in self._promoted_runs(campaign_id):
-            try:
-                for f in load_verified_findings(RunStore(self.output_dir, run_id)):
-                    if f.get("finding_id") == finding_id:
-                        return {"api_version": OBSERVER_API_VERSION, "finding": redact(f)}
-            except Exception:
-                continue
+        _raw, canonical, _summary = self._campaign_findings(campaign_id)
+        for row in canonical:
+            if row.get("finding_id") == finding_id:
+                return {"api_version": OBSERVER_API_VERSION, "finding": redact(row)}
         return {"api_version": OBSERVER_API_VERSION, "error": "finding_not_found",
                 "finding_id": finding_id}
 
