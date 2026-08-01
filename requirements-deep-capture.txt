@@ -1,0 +1,25 @@
+# Deep Capture (optional) — the browser half of Scout.
+#
+# The base install (requirements.txt) is deliberately light: a Static scan needs no browser. Deep
+# Capture is what advertises screenshots, axe-core accessibility, performance timing and
+# console/network evidence, and it needs these plus a Chromium binary. Install both together:
+#
+#     scripts\setup-local.ps1 -DeepCapture
+#
+# which installs this file and then runs `python -m playwright install chromium` with the same venv
+# interpreter. Installing the packages without the browser leaves Deep Capture unavailable, and the
+# Dashboard will refuse to start such a run rather than produce evidence with a hole in it.
+#
+# Versions are pinned, not floored. axe-playwright-python's own requirement is open-ended, so
+# installing it alone resolves a Playwright this repository has not exercised; pinning both is what
+# makes a fresh machine reproduce the environment the test suite proves.
+#
+# THIRD-PARTY NOTICE — axe-playwright-python bundles axe-core (axe_playwright_python/axe.min.js,
+# v4.12.1, © Deque Systems, Inc.) under the **Mozilla Public License, v. 2.0**, NOT under the MIT
+# licence the wrapper's own metadata declares. Scout loads that file at runtime through
+# core/scout/pipeline/browser_qa.py::load_axe_source(); the file is not copied into this repository
+# and is not redistributed in any client package, so the MPL notice stays with the upstream
+# distribution where it belongs. See https://github.com/dequelabs/axe-core for the source and terms.
+
+axe-playwright-python==0.1.8
+playwright==1.61.0

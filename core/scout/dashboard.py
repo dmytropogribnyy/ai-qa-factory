@@ -2660,7 +2660,8 @@ function startCampaign(){{
                 "<option value=static>Static (faster)</option></select></label></p>"
                 "<p class=muted>Static = faster HTTP/HTML checks. Deep Capture = real browser: "
                 "screenshots, axe accessibility, perf timing and console/network evidence (needs "
-                "Chromium). Coverage bounds how many same-site pages are explored (never a quota); "
+                "Chromium and axe-core: setup-local.ps1 -DeepCapture). Coverage bounds how many "
+                "same-site pages are explored (never a quota); "
                 "both profiles can stop early once further pages add no new coverage.</p>"
                 "<p><label><input type=checkbox id=impconfirm> I confirm this is an authorized, "
                 "bounded, read-only scan.</label></p>"
@@ -4868,7 +4869,8 @@ seeds. It never sends email, submits forms, solves CAPTCHAs, or runs commands. N
 <option value="playwright" selected>Deep Capture (Playwright)</option>
 <option value="static">Static (faster)</option></select></label></p>
 <p class="muted">Static = faster HTTP/HTML checks. Deep Capture = real browser: screenshots, axe
-accessibility, performance timing, and console/network evidence (needs Chromium installed).
+accessibility, performance timing, and console/network evidence (needs Chromium and axe-core
+installed &mdash; <code>scripts&#92;setup-local.ps1 -DeepCapture</code>).
 Coverage decides how many same-site pages Scout explores for meaningful, non-duplicate content
 &mdash; an upper bound, never a quota; both profiles can stop early once further pages add no new
 coverage. This is separate from how many domains a campaign analyzes.</p>

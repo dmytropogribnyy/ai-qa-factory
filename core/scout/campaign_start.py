@@ -58,6 +58,17 @@ def _default_browser_probe() -> bool:
     return probe_browser().status == READY
 
 
+def _default_axe_probe() -> bool:
+    """Real axe-core readiness: the production loader plus a genuine injection into a page.
+
+    Deep Capture advertises an accessibility module, so Chromium alone is not the prerequisite. A
+    host with a browser but no axe distribution produced a run whose accessibility evidence was
+    simply absent, and the operator paid for the run to find out.
+    """
+    from core.scout.preflight import READY, probe_axe
+    return probe_axe().status == READY
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -94,6 +105,7 @@ class CampaignLauncher:
                  resolver: Optional[Resolver] = None,
                  starter: Optional[Callable[[ScoutRunConfig], str]] = None,
                  browser_probe: Optional[Callable[[], bool]] = None,
+                 axe_probe: Optional[Callable[[], bool]] = None,
                  clock: Callable[[], str] = _now_iso,
                  env: Optional[Dict[str, str]] = None) -> None:
         self._service = service
@@ -107,6 +119,9 @@ class CampaignLauncher:
         # Deep Capture readiness probe (injectable for deterministic tests); only ever called for a
         # ``playwright`` run, so a ``static`` run never imports/launches a browser.
         self._browser_probe = browser_probe or _default_browser_probe
+        # Second half of the same readiness question. Kept separate from the browser probe so the
+        # refusal can name which prerequisite is missing instead of reporting one for the other.
+        self._axe_probe = axe_probe or _default_axe_probe
         self._clock = clock
         base = Path(registry_dir) if registry_dir else Path(service.output_dir) / "scout" / _REGISTRY_DIRNAME
         self._registry = base
@@ -182,10 +197,23 @@ class CampaignLauncher:
             # Deep Capture (Playwright) preflight: confirm a real Chromium is available BEFORE
             # starting. If not, refuse honestly with an actionable message — never silently downgrade
             # to static (which would hide the missing screenshots / axe / perf evidence).
-            if cfg.browser_mode == "playwright" and not self._browser_probe():
-                return _reject(503, "Deep Capture needs a working Chromium (Playwright) on this host. "
-                                    "Install it (python -m playwright install chromium) or choose "
-                                    "Static — refusing rather than silently downgrading to static.")
+            if cfg.browser_mode == "playwright":
+                if not self._browser_probe():
+                    return _reject(503, "Deep Capture needs a working Chromium (Playwright) on this "
+                                        "host. Install it (python -m playwright install chromium) "
+                                        "or choose Static — refusing rather than silently "
+                                        "downgrading to static.")
+                # Deep Capture also advertises axe-core accessibility. A browser without axe
+                # produces a run whose advertised module is simply missing, and the refusal has to
+                # arrive here — before a run id exists and before anything is persisted.
+                if not self._axe_probe():
+                    return _reject(503, "Deep Capture also needs axe-core for its accessibility "
+                                        "module, and it is not usable on this host. Install the "
+                                        "optional dependencies (scripts\\setup-local.ps1 "
+                                        "-DeepCapture, which installs requirements-deep-capture.txt "
+                                        "and Chromium) or choose Static — refusing rather than "
+                                        "starting a run whose accessibility evidence would be "
+                                        "missing.")
             cfg.run_id = fresh_run_id(cfg.campaign_name)
 
             record = {"idempotency_key": key, "run_id": cfg.run_id, "status": "STARTING",
