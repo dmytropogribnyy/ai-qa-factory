@@ -276,6 +276,46 @@ class CampaignRunControl:
             self._transition(target)
             self.state.heartbeat_at = _now_iso()
 
+    def begin_phase(self, target: str) -> str:
+        """Atomically decide between honouring a pending control and entering the next phase.
+
+        Checking the controls and then advancing as two steps leaves a window: a Pause landing
+        between them makes the state PAUSING, and PAUSING -> TRIAGING/ANALYZING is not a legal
+        transition, so the phase step fails the whole run. Re-reading before the advance does not
+        close it — the gap is between the decision and the write, not before the decision.
+
+        So the read and the decision happen under ONE hold of this campaign's lock. A concurrent
+        operator either gets there first (we see the control and report it) or waits (their pause
+        lands after the transition and is honoured at the next boundary). There is no in-between.
+
+        The parking is part of the same hold. Reporting ``paused`` and letting the caller park as
+        a second mutation reopens the gap one level down: a Stop landing in between would meet
+        ``STOPPED_CHECKPOINT -> PAUSED``, which is not a legal transition either. A Stop that is
+        already written therefore always wins here — it is checked first and never becomes a
+        failure.
+
+        Returns ``stop``, ``paused``, ``already_past`` or ``advanced``. ``stop`` and
+        ``already_past`` write nothing.
+        """
+        with _lock_for(self._path):
+            self.state = self._load()
+            if self.should_stop():
+                return "stop"
+            if self.should_pause():
+                if self.state.state != PAUSED:
+                    self._transition(PAUSED)
+                self.state.requested_control = ""
+                self._save()
+                return "paused"
+            # A resume deliberately lands the run in ANALYZING — continue pending work, never
+            # rediscover — so a phase already behind the run is a no-op, not an illegal transition.
+            if self.state.state == ANALYZING and target in (TRIAGING, ANALYZING):
+                return "already_past"
+            self._transition(target)
+            self.state.heartbeat_at = _now_iso()
+            self._save()
+            return "advanced"
+
     def heartbeat(self) -> None:
         """Liveness only. It reports that this worker is alive — it decides nothing else.
 
@@ -315,12 +355,19 @@ class CampaignRunControl:
         return self.state.state
 
     def stop_and_save(self, checkpoint: Optional[Checkpoint] = None) -> None:
-        """Stop safely, preserving completed work + pending queue + budgets + evidence."""
+        """Stop safely, preserving completed work + pending queue + budgets + evidence.
+
+        Idempotent: a run already stopped with a checkpoint records the new checkpoint and stays
+        stopped. Re-transitioning would be illegal (STOPPED_CHECKPOINT only leads back into work),
+        so a worker that notices an operator's Stop and calls this on its way out would otherwise
+        turn an orderly stop into a FAILED run.
+        """
         with self._mutation():
             if checkpoint is not None:
                 self.state.checkpoint = checkpoint
             self.state.requested_control = "stop"
-            self._transition(STOPPED_CHECKPOINT)
+            if self.state.state != STOPPED_CHECKPOINT:
+                self._transition(STOPPED_CHECKPOINT)
 
     def block(self, reason: str) -> None:
         with self._mutation():
