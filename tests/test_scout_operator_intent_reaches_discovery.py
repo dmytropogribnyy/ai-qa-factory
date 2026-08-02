@@ -80,6 +80,45 @@ def _launch(tmp_path, monkeypatch):
     return svc, res["campaign_id"]
 
 
+def test_registration_backfills_provenance_onto_an_existing_bare_row(tmp_path):
+    """A row that predates the fix must gain its provenance the next time it is registered.
+
+    Every target registered before this slice is a bare row, so a rescan of an already-analyzed
+    domain would otherwise keep showing a blank provider for ever — fixing only newly created
+    rows leaves the existing History untouched.
+    """
+    from core.scout.discovery.analyzed_registry import ANALYZED
+
+    reg = AnalyzedSiteRegistry(str(tmp_path))
+    reg.record_analysis("acme.com", status=ANALYZED, evidence_ref="scout/acme.com/qa",
+                        campaign_id="c0")                      # the pre-fix bare row
+    before = AnalyzedSiteRegistry(str(tmp_path)).get("acme.com")
+    assert before.discovery_provider == "" and before.original_url == ""
+
+    AnalyzedSiteRegistry(str(tmp_path)).observe("https://acme.com/", campaign_id="c1",
+                                                provider="tavily")
+
+    after = AnalyzedSiteRegistry(str(tmp_path)).get("acme.com")
+    assert after.discovery_provider == "tavily"
+    assert after.original_url == "https://acme.com/"
+    assert after.normalized_url == "https://acme.com"
+    assert after.campaign_ids == ["c0", "c1"]
+
+
+def test_backfill_never_overwrites_provenance_that_is_already_recorded(tmp_path):
+    """First-seen provenance is a historical fact: a later campaign must not rewrite it."""
+    reg = AnalyzedSiteRegistry(str(tmp_path))
+    reg.observe("https://acme.com/found-here", campaign_id="c1", provider="tavily")
+
+    AnalyzedSiteRegistry(str(tmp_path)).observe("https://acme.com/seen-later",
+                                                campaign_id="c2", provider="other-provider")
+
+    entry = AnalyzedSiteRegistry(str(tmp_path)).get("acme.com")
+    assert entry.discovery_provider == "tavily"
+    assert entry.original_url == "https://acme.com/found-here"
+    assert entry.campaign_ids == ["c1", "c2"]
+
+
 def test_campaign_registered_target_carries_its_discovery_provenance(tmp_path, monkeypatch):
     """History/Target must be able to say which provider found a site, and at which URL."""
     _svc, campaign_id = _launch(tmp_path, monkeypatch)
