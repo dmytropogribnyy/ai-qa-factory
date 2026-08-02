@@ -310,9 +310,16 @@ class CampaignService:
             diversity=DiversityCaps(**{k: v for k, v in (cfg.diversity_caps or {}).items()
                                        if k in DiversityCaps().__dict__}))
         decisions: List[Dict[str, Any]] = []
+        # Where each promoted target came from, carried to registration so History/Target can say
+        # which provider found it and at which URL (the candidate already records both).
+        provenance: Dict[str, Dict[str, str]] = {}
         for cand in state.get("candidates", []):
             if cand.get("promotion_decision") != "promoted":
                 continue
+            dom = cand.get("registrable_domain", "")
+            if dom:
+                provenance[dom] = {"url": cand.get("normalized_url", "") or "",
+                                   "provider": cand.get("provider_id", "") or ""}
             industry = cand.get("industry_hint") or (cfg.industries[0] if cfg.industries else "")
             profile = profile_for_industry(industry)
             commercial = int(cand.get("commercial_score", 0))
@@ -347,9 +354,11 @@ class CampaignService:
         self._write(cfg.campaign_id, "BRAIN_DECISIONS.json",
                     {"campaign_id": cfg.campaign_id, "at": _now(),
                      "allocator": alloc.snapshot(), "decisions": decisions})
-        self._register_analyzed(cfg.campaign_id, [d.get("domain", "") for d in decisions])
+        self._register_analyzed(cfg.campaign_id, [d.get("domain", "") for d in decisions],
+                                provenance=provenance)
 
-    def _register_analyzed(self, campaign_id: str, domains: List[str]) -> List[str]:
+    def _register_analyzed(self, campaign_id: str, domains: List[str], *,
+                           provenance: Optional[Dict[str, Dict[str, str]]] = None) -> List[str]:
         """P1 Golden-Path fix: every promoted/QA-analyzed domain must appear in the History registry
         (/scout/history reads AnalyzedSiteRegistry; target-detail findings come from the brain). Only
         promoted domains are passed here — rejected/failed/merely-discovered are never registered.
@@ -357,7 +366,13 @@ class CampaignService:
         no duplicate row is created. Never fails the run.
 
         Returns the domains actually PERSISTED — a suppressed write error is reflected by absence, so a
-        caller (reconcile) can report attempted-vs-persisted honestly rather than assume success."""
+        caller (reconcile) can report attempted-vs-persisted honestly rather than assume success.
+
+        ``provenance`` maps a domain to the ``url``/``provider`` it was discovered at. It is applied
+        through ``observe()`` — the single writer of those fields — before the analysis is recorded,
+        because ``record_analysis()`` creates a bare row when the domain is new, and History/Target
+        then have no way to say which provider found the site or at which URL. The replay path
+        (``reconcile_history``) has no candidate records, so it passes none and keeps its behaviour."""
         from core.scout.discovery.analyzed_registry import ANALYZED, AnalyzedSiteRegistry
         persisted: List[str] = []
         try:
@@ -369,6 +384,13 @@ class CampaignService:
             if not d:
                 continue
             try:
+                prov = (provenance or {}).get(d) or {}
+                url, provider = prov.get("url", ""), prov.get("provider", "")
+                if url and provider:
+                    try:
+                        reg.observe(url, campaign_id=campaign_id, provider=provider)
+                    except ValueError:
+                        pass          # a candidate with no canonical domain is not registrable
                 reg.record_analysis(d, status=ANALYZED, evidence_ref=f"scout/{d}/qa",
                                     campaign_id=campaign_id)
                 persisted.append(d)

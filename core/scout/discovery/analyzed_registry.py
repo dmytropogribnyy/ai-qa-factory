@@ -119,6 +119,17 @@ class AnalyzedSiteRegistry:
                           discovery_provider=provider, first_seen=now)
             self._entries[domain] = e
         e.last_seen = now
+        # An entry can already exist without provenance: ``record_analysis`` creates a bare row for
+        # a domain it has not seen, so every target registered by the campaign path before this was
+        # fixed — and any row a rescan touches — would otherwise stay blank in History for ever.
+        # Fill only what is MISSING: first-seen provenance is a historical fact, and a later
+        # campaign (possibly a different provider) must never rewrite where a site was first found.
+        if provider and not e.discovery_provider:
+            e.discovery_provider = provider
+        if not e.original_url:
+            e.original_url = url
+        if not e.normalized_url:
+            e.normalized_url = f"https://{domain}"
         if campaign_id and campaign_id not in e.campaign_ids:
             e.campaign_ids.append(campaign_id)
         self._save()

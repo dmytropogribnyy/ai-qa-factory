@@ -29,6 +29,24 @@ SUPPORTED_SITE_TYPES: Tuple[str, ...] = (
     SITE_TYPE_PROFESSIONAL, SITE_TYPE_MARKETPLACE, SITE_TYPE_PERSONAL,
 )
 
+# What a site type is called in prose. Used both by the Start-Scout form and by the search text
+# a selected type produces, so the operator reads the same words the query carries.
+SITE_TYPE_LABELS: Dict[str, str] = {
+    SITE_TYPE_COMMERCIAL: "Commercial product",
+    SITE_TYPE_B2B_SAAS: "B2B SaaS",
+    SITE_TYPE_ECOMMERCE: "E-commerce",
+    SITE_TYPE_BOOKING: "Travel and booking",
+    SITE_TYPE_PROFESSIONAL: "Professional services",
+    SITE_TYPE_MARKETPLACE: "Marketplace",
+    SITE_TYPE_PERSONAL: "Personal portfolio",
+}
+
+
+def site_type_label(site_type: str) -> str:
+    """Human search term for a site type (``b2b_saas`` -> ``B2B SaaS``)."""
+    s = str(site_type or "").strip()
+    return SITE_TYPE_LABELS.get(s, s.replace("_", " ").title())
+
 # Initial industries only (kept for back-compat).
 INITIAL_INDUSTRIES: Tuple[str, ...] = (
     "B2B SaaS", "E-commerce", "Travel/Booking", "Professional Services",
@@ -269,4 +287,16 @@ def build_config(campaign_preset: str, session_preset: Optional[str] = None, *,
     if overrides:
         known = set(DiscoveryCampaignConfig(campaign_name="x", provider_allowlist=["p"]).__dict__)
         kwargs.update({k: v for k, v in overrides.items() if k in known})
+        # The Start-Scout form sends its "Business types" choice as ``site_types`` — a downstream
+        # classification field the discovery matrix never reads. The choice was therefore recorded
+        # in intake provenance while the search ran unchanged, which reads as an applied filter.
+        # An explicit choice becomes the ``business_types`` axis, so it bounds the matrix and shows
+        # up in every query the campaign issues.
+        #
+        # Only an EXPLICIT choice does this. Every preset ships the full commercial site-type list,
+        # so mapping the preset default would turn one cell per industry into six per industry and
+        # multiply provider calls against the same budget. An explicit ``business_types`` override
+        # still wins, so the CLI keeps its contract.
+        if overrides.get("site_types") and "business_types" not in overrides:
+            kwargs["business_types"] = [site_type_label(s) for s in overrides["site_types"]]
     return DiscoveryCampaignConfig(**kwargs)

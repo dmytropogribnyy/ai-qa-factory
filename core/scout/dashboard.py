@@ -2830,14 +2830,11 @@ function startCampaign(){{
             builds the queue afterwards.
             """
             cat = self._campaign_service().catalog()
-            site_type_labels = {
-                "b2b_saas": "B2B SaaS",
-                "commercial_product_company": "Commercial product",
-                "ecommerce": "E-commerce",
-                "booking_travel": "Travel and booking",
-                "professional_services": "Professional services",
-                "marketplace": "Marketplace",
-            }
+            # One source for these words: the same labels become the search text when a type is
+            # selected, so the operator reads on the form exactly what the query will carry.
+            from core.scout.presets import SITE_TYPE_LABELS, SITE_TYPE_PERSONAL
+            site_type_labels = {k: v for k, v in SITE_TYPE_LABELS.items()
+                                if k != SITE_TYPE_PERSONAL}
             biz = "".join(
                 f'<label class="option-tile"><input type="checkbox" name="biztype" '
                 f'value="{_esc(s)}"><span>{_esc(site_type_labels.get(s, s.replace("_", " ").title()))}'
