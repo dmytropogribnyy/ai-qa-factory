@@ -2816,6 +2816,11 @@ function startCampaign(){{
             except Exception as exc:                # noqa: BLE001 - never drop the connection
                 return self._json(500, {"ok": False,
                                         "error": f"the control could not be saved: {exc}"})
+            # The service refuses an action it does not know by ANSWERING rather than raising, so a
+            # rejected request would otherwise arrive as a 200 carrying ok:false — an unapplied
+            # control indistinguishable from an applied one at the HTTP layer.
+            if not result.get("ok"):
+                return self._json(400, result)
             return self._json(200, result)
 
         def _scout_export(self, parsed):

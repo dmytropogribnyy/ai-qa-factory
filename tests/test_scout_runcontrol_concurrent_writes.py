@@ -131,6 +131,32 @@ def test_pause_over_http_reports_success_only_when_the_control_is_durable(tmp_pa
         server.shutdown()
 
 
+def test_an_unknown_control_action_is_refused_at_the_http_layer(tmp_path):
+    """A control that was never applied must not be reported as HTTP success.
+
+    ``CampaignService.control()`` answers ``{"ok": False, ...}`` for an action it does not know.
+    Returning 200 for that made a rejected request indistinguishable from an applied one at the
+    HTTP layer — the same confusion as the lost Pause, arriving by a different route.
+    """
+    server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
+    try:
+        worker = _live_worker(tmp_path)
+        before = worker.state.state
+
+        status, body = _post(
+            f"{url}/api/scout/control?id=c1&action=frobnicate", server.scout_csrf_token)
+
+        assert 400 <= status < 500, "an unapplied control must not come back as success"
+        assert body.get("ok") is False
+        assert "frobnicate" in str(body.get("error", ""))
+
+        after = _fresh(tmp_path)
+        assert after.state.state == before, "a refused action must not touch the run"
+        assert after.state.requested_control == ""
+    finally:
+        server.shutdown()
+
+
 def test_pause_over_http_returns_an_explicit_error_when_persistence_fails(tmp_path, monkeypatch):
     """A failed write must reach the operator as JSON, never as a dropped connection."""
     server, url = start_dashboard(ScoutService(str(tmp_path)), operator_home=True)
