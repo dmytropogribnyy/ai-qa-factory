@@ -282,8 +282,35 @@ class CampaignService:
                         rc.wait_until_resumed()
                     rc.heartbeat()
 
-                rc.advance(TRIAGING)
-                rc.advance(ANALYZING)
+                def enter_phase(target: str) -> None:
+                    """Move the lifecycle on, yielding first to a control already set.
+
+                    ``progress_cb`` has always done this at engine event boundaries; these two
+                    steps run BEFORE the engine and did not, so a Pause landing between them met
+                    a lifecycle step that could not legally proceed (PAUSING -> ANALYZING is not
+                    an allowed transition) and failed the whole run. Before the run-control writes
+                    were serialised the same sequence only "worked" because it validated against a
+                    stale snapshot — and that write erased the pause. Both outcomes come from the
+                    same missing handoff, not from two separate faults.
+                    """
+                    rc.reload()
+                    if rc.should_stop():
+                        raise _StopRequested()
+                    if rc.should_pause():
+                        rc.enter_paused(Checkpoint())
+                        rc.wait_until_resumed()
+                        rc.reload()
+                        if rc.should_stop():
+                            raise _StopRequested()
+                    # A resume deliberately lands the run in ANALYZING — continue pending work,
+                    # never rediscover — so a phase the run has already passed is a no-op here
+                    # rather than an illegal transition.
+                    if rc.state.state == ANALYZING and target in (TRIAGING, ANALYZING):
+                        return
+                    rc.advance(target)
+
+                enter_phase(TRIAGING)
+                enter_phase(ANALYZING)
                 state = DiscoveryEngine(cfg, registry, store, progress=progress_cb).run()
                 self._persist_brain(cfg, state)
                 rc.complete(state.get("stop_reason", "completed"))
