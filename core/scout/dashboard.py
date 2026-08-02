@@ -2803,8 +2803,20 @@ function startCampaign(){{
             if refusal:
                 return self._json(*refusal)
             qs = parse_qs(parsed.query)
-            return self._json(200, self._campaign_service().control(
-                (qs.get("id") or [""])[0], (qs.get("action") or [""])[0]))
+            # A control that could not be persisted must SAY so. This used to let the exception
+            # escape into the HTTP server, which closed the connection with no response at all —
+            # the operator saw neither success nor failure while the run carried on unpaused.
+            # 200 is therefore reserved for a control that reached disk.
+            from core.scout.run_control import RunControlError
+            try:
+                result = self._campaign_service().control(
+                    (qs.get("id") or [""])[0], (qs.get("action") or [""])[0])
+            except RunControlError as exc:          # refused transition — the run's own answer
+                return self._json(409, {"ok": False, "error": str(exc)})
+            except Exception as exc:                # noqa: BLE001 - never drop the connection
+                return self._json(500, {"ok": False,
+                                        "error": f"the control could not be saved: {exc}"})
+            return self._json(200, result)
 
         def _scout_export(self, parsed):
             body = self._read_json_body()

@@ -22,13 +22,42 @@ Controls: run_now / pause / resume / stop_and_save / continue_remaining.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 from core.atomic_io import atomic_replace
+
+# One lock per campaign file, shared by every CampaignRunControl in this process that addresses it.
+# The whole read-modify-write runs under it: the operator's Pause and the worker's heartbeat are
+# separate instances holding separate snapshots, so without serialising the ENTIRE cycle a saver
+# can still write a snapshot it read before someone else's change and erase it.
+#
+# Bound stated plainly: this serialises writers within one process, which is where the campaign
+# worker thread and the Dashboard request thread both live. Serialising a second OS process would
+# need a file lock and is not claimed here.
+_PATH_LOCKS: Dict[str, threading.RLock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+# Every write gets its own temp file. A shared `<name>.tmp` let two savers fight over one path:
+# whoever replaced first consumed it and the loser's os.replace raised FileNotFoundError. This is
+# the second barrier, not the fix — the lock above is what keeps state consistent.
+_TMP_SEQUENCE = itertools.count()
+
+
+def _lock_for(path: Path) -> threading.RLock:
+    key = str(Path(path).resolve())
+    with _PATH_LOCKS_GUARD:
+        lock = _PATH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _PATH_LOCKS[key] = lock
+        return lock
 
 QUEUED = "queued"
 DISCOVERING = "discovering"
@@ -202,9 +231,26 @@ class CampaignRunControl:
     def _save(self) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
         self.state.updated_at = _now_iso()
-        tmp = self._path.with_name(self._path.name + ".tmp")
+        tmp = self._path.with_name(
+            f"{self._path.name}.{os.getpid()}.{next(_TMP_SEQUENCE)}.tmp")
         tmp.write_text(json.dumps(self.state.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
         atomic_replace(tmp, self._path)
+
+    @contextmanager
+    def _mutation(self) -> Iterator[None]:
+        """Serialise one campaign's whole read-modify-write: fresh read -> change -> durable write.
+
+        Re-reading inside the lock is the point. Each instance keeps its own ``state`` snapshot, so
+        a worker that loaded the run before the operator paused it would otherwise write that older
+        view back and silently drop ``requested_control`` — no exception, just a lost instruction.
+
+        A mutation that raises (a refused transition, an unwritable disk) leaves the file untouched:
+        the save only runs when the body completed.
+        """
+        with _lock_for(self._path):
+            self.state = self._load()
+            yield
+            self._save()
 
     # -- transitions -----------------------------------------------------------------------------
     def _transition(self, target: str) -> None:
@@ -215,82 +261,88 @@ class CampaignRunControl:
 
     def run_now(self) -> None:
         """Start a new run. Refuses to overlap an already-active (live) run."""
-        if self.state.state in ACTIVE_STATES and not is_unattended(
-                self.state.state, self.state.heartbeat_at, recovery_stale_s=self._stale_s):
-            raise RunControlError("a run is already active for this campaign (no overlap)")
-        self.state = RunControlState(campaign_id=self.campaign_id, state=QUEUED,
-                                     owner_pid=self._pid, heartbeat_at=_now_iso())
-        self._transition(DISCOVERING)
-        self.state.owner_pid = self._pid
-        self.state.heartbeat_at = _now_iso()
-        self._save()
+        with self._mutation():
+            if self.state.state in ACTIVE_STATES and not is_unattended(
+                    self.state.state, self.state.heartbeat_at, recovery_stale_s=self._stale_s):
+                raise RunControlError("a run is already active for this campaign (no overlap)")
+            self.state = RunControlState(campaign_id=self.campaign_id, state=QUEUED,
+                                         owner_pid=self._pid, heartbeat_at=_now_iso())
+            self._transition(DISCOVERING)
+            self.state.owner_pid = self._pid
+            self.state.heartbeat_at = _now_iso()
 
     def advance(self, target: str) -> None:
-        self._transition(target)
-        self.state.heartbeat_at = _now_iso()
-        self._save()
+        with self._mutation():
+            self._transition(target)
+            self.state.heartbeat_at = _now_iso()
 
     def heartbeat(self) -> None:
-        self.state.heartbeat_at = _now_iso()
-        self.state.owner_pid = self._pid
-        self._save()
+        """Liveness only. It reports that this worker is alive — it decides nothing else.
+
+        Re-reading first is what keeps that true: the beat carries no opinion about the operator's
+        pending control or the run's phase, so it must never write those back from an older view.
+        """
+        with self._mutation():
+            self.state.heartbeat_at = _now_iso()
+            self.state.owner_pid = self._pid
 
     # -- operator controls -----------------------------------------------------------------------
     def request_pause(self) -> None:
-        self.state.requested_control = "pause"
-        if self.state.state in (DISCOVERING, TRIAGING, ANALYZING):
-            self._transition(PAUSING)
-        self._save()
+        with self._mutation():
+            self.state.requested_control = "pause"
+            if self.state.state in (DISCOVERING, TRIAGING, ANALYZING):
+                self._transition(PAUSING)
 
     def enter_paused(self, checkpoint: Optional[Checkpoint] = None) -> None:
         """The engine calls this after finishing the current atomic page op (starts no new work)."""
-        if checkpoint is not None:
-            self.state.checkpoint = checkpoint
-        if self.state.state != PAUSED:
-            self._transition(PAUSED)
-        self.state.requested_control = ""
-        self._save()
+        with self._mutation():
+            if checkpoint is not None:
+                self.state.checkpoint = checkpoint
+            if self.state.state != PAUSED:
+                self._transition(PAUSED)
+            self.state.requested_control = ""
 
     def resume(self) -> str:
         """Resume from PAUSED / RECOVERABLE / STOPPED_CHECKPOINT into ANALYZING (continue pending
         work, never rediscover). Returns the state resumed into."""
-        if self.state.state not in RESUMABLE_STATES:
-            raise RunControlError(f"cannot resume from {self.state.state!r}")
-        self.state.requested_control = ""
-        self._transition(ANALYZING)
-        self.state.owner_pid = self._pid
-        self.state.heartbeat_at = _now_iso()
-        self._save()
+        with self._mutation():
+            if self.state.state not in RESUMABLE_STATES:
+                raise RunControlError(f"cannot resume from {self.state.state!r}")
+            self.state.requested_control = ""
+            self._transition(ANALYZING)
+            self.state.owner_pid = self._pid
+            self.state.heartbeat_at = _now_iso()
         return self.state.state
 
     def stop_and_save(self, checkpoint: Optional[Checkpoint] = None) -> None:
         """Stop safely, preserving completed work + pending queue + budgets + evidence."""
-        if checkpoint is not None:
-            self.state.checkpoint = checkpoint
-        self.state.requested_control = "stop"
-        self._transition(STOPPED_CHECKPOINT)
-        self._save()
+        with self._mutation():
+            if checkpoint is not None:
+                self.state.checkpoint = checkpoint
+            self.state.requested_control = "stop"
+            self._transition(STOPPED_CHECKPOINT)
 
     def block(self, reason: str) -> None:
-        self.state.stop_reason = reason
-        self._transition(BLOCKED)
-        self._save()
+        with self._mutation():
+            self.state.stop_reason = reason
+            self._transition(BLOCKED)
 
     def fail(self, reason: str) -> None:
-        self.state.stop_reason = reason
-        self._transition(FAILED)
-        self._save()
+        with self._mutation():
+            self.state.stop_reason = reason
+            self._transition(FAILED)
 
     def complete(self, stop_reason: str = "completed") -> None:
-        self.state.stop_reason = stop_reason
-        self._transition(COMPLETED)
-        self.state.requested_control = ""
-        self._save()
+        with self._mutation():
+            self.state.stop_reason = stop_reason
+            self._transition(COMPLETED)
+            self.state.requested_control = ""
 
     def save_checkpoint(self, checkpoint: Checkpoint) -> None:
-        self.state.checkpoint = checkpoint
-        self.state.heartbeat_at = _now_iso()
-        self._save()
+        """Record where the worker got to. Like the heartbeat, it asserts nothing about controls."""
+        with self._mutation():
+            self.state.checkpoint = checkpoint
+            self.state.heartbeat_at = _now_iso()
 
     # -- cooperative signals (read by the engine loop) -------------------------------------------
     def should_pause(self) -> bool:
