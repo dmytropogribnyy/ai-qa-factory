@@ -276,6 +276,74 @@ class CampaignRunControl:
             self._transition(target)
             self.state.heartbeat_at = _now_iso()
 
+    def begin_phase(self, target: str) -> str:
+        """Atomically decide between honouring a pending control and entering the next phase.
+
+        Checking the controls and then advancing as two steps leaves a window: a Pause landing
+        between them makes the state PAUSING, and PAUSING -> TRIAGING/ANALYZING is not a legal
+        transition, so the phase step fails the whole run. Re-reading before the advance does not
+        close it — the gap is between the decision and the write, not before the decision.
+
+        So the read and the decision happen under ONE hold of this campaign's lock. A concurrent
+        operator either gets there first (we see the control and report it) or waits (their pause
+        lands after the transition and is honoured at the next boundary). There is no in-between.
+
+        The parking is part of the same hold. Reporting ``paused`` and letting the caller park as
+        a second mutation reopens the gap one level down: a Stop landing in between would meet
+        ``STOPPED_CHECKPOINT -> PAUSED``, which is not a legal transition either. A Stop that is
+        already written therefore always wins here — it is checked first and never becomes a
+        failure.
+
+        Returns ``stop``, ``paused``, ``already_past`` or ``advanced``. ``stop`` and
+        ``already_past`` write nothing.
+        """
+        with _lock_for(self._path):
+            self.state = self._load()
+            if self.should_stop():
+                return "stop"
+            if self.should_pause():
+                if self.state.state != PAUSED:
+                    self._transition(PAUSED)
+                self.state.requested_control = ""
+                self._save()
+                return "paused"
+            # A resume deliberately lands the run in ANALYZING — continue pending work, never
+            # rediscover — so a phase already behind the run is a no-op, not an illegal transition.
+            if self.state.state == ANALYZING and target in (TRIAGING, ANALYZING):
+                return "already_past"
+            self._transition(target)
+            self.state.heartbeat_at = _now_iso()
+            self._save()
+            return "advanced"
+
+    def reach_boundary(self, checkpoint: Optional[Checkpoint] = None) -> str:
+        """Atomically honour control or acknowledge one engine progress boundary.
+
+        ``reload() -> should_pause() -> enter_paused()`` is not a handoff: Stop can land after the
+        Pause decision but before the separate parking mutation, making the worker attempt
+        STOPPED_CHECKPOINT -> PAUSED. The normal-path heartbeat has the same ordering role — once
+        this locked decision says ``continue``, a later control belongs to the next boundary.
+
+        Returns ``stop``, ``paused`` or ``continue``. A Pause checkpoint and PAUSED state are durable
+        before the lock is released; an already persisted Stop is never rewritten.
+        """
+        with _lock_for(self._path):
+            self.state = self._load()
+            if self.should_stop():
+                return "stop"
+            if self.should_pause():
+                if checkpoint is not None:
+                    self.state.checkpoint = checkpoint
+                if self.state.state != PAUSED:
+                    self._transition(PAUSED)
+                self.state.requested_control = ""
+                self._save()
+                return "paused"
+            self.state.heartbeat_at = _now_iso()
+            self.state.owner_pid = self._pid
+            self._save()
+            return "continue"
+
     def heartbeat(self) -> None:
         """Liveness only. It reports that this worker is alive — it decides nothing else.
 
@@ -289,9 +357,14 @@ class CampaignRunControl:
     # -- operator controls -----------------------------------------------------------------------
     def request_pause(self) -> None:
         with self._mutation():
+            # A Pause that waited behind terminal completion cannot be honoured. Persisting it on
+            # COMPLETED/BLOCKED/FAILED/STOPPED would return success while leaving a pending control
+            # with no worker and no future boundary. Refuse before changing the in-memory snapshot;
+            # the mutation context then performs no save and the HTTP layer reports 409 truthfully.
+            if self.state.state not in (DISCOVERING, TRIAGING, ANALYZING):
+                raise RunControlError(f"cannot pause from {self.state.state!r}")
             self.state.requested_control = "pause"
-            if self.state.state in (DISCOVERING, TRIAGING, ANALYZING):
-                self._transition(PAUSING)
+            self._transition(PAUSING)
 
     def enter_paused(self, checkpoint: Optional[Checkpoint] = None) -> None:
         """The engine calls this after finishing the current atomic page op (starts no new work)."""
@@ -315,12 +388,19 @@ class CampaignRunControl:
         return self.state.state
 
     def stop_and_save(self, checkpoint: Optional[Checkpoint] = None) -> None:
-        """Stop safely, preserving completed work + pending queue + budgets + evidence."""
+        """Stop safely, preserving completed work + pending queue + budgets + evidence.
+
+        Idempotent: a run already stopped with a checkpoint records the new checkpoint and stays
+        stopped. Re-transitioning would be illegal (STOPPED_CHECKPOINT only leads back into work),
+        so a worker that notices an operator's Stop and calls this on its way out would otherwise
+        turn an orderly stop into a FAILED run.
+        """
         with self._mutation():
             if checkpoint is not None:
                 self.state.checkpoint = checkpoint
             self.state.requested_control = "stop"
-            self._transition(STOPPED_CHECKPOINT)
+            if self.state.state != STOPPED_CHECKPOINT:
+                self._transition(STOPPED_CHECKPOINT)
 
     def block(self, reason: str) -> None:
         with self._mutation():
@@ -337,6 +417,35 @@ class CampaignRunControl:
             self.state.stop_reason = stop_reason
             self._transition(COMPLETED)
             self.state.requested_control = ""
+
+    def finish(self, stop_reason: str = "completed") -> str:
+        """Atomically honour a final control or persist normal completion.
+
+        The engine can finish after its last progress boundary while an operator is writing Pause
+        or Stop. A separate control check followed by ``complete()`` would recreate the same TOCTOU
+        closed by ``begin_phase``: PAUSING/STOPPED_CHECKPOINT could land between those operations and
+        the worker would turn a valid control into FAILED. This method linearises the entire final
+        handoff under the campaign lock.
+
+        Returns ``stop``, ``paused`` or ``completed``. A pending Pause is parked durably before the
+        lock is released; the caller may then wait for Resume and retry finalization. An already
+        persisted Stop is left untouched, including its checkpoint.
+        """
+        with _lock_for(self._path):
+            self.state = self._load()
+            if self.should_stop():
+                return "stop"
+            if self.should_pause():
+                if self.state.state != PAUSED:
+                    self._transition(PAUSED)
+                self.state.requested_control = ""
+                self._save()
+                return "paused"
+            self.state.stop_reason = stop_reason
+            self._transition(COMPLETED)
+            self.state.requested_control = ""
+            self._save()
+            return "completed"
 
     def save_checkpoint(self, checkpoint: Checkpoint) -> None:
         """Record where the worker got to. Like the heartbeat, it asserts nothing about controls."""
