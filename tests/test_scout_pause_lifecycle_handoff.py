@@ -30,6 +30,7 @@ from core.scout.run_control import (
     TRIAGING,
     CampaignRunControl,
     Checkpoint,
+    RunControlError,
 )
 
 _RESULTS = [{"url": "https://acme-saas.com", "title": "Acme", "content": "b2b saas pricing"}]
@@ -436,3 +437,54 @@ def test_stop_after_a_progress_pause_decision_cannot_overtake_parking(tmp_path, 
     assert final.state == STOPPED_CHECKPOINT, final.stop_reason
     assert final.checkpoint.completed == ["acme-saas.com"]
     assert "invalid transition" not in final.stop_reason
+
+
+def test_pause_that_loses_to_completion_is_refused_not_left_pending(tmp_path, monkeypatch):
+    """If completion linearises first, a waiting Pause must fail truthfully and write nothing.
+
+    Otherwise the operator receives success after the run is already terminal, while the JSON is
+    left as COMPLETED with ``requested_control='pause'`` that no worker can ever honour.
+    """
+    rc = CampaignRunControl("c1", str(tmp_path))
+    rc.run_now()
+    rc.advance(TRIAGING)
+    rc.advance(ANALYZING)
+
+    completing = threading.Event()
+    pause_started = threading.Event()
+    pause_finished = threading.Event()
+    operator_errors: list[BaseException] = []
+    real_transition = CampaignRunControl._transition
+
+    def finish_holds_the_lock(self, target):
+        if target == COMPLETED and not completing.is_set():
+            completing.set()
+            assert pause_started.wait(1.0), "the concurrent Pause thread never started"
+            assert not pause_finished.wait(0.1), \
+                "Pause completed before the terminal state was made durable"
+        return real_transition(self, target)
+
+    monkeypatch.setattr(CampaignRunControl, "_transition", finish_holds_the_lock)
+
+    def pause_concurrently():
+        try:
+            assert completing.wait(1.0), "the worker never reached completion"
+            pause_started.set()
+            CampaignRunControl("c1", str(tmp_path)).request_pause()
+        except BaseException as exc:  # surfaced in the owning test thread below
+            operator_errors.append(exc)
+        finally:
+            pause_finished.set()
+
+    operator = threading.Thread(target=pause_concurrently)
+    operator.start()
+    outcome = rc.finish()
+    operator.join(timeout=2.0)
+
+    assert not operator.is_alive(), "the concurrent Pause thread did not finish"
+    assert outcome == "completed"
+    assert len(operator_errors) == 1 and isinstance(operator_errors[0], RunControlError), \
+        operator_errors
+    final = CampaignRunControl("c1", str(tmp_path)).state
+    assert final.state == COMPLETED
+    assert final.requested_control == ""

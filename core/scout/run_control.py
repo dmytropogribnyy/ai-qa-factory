@@ -357,9 +357,14 @@ class CampaignRunControl:
     # -- operator controls -----------------------------------------------------------------------
     def request_pause(self) -> None:
         with self._mutation():
+            # A Pause that waited behind terminal completion cannot be honoured. Persisting it on
+            # COMPLETED/BLOCKED/FAILED/STOPPED would return success while leaving a pending control
+            # with no worker and no future boundary. Refuse before changing the in-memory snapshot;
+            # the mutation context then performs no save and the HTTP layer reports 409 truthfully.
+            if self.state.state not in (DISCOVERING, TRIAGING, ANALYZING):
+                raise RunControlError(f"cannot pause from {self.state.state!r}")
             self.state.requested_control = "pause"
-            if self.state.state in (DISCOVERING, TRIAGING, ANALYZING):
-                self._transition(PAUSING)
+            self._transition(PAUSING)
 
     def enter_paused(self, checkpoint: Optional[Checkpoint] = None) -> None:
         """The engine calls this after finishing the current atomic page op (starts no new work)."""
