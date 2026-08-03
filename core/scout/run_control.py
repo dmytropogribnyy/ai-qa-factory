@@ -316,6 +316,34 @@ class CampaignRunControl:
             self._save()
             return "advanced"
 
+    def reach_boundary(self, checkpoint: Optional[Checkpoint] = None) -> str:
+        """Atomically honour control or acknowledge one engine progress boundary.
+
+        ``reload() -> should_pause() -> enter_paused()`` is not a handoff: Stop can land after the
+        Pause decision but before the separate parking mutation, making the worker attempt
+        STOPPED_CHECKPOINT -> PAUSED. The normal-path heartbeat has the same ordering role — once
+        this locked decision says ``continue``, a later control belongs to the next boundary.
+
+        Returns ``stop``, ``paused`` or ``continue``. A Pause checkpoint and PAUSED state are durable
+        before the lock is released; an already persisted Stop is never rewritten.
+        """
+        with _lock_for(self._path):
+            self.state = self._load()
+            if self.should_stop():
+                return "stop"
+            if self.should_pause():
+                if checkpoint is not None:
+                    self.state.checkpoint = checkpoint
+                if self.state.state != PAUSED:
+                    self._transition(PAUSED)
+                self.state.requested_control = ""
+                self._save()
+                return "paused"
+            self.state.heartbeat_at = _now_iso()
+            self.state.owner_pid = self._pid
+            self._save()
+            return "continue"
+
     def heartbeat(self) -> None:
         """Liveness only. It reports that this worker is alive — it decides nothing else.
 
@@ -384,6 +412,35 @@ class CampaignRunControl:
             self.state.stop_reason = stop_reason
             self._transition(COMPLETED)
             self.state.requested_control = ""
+
+    def finish(self, stop_reason: str = "completed") -> str:
+        """Atomically honour a final control or persist normal completion.
+
+        The engine can finish after its last progress boundary while an operator is writing Pause
+        or Stop. A separate control check followed by ``complete()`` would recreate the same TOCTOU
+        closed by ``begin_phase``: PAUSING/STOPPED_CHECKPOINT could land between those operations and
+        the worker would turn a valid control into FAILED. This method linearises the entire final
+        handoff under the campaign lock.
+
+        Returns ``stop``, ``paused`` or ``completed``. A pending Pause is parked durably before the
+        lock is released; the caller may then wait for Resume and retry finalization. An already
+        persisted Stop is left untouched, including its checkpoint.
+        """
+        with _lock_for(self._path):
+            self.state = self._load()
+            if self.should_stop():
+                return "stop"
+            if self.should_pause():
+                if self.state.state != PAUSED:
+                    self._transition(PAUSED)
+                self.state.requested_control = ""
+                self._save()
+                return "paused"
+            self.state.stop_reason = stop_reason
+            self._transition(COMPLETED)
+            self.state.requested_control = ""
+            self._save()
+            return "completed"
 
     def save_checkpoint(self, checkpoint: Checkpoint) -> None:
         """Record where the worker got to. Like the heartbeat, it asserts nothing about controls."""

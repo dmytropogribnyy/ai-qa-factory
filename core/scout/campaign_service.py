@@ -274,13 +274,14 @@ class CampaignService:
 
                 def progress_cb(event: Dict) -> None:
                     # Cooperative pause/stop at event boundaries (finish current op, start no new).
-                    rc.reload()                         # pick up a control set by another request
-                    if rc.should_stop():
-                        raise _StopRequested()
-                    if rc.should_pause():
-                        rc.enter_paused(Checkpoint(current_company=str(event.get("candidate", ""))))
-                        rc.wait_until_resumed()
-                    rc.heartbeat()
+                    checkpoint = Checkpoint(current_company=str(event.get("candidate", "")))
+                    while True:
+                        outcome = rc.reach_boundary(checkpoint)
+                        if outcome == "stop":
+                            raise _StopRequested()
+                        if outcome == "continue":
+                            return
+                        rc.wait_until_resumed()          # PAUSED is durable; re-decide after Resume
 
                 def enter_phase(target: str) -> None:
                     """Move the lifecycle on, yielding first to a control already set.
@@ -309,9 +310,18 @@ class CampaignService:
                 enter_phase(ANALYZING)
                 state = DiscoveryEngine(cfg, registry, store, progress=progress_cb).run()
                 self._persist_brain(cfg, state)
-                rc.complete(state.get("stop_reason", "completed"))
+                while True:
+                    outcome = rc.finish(state.get("stop_reason", "completed"))
+                    if outcome == "stop":
+                        raise _StopRequested()
+                    if outcome == "completed":
+                        break
+                    rc.wait_until_resumed()            # PAUSED is already durable; re-decide after
             except _StopRequested:
-                rc.stop_and_save(Checkpoint())
+                # The operator's Stop already carries the durable checkpoint. Passing a new empty
+                # one here would make an idempotent acknowledgement erase useful completed/pending
+                # work from the exact control we are honouring.
+                rc.stop_and_save()
             except Exception as exc:                   # honest failure, never a fake success
                 rc.fail(f"{type(exc).__name__}: {str(exc)[:160]}")
 
