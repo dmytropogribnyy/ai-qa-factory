@@ -16,13 +16,41 @@ really opened, and every address still carries the exact URL it was found on.
 """
 from __future__ import annotations
 
-from core.scout.backends import PageObservation
+from core.scout.backends import PageObservation, _parse_html
 from core.scout.config import ScoutRunConfig
 from core.scout.engine import ScoutEngine
 from core.scout.outreach.qa_draft import extract_public_contact_records
 from core.scout.store import RunStore
 
 DOMAIN = "plausible.example"
+
+
+def test_the_static_parser_keeps_a_public_mailto_link_for_contact_extraction():
+    """A real static scan must not discard the address before the contact policy sees it.
+
+    Both plausible.io/contact and userlist.com publish a public mailbox as a ``mailto:`` href whose
+    visible label is prose ("email us"), not the address itself.  The contact extractor supports
+    mailto links, but the production HTML parser used to remove them alongside javascript/tel/hash
+    pseudo-links, making the support unreachable on every static scan.
+    """
+    observation = PageObservation(
+        url=f"https://{DOMAIN}/contact", final_url=f"https://{DOMAIN}/contact",
+        status=200, ok=True, backend="static")
+
+    _parse_html(
+        observation.url,
+        '<main><h1>Contact</h1><a href="mailto:hello@plausible.example">Email us</a>'
+        '<a href="tel:+421000000">Call</a><a href="javascript:void(0)">Open</a></main>',
+        observation,
+    )
+
+    assert observation.links == [f"mailto:hello@{DOMAIN}"]
+    assert extract_public_contact_records(
+        {"links": observation.links, "final_url": observation.final_url}, domain=DOMAIN
+    ) == [{
+        "email": f"hello@{DOMAIN}", "source": "Public mailto link",
+        "source_url": f"https://{DOMAIN}/contact", "public": True,
+    }]
 
 
 class _SiteWithAContactPage:
