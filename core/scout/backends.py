@@ -195,7 +195,13 @@ class _HtmlExtractor(HTMLParser):
             self.canonical = urljoin(self.base_url, a.get("href", ""))
         elif tag == "a" and a.get("href"):
             href = a["href"].strip()
-            if href and not href.lower().startswith(("javascript:", "mailto:", "tel:", "#")):
+            # Public mailto links are contact evidence, not crawl targets.  Keep them in the
+            # in-memory observation so the existing same-company contact policy can evaluate the
+            # address before Sanitizer redacts it at the persistence boundary.  tel/javascript/hash
+            # pseudo-links still carry no page the bounded crawler may visit and remain excluded.
+            if href.lower().startswith("mailto:"):
+                self.links.append(href)
+            elif href and not href.lower().startswith(("javascript:", "tel:", "#")):
                 self.links.append(urljoin(self.base_url, href))
         elif tag == "img":
             self.images.append({"src": urljoin(self.base_url, a.get("src", "")), "alt": a.get("alt", "")})
