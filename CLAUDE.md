@@ -152,6 +152,25 @@ delivery»** (or the English equivalents), treat it as **client-work intake**, n
 - Reuse the existing orchestration + Scout components; never create a second project/capability/
   work-state/evidence store. See `docs/architecture/UNIFIED_PRODUCT_REUSE_MAP.md`.
 
+## Observer MCP tunnel (operational — read the runbook, do not re-derive it)
+
+On "подними Observer" / "raise the Observer", follow
+[docs/operations/observer-mcp-tunnel.md](docs/operations/observer-mcp-tunnel.md) immediately instead
+of reconstructing the architecture from logs. Invariants that hold without re-checking:
+
+- Run the **existing** `ai-qa-factory` profile via `tools/start_observer_tunnel_once.ps1`. Never
+  create a second tunnel, and never rebind the ChatGPT connector, while the profile's stable tunnel
+  id is unchanged — both are owner decisions.
+- The tunnel is **outbound-only** to the OpenAI control plane and spawns `tools/run_mcp_server.py`
+  over stdio. No public inbound port exists; the Dashboard is not reachable through it.
+- `127.0.0.1:8770` is a local auxiliary Observer surface, **not** the ChatGPT route.
+- `CONTROL_PLANE_API_KEY` comes from the User environment scope and is never printed.
+- Local health on `:8080` is necessary but **not proof** — only a real external ChatGPT Observer call
+  returning the expected git build proves reachability.
+- **Never switch the branch of the canonical checkout while the tunnel serves from it** (`C:\aiqa`
+  points at that tree); use a separate `git worktree` for development.
+- Autostart stays disabled unless the owner decides otherwise.
+
 ## Environment notes
 
 - Windows + PowerShell primary; Python venv at `.venv/`.
