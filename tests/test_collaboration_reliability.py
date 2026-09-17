@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from core.collaboration.budget import BudgetPolicy
@@ -42,13 +43,30 @@ def _decision_file(tmp_path: Path, *, thread: str = "t-1", key: str = "k") -> Pa
     return path
 
 
+def _ack_env(base=None):
+    """Environment for the ACK subprocess with PYTHONPATH removed.
+
+    Matched case-INSENSITIVELY: Windows environment keys are case-insensitive, so an exact-key match
+    would let a differently-cased `PythonPath` survive and silently make the repo importable again —
+    weakening every test here that depends on the bootstrap, not PYTHONPATH, doing the work.
+    """
+    src = os.environ if base is None else base
+    return {k: v for k, v in src.items() if k.upper() != "PYTHONPATH"}
+
+
+def test_ack_env_strips_pythonpath_whatever_its_case():
+    env = _ack_env({"PythonPath": "C:/injected", "PYTHONPATH": "C:/also", "PATH": "C:/keep"})
+    assert [k for k in env if k.upper() == "PYTHONPATH"] == []
+    assert env["PATH"] == "C:/keep"                           # unrelated vars are preserved
+
+
 def _run_ack(decision_path: Path) -> subprocess.CompletedProcess:
     """Run the EXACT production command shape: `python tools/collab_ack.py --decision-file <p>` from
     the repo root with no repo PYTHONPATH and no broader shell grant."""
-    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     return subprocess.run([sys.executable, "tools/collab_ack.py", "--decision-file",
                            str(decision_path)],
-                          cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=180)
+                          cwd=str(REPO_ROOT), env=_ack_env(), capture_output=True, text=True,
+                          timeout=180)
 
 
 def test_prescribed_ack_command_succeeds_as_a_subprocess_without_pythonpath(tmp_path):
@@ -182,6 +200,70 @@ def test_an_active_lease_is_not_counted_as_a_delivered_delivery(tmp_path):
     delivery.deliver(_reply())
     assert reentrant["delivered_during"] == 0                # in-flight is not "delivered"
     assert CollaborationMonitor(str(tmp_path))._delivery()["delivered"] == 1   # after: exactly one
+
+
+def _lease_path(tmp_path: Path, thread="t-1", key="k") -> Path:
+    path = tmp_path / "_review_relay" / "collab_delivery" / f"{thread}_{key}.inprogress.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def test_a_partially_written_lease_is_treated_as_live_and_blocks_a_duplicate_resume(tmp_path):
+    """The lease file is created with O_EXCL BEFORE its JSON payload is written, so a concurrent
+    claimant can legitimately observe it mid-write. Parsing that as 'stale' unlinks a genuinely active
+    lease and starts exactly the duplicate resume the lease exists to prevent. A fresh unparseable
+    lease must therefore fail CLOSED as live."""
+    starts = []
+
+    def runner(cmd, **kw):
+        starts.append(1)
+        return type("P", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
+
+    delivery = _delivery(tmp_path, runner)
+    lease = _lease_path(tmp_path)
+    lease.write_text("", encoding="utf-8")                 # the partial-write window: created, unwritten
+
+    out = delivery.deliver(_reply())
+    assert out["status"] == "in_progress"                  # refused, not reclaimed
+    assert starts == []                                    # NO duplicate resume was started
+    assert lease.exists()                                  # the active lease was not unlinked
+
+
+def test_a_truncated_json_lease_is_also_treated_as_live(tmp_path):
+    # Same window, caught slightly later: valid prefix, incomplete JSON.
+    starts = []
+
+    def runner(cmd, **kw):
+        starts.append(1)
+        return type("P", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
+
+    delivery = _delivery(tmp_path, runner)
+    lease = _lease_path(tmp_path)
+    lease.write_text('{"message_id": "t-1:k", "expi', encoding="utf-8")
+
+    assert delivery.deliver(_reply())["status"] == "in_progress"
+    assert starts == []
+    assert lease.exists()
+
+
+def test_a_long_abandoned_malformed_lease_is_still_reclaimable(tmp_path):
+    """Failing closed must not create a permanent wedge: a lease that has been malformed for longer
+    than the grace window belongs to a dead process and must still be deterministically reclaimed."""
+    starts = []
+
+    def runner(cmd, **kw):
+        starts.append(1)
+        return type("P", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
+
+    delivery = _delivery(tmp_path, runner)
+    lease = _lease_path(tmp_path)
+    lease.write_text("", encoding="utf-8")
+    old = time.time() - 86400                              # malformed for a day -> genuinely abandoned
+    os.utime(lease, (old, old))
+
+    out = delivery.deliver(_reply())
+    assert out["status"] == "delivered"                    # reclaimed deterministically
+    assert len(starts) == 1
 
 
 def test_a_stale_lease_from_a_dead_process_is_reclaimed(tmp_path):

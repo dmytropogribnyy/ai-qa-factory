@@ -26,6 +26,10 @@ _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 DEFAULT_DELIVERY_TIMEOUT_S = 900
 # How long a lease outlives its own delivery bound before it is treated as abandoned by a dead process.
 _LEASE_GRACE_S = 60
+# How long an UNPARSEABLE lease is assumed to be a live writer's in-flight partial write. Bounds the
+# fail-closed window: long enough to cover any real create-then-write gap, short enough that a lease
+# corrupted by a dead process is still reclaimed promptly.
+_MALFORMED_LEASE_GRACE_S = 60
 
 
 def billing_mode() -> Dict[str, str]:
@@ -148,12 +152,32 @@ class ClaudeSessionDelivery:
 
     def _lease_is_live(self, path: Path) -> bool:
         """Live until it expires. An expired lease belongs to a crashed resume and is reclaimable, so a
-        dead process can never wedge a reply for ever."""
+        dead process can never wedge a reply for ever.
+
+        FAIL CLOSED on an unreadable/partial lease. The lease file is published by O_EXCL creation
+        BEFORE its JSON payload is written, so a concurrent claimant can legitimately observe it
+        mid-write. Reading that ambiguous state as "stale" would unlink a genuinely active lease and
+        start exactly the duplicate resume this lease exists to prevent. A malformed lease therefore
+        counts as LIVE until it has been malformed for longer than the grace window — after which a
+        truly abandoned one is still deterministically reclaimable (mtime is readable without parsing).
+        """
         try:
-            expires = json.loads(path.read_text(encoding="utf-8")).get("expires_at", "")
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            return self._within_malformed_grace(path)      # unreadable right now -> assume live
+        try:
+            expires = json.loads(raw).get("expires_at", "")
             return datetime.now(timezone.utc) < datetime.fromisoformat(str(expires))
-        except (OSError, ValueError, TypeError):
-            return False                                   # unreadable/malformed -> not a live claim
+        except (AttributeError, TypeError, ValueError):
+            return self._within_malformed_grace(path)      # partial/corrupt -> assume live, briefly
+
+    def _within_malformed_grace(self, path: Path) -> bool:
+        """True while an unparseable lease is still young enough to be a live writer's partial write."""
+        try:
+            age = datetime.now(timezone.utc).timestamp() - path.stat().st_mtime
+        except OSError:
+            return False                                   # vanished; the caller retries the create
+        return age < _MALFORMED_LEASE_GRACE_S
 
     def _claim_lease(self, message_id: str) -> bool:
         """Atomically claim the right to resume this reply (O_EXCL, same primitive as the store)."""
@@ -168,6 +192,8 @@ class ClaudeSessionDelivery:
                     return False
                 try:
                     path.unlink()
+                except FileNotFoundError:
+                    pass                                   # released meanwhile -> retry the create
                 except OSError:
                     return False
                 continue
