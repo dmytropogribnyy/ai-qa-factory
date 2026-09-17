@@ -166,6 +166,24 @@ def test_a_real_terminal_delivery_failure_is_still_owner_visible(tmp_path):
                              .thread("t-1")["messages"]]
 
 
+def test_an_active_lease_is_not_counted_as_a_delivered_delivery(tmp_path):
+    """The lease is a new file type in collab_delivery/; the operator's delivery telemetry must not
+    mistake an in-flight resume for a completed one."""
+    from core.collaboration.monitor import CollaborationMonitor
+
+    reentrant = {}
+
+    def runner(cmd, **kw):
+        reentrant["delivered_during"] = CollaborationMonitor(
+            str(tmp_path))._delivery()["delivered"]          # lease is on disk at this moment
+        return type("P", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
+
+    delivery = _delivery(tmp_path, runner)
+    delivery.deliver(_reply())
+    assert reentrant["delivered_during"] == 0                # in-flight is not "delivered"
+    assert CollaborationMonitor(str(tmp_path))._delivery()["delivered"] == 1   # after: exactly one
+
+
 def test_a_stale_lease_from_a_dead_process_is_reclaimed(tmp_path):
     # A crashed resume must not wedge the reply for ever: an expired lease is reclaimable.
     starts = []
