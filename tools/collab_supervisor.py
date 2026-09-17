@@ -28,6 +28,12 @@ from typing import Any, Callable, Dict, Optional
 REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))                       # importable as a standalone Scheduled Task
+
+# Imported after the bootstrap above (hence the E402 waiver) so the outer watchdog is DERIVED from the
+# delivery bound instead of restated. A hand-written outer bound below the delivery bound turned every
+# legitimately long resume into a false TICK_TIMEOUT / owner_action.
+from core.collaboration.session_delivery import DEFAULT_DELIVERY_TIMEOUT_S  # noqa: E402
+
 VENV_PY = REPO / ".venv" / "Scripts" / "python.exe"
 PORT = 8765
 _HEARTBEAT_MAX_S = 300.0
@@ -178,7 +184,11 @@ def _heartbeat_age_s(output_root: str) -> float:
         return 1e9
 
 
-_TICK_TIMEOUT_S = 300.0
+# Strictly greater than the delivery bound, so a bounded resume that runs for its full allowance still
+# finishes inside one tick. The delivery's own in-progress lease (not this watchdog) is what prevents a
+# duplicate concurrent resume if the watchdog ever does fire.
+_TICK_MARGIN_S = 60.0
+_TICK_TIMEOUT_S = DEFAULT_DELIVERY_TIMEOUT_S + _TICK_MARGIN_S
 
 
 def _run_with_timeout(fn: Callable[[], Dict[str, Any]], timeout_s: float) -> Dict[str, Any]:

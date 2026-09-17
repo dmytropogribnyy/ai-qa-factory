@@ -114,11 +114,15 @@ class CollaborationCycle:
             for m in self._store.thread(thread_id)["messages"]:
                 if m.get("kind") not in _DELIVERABLE:
                     continue
+                # A durable ACK is authoritative completion proof: the bound session demonstrably read
+                # this reply, so it must never be re-delivered even if the success marker was lost or
+                # corrupted. Marker dedup below remains as the additional (faster) guard.
+                if m.get("idempotency_key") in acked:
+                    continue
                 try:
                     res = self._delivery.deliver(m)
                 except SessionDeliveryError as exc:
                     res = {"status": "error", "reason": str(exc)}
-                res["acked"] = m.get("idempotency_key") in acked
                 # A terminal delivery failure must become a DURABLE owner-visible escalation, so the
                 # Dashboard can never show IDLE while delivery is dead (P1).
                 if res.get("status") in ("failed_exhausted", "stale", "error"):
