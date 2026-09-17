@@ -11,13 +11,21 @@ persisted marker means a restart re-delivers nothing. If no valid session is bou
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+# Single source of truth for how long ONE bounded resume may run. ``tools/collab_supervisor.py``
+# derives its outer watchdog from this value so the two bounds can never drift apart again: an outer
+# bound below this one turns every legitimately long resume into a false terminal timeout.
+DEFAULT_DELIVERY_TIMEOUT_S = 900
+# How long a lease outlives its own delivery bound before it is treated as abandoned by a dead process.
+_LEASE_GRACE_S = 60
 
 
 def billing_mode() -> Dict[str, str]:
@@ -114,7 +122,8 @@ class ClaudeSessionDelivery:
                  exe_resolver: Optional[Callable[[], Optional[str]]] = None,
                  runner: Optional[Callable[..., Any]] = None,
                  head_resolver: Optional[Callable[[], str]] = None,
-                 workspace: str = ".", timeout: int = 900, max_attempts: int = 3,
+                 workspace: str = ".", timeout: int = DEFAULT_DELIVERY_TIMEOUT_S,
+                 max_attempts: int = 3,
                  clock: Optional[Callable[[], str]] = None) -> None:
         self._registry = registry
         self._exe_resolver = exe_resolver or _default_exe_resolver
@@ -128,6 +137,52 @@ class ClaudeSessionDelivery:
         base = Path(output_root) / "_review_relay" / "collab_delivery"
         base.mkdir(parents=True, exist_ok=True)
         self._dir = base
+
+    # --- in-progress lease ------------------------------------------------------------------------
+    # The supervisor's outer watchdog can elapse while a resume is still legitimately running. Without
+    # a lease the next tick sees no success marker (it is written only after the resume returns) and
+    # starts a SECOND concurrent resume of the same reply. The lease makes "already running" a distinct,
+    # NON-terminal state instead of a duplicate wake or a false owner alarm.
+    def _lease(self, message_id: str) -> Path:
+        return self._dir / f"{self._safe(message_id)}.inprogress.json"
+
+    def _lease_is_live(self, path: Path) -> bool:
+        """Live until it expires. An expired lease belongs to a crashed resume and is reclaimable, so a
+        dead process can never wedge a reply for ever."""
+        try:
+            expires = json.loads(path.read_text(encoding="utf-8")).get("expires_at", "")
+            return datetime.now(timezone.utc) < datetime.fromisoformat(str(expires))
+        except (OSError, ValueError, TypeError):
+            return False                                   # unreadable/malformed -> not a live claim
+
+    def _claim_lease(self, message_id: str) -> bool:
+        """Atomically claim the right to resume this reply (O_EXCL, same primitive as the store)."""
+        path = self._lease(message_id)
+        expires = (datetime.now(timezone.utc)
+                   + timedelta(seconds=self._timeout + _LEASE_GRACE_S)).isoformat(timespec="seconds")
+        for _ in range(2):                                 # claim, or reclaim ONE abandoned lease
+            try:
+                fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                if self._lease_is_live(path):
+                    return False
+                try:
+                    path.unlink()
+                except OSError:
+                    return False
+                continue
+            except OSError:
+                return False
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"message_id": message_id, "expires_at": expires, "at": self._clock()}, fh)
+            return True
+        return False
+
+    def _release_lease(self, message_id: str) -> None:
+        try:
+            self._lease(message_id).unlink()
+        except OSError:
+            pass                                           # already gone; releasing is best-effort
 
     def _attempts(self, message_id: str) -> int:
         path = self._dir / f"{self._safe(message_id)}.attempts.json"
@@ -174,6 +229,18 @@ class ClaudeSessionDelivery:
         if not exe:
             raise SessionDeliveryError("no native claude executable resolved; cannot deliver safely")
 
+        # Claim the lease BEFORE waking anything. A refused claim means another resume of this exact
+        # reply is still running: report it as in-progress (non-terminal) — never a second wake and
+        # never an owner-visible failure.
+        if not self._claim_lease(message_id):
+            return {"status": "in_progress", "message_id": message_id, "session": session}
+        try:
+            return self._resume(decision, thread, message_id, session, exe, marker, attempts)
+        finally:
+            self._release_lease(message_id)
+
+    def _resume(self, decision: Dict[str, Any], thread: str, message_id: str, session: str,
+                exe: str, marker: Path, attempts: int) -> Dict[str, Any]:
         # The FULL decision (including thread_id + idempotency_key) travels ONLY in this data file, in the
         # trusted collab_delivery directory; no identifier is ever interpolated into the command/
         # instruction, so a crafted id cannot alter what Claude is told to run. The only value in the

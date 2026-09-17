@@ -17,10 +17,19 @@ import json
 import sys
 from pathlib import Path
 
-from core.collaboration.service import record_ack
+# The bounded resumed session is instructed to run EXACTLY `python tools/collab_ack.py --decision-file
+# ...` from the repo root, where Python puts `tools/` — not the repo root — on sys.path. Without this
+# bootstrap the `core.collaboration` import fails with ModuleNotFoundError, and the narrow
+# `Bash(python tools/collab_ack.py:*)` grant leaves no way to prepend PYTHONPATH, so only a broader
+# session could ever complete the ACK. Same idiom as tools/collab_supervisor.py.
+REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
 
 def main(argv=None) -> int:
+    from core.collaboration.service import record_ack      # after the sys.path bootstrap above
+
     ap = argparse.ArgumentParser(description="Acknowledge a delivered collaboration reply")
     ap.add_argument("--decision-file", default="",
                     help="path to the immutable decision data file; ids are read from it")
