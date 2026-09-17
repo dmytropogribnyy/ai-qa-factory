@@ -19,6 +19,30 @@ universal orchestration + MCP-consumption layer (ARK). Read `docs/PRODUCT_VISION
   do not duplicate existing schemas.
 - Independent verification: never approve your own implementation.
 
+## Execution policy (mandatory — read before non-trivial work)
+
+[docs/ENGINEERING_EXECUTION_POLICY.md](docs/ENGINEERING_EXECUTION_POLICY.md) is canonical and
+permanent. It governs **how** work is executed here and applies to every session and agent. Load it
+before any bounded slice, review, checkpoint or autonomous run. In brief:
+
+- **Truth hierarchy** — fresh repo/runtime truth > canonical docs > control surfaces (issues/PRs) >
+  continuity material. A plan is intent; the repository is truth.
+- **Bounded work, one writer per seam.** Parallel work only on proven-disjoint seams. Don't widen
+  scope for attractive adjacent cleanup — record it instead.
+- **Checkpoints are recovery points, not waiting points.** Don't stop because a stage finished, tests
+  passed, CI went green or a defect was fixed. Repair and continue; stop only for the policy's §10 list.
+- **Verification cadence** — red first; focused/affected tests in the inner loop; the full suite and
+  broad CI are *material gates*, not inner-loop commands (see the fast local loop and tiered CI below,
+  which remain authoritative for the exact commands). Reuse still-valid exact-head evidence.
+- **Stationary checkpoints** carry exact HEAD/TREE, dirty state, changed paths, real test counts, and
+  an explicit **claims / non-claims** split.
+- **Fail closed** on uncertain scope, identity, authority, evidence, budget or state. Missing evidence
+  is not PASS; missing is not zero; health is not readiness.
+- **Subscription-first, API by exception**; respect budgets, never silently exceed them.
+- **Subagents** are bounded helpers, never gate authorities; summarise their output into the checkpoint.
+- **Browser work** is gated by consequence, not by each click (R0–R4 tiers); prefer authorised test
+  enablers over interrupting a human, and never present sandboxed execution as a real transaction.
+
 ## Per-phase quality gate (required before commit)
 
 1. `python -m ruff check .` — must be clean
