@@ -218,3 +218,69 @@ def test_driver_health_reports_cost_knowledge(tmp_path):
     budget = driver.health()["budget"]
     assert budget["usd_known"] is False
     assert budget["unpriced_calls"] == 1
+# --- an unusable price is UNKNOWN, not priced ----------------------------------------------------
+
+@pytest.mark.parametrize("bad, why", [
+    (float("nan"), "NaN marks the scope priced while every cap comparison is False"),
+    (float("inf"), "infinity is not a spend a cap can be reasoned about"),
+    (float("-inf"), "negative infinity would offset real spend"),
+    (-1.0, "a negative price would offset real spend"),
+])
+def test_an_unusable_usd_value_is_recorded_as_unknown_not_as_priced(tmp_path, bad, why):
+    """`usd is not None` was not a price check.
+
+    `reviewer_driver._cost_from_usage` already refuses these values, but it is not the only caller:
+    a custom estimator or a provider field reaches the ledger directly. NaN is the dangerous one -
+    it marks the scope PRICED while `total >= cap` is False for every cap, so the USD limit stops
+    binding while reporting that it is enforced. That is the protection gap this ledger exists to
+    close, reopened one layer below the estimator.
+    """
+    ledger = BudgetLedger(str(tmp_path))
+    event = ledger.record("t-bad", usd=bad, total_tokens=100)
+    assert event["cost_known"] is False, why
+    assert event["usd"] is None, why
+
+    usage = ledger.usage("t-bad")
+    assert usage["unpriced_calls"] == 1
+    assert usage["usd_known"] is False, "an unusable price must not be reported as known spend"
+
+
+def test_a_usable_price_is_still_recorded_as_known(tmp_path):
+    """Control: the validation must not reclassify legitimate prices, including a free call."""
+    ledger = BudgetLedger(str(tmp_path))
+    assert ledger.record("t-ok", usd=0.0)["cost_known"] is True
+    assert ledger.record("t-ok", usd=1.25)["cost_known"] is True
+    usage = ledger.usage("t-ok")
+    assert usage["unpriced_calls"] == 0 and usage["usd_known"] is True
+
+
+def test_a_nan_price_cannot_silently_unbind_a_usd_cap(tmp_path):
+    """The consequence, not just the flag: a NaN call must not leave the cap reporting enforcement."""
+    ledger = BudgetLedger(str(tmp_path), policy=BudgetPolicy(daily_usd=0.01))
+    ledger.record("t-nan", usd=float("nan"), total_tokens=10)
+    verdict = ledger.check("t-nan")
+    assert verdict.usd_enforced is False, (
+        "with an unpriced call in scope the USD cap cannot be enforced, and must say so rather "
+        "than compare against a total that silently excludes it")
+def test_a_legacy_event_with_an_unusable_stored_price_does_not_poison_the_totals(tmp_path):
+    """The sibling of the write-path fix: an event the validation never saw.
+
+    `json.dump` emits a bare `NaN` and `json.load` accepts it, so an event persisted before the
+    ledger validated prices can still carry one. Summed unguarded it turns `daily_usd` into NaN and
+    every total rendered from it becomes NaN - `round(nan, 6)` is still nan.
+    """
+    ledger = BudgetLedger(str(tmp_path))
+    ledger.record("t-legacy", usd=2.50, total_tokens=10)
+
+    events = tmp_path / "_review_relay" / "collab_budget"
+    real = json.loads(sorted(events.glob("*.json"))[0].read_text(encoding="utf-8"))
+    real.update({"usd": float("nan"), "cost_known": True, "thread_id": "t-legacy"})
+    # The same date prefix the ledger globs for - otherwise the fixture is never read and the
+    # test passes while proving nothing.
+    (events / (real["date"] + "-legacy.json")).write_text(json.dumps(real), encoding="utf-8")
+
+    usage = ledger.usage("t-legacy")
+    assert usage["thread_usd"] == usage["thread_usd"], "thread_usd is NaN - a poisoned event summed"
+    assert usage["daily_usd"] == usage["daily_usd"], "daily_usd is NaN - a poisoned event summed"
+    assert usage["usd_known"] is False, (
+        "an event whose stored price is unusable must count as UNPRICED, not as known spend")

@@ -521,3 +521,105 @@ def test_the_watermark_enumerates_untracked_files_too(tmp_path):
         assert "--others" in call and "--exclude-standard" in call, (
             "the watermark must include untracked-but-not-ignored files, or a file injected into "
             "tests/ during the gate is invisible to it: " + call)
+# --- a required check is only satisfied by the app that is required ------------------------------
+
+def _run_app(name, conclusion, app_id, at="2026-09-18T11:00:00Z"):
+    return {"name": name, "status": "completed", "conclusion": conclusion,
+            "completed_at": at, "app_id": app_id}
+
+
+def test_a_same_named_check_from_another_app_does_not_satisfy_the_requirement():
+    """Branch protection binds a required check to the App that produces it.
+
+    Dropping the binding and matching on name alone means any installed app - or anything that can
+    create a check run - can publish a green `fast` and satisfy the gate.
+    """
+    required = [{"context": "fast", "app_id": 15368}]
+    impostor = [_run_app("fast", "success", 99999)]
+    conclusion, detail = _ci_admission(required, impostor)
+    assert conclusion != "success"
+    assert "required app" in detail
+
+    genuine = [_run_app("fast", "success", 15368)]
+    assert _ci_admission(required, genuine)[0] == "success"
+
+
+def test_an_unverifiable_producing_app_fails_closed():
+    """A check run with no app identity cannot be shown to be the required one."""
+    required = [{"context": "fast", "app_id": 15368}]
+    conclusion, detail = _ci_admission(required, [_run_app("fast", "success", None)])
+    assert conclusion != "success"
+    assert "could not be verified" in detail
+
+
+def test_a_requirement_without_an_app_binding_still_matches_by_name():
+    """Control: the older `contexts` shape carries no app, and must keep working."""
+    assert _ci_admission(["fast"], [_run_app("fast", "success", 12345)])[0] == "success"
+
+
+# --- the worktree snapshot must be per-path, not one global maximum ------------------------------
+
+def test_a_file_restored_below_the_mtime_maximum_is_still_detected(tmp_path):
+    """The defeat of a global maximum, made concrete.
+
+    Two files: one recent (it sets the maximum) and one old. A writer touches the OLD one during
+    the gate and leaves its mtime still below the maximum. The maximum, the file count, the tree
+    hash and `status --porcelain` are all unchanged - only a per-path snapshot sees it.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    old_file, recent = repo / "old.py", repo / "recent.py"
+    old_file.write_bytes(b"old")
+    recent.write_bytes(b"recent")
+    now = time.time()
+    os.utime(old_file, (now - 10000, now - 10000))
+    os.utime(recent, (now, now))          # `recent` holds the maximum throughout
+
+    class _TouchesTheOldFile(_Runs):
+        def __init__(self):
+            super().__init__()
+            self.listings = 0
+
+        def __call__(self, cmd, **kw):
+            joined = " ".join(str(c) for c in cmd)
+            if "ls-files" in joined:
+                self.listings += 1
+                if self.listings == 2:
+                    # modified and restored, mtime moved but still far BELOW the maximum
+                    old_file.write_bytes(b"old")
+                    os.utime(old_file, (now - 5000, now - 5000))
+                return _P(0, "old.py\0recent.py\0")
+            return super().__call__(cmd, **kw)
+
+    with pytest.raises(GateEvidenceError, match="worktree was written to while the gate"):
+        produce_gate_manifest(str(tmp_path / "out"), str(repo), _SHA,
+                              ci_lookup=_ci(), run=_TouchesTheOldFile())
+
+
+# --- the CI state must be read AFTER the long gate, not before it --------------------------------
+
+def test_ci_that_goes_red_during_the_gate_does_not_persist_the_pre_gate_success(tmp_path):
+    """The audits and the full suite take many minutes; a required check can change inside that.
+
+    Reading CI once before the gate and persisting that answer authorises an exact-SHA GO on a
+    state that no longer holds - the same time-of-check/time-of-use shape as the identity
+    re-validation, one field over.
+    """
+    calls = []
+
+    def _flaps(sha):
+        calls.append(sha)
+        if len(calls) == 1:
+            return {"conclusion": "success", "run_id": "1", "detail": "all required checks green"}
+        return {"conclusion": "", "run_id": "1", "detail": "required checks not satisfied: fast: failure"}
+
+    out = produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_flaps, run=_Runs())
+    assert len(calls) >= 2, "the CI state must be re-read after the gate, not only before it"
+    assert out["success"] is False, "a pre-gate success must not survive CI going red during the gate"
+    assert "CHANGED during the gate" in out["notes"]
+
+
+def test_ci_that_stays_green_across_the_gate_still_succeeds(tmp_path):
+    """Control: re-reading must not make a stable green gate fail."""
+    out = produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(), run=_Runs())
+    assert out["success"] is True

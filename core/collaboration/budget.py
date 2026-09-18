@@ -10,6 +10,7 @@ base so there is no second store and everything survives a restart.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,7 +88,15 @@ class BudgetLedger:
         """Record one call. ``usd=None`` means the cost is UNKNOWN (no pricing configured) — it is
         persisted as null with ``cost_known: false``, never as a fabricated 0.0, so a real spend can
         never be reported as free."""
-        cost_known = usd is not None
+        # A price is "known" only when it is a finite, non-negative number.
+        #
+        # `usd is not None` was not enough. NaN, infinity and negatives can all reach here - from a
+        # custom cost estimator, a provider field, or a malformed price - and NaN is the dangerous
+        # one: it marks the scope PRICED while every `>=` comparison against a cap is False, so the
+        # USD cap silently stops binding. That is the exact protection gap this ledger exists to
+        # close, reopened one layer below the estimator that already refuses these values.
+        # Unusable input is recorded as UNKNOWN rather than accepted, so it fails closed.
+        cost_known = usd is not None and math.isfinite(usd) and float(usd) >= 0.0
         event = {"thread_id": str(thread_id), "date": self._today(), "calls": int(calls),
                  "usd": (float(usd) if cost_known else None), "cost_known": cost_known,
                  "input_chars": int(input_chars),
@@ -118,7 +127,18 @@ class BudgetLedger:
             # default usd: 0.0; inferring "priced" from that would flip usd_known to true after an
             # upgrade and report a real historical spend as zero.
             known = bool(e.get("cost_known", False))
-            usd = float(e.get("usd") or 0.0)
+            # The READ path needs the same validation as the write path, for events the write path
+            # never saw. `json.dump` emits a bare `NaN` and `json.load` accepts it, so an event
+            # persisted before that validation existed can still carry one; summed unguarded it
+            # turns `daily_usd` into NaN and every total rendered from it becomes NaN. Enforcement
+            # is already safe here (such an event is unpriced, so the USD cap reports itself
+            # unenforceable) - what this protects is the honesty of the reported number.
+            try:
+                usd = float(e.get("usd") or 0.0)
+            except (TypeError, ValueError):
+                usd, known = 0.0, False
+            if not math.isfinite(usd) or usd < 0.0:
+                usd, known = 0.0, False
             d_calls += e.get("calls", 0)
             d_usd += usd
             d_tokens += e.get("total_tokens", 0)

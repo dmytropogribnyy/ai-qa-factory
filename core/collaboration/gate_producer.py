@@ -93,26 +93,32 @@ def _gh_required_contexts(repo_root: str, branch: str) -> Optional[List[str]]:
     """
     data = _gh_json(["api", "repos/{owner}/{repo}/branches/" + branch
                      + "/protection/required_status_checks"], repo_root)
+    # `checks` carries the app binding; the older `contexts` is names only. Prefer `checks`, so a
+    # requirement that names its producing GitHub App keeps that binding - a check run is only
+    # trustworthy as "the required check" when the app that produced it is the required one.
     if isinstance(data, dict):
-        raw = data.get("contexts")
-        if not raw:
-            raw = [c.get("context") for c in (data.get("checks") or []) if isinstance(c, dict)]
-        contexts = sorted({str(c) for c in (raw or []) if c})
-        if contexts:
-            return contexts
+        required = []
+        for check in data.get("checks") or []:
+            if isinstance(check, dict) and check.get("context"):
+                required.append({"context": str(check["context"]), "app_id": check.get("app_id")})
+        if not required:
+            required = [{"context": str(c), "app_id": None} for c in (data.get("contexts") or []) if c]
+        if required:
+            return sorted(required, key=lambda r: r["context"])
 
     rules = _gh_json(["api", "repos/{owner}/{repo}/rules/branches/" + branch], repo_root)
     if isinstance(rules, list):
-        contexts = []
+        required = []
         for rule in rules:
             if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
                 continue
             params = rule.get("parameters") or {}
             for check in params.get("required_status_checks") or []:
                 if isinstance(check, dict) and check.get("context"):
-                    contexts.append(str(check["context"]))
-        if contexts:
-            return sorted(set(contexts))
+                    required.append({"context": str(check["context"]),
+                                     "app_id": check.get("integration_id")})
+        if required:
+            return sorted(required, key=lambda r: r["context"])
     return None
 
 
@@ -122,7 +128,7 @@ def _gh_check_runs(repo_root: str, sha: str) -> Optional[List[Dict[str, Any]]]:
         proc = subprocess.run(
             ["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs",
              "--jq", ".check_runs[] | "
-             "{name, status, conclusion, completed_at, started_at, id}"],
+             "{name, status, conclusion, completed_at, started_at, id, app_id: .app.id}"],
             cwd=repo_root, capture_output=True, text=True, check=False, timeout=120)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -165,11 +171,36 @@ def _ci_admission(required: Optional[List[str]],
             by_name.setdefault(name, []).append(run)
 
     problems = []
-    for context in required:
+    for requirement in required:
+        # A plain string is a requirement with no app binding.
+        if isinstance(requirement, dict):
+            context, required_app = str(requirement.get("context") or ""), requirement.get("app_id")
+        else:
+            context, required_app = str(requirement), None
         records = by_name.get(context) or []
+        if required_app is not None:
+            # Fail closed on an unverifiable binding: a check run whose producing app is unknown
+            # cannot be shown to be the required one, and a same-named run from a DIFFERENT app
+            # must never satisfy the requirement.
+            matched, unverifiable = [], False
+            for record in records:
+                app_id = record.get("app_id")
+                if app_id is None:
+                    unverifiable = True
+                elif str(app_id) == str(required_app):
+                    matched.append(record)
+            if unverifiable and not matched:
+                problems.append(f"{context}: producing app could not be verified "
+                                f"(required app {required_app})")
+                continue
+            if records and not matched:
+                problems.append(f"{context}: no check run from the required app {required_app}")
+                continue
+            records = matched
         if not records:
             problems.append(f"{context}: no check run for this SHA")
             continue
+
         # ANY record that has not completed blocks, whatever the ordering says.
         #
         # Selecting "the latest" and then testing its status is not enough, and the ordering is
@@ -237,8 +268,8 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
                                     "manifest for an unidentified tree")
         return (getattr(proc, "stdout", "") or "").strip()
 
-    def _worktree_watermark(when: str) -> tuple:
-        """(newest mtime, file count) over every non-ignored path, files AND their directories.
+    def _worktree_watermark(when: str) -> Dict[str, Any]:
+        """A PER-PATH `st_mtime_ns` snapshot of every non-ignored path, files AND directories.
 
         A clean `status --porcelain` before and after cannot see a tracked file that was modified
         and restored while the gate ran: the bytes match again by the time it is asked, yet the
@@ -255,32 +286,37 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
         * directories are watermarked too, because a create-and-delete leaves no file behind to
           stat - the trace it does leave is on the parent directory.
 
+        It is a per-path snapshot and not one global maximum, because a maximum is blind in an
+        obvious way once pointed out: a writer can modify and restore any file whose mtime sits
+        BELOW the current maximum, and the maximum, the count, the status and the tree hash all
+        stay identical while the gate measured different bytes. Nanosecond resolution likewise
+        matters - a whole-second mtime is coarse enough for a fast write to land inside one tick.
+
         This DETECTS concurrent writes; it does not PREVENT them. A filesystem that does not update
         directory mtimes, or a writer that restores them, would still evade it. Running the gate in
         an isolated checkout that nothing else writes to remains the only complete guarantee, and
-        that is the direction this should move; the watermark is the fail-closed check until then.
+        that is the direction this should move; the snapshot is the fail-closed check until then.
         """
         proc = runner(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
                       cwd=repo_root)
         if int(getattr(proc, "returncode", 1) or 0) != 0:
             raise GateEvidenceError(f"could not list worktree files ({when}); refusing to treat an "
                                     "unverifiable worktree as stable")
-        newest, seen, directories = 0.0, 0, {""}
+        snapshot, directories = {}, {""}
         for rel in (getattr(proc, "stdout", "") or "").split("\0"):
             if not rel.strip():
                 continue
-            seen += 1
-            try:
-                newest = max(newest, os.stat(os.path.join(repo_root, rel)).st_mtime)
-            except OSError:
-                continue
             directories.add(os.path.dirname(rel))
-        for rel in directories:
             try:
-                newest = max(newest, os.stat(os.path.join(repo_root, rel)).st_mtime)
+                snapshot[rel] = os.stat(os.path.join(repo_root, rel)).st_mtime_ns
             except OSError:
-                continue
-        return newest, seen
+                snapshot[rel] = None  # present in the listing but unreadable: still a difference
+        for rel in sorted(directories):
+            try:
+                snapshot["dir:" + rel] = os.stat(os.path.join(repo_root, rel)).st_mtime_ns
+            except OSError:
+                snapshot["dir:" + rel] = None
+        return snapshot
 
     def _assert_identity(when: str) -> None:
         head_proc = runner(["git", "rev-parse", "HEAD"], cwd=repo_root)
@@ -311,9 +347,12 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
     watermark_before = _worktree_watermark("before running the gate")
 
     # --- CI: external, exact-SHA, absent is not success --------------------------------------------
-    ci = lookup(sha) or {}
-    ci_conclusion = str(ci.get("conclusion") or "")
-    ci_run = str(ci.get("run_id") or "")
+    # Sampled here only as an early signal. The AUTHORITATIVE read happens after the gate: the
+    # audits and the full suite take many minutes, and a required check can be re-run, go
+    # in-progress or fail inside that window. Persisting this pre-gate snapshot would allow an
+    # exact-SHA GO on a CI state that no longer holds - the same time-of-check/time-of-use shape
+    # the identity re-validation below exists to close, one field over.
+    ci_before = lookup(sha) or {}
 
     # --- audits: real exit codes -------------------------------------------------------------------
     audits_ok = True
@@ -341,11 +380,23 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
             f"{tree_after[:12]}); the commands did not all measure one tree")
     watermark_after = _worktree_watermark("after running the gate")
     if watermark_after != watermark_before:
+        changed = sorted(set(watermark_before) ^ set(watermark_after)) or sorted(
+            p for p in watermark_before if watermark_before[p] != watermark_after.get(p))
         raise GateEvidenceError(
             "the worktree was written to while the gate was running, so the commands did not all "
-            "measure the same bytes; re-run the gate on a checkout nothing else is writing to")
+            f"measure the same bytes ({', '.join(changed[:5])}); re-run the gate on a checkout "
+            "nothing else is writing to")
 
+    # The authoritative CI read: immediately before persisting, not before the gate.
+    ci = lookup(sha) or {}
+    ci_conclusion = str(ci.get("conclusion") or "")
+    ci_run = str(ci.get("run_id") or "")
+    before_conclusion = str(ci_before.get("conclusion") or "")
     ci_detail = str(ci.get("detail") or "")
+    if before_conclusion != ci_conclusion:
+        ci_detail = (f"required-check state CHANGED during the gate "
+                     f"({before_conclusion or 'unavailable'} -> {ci_conclusion or 'unavailable'}); "
+                     f"{ci_detail}")
     detail = (f"ci={ci_conclusion or 'unavailable'}"
               + (f" ({ci_detail})" if ci_detail else "")
               + f"; tree={tree_before[:12]}; tests rc={tests_rc} "
