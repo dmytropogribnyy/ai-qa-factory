@@ -17,9 +17,19 @@ from typing import Any, Dict, List
 from core.schemas.base import SchemaMixin
 
 EVIDENCE_TYPES = {
+    # Phase 4B foundation artefacts
     "validation_report", "command_log", "scaffold_metadata",
     "strategy_artifact", "blueprint_artifact", "project_artifact",
     "internal_summary", "quality_gate",
+    # A4 convergence: the client-work execution kinds (`work_execution.EvidenceItem.kind`) ...
+    "artifact", "screenshot", "trace", "log", "test_output", "diff", "report",
+    # ... and the Scout pipeline evidence types. Both now adapt onto this record, so this
+    # vocabulary must actually describe what the record can hold.
+    "screenshot_original", "screenshot_annotated", "axe_summary", "performance_summary",
+    "seo_excerpt", "console_sanitized", "network_sanitized", "video",
+    "reproduction_steps", "environment", "cleanup_verification",
+    # ... and the browser-execution evidence types (`BrowserExecutionEvidence`).
+    "playwright_report", "test_results", "execution_summary", "unknown",
 }
 
 
@@ -38,6 +48,11 @@ class EvidenceRecord(SchemaMixin):
     redacted: bool = False
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     notes: List[str] = field(default_factory=list)
+    # A4 convergence — integrity and verification, carried from producers that have them.
+    # Fail-closed defaults: no hash is invented and nothing is verified until a verifier says so.
+    # Records persisted before these fields existed load unchanged (`from_dict` defaults them).
+    content_hash: str = ""
+    verification_status: str = "UNVERIFIED"
 
 
 @dataclass

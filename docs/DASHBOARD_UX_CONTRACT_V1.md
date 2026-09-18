@@ -107,6 +107,21 @@ serves client work.
 Backend rule: every outward read endpoint is a projection of persisted truth through this model.
 Introducing a second read path for the same concept is a contract violation, regardless of convenience.
 
+### 3.1.1 Canonical evidence and finding types (A4)
+
+The read model projects exactly **one** evidence type and **one** finding type:
+
+| Concept | Canonical type | Everything else |
+|---|---|---|
+| Evidence item | `core/schemas/evidence.py:EvidenceRecord` — extended in A4 with `content_hash` and `verification_status`, fail-closed defaults (`client_visible=False`, `requires_redaction=True`, `verification_status="UNVERIFIED"`) | the live producer shapes (`core/schemas/work_execution.py:EvidenceItem`, `core/scout/pipeline/evidence.py:EvidenceItem`, `core/schemas/browser_execution.py:BrowserExecutionEvidence`) reach the read model **only** through `core/schemas/evidence_adapters.py`; `core/schemas/execution_summary.py:EvidenceItem` is deprecated and has no product consumer |
+| Finding | `core/schemas/finding.py:Finding` | `core/scout/findings.py:ScoutFinding` reaches it **only** through `finding_from_scout` in `core/risk/finding_adapters.py`; anything short of `VERIFIED` arrives as `needs_review`, and evidence references are withheld unless the Scout finding is client-safe |
+
+`GET /api/v2/evidence` returns `EvidenceRecord` projections; `GET /api/v2/targets/<ref>` findings are
+`Finding` projections. A backend that introduces a third evidence or finding shape for a V2 endpoint
+violates this contract. The full classification of every evidence-shaped class in `core/` is
+`EVIDENCE_SHAPE_REGISTRY` in `core/schemas/evidence_adapters.py`, and a guard test fails when a new
+one appears unclassified.
+
 ### 3.2 Envelope
 
 Every read endpoint returns the same envelope, so the frontend has one parsing strategy:
@@ -137,7 +152,7 @@ Every read endpoint returns the same envelope, so the frontend has one parsing s
 | `GET /api/v2/targets/<ref>` | the seven-tab payload for one target |
 | `GET /api/v2/assurance/profiles` | available profiles and their applicability |
 | `GET /api/v2/assurance/runs?target=` | assurance runs for a subject |
-| `GET /api/v2/evidence?subject=` | evidence items with integrity + client-safety flags |
+| `GET /api/v2/evidence?subject=` | `EvidenceRecord` projections: integrity (`content_hash`, `verification_status`) + client-safety flags |
 | `GET /api/v2/reviews` | pending decisions, bridge state, review history |
 | `GET /api/v2/history?subject=` | activity/audit entries |
 | `GET /api/v2/settings/runtime` | build identity, readiness, integrations |

@@ -340,6 +340,49 @@ flag — its own schema string says so.
 
 ---
 
+## A4 addendum — evidence-model convergence, as actually found (2026-09-18)
+
+The A4 slice re-proved §1.2 before touching anything, and the picture is different from the one
+recorded above in two ways that changed the work:
+
+1. **One of the three `EvidenceItem` classes is dead.** `core/schemas/execution_summary.py:EvidenceItem`
+   (and its container `ExecutionSummary`) has **zero** product consumers — it is re-exported from
+   `core/schemas/__init__.py` and constructed by one schema test, nothing else. It was deprecated, not
+   adapted, and a guard test fails if product code starts using it again.
+2. **The count above was of the exact class name, not the concept.** Beside the three `EvidenceItem`
+   classes, `core/` also holds `BrowserExecutionEvidence` (a live per-item evidence record, adapted
+   below), and `QAEvidenceItem` (report aggregate), `MediaEvidenceItem` (media metadata) and
+   `EvidenceCoverageItem` (coverage aggregate), which are not per-item records and needed no adapter.
+   A convergence claim that did not name them would have been incomplete.
+
+What A4 did, and did not do:
+
+- **Canonical record = `core/schemas/evidence.py:EvidenceRecord`.** It was already the shape on the
+  delivery path (`core/evidence_manager.py`, `core/schemas/work_delivery.py`) with fail-closed
+  client-safety defaults. It was **extended** with `content_hash` and `verification_status` (both
+  default to "not proven"); persisted records from before the extension load unchanged. Its declared
+  `EVIDENCE_TYPES` vocabulary — which was never enforced — was widened to cover every type an adapter
+  can emit, and a test pins that.
+- **Three adapters, no fourth model:** `core/schemas/evidence_adapters.py` adapts the client-work
+  and Scout pipeline shapes onto the record — and a third, `BrowserExecutionEvidence`
+  (`core/schemas/browser_execution.py`), which the A1 count could not see because its name carries
+  neither `Item` nor `Record`. A structural scan (an `evidence_type` field plus a path field) found
+  it after the first two adapters were written; the guard test now runs both scans. Client visibility is granted only when the source proves
+  both sanitisation and client clearance; nothing (hash, timestamp, status) is invented; origin is
+  preserved in `notes`.
+- **`ScoutFinding` -> `Finding`** lives in the existing adapter home `core/risk/finding_adapters.py`.
+  Only `VERIFIED` becomes `open`; `REJECTED` becomes `false_positive`; everything else is
+  `needs_review`. Evidence references cross only when the Scout finding is client-safe, and the
+  withholding is tagged. Scout categories with no canonical equivalent (`seo`, `structured_data`,
+  `coverage`) map to `unknown` with the original preserved as a tag — extending `FindingCategory`
+  touches risk scoring and client rendering and is recorded here as an `EXTEND` candidate, not done.
+- **Not done:** the four evidence writers over different roots (§1.2) are untouched; the producers
+  still write their own shapes and the adapters are available at the read/delivery boundary. Moving
+  the writers onto `EvidenceRecord` directly is the next convergence step and belongs with the
+  Assurance Core persistence work it was a precondition for.
+
+---
+
 ## Related
 
 - `docs/ENGINEERING_EXECUTION_POLICY.md` — how work is executed

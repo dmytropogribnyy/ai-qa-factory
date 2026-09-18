@@ -1,3 +1,11 @@
+"""Execution summary schema (v3) - DEPRECATED (Issue #74, A4 evidence convergence).
+
+This module's ``EvidenceItem`` and ``ExecutionSummary`` have no product consumer. They remain
+exported from ``core.schemas`` only so the public name does not vanish. The canonical product
+evidence record is ``core.schemas.evidence.EvidenceRecord``; new code must use it, with the
+adapters in ``core.schemas.evidence_adapters`` for the live producer shapes. A guard test fails
+if product code starts using this shape again.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -6,6 +6,8 @@ generated for planning_only mode or empty data.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from core.schemas.finding import (
     Confidence,
     Finding,
@@ -13,6 +15,74 @@ from core.schemas.finding import (
     FindingStatus,
     Severity,
 )
+
+# --- A4: ScoutFinding -> Finding ------------------------------------------------------------------
+#
+# Scout categories that have a canonical equivalent. Anything absent here maps to UNKNOWN rather
+# than to a guessed neighbour, and the Scout label always survives as a `scout:category=` tag —
+# a category is never silently upgraded. (`seo`, `structured_data`, `coverage` are EXTEND
+# candidates for FindingCategory; adding enum members touches risk scoring and client rendering,
+# so that is a separate decision, not an adapter's.)
+_SCOUT_CATEGORY_TO_CANONICAL = {
+    "functional": FindingCategory.FUNCTIONAL,
+    "accessibility": FindingCategory.ACCESSIBILITY,
+    "performance": FindingCategory.PERFORMANCE,
+    "reliability": FindingCategory.RELIABILITY,
+    "mobile": FindingCategory.UX,
+    "business_flow": FindingCategory.FUNCTIONAL,
+}
+
+# Only a VERIFIED Scout finding is an established, open finding. Everything short of that lands in
+# NEEDS_REVIEW so it is never presented as settled; a REJECTED one is a recorded false positive.
+_SCOUT_STATE_TO_STATUS = {
+    "VERIFIED": FindingStatus.OPEN,
+    "REJECTED": FindingStatus.FALSE_POSITIVE,
+}
+
+
+def finding_from_scout(scout: Any) -> Finding:
+    """Convert one ``core.scout.findings.ScoutFinding`` into the canonical ``Finding``.
+
+    ``Finding.evidence`` flows to client delivery, so evidence references are carried across ONLY
+    when the Scout finding is client-safe (independently verified AND sanitised). Otherwise they are
+    withheld and the withholding is tagged, so the omission is visible rather than silent.
+    Nothing is invented: Scout carries no recommendation, so none is written.
+    """
+    state = str(getattr(scout, "verification_state", "") or "")
+    category = str(getattr(scout, "category", "") or "")
+    client_safe = bool(getattr(scout, "is_client_safe", False))
+    refs = [str(r) for r in (getattr(scout, "evidence_refs", None) or [])]
+    tags = [
+        f"scout:category={category}",
+        f"scout:check_family={getattr(scout, 'check_family', '')}",
+        f"scout:verification={state}",
+        f"scout:sanitized={bool(getattr(scout, 'sanitized', False))}",
+        f"scout:client_safe={client_safe}",
+    ]
+    if refs and not client_safe:
+        tags.append("scout:evidence_withheld=not_client_safe")
+    expected = str(getattr(scout, "expected", "") or "")
+    actual = str(getattr(scout, "actual", "") or "")
+    description = "\n".join(part for part in (
+        f"Expected: {expected}" if expected else "",
+        f"Actual: {actual}" if actual else "",
+    ) if part)
+    return Finding(
+        id=str(getattr(scout, "finding_id", "") or ""),
+        title=str(getattr(scout, "title", "") or ""),
+        description=description,
+        severity=Severity(str(getattr(scout, "severity", "low") or "low")),
+        category=_SCOUT_CATEGORY_TO_CANONICAL.get(category, FindingCategory.UNKNOWN),
+        source_module="scout",
+        affected_area=str(getattr(scout, "url", "") or ""),
+        evidence="; ".join(refs) if (refs and client_safe) else "",
+        recommendation="",
+        client_impact=str(getattr(scout, "business_impact", "") or ""),
+        confidence=Confidence(str(getattr(scout, "confidence", "medium") or "medium")),
+        status=_SCOUT_STATE_TO_STATUS.get(state, FindingStatus.NEEDS_REVIEW),
+        tags=tags,
+        created_at="",
+    )
 
 
 def findings_from_api_contract(

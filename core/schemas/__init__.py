@@ -45,6 +45,9 @@ from core.schemas.tool_selection import ToolRecommendation, ToolSelection
 from core.schemas.artifact_manifest import ArtifactRecord, ArtifactManifest
 from core.schemas.run_context import RunContext
 from core.schemas.safety import SafetyCheck, SafetyReport, SafetyAssessment
+# DEPRECATED (A4): `EvidenceItem`/`ExecutionSummary` here have no product consumer and are kept only
+# so the public names do not vanish. The canonical evidence record is `EvidenceRecord` below;
+# live producer shapes reach it through `core.schemas.evidence_adapters`.
 from core.schemas.execution_summary import EvidenceItem, ExecutionSummary
 from core.schemas.assistance import AssistanceRecord, AssistanceHistory
 from core.schemas.activity_log import ActivityEvent, ActivityLog
