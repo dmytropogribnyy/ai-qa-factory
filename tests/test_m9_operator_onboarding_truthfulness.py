@@ -369,7 +369,10 @@ def test_mutating_the_real_catalogue_claims_is_caught_in_both_directions(tmp_pat
 # so they are not claims about the catalogue and must not be validated as if they were.
 _DIAGNOSTIC_CLAIMS = {
     ("CHATGPT_OBSERVER_MCP_CONNECTION.md", 135),
-    ("OBSERVER_MCP_V33.md", 98),
+    # Moved 98 -> 115 when the role-scoped-catalog correction (Issue #74 A3.5) added the permission
+    # model to this document. The sentence itself is unchanged: "--list-tools shows only 7 tools ->
+    # old build" still describes a BROKEN state, not a claim about the catalogue.
+    ("OBSERVER_MCP_V33.md", 115),
 }
 
 
