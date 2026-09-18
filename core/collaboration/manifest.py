@@ -10,6 +10,7 @@ explicitly successful for the exact SHA.
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,12 +27,36 @@ SCHEMA = "collab-gate-manifest/v2"
 _EVIDENCE_FIELDS = ("ci_conclusion", "tests_passed", "tests_total", "tests_ok", "audits_ok")
 
 
+def _count(value: Any) -> Optional[int]:
+    """A test count, or None when the record does not carry a usable one.
+
+    `int(value or 0)` raised straight out of the trusted READ boundary for a record whose
+    `tests_passed` was a string or a list - a crash where the whole job is to decide whether
+    evidence may be believed. A record that cannot be understood is refused; refusing is not the
+    same as raising, and an unparseable count is certainly not a passing one. `bool` is excluded on
+    purpose: `True` is an `int` in Python, and "tests passed: yes" is not a count.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) else None
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
 def _derive_success(gate: Dict[str, Any]) -> bool:
     """The ONE place a gate verdict is computed, used when writing and again when reading."""
+    passed = _count(gate.get("tests_passed"))
     return (str(gate.get("ci_conclusion", "")).lower() == "success"
             and bool(gate.get("tests_ok"))
             and bool(gate.get("audits_ok"))
-            and int(gate.get("tests_passed") or 0) > 0)
+            and passed is not None and passed > 0)
 
 
 def _gate_dir(output_root: str) -> Path:
@@ -108,7 +133,10 @@ def build_trusted_manifest(output_root: str, repo_root: str, head_sha: str) -> D
                f"{gate.get('tests_passed', 0)}/{gate.get('tests_total', 0)} "
                f"ok={gate.get('tests_ok')}; audits ok={gate.get('audits_ok')}")
 
-    missing = [f for f in _EVIDENCE_FIELDS if f not in gate]
+    # A field present but unusable is as good as absent for a verdict that must be re-derivable.
+    unusable = [f for f in ("tests_passed", "tests_total")
+                if f in gate and _count(gate.get(f)) is None]
+    missing = [f for f in _EVIDENCE_FIELDS if f not in gate] + unusable
     if missing:
         return {"present": True, "success": False, "gate": gate,
                 "summary": f"{summary}; record is INCOMPLETE - missing evidence {missing}, so its "

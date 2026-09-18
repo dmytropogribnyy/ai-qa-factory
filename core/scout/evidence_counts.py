@@ -19,11 +19,35 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # The artifact kinds the canonical evidence surface publishes. Kept here so the Dashboard and the
 # Observer cannot drift apart again by editing one list.
 EVIDENCE_SUFFIXES = frozenset({".json", ".png", ".webm"})
+
+
+
+def _index_records(data: Any) -> Optional[List[Dict[str, Any]]]:
+    """The evidence records in an EVIDENCE_INDEX file, whatever real shape it uses.
+
+    Two shapes are written in production and the first reader matched NEITHER, so every genuine
+    index counted as unreadable and the client-safe count was structurally always zero:
+
+    * ``engine._persist_finding``   -> ``{finding_id:  {...}}``
+    * ``build_evidence_index``      -> ``{evidence_id: {...}}``
+
+    Both are mappings of id -> record, so one rule covers them. ``{"evidence": [...]}`` is accepted
+    too because that is the shape the first version expected and a stored file may still use it.
+    Returns None when the file is readable JSON but not an index at all.
+    """
+    if isinstance(data, dict):
+        listed = data.get("evidence")
+        if isinstance(listed, list):
+            return [r for r in listed if isinstance(r, dict)]
+        records = [v for v in data.values() if isinstance(v, dict)]
+        # A mapping with no record-shaped value is not an index; saying so beats counting zero.
+        return records if records else None
+    return None
 
 
 def promoted_run_ids(output_dir: str, campaign_id: str) -> List[str]:
@@ -60,6 +84,7 @@ def campaign_evidence_counts(output_dir: str, campaign_id: str) -> Dict[str, Any
     root = Path(output_dir) / "scout"
     total = 0
     client_safe = 0
+    unverifiable = 0
     unreadable = 0
 
     for run_id in promoted_run_ids(output_dir, campaign_id):
@@ -78,16 +103,22 @@ def campaign_evidence_counts(output_dir: str, campaign_id: str) -> Dict[str, Any
                 except (OSError, ValueError):
                     unreadable += 1
                     continue
-                items = data.get("evidence") if isinstance(data, dict) else None
-                if not isinstance(items, list):
+                records = _index_records(data)
+                if records is None:
                     unreadable += 1
                     continue
-                for item in items:
-                    if not isinstance(item, dict):
+                for item in records:
+                    if not bool(item.get("client_safe")):
                         continue
-                    if (bool(item.get("client_safe"))
-                            and str(item.get("sanitization_status")) == "sanitized"
-                            and str(item.get("verification_status")) == "VERIFIED"):
+                    sanitization = item.get("sanitization_status")
+                    verification = item.get("verification_status")
+                    if sanitization is None or verification is None:
+                        # The historical engine record carried only the flag. It cannot prove the
+                        # claim from its own contents, so it is neither counted as proven nor
+                        # silently dropped - the missing provenance is reported.
+                        unverifiable += 1
+                    elif (str(sanitization) == "sanitized" and str(verification) == "VERIFIED"):
                         client_safe += 1
 
-    return {"total": total, "client_safe": client_safe, "unreadable_indexes": unreadable}
+    return {"total": total, "client_safe": client_safe,
+            "client_safe_unverifiable": unverifiable, "unreadable_indexes": unreadable}

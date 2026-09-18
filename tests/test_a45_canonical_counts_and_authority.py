@@ -156,7 +156,11 @@ def test_a_non_boolean_deep_is_refused_rather_than_coerced(value):
     mcp_server.set_role("operator")
     try:
         out = mcp_server._call_handler("observer_get_system_readiness", {"deep": value})
-        payload = json.loads(out[0].text if hasattr(out[0], "text") else out)
+        # The contract is a JSON STRING, like every other branch of this function. The first
+        # version of this test accepted either a string or a TextContent list, and that
+        # flexibility is exactly what let a branch returning the wrong type pass.
+        assert isinstance(out, str), f"_call_handler must return a JSON string, got {type(out)}"
+        payload = json.loads(out)
         assert payload["status"] == "error", f"deep={value!r} must be refused, not coerced"
         assert "boolean" in payload["message"]
     finally:
@@ -169,8 +173,8 @@ def test_a_real_boolean_deep_is_still_accepted_by_the_operator_role():
     mcp_server.set_role("operator")
     try:
         out = mcp_server._call_handler("observer_get_system_readiness", {"deep": False})
-        text = out[0].text if hasattr(out[0], "text") else out
-        assert json.loads(text).get("status") != "error"
+        assert isinstance(out, str), f"_call_handler must return a JSON string, got {type(out)}"
+        assert json.loads(out).get("status") != "error"
     finally:
         mcp_server.set_role(None)
 

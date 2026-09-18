@@ -118,8 +118,13 @@ class DeepQaSession:
              + f"\n\n**Expected:** {f.expected}\n\n**Actual:** {f.actual}\n").encode("utf-8"))
         self.store.save_prospect_artifact(
             self.session_id, f"EVIDENCE_INDEX_{fid}.json",
+            # `client_safe` alone cannot be checked by whoever reads this later: before A4.5 the
+            # writer could set it on REJECTED evidence. The provenance travels with the claim so a
+            # reader can re-derive it instead of trusting the flag.
             {fid: {"evidence_id": evidence_item.evidence_id,
                    "storage_ref": evidence_item.storage_ref, "hash": evidence_item.content_hash,
+                   "sanitization_status": evidence_item.sanitization_status,
+                   "verification_status": evidence_item.verification_status,
                    "client_safe": evidence_item.client_safe}})
         self.store.save_prospect_artifact(
             self.session_id, f"VERIFICATION_RESULT_{fid}.json",

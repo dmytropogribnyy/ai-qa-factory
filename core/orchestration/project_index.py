@@ -115,10 +115,15 @@ class ProjectIndex:
 
     @staticmethod
     def _read_json(path: Path) -> Dict[str, Any]:
+        """Always a mapping. `null`, `[]`, `"done"` and `42` are all VALID JSON, and every caller
+        here immediately calls `.get` on the result - so a syntactically fine file of the wrong
+        shape raised `AttributeError` and took down the whole project index, which is the screen
+        that exists to surface trouble."""
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
+        return data if isinstance(data, dict) else {}
 
     @staticmethod
     def _read_state(path: Path):
@@ -133,9 +138,12 @@ class ProjectIndex:
         if not path.exists():
             return {}, False
         try:
-            return json.loads(path.read_text(encoding="utf-8")), False
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}, True
+        # Parsed is not the same as usable: a file holding `null`/`[]`/`"done"` is readable JSON
+        # that carries no state, which is UNKNOWN, not a fresh intake.
+        return (data, False) if isinstance(data, dict) else ({}, True)
 
     def _client_projects(self, include_diagnostics: bool = False) -> List[ProjectEntry]:
         from core.scout.canonical_runs import is_diagnostic_run
