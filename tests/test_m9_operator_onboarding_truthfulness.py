@@ -369,10 +369,16 @@ def test_mutating_the_real_catalogue_claims_is_caught_in_both_directions(tmp_pat
 # so they are not claims about the catalogue and must not be validated as if they were.
 _DIAGNOSTIC_CLAIMS = {
     ("CHATGPT_OBSERVER_MCP_CONNECTION.md", 135),
-    # Moved 98 -> 115 when the role-scoped-catalog correction (Issue #74 A3.5) added the permission
-    # model to this document. The sentence itself is unchanged: "--list-tools shows only 7 tools ->
-    # old build" still describes a BROKEN state, not a claim about the catalogue.
-    ("OBSERVER_MCP_V33.md", 115),
+    # Moved 98 -> 118 across the Issue #74 A3.5 role-scoped-catalog edits to this document. The
+    # sentence itself is unchanged: "--list-tools shows only 7 tools -> old build" still describes a
+    # BROKEN state, not a claim about the catalogue.
+    # NOTE: keying this allowlist by line number makes it brittle — any edit ABOVE the sentence
+    # re-breaks it even though nothing about the claim changed (this entry moved twice during one
+    # slice). Keying by the sentence text would be equally strict and would only need revisiting when
+    # the sentence itself changes, which is exactly when re-adjudication IS wanted. Left as-is here
+    # deliberately: changing a truthfulness guard's mechanism to make one's own change pass is the
+    # pattern this file exists to prevent, so it is recorded as a residual instead.
+    ("OBSERVER_MCP_V33.md", 118),
 }
 
 
