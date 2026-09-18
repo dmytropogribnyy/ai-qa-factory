@@ -170,11 +170,15 @@ class AnalyzedSiteRegistry:
             os.write(fd, json.dumps({"owner": owner, "until": now + lease_s}).encode())
             os.close(fd)
         except FileExistsError:
+            # An unreadable lease is held, not expired - see `run_lock.acquire` for the same rule.
+            # Granting a claim here lets two campaigns analyse one domain at once, which this
+            # method's own docstring promises cannot happen.
             try:
                 info = json.loads(lock.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                info = {}
-            if float(info.get("until", 0)) > now:                # a live lease held by someone else
+                until = float(info["until"])
+            except (OSError, ValueError, TypeError, KeyError):
+                return False
+            if until > now:                                      # a live lease held by someone else
                 return False
             lock.write_text(json.dumps({"owner": owner, "until": now + lease_s}), encoding="utf-8")
         e = self._entries.get(domain) or SiteEntry(domain=domain, first_seen=_now_iso())
