@@ -23,7 +23,6 @@ Safety:
 from __future__ import annotations
 
 import json
-import os
 
 try:
     import mcp.types as types  # type: ignore[import-untyped,import-not-found]
@@ -236,10 +235,26 @@ READ_ONLY_TOOLS = frozenset({
 })
 
 
+# Set only by the serving process itself, via `tools/run_mcp_server.py --role`. Deliberately NOT
+# readable from the ambient environment: a tunnel child inherits its parent's environment by
+# definition, so an inherited AIQA_MCP_ROLE=operator would hand write tools to the remote transport.
+# Environment may RESTRICT (it is already the restricted default) but can never WIDEN privilege.
+_EXPLICIT_ROLE: str | None = None
+
+
+def set_role(role: str | None) -> str:
+    """Declare the role for THIS process. Anything unrecognised clears back to the restricted role."""
+    global _EXPLICIT_ROLE
+    candidate = str(role or "").strip().lower()
+    _EXPLICIT_ROLE = candidate if candidate in _VALID_ROLES else None
+    return server_role()
+
+
 def server_role() -> str:
-    """The active role. Anything unset or unrecognised resolves to the restricted role."""
-    role = os.environ.get("AIQA_MCP_ROLE", "").strip().lower()
-    return role if role in _VALID_ROLES else _DEFAULT_ROLE
+    """The active role. Only an explicit in-process declaration can select `operator`."""
+    if _EXPLICIT_ROLE in _VALID_ROLES:
+        return _EXPLICIT_ROLE
+    return _DEFAULT_ROLE
 
 
 def tool_schemas(role: str | None = None) -> list[dict]:

@@ -97,16 +97,22 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
     runner = run or _run_default
     lookup = ci_lookup or _gh_ci_lookup(repo_root)
 
+    def _assert_identity(when: str) -> None:
+        head = (getattr(runner(["git", "rev-parse", "HEAD"], cwd=repo_root), "stdout", "")
+                or "").strip()
+        if head.lower() != sha:
+            raise GateEvidenceError(
+                f"repository head {head[:12] or '<unknown>'} is not the requested SHA {sha[:12]} "
+                f"({when}); gate evidence would describe a different commit")
+        dirty = (getattr(runner(["git", "status", "--porcelain"], cwd=repo_root), "stdout", "")
+                 or "").strip()
+        if dirty:
+            raise GateEvidenceError(
+                f"working tree is not clean ({when}); gate evidence would not describe the "
+                "committed SHA")
+
     # --- identity: the gates must measure the SHA the manifest names -------------------------------
-    head = (getattr(runner(["git", "rev-parse", "HEAD"], cwd=repo_root), "stdout", "") or "").strip()
-    if head.lower() != sha:
-        raise GateEvidenceError(
-            f"repository head {head[:12] or '<unknown>'} is not the requested SHA {sha[:12]}; "
-            "gate evidence would describe a different commit")
-    dirty = (getattr(runner(["git", "status", "--porcelain"], cwd=repo_root), "stdout", "") or "").strip()
-    if dirty:
-        raise GateEvidenceError(
-            "working tree is not clean; gate evidence would not describe the committed SHA")
+    _assert_identity("before running the gate")
 
     # --- CI: external, exact-SHA, absent is not success --------------------------------------------
     ci = lookup(sha) or {}
@@ -127,6 +133,11 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
     tests_rc = int(getattr(proc, "returncode", 1) or 0)
     tests_passed, tests_total = _parse_pytest(str(getattr(proc, "stdout", "") or ""))
     tests_ok = tests_rc == 0 and tests_passed > 0
+
+    # The gate above takes many minutes. Re-check identity immediately before persisting: if HEAD
+    # advanced or a tracked file changed meanwhile, the commands measured a different checkout and a
+    # manifest written for `sha` would authorise an exact-SHA GO on mismatched evidence.
+    _assert_identity("after running the gate")
 
     detail = (f"ci={ci_conclusion or 'unavailable'}; tests rc={tests_rc} "
               f"{tests_passed}/{tests_total}; " + ", ".join(audit_notes))

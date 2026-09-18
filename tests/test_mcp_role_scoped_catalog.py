@@ -25,6 +25,14 @@ import pytest
 
 from integrations.mcp import server as mcp_server
 
+@pytest.fixture(autouse=True)
+def _reset_role():
+    """The role is process state; leaking it between tests would make results order-dependent."""
+    mcp_server.set_role(None)
+    yield
+    mcp_server.set_role(None)
+
+
 # Tools that mutate state, write files, or launch active probes. None may appear in the observer role.
 MUTATING_TOOLS = {
     "analyze_project",
@@ -80,9 +88,9 @@ def test_a_tool_outside_the_active_role_is_refused_at_dispatch(monkeypatch):
     assert "role" in out.get("reason", "").lower()
 
 
-def test_the_same_tool_is_reachable_under_the_operator_role(monkeypatch):
+def test_the_same_tool_is_reachable_under_the_operator_role():
     """Discriminating: the refusal above must come from the ROLE, not from the tool being broken."""
-    monkeypatch.setenv("AIQA_MCP_ROLE", "operator")
+    mcp_server.set_role("operator")
     out = json.loads(mcp_server._call_handler("apply_self_healing_fixes", {}))
     # Reaches the handler, which then applies its own guard — a different refusal than the role gate.
     assert "role" not in out.get("reason", "").lower()
@@ -203,9 +211,42 @@ def test_the_launcher_guard_rejects_a_pin_hidden_in_a_comment_block():
     assert _pins_role_executably(before_param) is False
 
 
-def test_an_inherited_operator_role_is_what_the_pin_prevents(monkeypatch):
-    """Discriminating: without a pin, an inherited value really does change the catalog."""
+def test_the_launcher_pins_remain_as_defence_in_depth(monkeypatch):
+    """The launcher pins are no longer the primary control — provenance is (see round 3) — but they
+    are kept: two independent reasons for the remote transport to be read-only is the point."""
     monkeypatch.setenv("AIQA_MCP_ROLE", "operator")
-    assert "apply_self_healing_fixes" in mcp_server.tool_names()
-    monkeypatch.setenv("AIQA_MCP_ROLE", "observer")
+    assert mcp_server.server_role() == "observer"      # provenance wins regardless of the pin
+    mcp_server.set_role("operator")
+    assert mcp_server.server_role() == "operator"
+
+
+# --- review round 3: ambient environment must never WIDEN privilege ----------------------------------
+def test_inherited_environment_cannot_grant_the_operator_role(monkeypatch):
+    """A tunnel child inherits its parent's environment by definition, so an env-based pin is a patch
+    on the wrong layer. Operator must require an explicit argv flag on the serving process; an
+    inherited AIQA_MCP_ROLE=operator must not widen the catalog."""
+    mcp_server.set_role(None)
+    monkeypatch.setenv("AIQA_MCP_ROLE", "operator")
+    assert mcp_server.server_role() == "observer"
     assert "apply_self_healing_fixes" not in mcp_server.tool_names()
+
+
+def test_an_explicit_flag_grants_the_operator_role(monkeypatch):
+    """Discriminating: the refusal above is about PROVENANCE, not about operator being unreachable."""
+    monkeypatch.delenv("AIQA_MCP_ROLE", raising=False)
+    try:
+        mcp_server.set_role("operator")
+        assert mcp_server.server_role() == "operator"
+        assert "apply_self_healing_fixes" in mcp_server.tool_names()
+    finally:
+        mcp_server.set_role(None)
+
+
+def test_the_server_cli_exposes_the_role_flag():
+    """The local developer path must have a way in that does not rely on the environment."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "tools" / "run_mcp_server.py"
+    text = src.read_text(encoding="utf-8")
+    assert "--role" in text
+    assert "set_role" in text

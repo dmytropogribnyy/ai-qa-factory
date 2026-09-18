@@ -6,9 +6,9 @@ model — the same persisted source-of-truth the Dashboard uses. Tools are secre
 evidence-root path-confined, and bounded.
 
 > **Read-only is a ROLE, not a property of every tool.** The catalog is an explicit read-only
-> **allowlist** and fails closed: with `AIQA_MCP_ROLE` unset the server publishes only the `observer`
-> catalog, and any tool not named in the allowlist — including one added later — is `operator`-only by
-> default. `observer_export_ai_review_bundle` is withheld because it writes files; the `deep=true`
+> **allowlist** and fails closed: without an explicit `--role operator` flag the server publishes only
+> the `observer` catalog, and any tool not named in the allowlist — including one added later — is
+> `operator`-only by default. `observer_export_ai_review_bundle` is withheld because it writes files; the `deep=true`
 > *mode* of `observer_get_system_readiness` is refused because it launches Chromium and network
 > probes. The seven planning tools are `operator`-only. See "Permission model" below.
 
@@ -62,9 +62,13 @@ Claude Code / Claude Desktop / VS Code (`mcpServers`):
 
 ## Permission model
 
-- **Role-scoped catalog, failing closed.** `AIQA_MCP_ROLE` selects `observer` (default) or
-  `operator`. The role gate runs at dispatch, so it holds on **every** transport — stdio and
-  authenticated HTTP alike — and a tool outside the active catalog is refused before any handler runs.
+- **Role-scoped catalog, failing closed.** The role is `observer` unless the serving process is
+  started with an explicit `--role operator` flag (`tools/run_mcp_server.py --role operator`). It is
+  deliberately **not** selected by an environment variable: a tunnel child inherits its parent's
+  environment, so an inherited value could otherwise widen the remote catalog. Ambient environment can
+  never grant `operator`. The role gate runs at dispatch, so it holds on **every** transport — stdio
+  and authenticated HTTP alike — and a tool outside the active catalog is refused before any handler
+  runs.
 - **`observer` role = genuinely non-mutating only.** It excludes every planning tool (including
   `apply_self_healing_fixes`, which writes into spec files when `dry_run=false`),
   `observer_export_ai_review_bundle` (writes a bundle to disk), and `deep` readiness.

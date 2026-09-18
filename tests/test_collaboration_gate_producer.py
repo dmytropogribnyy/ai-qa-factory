@@ -222,3 +222,44 @@ def test_a_ruff_failure_blocks_success(tmp_path):
 
     out = produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(), run=_RuffFails())
     assert out["success"] is False
+
+
+def test_identity_is_revalidated_after_the_long_running_gate(tmp_path):
+    """TOCTOU: the gate takes 20+ minutes. If HEAD advances or the tree goes dirty while ruff, the
+    audits and the full suite run, the manifest would still be persisted for the REQUESTED sha while
+    the commands measured a different checkout - exact-SHA GO on mismatched evidence."""
+    class _MovesAfterChecks(_Runs):
+        def __init__(self):
+            super().__init__()
+            self.head_reads = 0
+
+        def __call__(self, cmd, **kw):
+            joined = " ".join(str(c) for c in cmd)
+            if "rev-parse" in joined:
+                self.head_reads += 1
+                # first read: the requested sha; after the gate ran, HEAD has moved on
+                return _P(0, _SHA if self.head_reads == 1 else _OTHER)
+            return super().__call__(cmd, **kw)
+
+    runs = _MovesAfterChecks()
+    with pytest.raises(GateEvidenceError, match="head|moved|changed"):
+        produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(), run=runs)
+    assert not (tmp_path / "_review_relay" / "collab_gate" / f"{_SHA}.json").exists(), \
+        "a manifest was persisted even though the checkout moved during the gate"
+
+
+def test_a_tree_dirtied_during_the_gate_is_refused(tmp_path):
+    class _DirtiesAfterChecks(_Runs):
+        def __init__(self):
+            super().__init__()
+            self.status_reads = 0
+
+        def __call__(self, cmd, **kw):
+            joined = " ".join(str(c) for c in cmd)
+            if "status" in joined:
+                self.status_reads += 1
+                return _P(0, "" if self.status_reads == 1 else " M core/x.py")
+            return super().__call__(cmd, **kw)
+
+    with pytest.raises(GateEvidenceError, match="dirty|clean|changed"):
+        produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(), run=_DirtiesAfterChecks())

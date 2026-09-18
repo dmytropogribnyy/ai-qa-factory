@@ -36,8 +36,22 @@ def _blocked_flag_check(args_list: list[str]) -> None:
             sys.exit(1)
 
 
+def _role_from_argv(args_list: list[str]) -> str | None:
+    """`--role operator` / `--role=operator`. An explicit flag is the ONLY way to reach the operator
+    catalog; the ambient environment cannot widen privilege for an inherited child process."""
+    for i, arg in enumerate(args_list):
+        if arg == "--role" and i + 1 < len(args_list):
+            return args_list[i + 1]
+        if arg.startswith("--role="):
+            return arg.split("=", 1)[1]
+    return None
+
+
 def main(argv: list[str] | None = None) -> None:
-    _blocked_flag_check(sys.argv[1:] if argv is None else argv)
+    args_list = sys.argv[1:] if argv is None else argv
+    _blocked_flag_check(args_list)
+    from integrations.mcp.server import set_role
+    set_role(_role_from_argv(args_list))
 
     parser = argparse.ArgumentParser(
         description=f"AI QA Factory v{APP_VERSION} — Phase 6 MCP Server",
