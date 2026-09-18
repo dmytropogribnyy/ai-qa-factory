@@ -263,3 +263,19 @@ def test_a_tree_dirtied_during_the_gate_is_refused(tmp_path):
 
     with pytest.raises(GateEvidenceError, match="dirty|clean|changed"):
         produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(), run=_DirtiesAfterChecks())
+
+
+@pytest.mark.parametrize("failing", ["rev-parse", "status"])
+def test_a_failed_git_command_is_not_treated_as_a_clean_checkout(tmp_path, failing):
+    """Empty stdout from a FAILED git command is not evidence of a clean tree. A transient
+    repository or permission failure must refuse, not silently look like "nothing modified"."""
+    class _GitFails(_Runs):
+        def __call__(self, cmd, **kw):
+            joined = " ".join(str(c) for c in cmd)
+            if failing in joined:
+                return _P(128, "")          # non-zero, empty output
+            return super().__call__(cmd, **kw)
+
+    with pytest.raises(GateEvidenceError):
+        produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(), run=_GitFails())
+    assert not (tmp_path / "_review_relay" / "collab_gate" / f"{_SHA}.json").exists()

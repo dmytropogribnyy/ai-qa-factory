@@ -98,14 +98,23 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
     lookup = ci_lookup or _gh_ci_lookup(repo_root)
 
     def _assert_identity(when: str) -> None:
-        head = (getattr(runner(["git", "rev-parse", "HEAD"], cwd=repo_root), "stdout", "")
-                or "").strip()
+        head_proc = runner(["git", "rev-parse", "HEAD"], cwd=repo_root)
+        if int(getattr(head_proc, "returncode", 1) or 0) != 0:
+            raise GateEvidenceError(f"could not read repository head ({when}); refusing to record "
+                                    "a manifest for an unverified checkout")
+        head = (getattr(head_proc, "stdout", "") or "").strip()
         if head.lower() != sha:
             raise GateEvidenceError(
                 f"repository head {head[:12] or '<unknown>'} is not the requested SHA {sha[:12]} "
                 f"({when}); gate evidence would describe a different commit")
-        dirty = (getattr(runner(["git", "status", "--porcelain"], cwd=repo_root), "stdout", "")
-                 or "").strip()
+        status_proc = runner(["git", "status", "--porcelain"], cwd=repo_root)
+        # Empty stdout from a FAILED status is not a clean tree. Without this, a transient
+        # repository/permission failure would look like "nothing modified" and let the producer
+        # record a manifest for a checkout whose cleanliness was never actually verified.
+        if int(getattr(status_proc, "returncode", 1) or 0) != 0:
+            raise GateEvidenceError(f"could not determine working-tree status ({when}); refusing to "
+                                    "treat an unreadable status as clean")
+        dirty = (getattr(status_proc, "stdout", "") or "").strip()
         if dirty:
             raise GateEvidenceError(
                 f"working tree is not clean ({when}); gate evidence would not describe the "

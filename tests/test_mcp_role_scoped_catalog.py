@@ -242,11 +242,39 @@ def test_an_explicit_flag_grants_the_operator_role(monkeypatch):
         mcp_server.set_role(None)
 
 
-def test_the_server_cli_exposes_the_role_flag():
-    """The local developer path must have a way in that does not rely on the environment."""
+def _run_cli(*args):
+    """Run the REAL CLI as a subprocess, with AIQA_MCP_ROLE stripped from the environment."""
+    import os
+    import subprocess
+    import sys
     from pathlib import Path
 
-    src = Path(__file__).resolve().parents[1] / "tools" / "run_mcp_server.py"
-    text = src.read_text(encoding="utf-8")
-    assert "--role" in text
-    assert "set_role" in text
+    repo = Path(__file__).resolve().parents[1]
+    env = {k: v for k, v in os.environ.items() if k.upper() != "AIQA_MCP_ROLE"}
+    return subprocess.run([sys.executable, "tools/run_mcp_server.py", *args],
+                          cwd=str(repo), env=env, capture_output=True, text=True, timeout=120)
+
+
+def test_the_documented_operator_command_actually_starts():
+    """A substring check on the source is NOT enough, and that is not hypothetical: `--role` was
+    parsed by hand but never declared to argparse, so this exact command died with
+    `unrecognized arguments: --role operator` while a source grep reported it as present."""
+    proc = _run_cli("--role", "operator", "--list-tools")
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "unrecognized arguments" not in (proc.stdout + proc.stderr)
+    assert "apply_self_healing_fixes" in proc.stdout
+
+
+def test_the_default_cli_invocation_lists_only_the_read_only_catalog():
+    """The listing must not advertise a tool this process would refuse to run."""
+    proc = _run_cli("--list-tools")
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "apply_self_healing_fixes" not in proc.stdout
+    assert "observer_export_ai_review_bundle" not in proc.stdout
+    assert "qa_factory_health" in proc.stdout
+
+
+def test_an_invalid_role_value_is_rejected_by_the_cli():
+    proc = _run_cli("--role", "superuser", "--list-tools")
+    assert proc.returncode != 0
+    assert "invalid choice" in (proc.stdout + proc.stderr)
