@@ -127,7 +127,7 @@ materially cheaper than the roadmap implies.
 | Canonical tool registry | `EXTEND` | Four disjoint registries (`config/mcp_servers.yaml` v1 — the only one loaded — plus `v2.yaml`, `capabilities/atomic_capabilities.yaml`, `tool_broker._CATALOGUE`). `core/schemas/mcp_descriptor.py:86 MCPToolDescriptor` is nearly the V3 row but **nothing constructs it at runtime**. |
 | R0–R5 risk tiers | `NEW` | Four competing risk vocabularies; the ordinal `RISK_LEVELS` has **zero non-test consumers**. |
 | Task capability envelope | `EXTEND` | `ToolchainPlan`/`ExecutionBudget` exist but are planning artifacts no executor reads back. |
-| Deterministic policy gateway | `NEW` | `ToolPolicyEngine` is referenced in four docstrings and **does not exist**. `core/scout/integrations/mcp.py` implements exactly the right primitives (`validate_tool`, `check_recursion`, `detect_prompt_injection`, `classify_result`) — with **test-only callers**. Natural insertion point: `integrations/mcp/server.py:197 _call_handler`. |
+| Deterministic policy gateway | `NEW` | `ToolPolicyEngine` is referenced in four docstrings and **does not exist**. `core/scout/integrations/mcp.py` implements exactly the right primitives (`validate_tool`, `check_recursion`, `detect_prompt_injection`, `classify_result`) — with **test-only callers**. The natural single choke is `_call_handler` in `integrations/mcp/server.py`. |
 | Action receipts | `NEW` | `operator_executor.py:222-237` validation `metadata.json` is the template to generalise. |
 | Per-tool-call idempotency | `NEW` | Explicitly deferred in-code (`work_run_state.py:16-22`). Run-level and message-level idempotency are `ALREADY_EXISTS`. |
 | Budgets | `EXTEND` | `BudgetLedger` is a real fail-closed persistent ledger; `ExecutionBudget` is the right schema with no runtime. |
@@ -163,7 +163,7 @@ CSRF). A real read-model layer exists for client work (`core/dashboard/read_mode
 
 Duplication to resolve in A2/A3 (evidence-backed):
 
-1. **Two entry points, two different home pages, same default port 8765** (`operator_home` True/False).
+1. **Two entry paths, two different home pages, one shared default port** (`operator_home` True/False).
 2. **Two ways to start Scout** — `/scout` (in-process launcher) vs `/scout/new` (CampaignService); the
    Help page exists mainly to explain which to use.
 3. **Two prospect/company truth stores** — `/results` + `/company` read a run-scoped `memory.db` and are
