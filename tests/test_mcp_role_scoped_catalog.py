@@ -274,6 +274,24 @@ def test_the_default_cli_invocation_lists_only_the_read_only_catalog():
     assert "qa_factory_health" in proc.stdout
 
 
+def test_the_default_diagnostic_does_not_advertise_write_tools():
+    """`--demo-health` called the raw handler, which reports available_modules regardless of role, so
+    the DEFAULT diagnostic advertised all seven planning tools while the process could dispatch none
+    of them. Health must have one meaning. This is the sibling of the --list-tools defect: fixing one
+    caller of a projection and leaving the other is how both got shipped."""
+    proc = _run_cli("--demo-health")
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "apply_self_healing_fixes" not in proc.stdout
+    assert "qa_factory_health" in proc.stdout
+
+
+def test_the_operator_diagnostic_still_reports_the_full_catalog():
+    """NEGATIVE control: the projection must narrow by ROLE, not unconditionally."""
+    proc = _run_cli("--role", "operator", "--demo-health")
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "apply_self_healing_fixes" in proc.stdout
+
+
 def test_an_invalid_role_value_is_rejected_by_the_cli():
     proc = _run_cli("--role", "superuser", "--list-tools")
     assert proc.returncode != 0

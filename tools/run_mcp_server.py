@@ -12,7 +12,6 @@ Blocked flags (always exit 1):
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -103,9 +102,11 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.demo_health:
-        from integrations.mcp.tool_handlers import handle_qa_factory_health
-        result = handle_qa_factory_health({})
-        print(json.dumps(result, indent=2))
+        # Routed through the role-aware dispatch, not the raw handler: calling the handler directly
+        # printed all seven planning tools regardless of role, so the default diagnostic advertised
+        # tools this process can neither list nor dispatch. Health must have ONE meaning.
+        from integrations.mcp.server import _call_handler
+        print(_call_handler("qa_factory_health", {}))
         return
 
     if args.http:

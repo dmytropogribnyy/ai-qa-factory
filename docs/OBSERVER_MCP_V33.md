@@ -17,7 +17,9 @@ evidence-root path-confined, and bounded.
 ```powershell
 pip install mcp                       # transport dependency (optional; handlers work without it)
 $env:AIQA_OUTPUT_ROOT = "D:\1QA AI\ai-qa-factory\outputs"   # server-side root (NOT a tool arg)
-python tools/run_mcp_server.py --list-tools                 # 27 tools: 7 planning + 20 observer
+python tools/run_mcp_server.py --list-tools                 # 20 tools: the read-only observer
+                                                            # role (19 observer + health)
+python tools/run_mcp_server.py --role operator --list-tools # 27: adds the 7 planning tools
 python tools/run_mcp_server.py                              # start stdio MCP server
 ```
 

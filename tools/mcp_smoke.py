@@ -62,7 +62,15 @@ async def _run(output_root: str) -> dict:
             tools = await session.list_tools()
             names = sorted(t.name for t in tools.tools)
             observer = [n for n in names if n.startswith("observer_")]
-            step("list_tools", len(names) >= 26, f"{len(names)} tools ({len(observer)} observer)")
+            # The default transport is the READ-ONLY observer role (Issue #74 A3.5): 19 Observer
+            # tools + qa_factory_health. Expecting the full 27 here made a healthy read-only tunnel
+            # report FAIL, and asserting a write tool is present would contradict least privilege.
+            ok = len(observer) >= 19 and "qa_factory_health" in names
+            leaked = [n for n in names if n in {"apply_self_healing_fixes", "generate_delivery_pack",
+                                                "observer_export_ai_review_bundle"}]
+            step("list_tools", ok and not leaked,
+                 f"{len(names)} tools ({len(observer)} observer)"
+                 + (f"; UNEXPECTED write tools exposed: {leaked}" if leaked else ""))
             report["tool_count"] = len(names)
             report["observer_tool_count"] = len(observer)
 
