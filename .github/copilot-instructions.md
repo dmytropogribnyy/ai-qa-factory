@@ -65,10 +65,19 @@ first (see [docs/handoffs/PHASE_8_2_REUSE_ANALYSIS.md](../docs/handoffs/PHASE_8_
 ## Git discipline
 
 - Never amend reviewed commits. Never force-push. Never rebase shared branches.
-- Never merge or push without explicit user authorization.
+- Never merge or push without explicit user authorization. **Authorization may be durable, not only
+  per-action:** a standing owner/controller authorization recorded on the canonical control surface
+  (e.g. a GitHub issue directive that bounds a named program) satisfies this rule *inside the scope it
+  names*, and only while the recorded admission conditions hold — green required checks, no unresolved
+  material review finding, identity not stale, scope coherent. Outside that named scope, the
+  per-action rule applies unchanged. Owner-gated actions are never covered: destructive `main` history
+  rewrite, repo visibility/access changes, credentials, paid-budget widening, and real
+  external/customer consequence. See `CLAUDE.md` → "Standing authorization" and
+  `docs/COLLABORATIVE_AI_ENGINEERING_MODEL.md` §13.
 - Only one active writing agent per branch. Coordinate handoffs through
   `docs/handoffs/CURRENT.md`.
-- Leave additions uncommitted for review unless the user authorizes a commit.
+- Leave additions uncommitted for review unless the user authorizes a commit (durable program-scoped
+  authorization counts, per the rule above).
 
 ## Before claiming done
 

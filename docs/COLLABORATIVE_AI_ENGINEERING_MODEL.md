@@ -301,6 +301,25 @@ The relay and reviewer tools themselves have **no merge capability** (`merge_aut
 false); the merge is executed by the trusted local Git/Claude workflow after the validated exact-SHA GO.
 A GO whose `reviewed_sha` no longer matches the branch head is stale and must not be acted on.
 
+### 13.1 Durable program-scoped authorization (resolves the copilot-instructions conflict)
+
+Owner/controller decision, Issue #74 comment 5726954249. `.github/copilot-instructions.md` requires
+"explicit user authorization" to merge or push. That requirement is satisfied by a **durable**
+authorization recorded on the canonical control surface — a control-plane directive that bounds a
+**named program** — and not only by a fresh per-action message.
+
+It applies **only inside the scope that directive names**, and only while the applicable slice's
+recorded exact-head admission conditions hold: green required checks, no unresolved material review
+finding, non-stale identity, coherent scope. Outside the named program the per-action rule is
+unchanged, and the owner-gated list above is never covered.
+
+Independent acceptance is unaffected: durable authorization removes the *administrative* stop, not the
+requirement that a writer never self-accepts a material gate.
+
+There is deliberately **no second governance system**. This section is wording reconciliation, not a
+new approval platform; the eventual machine-enforced source of truth is GitHub branch/ruleset
+protection.
+
 ## 14. Canonical product invariants (review acceptance criteria)
 
 Every architecture/PR review checks these owner-level invariants (GitHub PR #13 comment 5037647350).

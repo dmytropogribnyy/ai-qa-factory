@@ -98,6 +98,13 @@ write source, or send externally. When operating as the relay worker:
   owner-gated. GPT's GO is a review verdict (`merge_authorized=false`); the merge is executed by the
   trusted local workflow. A GO whose `reviewed_sha` no longer matches the branch head is stale — do not
   act on it. Canonical: `docs/COLLABORATIVE_AI_ENGINEERING_MODEL.md` §13.
+- **Durable program-scoped authorization** (owner/controller, Issue #74 comment 5726954249): a
+  directive recorded on the canonical control surface that bounds a named program **is** the "explicit
+  user authorization" that `.github/copilot-instructions.md` requires — *inside that program's scope
+  only*, and only while the slice's recorded exact-head admission conditions hold. It grants no blanket
+  authority outside the named program, and never covers the owner-gated actions listed above. There is
+  deliberately **no second governance system**: the eventual machine-enforced source of truth is GitHub
+  branch/ruleset protection, not a parallel custom approval platform.
 - **Direct Collaboration Driver v1** (`core/collaboration/`, Issue #14) removes manual Claude↔GPT
   copy/paste: SHA-bound envelopes over the same `_review_relay` store, a bounded OpenAI-backed reviewer
   driver, safe delivery into one bound Claude session, an owner-visible Dashboard `/collab` monitor, and
