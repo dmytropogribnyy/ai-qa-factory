@@ -205,15 +205,34 @@ _VALID_ROLES = {"observer", "operator"}
 # RESTRICTED catalog, so the correction takes effect without reconfiguring anything.
 _DEFAULT_ROLE = "observer"
 
-# Tools that mutate state, write files, or launch active probes. Never exposed to the observer role.
-_OPERATOR_ONLY_TOOLS = frozenset({
-    "analyze_project",
-    "run_quality_audit",
-    "run_flaky_test_analysis",
-    "generate_delivery_pack",
-    "propose_self_healing_fixes",
-    "apply_self_healing_fixes",
-    "observer_export_ai_review_bundle",   # mkdir + write_text under <output_root>/scout/_bundles
+# An explicit ALLOWLIST of genuinely non-mutating tools, not a denylist of dangerous ones. A denylist
+# fails OPEN: a tool added to OBSERVER_TOOL_SCHEMAS later — a future write or active probe — would be
+# exposed to the read-only role until someone remembered to deny it. Anything not named here is
+# operator-only by default, so forgetting to classify a new tool is safe rather than a leak.
+READ_ONLY_TOOLS = frozenset({
+    # Pure health read; no filesystem or network side effect.
+    "qa_factory_health",
+    # Observer reads over persisted state. observer_export_ai_review_bundle is deliberately ABSENT
+    # (mkdir + write_text under <output_root>/scout/_bundles).
+    "observer_get_project_overview",
+    "observer_get_system_readiness",       # shallow only; deep=true is gated separately below
+    "observer_get_release_readiness",
+    "observer_get_storage_status",
+    "observer_list_campaigns",
+    "observer_campaign_counts",
+    "observer_get_campaign",
+    "observer_get_run_progress",
+    "observer_get_run_stop_reason",
+    "observer_get_updates_since",
+    "observer_list_targets",
+    "observer_get_target",
+    "observer_get_target_test_plan",
+    "observer_get_target_decision_history",
+    "observer_list_findings",
+    "observer_get_finding",
+    "observer_get_evidence_manifest",
+    "observer_get_evidence_item",
+    "observer_get_activity_log",
 })
 
 
@@ -227,7 +246,7 @@ def tool_schemas(role: str | None = None) -> list[dict]:
     selected = role or server_role()
     if selected == "operator":
         return list(ALL_TOOL_SCHEMAS)
-    return [s for s in ALL_TOOL_SCHEMAS if s["name"] not in _OPERATOR_ONLY_TOOLS]
+    return [s for s in ALL_TOOL_SCHEMAS if s["name"] in READ_ONLY_TOOLS]
 
 
 def tool_names(role: str | None = None) -> list[str]:

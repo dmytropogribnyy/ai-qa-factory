@@ -5,11 +5,12 @@ A thin adapter that exposes the existing `core.scout.observer_api.ObserverAPI` a
 model — the same persisted source-of-truth the Dashboard uses. Tools are secret-redacted,
 evidence-root path-confined, and bounded.
 
-> **Read-only is a ROLE, not a property of every tool.** The catalog is role-scoped and fails closed:
-> with `AIQA_MCP_ROLE` unset the server publishes only the `observer` catalog. Two Observer tools are
-> **not** passive and are `operator`-only — `observer_export_ai_review_bundle` writes files, and
-> `observer_get_system_readiness(deep=true)` launches Chromium and network probes. The seven planning
-> tools are also `operator`-only. See "Permission model" below.
+> **Read-only is a ROLE, not a property of every tool.** The catalog is an explicit read-only
+> **allowlist** and fails closed: with `AIQA_MCP_ROLE` unset the server publishes only the `observer`
+> catalog, and any tool not named in the allowlist — including one added later — is `operator`-only by
+> default. `observer_export_ai_review_bundle` is withheld because it writes files; the `deep=true`
+> *mode* of `observer_get_system_readiness` is refused because it launches Chromium and network
+> probes. The seven planning tools are `operator`-only. See "Permission model" below.
 
 ## Local startup
 
@@ -103,9 +104,11 @@ to the project output dir.
 ## MCP status (honest)
 
 1. **MCP server implemented** — yes (existing `qa-factory` stdio server, extended additively).
-2. **Observer tools exposed** — yes (20 tools; 18 read-only in the `observer` role, plus
-   `observer_export_ai_review_bundle` and `deep` readiness which are `operator`-only). The original 7
-   planning tools remain available in the `operator` role and are regression-safe.
+2. **Observer tools exposed** — yes. `OBSERVER_TOOL_SCHEMAS` has 20 entries; the `observer` role
+   publishes **19** of them and withholds only `observer_export_ai_review_bundle`, which writes files.
+   `deep` is a *mode* of `observer_get_system_readiness`, not a separate tool: that tool is published
+   to the `observer` role and its `deep=true` mode is refused there. The original 7 planning tools
+   remain available in the `operator` role and are regression-safe.
 3. **Compatible MCP client smoke-tested** — handler/dispatch/catalog verified deterministically;
    full stdio transport requires `pip install mcp`.
 4. **ChatGPT connection** — still requires operator/client configuration (not automatable here).

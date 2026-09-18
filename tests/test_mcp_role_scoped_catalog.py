@@ -117,3 +117,21 @@ def test_every_exposed_tool_has_a_handler(role):
     known = set(mcp_server.OBSERVER_HANDLERS) | set(mcp_server.HANDLERS)
     missing = sorted(set(mcp_server.tool_names(role)) - known)
     assert missing == [], f"exposed with no handler: {missing}"
+
+
+# --- review follow-up: least privilege must be an ALLOWLIST, not a denylist -------------------------
+def test_an_unknown_tool_defaults_to_operator_only(monkeypatch):
+    """A denylist silently exposes anything added later. A new Observer tool - a future write or
+    active probe - must NOT reach the read-only role just because nobody remembered to deny it."""
+    added = {"name": "observer_future_mutating_tool", "description": "x", "inputSchema": {}}
+    monkeypatch.setattr(mcp_server, "ALL_TOOL_SCHEMAS",
+                        list(mcp_server.ALL_TOOL_SCHEMAS) + [added])
+    assert "observer_future_mutating_tool" not in mcp_server.tool_names("observer")
+    assert "observer_future_mutating_tool" in mcp_server.tool_names("operator")
+
+
+def test_every_currently_exposed_read_only_tool_is_explicitly_classified():
+    """The allowlist must cover the real catalog, or a genuine read tool silently disappears."""
+    observer = set(mcp_server.tool_names("observer"))
+    assert len([n for n in observer if n.startswith("observer_")]) == 19
+    assert observer <= set(mcp_server.READ_ONLY_TOOLS)

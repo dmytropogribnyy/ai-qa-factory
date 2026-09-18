@@ -11,6 +11,7 @@ merge, write source, run shell, or send externally.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -62,13 +63,20 @@ def _cost_from_usage(usage: Optional[Dict[str, Any]]) -> Optional[float]:
         return None
     raw_in = os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_IN", "").strip()
     raw_out = os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_OUT", "").strip()
-    if not raw_in and not raw_out:
-        return None                                    # unpriced deployment -> cost unknown
+    # BOTH prices are required. With only one configured, the other token class would be silently
+    # valued at $0 — a known-but-understated cost, which is worse than an honest unknown because it
+    # makes the USD cap look enforceable.
+    if not raw_in or not raw_out:
+        return None                                    # unpriced/partially priced -> cost unknown
     try:
-        p_in = float(raw_in or 0.0)
-        p_out = float(raw_out or 0.0)
+        p_in = float(raw_in)
+        p_out = float(raw_out)
     except ValueError:
         return None                                    # malformed pricing -> unknown, not zero
+    # float() happily accepts nan/inf/negative. A NaN cost makes every `>= cap` comparison False, so
+    # the cap would stop blocking while the event was marked priced. Reject rather than admit.
+    if not all(math.isfinite(v) and v >= 0.0 for v in (p_in, p_out)):
+        return None
     return round(usage.get("input_tokens", 0) / 1e6 * p_in
                  + usage.get("output_tokens", 0) / 1e6 * p_out, 6)
 

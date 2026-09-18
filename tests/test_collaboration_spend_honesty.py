@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from core.collaboration.budget import BudgetLedger, BudgetPolicy
 
 
@@ -127,3 +129,55 @@ def test_ledger_event_is_json_serialisable_with_unknown_cost(tmp_path):
     data = json.loads(events[0].read_text(encoding="utf-8"))
     assert data["usd"] is None
     assert data["cost_known"] is False
+
+
+# --- review follow-up -------------------------------------------------------------------------------
+def test_a_single_configured_price_is_still_unknown(monkeypatch):
+    """Only one price configured would silently value the other token class at $0, understating a
+    real cost while marking it known."""
+    from core.collaboration.reviewer_driver import _cost_from_usage
+
+    monkeypatch.setenv("AIQA_REVIEWER_PRICE_PER_MTOK_IN", "3.00")
+    monkeypatch.delenv("AIQA_REVIEWER_PRICE_PER_MTOK_OUT", raising=False)
+    assert _cost_from_usage({"input_tokens": 10, "output_tokens": 1000}) is None
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "-1.5"])
+def test_non_finite_or_negative_pricing_is_rejected(monkeypatch, bad):
+    """float() accepts nan/inf/negative. A NaN cost makes every `>= cap` comparison False, so the
+    cap silently stops blocking while the event is marked priced."""
+    from core.collaboration.reviewer_driver import _cost_from_usage
+
+    monkeypatch.setenv("AIQA_REVIEWER_PRICE_PER_MTOK_IN", bad)
+    monkeypatch.setenv("AIQA_REVIEWER_PRICE_PER_MTOK_OUT", "1.0")
+    assert _cost_from_usage({"input_tokens": 10, "output_tokens": 10}) is None
+
+
+def test_a_legacy_event_without_provenance_counts_as_unpriced(tmp_path):
+    """Pre-existing ledger events carry the old default usd: 0.0 and no cost_known. Treating them as
+    priced would make usd_known flip to true after an upgrade and report a real spend as zero."""
+    import json as _json
+
+    events = tmp_path / "_review_relay" / "collab_budget"
+    events.mkdir(parents=True)
+    ledger = BudgetLedger(str(tmp_path))
+    today = ledger.usage("t-1")  # ensure the dir/date shape exists
+    date = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()[:10]
+    (events / f"{date}-legacy.json").write_text(_json.dumps(
+        {"thread_id": "t-1", "date": date, "calls": 1, "usd": 0.0,
+         "input_tokens": 100, "output_tokens": 50, "total_tokens": 150}), encoding="utf-8")
+    usage = ledger.usage("t-1")
+    assert usage["usd_known"] is False
+    assert usage["unpriced_calls"] == 1
+    assert today is not None
+
+
+def test_per_thread_usd_cap_is_not_disabled_by_another_threads_unpriced_call(tmp_path):
+    """The thread cap must key off the THREAD's pricing knowledge. Otherwise one unpriced call in an
+    unrelated thread lets a fully priced thread blow past per_thread_usd unchecked."""
+    ledger = BudgetLedger(str(tmp_path), policy=BudgetPolicy(per_thread_usd=1.0, daily_usd=999.0))
+    ledger.record("other", calls=1, usd=None, input_tokens=1, output_tokens=1)   # unpriced elsewhere
+    ledger.record("t-1", calls=1, usd=1.5, input_tokens=1, output_tokens=1)      # priced, over cap
+    verdict = ledger.check("t-1")
+    assert verdict.allowed is False
+    assert verdict.cap == "per_thread_usd"

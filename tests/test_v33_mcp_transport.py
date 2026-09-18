@@ -31,6 +31,9 @@ async def _smoke(output_root: str) -> dict:
     repo = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
     env["AIQA_OUTPUT_ROOT"] = output_root
+    # This test asserts the DEFAULT role. Inheriting AIQA_MCP_ROLE=operator from a developer shell or
+    # a CI job would silently stop it testing that default.
+    env.pop("AIQA_MCP_ROLE", None)
     env.setdefault("PYTHONPATH", str(repo))
     params = StdioServerParameters(command=sys.executable,
                                    args=[str(repo / "tools" / "run_mcp_server.py")], env=env)

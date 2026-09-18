@@ -5967,6 +5967,17 @@ def _spend_text(budget: dict) -> str:
     return f'cost unknown ({unpriced} unpriced call{"" if unpriced == 1 else "s"})'
 
 
+def _spend_cap_text(budget: dict) -> str:
+    """Spend against its cap — but only show the cap as a bound when it is actually enforced.
+
+    Rendering "cost unknown (3 unpriced calls)/$10.00" would present a USD ceiling as an active
+    protection while BudgetLedger.check has disabled it for exactly that reason.
+    """
+    if budget.get("usd_known"):
+        return f'{_spend_text(budget)}/${float(budget.get("cap_usd", 0) or 0):.2f}'
+    return f'{_spend_text(budget)} — USD cap not enforced while cost is unknown'
+
+
 def _collab_body(snap: dict, *, show_completed: bool = False) -> str:
     """Render an operator-first collaboration monitor.
 
@@ -5996,7 +6007,7 @@ def _collab_body(snap: dict, *, show_completed: bool = False) -> str:
         f'<p>Heartbeat: {_esc(beat)} · model <code>{model}</code> · effort {effort}</p>'
         f'<p>{int(b.get("daily_calls",0))}/{int(b.get("cap_calls",0))} calls · '
         f'{int(b.get("daily_tokens",0))} tokens · '
-        f'{_spend_text(b)}/${float(b.get("cap_usd",0)):.2f}</p></details></div>')
+        f'{_spend_cap_text(b)}</p></details></div>')
 
     dl = snap.get("delivery", {})
     bsrc = dl.get("billing_source") or "unknown"

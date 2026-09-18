@@ -35,7 +35,12 @@ _SKIPPED = re.compile(r"(\d+)\s+skipped")
 
 # The repository-required gate, per CLAUDE.md. Kept here as data so the producer runs exactly the
 # declared gate rather than a convenient subset.
-AUDIT_COMMANDS = (("tools/docs_audit.py",), ("tools/agent_readiness_audit.py",))
+# `-m ruff check .` is part of the required gate too: a manifest that never ran it could unlock a
+# CHECKPOINT GO on a SHA that fails the repository's own lint gate, and a green CI run does not prove
+# it (the PR workflow is path-selective).
+AUDIT_COMMANDS = (("-m", "ruff", "check", "."),
+                  ("tools/docs_audit.py",),
+                  ("tools/agent_readiness_audit.py",))
 TEST_COMMAND = ("-m", "pytest", "tests/", "-q")
 
 
@@ -115,7 +120,7 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
         proc = runner([python_bin, *cmd], cwd=repo_root)
         rc = int(getattr(proc, "returncode", 1) or 0)
         audits_ok = audits_ok and rc == 0
-        audit_notes.append(f"{cmd[0]} rc={rc}")
+        audit_notes.append(f"{' '.join(cmd)} rc={rc}")
 
     # --- tests: real exit code + real counts -------------------------------------------------------
     proc = runner([python_bin, *TEST_COMMAND], cwd=repo_root)

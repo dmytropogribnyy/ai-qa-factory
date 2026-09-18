@@ -200,3 +200,25 @@ def test_a_failing_gate_manifest_still_blocks_go(tmp_path):
     _checkpoint(root)
     out = _driver(tmp_path, root).process_once()
     assert out["status"] == "needs_owner"
+
+
+def test_ruff_is_part_of_the_derived_gate(tmp_path):
+    """CLAUDE.md's required gate is ruff + pytest + docs audit + agent readiness. A manifest that
+    never ran ruff could unlock GO on a SHA that fails the repository's own lint gate."""
+    runs = _Runs()
+    produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(), run=runs)
+    assert any("ruff" in c for c in runs.calls), f"ruff never ran: {runs.calls}"
+
+
+def test_a_ruff_failure_blocks_success(tmp_path):
+    """NEGATIVE control: including ruff is worthless unless its failure actually blocks."""
+    class _RuffFails(_Runs):
+        def __call__(self, cmd, **kw):
+            joined = " ".join(str(c) for c in cmd)
+            self.calls.append(joined)
+            if "ruff" in joined:
+                return _P(1, "1 error found")
+            return super().__call__(cmd, **kw)
+
+    out = produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(), run=_RuffFails())
+    assert out["success"] is False
