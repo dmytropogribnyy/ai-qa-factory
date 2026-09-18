@@ -5967,6 +5967,29 @@ def _spend_text(budget: dict) -> str:
     return f'cost unknown ({unpriced} unpriced call{"" if unpriced == 1 else "s"})'
 
 
+def _delivery_cost_text(delivery: dict) -> str:
+    """Render delivery-worker cost honestly — the sibling of `_spend_text`.
+
+    The reviewer card above was made honest earlier in Issue #74 while this one, on the same screen,
+    still printed `$0.0000` for a cost nobody knew: a subscription-billed run omits
+    `total_cost_usd`, and four unknown conditions all collapsed to a definite zero. An unreadable
+    marker counts against knowing the total too, because it may have carried a cost.
+    """
+    if delivery.get("cost_known"):
+        return f'${float(delivery.get("claude_cost_usd", 0) or 0):.4f}'
+    unpriced = int(delivery.get("unpriced_deliveries", 0) or 0)
+    unreadable = int(delivery.get("unreadable_markers", 0) or 0)
+    known = float(delivery.get("claude_cost_usd", 0) or 0)
+    parts = []
+    if unpriced:
+        parts.append(f'{unpriced} unpriced')
+    if unreadable:
+        parts.append(f'{unreadable} unreadable')
+    detail = ", ".join(parts) or "provenance missing"
+    prefix = f'at least ${known:.4f}; ' if known > 0 else ""
+    return f'{prefix}cost unknown ({detail})'
+
+
 def _spend_cap_text(budget: dict) -> str:
     """Spend against its cap — but only show the cap as a bound when it is actually enforced.
 
@@ -6019,7 +6042,7 @@ def _collab_body(snap: dict, *, show_completed: bool = False) -> str:
         f'<p>{int(dl.get("delivered",0))} decisions delivered</p>'
         '<details class="advanced"><summary>Technical details</summary>'
         f'<p>Model <code>{_esc(dl.get("claude_model") or "—")}</code> · cost '
-        f'${float(dl.get("claude_cost_usd",0)):.4f}</p>'
+        f'{_esc(_delivery_cost_text(dl))}</p>'
         f'<p>Billing source: <strong>{billing_label}</strong></p></details></div>')
     driver_card += delivery_card
 

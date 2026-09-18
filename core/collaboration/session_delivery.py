@@ -11,6 +11,7 @@ persisted marker means a restart re-delivers nothing. If no valid session is bou
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -290,8 +291,19 @@ class ClaudeSessionDelivery:
                              encoding="utf-8")
         ack_cmd = f'python tools/collab_ack.py --decision-file "{data_path}"'
         prompt = _DELIVERY_PROMPT.format(ack_cmd=ack_cmd, path=str(data_path))
-        # Narrowest possible tool grant: only the exact ACK script + reading the decision file. No broad
-        # shell, no network, no skip-permissions — the resumed session cannot run anything else.
+        # The grant below names the exact ACK script and reading the decision file, and this code
+        # adds no broad shell, no network and no skip-permissions flag.
+        #
+        # What it is NOT: `--allowedTools` ADDS to what may run without a prompt; it does not narrow
+        # the built-in tool set (that is `--tools`, with `--disallowedTools` / `--restricted` to
+        # subtract). It therefore does not bound what the resumed session CAN do, and the operator's
+        # own `~/.claude/settings.json` — permission mode and allow rules — governs that. This
+        # comment previously claimed "the resumed session cannot run anything else", which asserted
+        # a boundary this flag does not provide. Treat it as scoping intent, NOT as a security
+        # boundary: the untrusted input here is the reviewer's text, and what keeps it from becoming
+        # an instruction is the prompt contract plus the reviewer never holding merge authority -
+        # not this argument. Narrowing it for real means `--tools`/`--disallowedTools`/`--restricted`
+        # verified against the installed CLI, and changing the operator's settings is their call.
         cmd = [exe, "--resume", session, "-p", prompt, "--output-format", "json",
                "--permission-mode", "acceptEdits",
                "--allowedTools", "Bash(python tools/collab_ack.py:*)", "Read"]
@@ -316,28 +328,46 @@ class ClaudeSessionDelivery:
         marker.write_text(json.dumps({"message_id": message_id, "thread_id": thread,
                                       "session": session, "delivered_at": self._clock(),
                                       "returncode": 0, "claude_cost_usd": claude_cost,
+                                      "cost_known": claude_cost is not None,
                                       "claude_model": claude_model,
                                       "billing_source": billing.get("source"),
                                       "billing_plan": billing.get("plan", "")},
                                      ensure_ascii=False, indent=2), encoding="utf-8")
         return {"status": "delivered", "session": session, "message_id": message_id,
-                "returncode": 0, "claude_cost_usd": claude_cost}
+                "returncode": 0, "claude_cost_usd": claude_cost,
+                "cost_known": claude_cost is not None}
 
     @staticmethod
     def _parse_claude_result(stdout: Any) -> tuple:
+        """(cost or None, model). An UNKNOWN cost is None - never a definite 0.0.
+
+        Four distinct unknown conditions used to return ``0.0``: unparseable stdout, stdout that is
+        not an object, an absent ``total_cost_usd``, and a malformed one. That zero was persisted
+        into the delivery marker as fact, summed by the monitor and rendered as ``$0.0000``. A
+        subscription-billed run legitimately omits ``total_cost_usd``, so the COMMON case reported
+        a definite zero. This mirrors `reviewer_driver._cost_from_usage`, whose spend was made
+        honest earlier in this issue while this one - on the same screen - was not.
+
+        A genuine 0.0 stays 0.0: zero is a price, and it must remain distinguishable from unknown.
+        """
         try:
             data = json.loads(str(stdout or "") or "{}")
         except (ValueError, TypeError):
-            return 0.0, ""
+            return None, ""
         if not isinstance(data, dict):
-            return 0.0, ""
-        cost = data.get("total_cost_usd")
+            return None, ""
         usage = data.get("modelUsage") or {}
-        model = next(iter(usage.keys()), "") if isinstance(usage, dict) else ""
+        model = str(next(iter(usage.keys()), "") if isinstance(usage, dict) else "")
+        cost = data.get("total_cost_usd")
+        if cost is None or isinstance(cost, bool):
+            return None, model
         try:
-            return round(float(cost or 0.0), 6), str(model)
+            value = float(cost)
         except (TypeError, ValueError):
-            return 0.0, str(model)
+            return None, model
+        if not math.isfinite(value) or value < 0.0:
+            return None, model
+        return round(value, 6), model
 
     @staticmethod
     def _safe(value: str) -> str:

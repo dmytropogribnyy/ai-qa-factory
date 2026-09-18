@@ -284,6 +284,15 @@ def _call_handler(name: str, arguments: dict) -> str:
 
     # `deep=true` launches Chromium + network probes — an active diagnostic, not a passive read.
     # Refused, never silently downgraded: a downgrade would let the caller believe a deep probe ran.
+    # `bool("false")` is True, so a STRING "false" launched Chromium under the operator role.
+    # A non-boolean `deep` is refused as invalid input rather than coerced in either direction:
+    # guessing "they meant False" would silently skip a probe the caller asked for, and guessing
+    # True runs a browser nobody asked for.
+    if name == "observer_get_system_readiness" and not isinstance(arguments.get("deep", False), bool):
+        return [types.TextContent(type="text", text=json.dumps(
+            {"status": "error",
+             "message": "`deep` must be a boolean; a string such as \"false\" is not accepted"},
+            ensure_ascii=False))]
     if (name == "observer_get_system_readiness" and bool(arguments.get("deep", False))
             and role != "operator"):
         return json.dumps({"status": "blocked",

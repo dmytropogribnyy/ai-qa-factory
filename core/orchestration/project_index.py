@@ -218,8 +218,13 @@ class ProjectIndex:
         base = self._out / "scout" / cid
         st = self._read_json(base / "state.json")
         cfg = self._read_json(base / "config.json")
-        report = base / "report"
-        evidence = len(list(report.glob("*.json"))) if report.is_dir() else 0
+        # NOT `report/*.json`: those are discovery PLANNING artifacts (DISCOVERY_PLAN.json,
+        # PROMOTED_TARGETS.json, ...), so every completed discovery campaign showed the same
+        # constant whether or not one screenshot was captured, while the Observer reported the real
+        # per-prospect count. One canonical source now serves both.
+        from core.scout.evidence_counts import campaign_evidence_counts
+        ev = campaign_evidence_counts(str(self._out), cid)
+        evidence = ev["total"]
         counts = st.get("counts", {}) if isinstance(st.get("counts"), dict) else {}
         # Lifecycle comes from the canonical view, never from `state.json`: the worker writes RUNNING
         # there at start and rewrites it only on a graceful finish, so a killed worker leaves RUNNING
