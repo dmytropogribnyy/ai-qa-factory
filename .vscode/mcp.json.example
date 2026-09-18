@@ -41,6 +41,21 @@
         "AIQA_OUTPUT_ROOT": "${workspaceFolder}/outputs"
       },
       "disabled": true
+    },
+    // QA Factory MCP — OPERATOR role for the local developer agent (planning tools + Observer reads
+    // + active `deep` diagnostics). The catalog is role-scoped and FAILS CLOSED: with AIQA_MCP_ROLE
+    // unset the server publishes only the read-only `observer` catalog. That is deliberate — the
+    // remote/tunnel transport sets no role and therefore can never reach a write tool such as
+    // `apply_self_healing_fixes`. Set "operator" ONLY for a local, trusted, operator-side client.
+    "qa-factory": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["${workspaceFolder}/tools/run_mcp_server.py"],
+      "env": {
+        "AIQA_MCP_ROLE": "operator",
+        "AIQA_OUTPUT_ROOT": "${workspaceFolder}/outputs"
+      },
+      "disabled": true
     }
     // Resend/Gmail (external communication), Stripe (financial), BrowserStack (paid), Cloudflare/
     // Supabase (deployment) are intentionally omitted from this starter example — add them only

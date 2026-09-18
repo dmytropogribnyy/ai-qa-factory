@@ -40,6 +40,9 @@ class BudgetVerdict:
     allowed: bool
     reason: str = ""
     cap: str = ""
+    # False when any call in scope was recorded WITHOUT a known price. The USD caps then cannot be
+    # evaluated and must not be presented as protection; the call-count caps still bind hard.
+    usd_enforced: bool = True
 
 
 def run_with_retries(fn: Callable[[], Any], *, policy: BudgetPolicy,
@@ -78,11 +81,16 @@ class BudgetLedger:
         return str(self._clock())[:10]
 
     # --- usage ----------------------------------------------------------------------------------
-    def record(self, thread_id: str, *, calls: int = 1, usd: float = 0.0,
+    def record(self, thread_id: str, *, calls: int = 1, usd: Optional[float] = None,
                input_chars: int = 0, output_chars: int = 0, input_tokens: int = 0,
                output_tokens: int = 0, total_tokens: int = 0) -> Dict[str, Any]:
+        """Record one call. ``usd=None`` means the cost is UNKNOWN (no pricing configured) — it is
+        persisted as null with ``cost_known: false``, never as a fabricated 0.0, so a real spend can
+        never be reported as free."""
+        cost_known = usd is not None
         event = {"thread_id": str(thread_id), "date": self._today(), "calls": int(calls),
-                 "usd": float(usd), "input_chars": int(input_chars),
+                 "usd": (float(usd) if cost_known else None), "cost_known": cost_known,
+                 "input_chars": int(input_chars),
                  "output_chars": int(output_chars), "input_tokens": int(input_tokens),
                  "output_tokens": int(output_tokens), "total_tokens": int(total_tokens),
                  "at": self._clock()}
@@ -104,30 +112,46 @@ class BudgetLedger:
     def usage(self, thread_id: str) -> Dict[str, Any]:
         tid = str(thread_id)
         t_calls = t_usd = d_calls = d_usd = d_tokens = t_tokens = 0.0
+        d_unpriced = t_unpriced = 0
         for e in self._events_today():
+            # An event predating cost_known, or one carrying a null usd, is UNPRICED.
+            known = bool(e.get("cost_known", e.get("usd") is not None))
+            usd = float(e.get("usd") or 0.0)
             d_calls += e.get("calls", 0)
-            d_usd += e.get("usd", 0.0)
+            d_usd += usd
             d_tokens += e.get("total_tokens", 0)
+            if not known:
+                d_unpriced += int(e.get("calls", 0)) or 1
             if e.get("thread_id") == tid:
                 t_calls += e.get("calls", 0)
-                t_usd += e.get("usd", 0.0)
+                t_usd += usd
                 t_tokens += e.get("total_tokens", 0)
+                if not known:
+                    t_unpriced += int(e.get("calls", 0)) or 1
         return {"thread_calls": int(t_calls), "thread_usd": round(t_usd, 6),
                 "thread_tokens": int(t_tokens), "daily_calls": int(d_calls),
-                "daily_usd": round(d_usd, 6), "daily_tokens": int(d_tokens)}
+                "daily_usd": round(d_usd, 6), "daily_tokens": int(d_tokens),
+                # Honesty fields: the totals above are only trustworthy when usd_known is True.
+                "unpriced_calls": int(d_unpriced), "thread_unpriced_calls": int(t_unpriced),
+                "usd_known": d_unpriced == 0}
 
     def check(self, thread_id: str) -> BudgetVerdict:
+        """Admission decision. Call-count caps are hard and always bind. USD caps bind only when
+        every call in scope carried a known price; otherwise ``usd_enforced`` is False and the USD
+        caps are honestly reported as unenforceable rather than silently passing at a fake $0."""
         u = self.usage(thread_id)
         p = self._policy
+        usd_enforced = bool(u["usd_known"])
         if u["daily_calls"] >= p.daily_calls:
-            return BudgetVerdict(False, "daily call cap reached", "daily_calls")
-        if u["daily_usd"] >= p.daily_usd:
-            return BudgetVerdict(False, "daily spend cap reached", "daily_usd")
+            return BudgetVerdict(False, "daily call cap reached", "daily_calls", usd_enforced)
         if u["thread_calls"] >= p.per_thread_calls:
-            return BudgetVerdict(False, "per-thread call cap reached", "per_thread_calls")
-        if u["thread_usd"] >= p.per_thread_usd:
-            return BudgetVerdict(False, "per-thread spend cap reached", "per_thread_usd")
-        return BudgetVerdict(True)
+            return BudgetVerdict(False, "per-thread call cap reached", "per_thread_calls",
+                                 usd_enforced)
+        if usd_enforced and u["daily_usd"] >= p.daily_usd:
+            return BudgetVerdict(False, "daily spend cap reached", "daily_usd", True)
+        if usd_enforced and u["thread_usd"] >= p.per_thread_usd:
+            return BudgetVerdict(False, "per-thread spend cap reached", "per_thread_usd", True)
+        return BudgetVerdict(True, usd_enforced=usd_enforced)
 
     # --- input clamp + response cache -----------------------------------------------------------
     def clamp_input(self, text: str) -> str:

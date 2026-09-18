@@ -83,7 +83,11 @@ class CollaborationMonitor:
                 "budget": {"daily_calls": daily["daily_calls"], "daily_usd": daily["daily_usd"],
                            "daily_tokens": daily["daily_tokens"],
                            "cap_calls": self._budget.policy.daily_calls,
-                           "cap_usd": self._budget.policy.daily_usd}}
+                           "cap_usd": self._budget.policy.daily_usd,
+                           # daily_usd is only meaningful when usd_known is True; otherwise calls were
+                           # made at an unknown price and the total must not be shown as a spend.
+                           "usd_known": daily.get("usd_known", False),
+                           "unpriced_calls": daily.get("unpriced_calls", 0)}}
 
     def _thread_view(self, thread_id: str) -> Dict[str, Any]:
         messages = self._store.thread(thread_id)["messages"]

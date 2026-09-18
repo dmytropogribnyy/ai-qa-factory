@@ -4,8 +4,15 @@ Reused by the existing qa-factory MCP server (integrations/mcp/server.py); this 
 server or a second data model. Every tool is read-only, returns the same persisted source-of-truth
 the Dashboard uses, is secret-redacted and evidence-root path-confined by ObserverAPI, and bounds
 its output. The project/output root is configured SERVER-SIDE (env AIQA_OUTPUT_ROOT, default
-"outputs") — it is never taken from an unrestricted arbitrary tool argument. No control/write tools
-are exposed in this increment; errors are returned structured (no tracebacks, no secrets).
+"outputs") — it is never taken from an unrestricted arbitrary tool argument; errors are returned
+structured (no tracebacks, no secrets).
+
+TWO tools here are NOT passive and are therefore operator-role only, enforced by the
+role-scoped catalog in integrations/mcp/server.py:
+  - observer_export_ai_review_bundle WRITES files (mkdir + write_text under
+    <output_root>/scout/_bundles), path-confined and bounded, but a write nonetheless;
+  - observer_get_system_readiness(deep=True) LAUNCHES Chromium and network probes.
+Everything else in this module is a genuine read.
 """
 from __future__ import annotations
 
