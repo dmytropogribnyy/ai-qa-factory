@@ -10,9 +10,10 @@ scan cannot see and a structural one found after the first two adapters were wri
 
 Every adapter follows three rules:
 
-* **Fail closed.** ``client_visible`` is granted only when the source proves both sanitisation and
-  client clearance; a single caller-supplied boolean is never enough. Everything else keeps the
-  canonical defaults (``internal_only=True``, ``requires_redaction=True``).
+* **Fail closed.** ``client_visible`` is granted only when EVERY safety condition the source exposes
+  agrees - clearance, sanitisation, verification, not marked internal-only; a single caller-supplied
+  boolean is never enough and a contradiction between flags is resolved to internal-only. Everything
+  else keeps the canonical defaults (``internal_only=True``, ``requires_redaction=True``).
 * **Invent nothing.** No hash, timestamp or status is fabricated for a source that does not carry
   one; an absent value stays absent (``""`` / ``UNVERIFIED``).
 * **Preserve the origin.** The source shape and its identifiers go into ``notes`` so a converted
@@ -82,14 +83,19 @@ def evidence_record_from_browser_execution(item: Any) -> EvidenceRecord:
     internally contradictory, and fails closed to internal-only with the contradiction noted.
     """
     visible = bool(getattr(item, "client_visible", False))
+    internal_only = bool(getattr(item, "internal_only", True))
     redacted = bool(getattr(item, "redacted", False))
     requires_redaction = bool(getattr(item, "requires_redaction", True))
     notes: List[str] = list(getattr(item, "notes", None) or [])
     notes.append(f"adapted_from=core.schemas.browser_execution.BrowserExecutionEvidence "
                  f"id={getattr(item, 'id', '')}")
-    if visible and (requires_redaction or not redacted):
-        notes.append("contradictory source safety flags (client_visible without completed "
-                     "redaction); kept internal-only")
+    # Visibility requires EVERY safety flag the source exposes to agree: cleared, not marked
+    # internal-only, redaction completed and no longer required. Any contradiction fails closed.
+    # (The first version checked redaction and forgot `internal_only`, so a record the source
+    # itself marked internal could come out client-visible.)
+    if visible and (internal_only or requires_redaction or not redacted):
+        notes.append("contradictory source safety flags (client_visible while internal_only or "
+                     "without completed redaction); kept internal-only")
         visible = False
     return EvidenceRecord(
         id=str(getattr(item, "id", "") or ""),
@@ -118,7 +124,13 @@ def evidence_record_from_scout_pipeline(item: Any) -> EvidenceRecord:
     """
     sanitization = str(getattr(item, "sanitization_status", "") or "")
     sanitized = sanitization == "sanitized"
-    visible = bool(getattr(item, "client_safe", False)) and sanitized
+    verification = str(getattr(item, "verification_status", "") or "UNVERIFIED")
+    # The same contract `ScoutFinding.is_client_safe` enforces: independently VERIFIED and
+    # sanitised, and cleared. The source dataclass permits `client_safe=True` on an UNVERIFIED item,
+    # so trusting the flag plus sanitisation alone emitted a client-visible record that itself said
+    # it was unverified. (The finding adapter had this right; this one did not - one predicate, two
+    # adapters.)
+    visible = bool(getattr(item, "client_safe", False)) and sanitized and verification == "VERIFIED"
     provenance = {k: getattr(item, k, "") for k in
                   ("finding_id", "company_id", "campaign_id", "session_id", "page_url", "tool",
                    "tool_version", "viewport", "locale", "browser", "retention_deadline")}
@@ -140,5 +152,5 @@ def evidence_record_from_scout_pipeline(item: Any) -> EvidenceRecord:
         created_at=str(getattr(item, "captured_at", "") or ""),
         notes=notes,
         content_hash=str(getattr(item, "content_hash", "") or ""),
-        verification_status=str(getattr(item, "verification_status", "") or "UNVERIFIED"),
+        verification_status=verification,
     )

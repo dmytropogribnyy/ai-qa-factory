@@ -125,6 +125,24 @@ def test_scout_evidence_is_client_visible_only_when_the_source_proves_both_condi
     assert rec.requires_redaction is (sanitization != "sanitized")
 
 
+def test_scout_evidence_is_not_client_visible_while_unverified_even_if_flagged_safe():
+    """`client_safe=True` + sanitised is not enough: an UNVERIFIED record must not go to a client.
+
+    The Scout FINDING adapter already requires VERIFIED (via `is_client_safe`); the evidence adapter
+    had the same predicate with that condition missing - one predicate, two adapters, one wrong.
+    """
+    from core.schemas.evidence_adapters import evidence_record_from_scout_pipeline
+    for state in ("UNVERIFIED", "REPRODUCED", "EVIDENCE_CAPTURED", "SANITIZED", "REJECTED"):
+        rec = evidence_record_from_scout_pipeline(
+            _scout_item(client_safe=True, sanitization_status="sanitized", verification_status=state))
+        assert rec.client_visible is False, f"{state} must not be client-visible"
+        assert rec.internal_only is True
+        assert rec.verification_status == state, "the status is carried, never upgraded"
+    verified = evidence_record_from_scout_pipeline(
+        _scout_item(client_safe=True, sanitization_status="sanitized", verification_status="VERIFIED"))
+    assert verified.client_visible is True
+
+
 # --- every type an adapter can emit is in the canonical vocabulary ----------------------------------
 
 def test_every_adaptable_evidence_type_is_declared_in_the_canonical_vocabulary():
@@ -190,6 +208,14 @@ def test_browser_execution_adapter_carries_an_explicitly_cleared_record_but_neve
     assert contradictory.client_visible is False
     assert contradictory.internal_only is True
     assert any("contradictory" in n for n in contradictory.notes)
+    # internal_only is a source decision in its own right: visible + redacted + still internal-only
+    # is contradictory too, and must not be widened into a client-visible record.
+    still_internal = evidence_record_from_browser_execution(BrowserExecutionEvidence(
+        id="be-4", evidence_type="screenshot", path="s.png", internal_only=True,
+        client_visible=True, requires_redaction=False, redacted=True))
+    assert still_internal.client_visible is False
+    assert still_internal.internal_only is True
+    assert any("contradictory" in n for n in still_internal.notes)
 
 
 # --- ScoutFinding -> Finding, in the existing adapter home -----------------------------------------
