@@ -235,3 +235,93 @@ def test_the_session_delivery_tool_grant_is_not_described_as_a_restriction():
         "`--allowedTools` only ADDS tools. Either restrict the grant with --tools/--disallowedTools/"
         "--restricted, or state at the call site that this is not a security boundary - describing "
         "it as 'the narrowest possible grant' claims a bound it does not provide")
+
+
+# --- no consumer may launch the relay REVIEWER through the environment ---------------------------
+
+def _repo_root():
+    import pathlib
+    return pathlib.Path(__file__).resolve().parents[1]
+
+
+def _is_prose_or_negative_control(line: str) -> bool:
+    """Distinguish a LAUNCH from an assertion that the launch is refused, or from prose about it.
+
+    Naming the forbidden shape is how both the CI negative control and the runbook explain the rule,
+    so a scan that matched the string alone reported the very text documenting the fix. The answer is
+    not to weaken the scan or to reword around it - a guard that cannot tell a launch from a refusal
+    check is measuring the wrong thing.
+    """
+    stripped = line.strip()
+    if stripped.startswith("#"):                       # a comment explaining the rule
+        return True
+    if "cannot be granted" in line or "refus" in line.lower():
+        return True                                    # an assertion that the grant is refused
+    return False
+
+
+def test_no_consumer_launches_the_relay_reviewer_through_the_environment():
+    """The sibling sweep this slice first got wrong.
+
+    The server was changed so an inherited `AIQA_REVIEW_RELAY_ROLE=reviewer` can no longer grant the
+    higher-privilege role — and the CI workflow and the runbook were left starting the reviewer that
+    exact way. The code was right and its consumers were not, which is how a green local suite sat
+    beside a red `relay-smoke`.
+
+    `worker` through the environment is still legitimate (ambient config may restrict, never widen),
+    so only the reviewer grant is forbidden here.
+    """
+    import re
+    root = _repo_root()
+    targets = [p for p in (list((root / ".github").rglob("*.yml"))
+                           + list((root / ".github").rglob("*.yaml"))
+                           + list((root / "docs").rglob("*.md"))
+                           + list(root.glob("*.md"))
+                           + list((root / "tools").glob("*.ps1")))
+               if p.is_file()]
+    assert targets, "the scan found no consumer files at all — it is broken, not the repo"
+
+    offenders = []
+    pattern = re.compile(r"AIQA_REVIEW_RELAY_ROLE\s*[=:]\s*[\"']?reviewer", re.I)
+    for path in targets:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if not pattern.search(line):
+                continue
+            if _is_prose_or_negative_control(line):
+                continue
+            offenders.append(f"{path.relative_to(root).as_posix()}:{lineno}")
+    assert not offenders, (
+        "these launch the relay reviewer via the environment, which the server now refuses; "
+        "pass `--role reviewer` explicitly instead: " + repr(offenders))
+
+
+def test_the_consumer_scan_would_catch_a_reintroduced_env_reviewer(tmp_path):
+    """Control: the scan must actually match the shapes consumers use."""
+    import re
+    pattern = re.compile(r"AIQA_REVIEW_RELAY_ROLE\s*[=:]\s*[\"']?reviewer", re.I)
+    for shape in ('export AIQA_REVIEW_RELAY_ROLE=reviewer',
+                  '$env:AIQA_REVIEW_RELAY_ROLE = "reviewer"',
+                  '  AIQA_REVIEW_RELAY_ROLE: reviewer',
+                  'AIQA_REVIEW_RELAY_ROLE=reviewer python tools/run_review_relay_mcp.py'):
+        assert pattern.search(shape), f"the scan would miss {shape!r}"
+    assert not pattern.search('AIQA_REVIEW_RELAY_ROLE=worker python x.py'), \
+        "worker via the environment is still allowed and must not be reported"
+
+
+def test_the_consumer_scan_still_flags_a_real_launch_after_the_prose_exemption():
+    """The exemption must not hollow out the guard: a real launch line is still an offender."""
+    launches = [
+        'export AIQA_REVIEW_RELAY_ROLE=reviewer AIQA_RELAY_MCP_TOKEN=t',
+        '$env:AIQA_REVIEW_RELAY_ROLE = "reviewer"',
+        '  AIQA_REVIEW_RELAY_ROLE: reviewer',
+        'AIQA_REVIEW_RELAY_ROLE=reviewer python tools/run_review_relay_mcp.py --http',
+    ]
+    for line in launches:
+        assert not _is_prose_or_negative_control(line), f"a real launch was exempted: {line!r}"
+
+    exempt = [
+        '# an inherited AIQA_REVIEW_RELAY_ROLE=reviewer would grant the higher role',
+        'AIQA_REVIEW_RELAY_ROLE=reviewer python x.py 2>&1 | grep -q "cannot be granted"',
+    ]
+    for line in exempt:
+        assert _is_prose_or_negative_control(line), f"a control/prose line was flagged: {line!r}"

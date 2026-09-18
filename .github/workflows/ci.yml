@@ -288,12 +288,21 @@ jobs:
         run: |
           set -e
           test "$(AIQA_REVIEW_RELAY_ROLE=worker python tools/run_review_relay_mcp.py --list-tools | grep -c 'relay_')" = "4"
-          AIQA_REVIEW_RELAY_ROLE=both python tools/run_review_relay_mcp.py --list-tools 2>&1 | grep -q "must be worker or reviewer"
+          # An unrecognised role is refused, never defaulted. Asserted through the explicit CLI
+          # contract: argparse rejects `--role both` before the server is reached.
+          ! python tools/run_review_relay_mcp.py --role both --list-tools 2>/dev/null
+          # The environment may still select the LOWER-privilege worker, but never `reviewer`:
+          # a child inherits its parent's environment, so an inherited value would let one actor
+          # review its own checkpoints.
+          AIQA_REVIEW_RELAY_ROLE=reviewer python tools/run_review_relay_mcp.py --list-tools 2>&1 | grep -q "cannot be granted"
+          test "$(python tools/run_review_relay_mcp.py --role reviewer --list-tools | grep -c 'relay_')" -ge 1
       - name: Authenticated reviewer HTTP smoke (401 unauth; real MCP initialize -> 200)
         run: |
           set -e
-          export AIQA_REVIEW_RELAY_ROLE=reviewer AIQA_RELAY_MCP_TOKEN=ci-smoke-token AIQA_OUTPUT_ROOT="$(mktemp -d)"
-          python tools/run_review_relay_mcp.py --http --port 8785 &
+          export AIQA_RELAY_MCP_TOKEN=ci-smoke-token AIQA_OUTPUT_ROOT="$(mktemp -d)"
+          # `--role reviewer`, not an environment variable: the server refuses to take the
+          # higher-privilege role from ambient configuration.
+          python tools/run_review_relay_mcp.py --role reviewer --http --port 8785 &
           srv=$!
           trap 'kill "$srv" 2>/dev/null || true' EXIT
           sleep 4
