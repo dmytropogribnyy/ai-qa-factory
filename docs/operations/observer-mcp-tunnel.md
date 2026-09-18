@@ -3,6 +3,14 @@
 Status: current as of 2026-07-30. Canonical operational reference for reaching the read-only
 AI QA Factory Observer MCP from an external ChatGPT connector.
 
+
+> **MCP role is pinned by the launcher.** The tunnel child runs with `AIQA_MCP_ROLE=observer`, set explicitly by `tools/start_observer_tunnel*.ps1` and the
+> autostart script. This is not merely a default: the launchers hand their whole process
+> environment to the child, and the documented local developer setup sets
+> `AIQA_MCP_ROLE=operator`, so starting a tunnel from that shell would otherwise publish
+> write-capable planning tools through the remote transport. Pinned, inheritance cannot
+> widen the remote catalog.
+
 ## The one rule
 
 **Do not re-derive this architecture from logs.** Run the existing profile, verify, done.

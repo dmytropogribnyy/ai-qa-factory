@@ -106,6 +106,13 @@ if ([string]::IsNullOrWhiteSpace($key)) {
   exit 2
 }
 $env:CONTROL_PLANE_API_KEY = $key   # inherited by the child; never echoed
+# Pin the MCP role for the child. The remote transport must publish ONLY the read-only Observer
+# catalog, and "safe because the variable is unset" is not a guarantee: this script hands its whole
+# process environment to the child, and the documented LOCAL developer setup sets
+# AIQA_MCP_ROLE=operator. Starting a tunnel from that shell would otherwise expose write tools
+# (e.g. apply_self_healing_fixes) through the tunnel. Pinned explicitly, inheritance cannot widen it.
+$env:AIQA_MCP_ROLE = 'observer'
+
 
 # 5. Launch the existing profile, hidden and detached. Logs live outside the repository.
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null

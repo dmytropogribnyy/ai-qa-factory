@@ -61,6 +61,11 @@ def _cost_from_usage(usage: Optional[Dict[str, Any]]) -> Optional[float]:
     """
     if not usage:
         return None
+    # The live client builds a usage dict even when the API reported none, so "usage is truthy" is not
+    # the same as "usage was metered". A real call always consumes input tokens; all-zero counts mean
+    # nothing was measured, and pricing that at $0 would report an unmetered call as free.
+    if int(usage.get("input_tokens") or 0) <= 0 and int(usage.get("output_tokens") or 0) <= 0:
+        return None
     raw_in = os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_IN", "").strip()
     raw_out = os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_OUT", "").strip()
     # BOTH prices are required. With only one configured, the other token class would be silently
@@ -149,6 +154,10 @@ class ReviewerDriver:
                                                     getattr(self._client, "reasoning_effort", "")),
                 "budget": {"daily_calls": daily["daily_calls"], "daily_usd": daily["daily_usd"],
                            "daily_tokens": daily["daily_tokens"],
+                           # Without these, tick() and run_collab_driver.py --once would still show
+                           # daily_usd 0.0 for unpriced calls, contradicting the ledger's honesty.
+                           "usd_known": daily.get("usd_known", False),
+                           "unpriced_calls": daily.get("unpriced_calls", 0),
                            "policy": {"daily_calls": self._budget.policy.daily_calls,
                                       "daily_usd": self._budget.policy.daily_usd}}}
 

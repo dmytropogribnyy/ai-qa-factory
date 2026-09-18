@@ -19,6 +19,12 @@ param(
   [ValidateSet("install", "start", "status", "stop", "restart", "uninstall")]
   [string]$Action = "status"
 )
+# Pin the MCP role for the child. The remote transport must publish ONLY the read-only Observer
+# catalog, and "safe because the variable is unset" is not a guarantee: this script hands its whole
+# process environment to the child, and the documented LOCAL developer setup sets
+# AIQA_MCP_ROLE=operator. Starting a tunnel from that shell would otherwise expose write tools
+# (e.g. apply_self_healing_fixes) through the tunnel. Pinned explicitly, inheritance cannot widen it.
+$env:AIQA_MCP_ROLE = 'observer'
 $ErrorActionPreference = "Stop"
 $TaskName = "AI QA Factory Observer Tunnel"
 $Root = "C:\aiqa"

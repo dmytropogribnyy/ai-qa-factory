@@ -135,3 +135,77 @@ def test_every_currently_exposed_read_only_tool_is_explicitly_classified():
     observer = set(mcp_server.tool_names("observer"))
     assert len([n for n in observer if n.startswith("observer_")]) == 19
     assert observer <= set(mcp_server.READ_ONLY_TOOLS)
+
+
+# --- review round 2: the default must not depend on the variable being ABSENT ------------------------
+def test_tunnel_launchers_pin_the_observer_role_explicitly():
+    """Fail-closed-by-default is only safe if nothing inherits `operator`.
+
+    The launchers hand their whole process environment to the child, and the documented local
+    developer setup now sets AIQA_MCP_ROLE=operator — so starting a tunnel from that shell would
+    publish write tools through the remote transport. The remote child must PIN the role, not rely on
+    the variable happening to be unset.
+    """
+    from pathlib import Path
+
+    tools = Path(__file__).resolve().parents[1] / "tools"
+    launchers = [p for p in tools.glob("*observer_tunnel*.ps1")]
+    assert launchers, "no tunnel launcher found"
+    missing = [p.name for p in launchers
+               if not _pins_role_executably(p.read_text(encoding="utf-8", errors="replace"))]
+    assert missing == [], f"these launchers do not pin the MCP role executably: {missing}"
+
+
+def _pins_role_executably(script: str) -> bool:
+    """True only when the assignment is real CODE.
+
+    Checking merely that "AIQA_MCP_ROLE" appears in the file is not enough: an insertion that lands
+    inside a `<# ... #>` comment-based help block, or on a `#` line, reads as present while being
+    completely inert. That exact mistake was made while writing this guard, and a substring check
+    happily passed it.
+    """
+    lines = script.splitlines()
+    in_block = False
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        if in_block:
+            if "#>" in line:
+                in_block = False
+            continue
+        if line.startswith("<#"):
+            in_block = "#>" not in line
+            continue
+        if line.startswith("#"):
+            continue
+        if "$env:AIQA_MCP_ROLE" in line and "=" in line and "observer" in line:
+            # PowerShell requires [CmdletBinding()] / param() to be the FIRST statement. A pin placed
+            # above one is not merely misplaced — it makes the whole script fail to parse, which is
+            # exactly the break introduced while writing this guard.
+            below = [ln.strip() for ln in lines[index + 1:]]
+            if any(ln.startswith("param(") or ln.startswith("[CmdletBinding()]") for ln in below):
+                return False
+            return True
+    return False
+
+
+def test_the_launcher_guard_rejects_a_pin_hidden_in_a_comment_block():
+    """NEGATIVE control for the guard itself — otherwise it would pass on an inert pin."""
+    assign = "$env:AIQA_MCP_ROLE = 'observer'"
+    # Built from line lists so the fixtures stay readable and need no escape juggling.
+    inert = "\n".join(["<#", assign, "#>", "$x = 1"])          # swallowed by the help block
+    commented = "\n".join(["# " + assign, "$x = 1"])           # commented out
+    real = "\n".join(["<#", ".SYNOPSIS", "#>", assign])        # genuinely executable
+    assert _pins_role_executably(inert) is False
+    assert _pins_role_executably(commented) is False
+    assert _pins_role_executably(real) is True
+    # ...and a pin above a param() block, which makes PowerShell refuse the whole script.
+    before_param = "\n".join(["<#", ".SYNOPSIS", "#>", assign, "[CmdletBinding()]", "param()"])
+    assert _pins_role_executably(before_param) is False
+
+
+def test_an_inherited_operator_role_is_what_the_pin_prevents(monkeypatch):
+    """Discriminating: without a pin, an inherited value really does change the catalog."""
+    monkeypatch.setenv("AIQA_MCP_ROLE", "operator")
+    assert "apply_self_healing_fixes" in mcp_server.tool_names()
+    monkeypatch.setenv("AIQA_MCP_ROLE", "observer")
+    assert "apply_self_healing_fixes" not in mcp_server.tool_names()

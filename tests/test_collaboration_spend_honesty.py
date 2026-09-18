@@ -181,3 +181,40 @@ def test_per_thread_usd_cap_is_not_disabled_by_another_threads_unpriced_call(tmp
     verdict = ledger.check("t-1")
     assert verdict.allowed is False
     assert verdict.cap == "per_thread_usd"
+
+
+def test_usage_with_no_metered_tokens_is_unknown_not_free(monkeypatch):
+    """The live client builds a usage dict even when the API reported none, so the dict is truthy
+    with all-zero counts. With prices configured that produced 0.0 and marked the call PRICED - an
+    unmetered call reported as free."""
+    from core.collaboration.reviewer_driver import _cost_from_usage
+
+    _priced(monkeypatch)
+    assert _cost_from_usage({"model": "m", "input_tokens": 0, "output_tokens": 0}) is None
+
+
+def test_the_live_client_signals_missing_usage(monkeypatch):
+    """Integration: OpenAIReviewerClient._usage_from(None) must not look like a metered zero-cost call."""
+    from core.collaboration.reviewer_client import OpenAIReviewerClient
+    from core.collaboration.reviewer_driver import _cost_from_usage
+
+    _priced(monkeypatch)
+    client = OpenAIReviewerClient(api_key="x", create=lambda *a, **k: "{}")
+    assert _cost_from_usage(client._usage_from("m", None)) is None
+
+
+def test_driver_health_reports_cost_knowledge(tmp_path):
+    """tick() and `run_collab_driver.py --once` surface health(); it must not show daily_usd 0.0 with
+    no marker that the cost is actually unknown."""
+    from core.collaboration.reviewer_client import FixtureReviewerClient
+    from core.collaboration.reviewer_driver import ReviewerDriver
+    from core.collaboration.store import CollaborationStore
+
+    ledger = BudgetLedger(str(tmp_path))
+    ledger.record("t-1", calls=1, usd=None, input_tokens=100, output_tokens=50)
+    driver = ReviewerDriver(CollaborationStore(str(tmp_path)), ledger,
+                            FixtureReviewerClient(lambda m: {"decision_type": "RESPONSE",
+                                                             "message": "ok"}))
+    budget = driver.health()["budget"]
+    assert budget["usd_known"] is False
+    assert budget["unpriced_calls"] == 1

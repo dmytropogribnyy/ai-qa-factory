@@ -8,6 +8,12 @@
   second instance. Otherwise it runs `tunnel-client run --profile ai-qa-factory` from C:\aiqa.
   Never prints the key; logs go to %LOCALAPPDATA%\AIQA-Observer-Tunnel (outside the repo).
 #>
+# Pin the MCP role for the child. The remote transport must publish ONLY the read-only Observer
+# catalog, and "safe because the variable is unset" is not a guarantee: this script hands its whole
+# process environment to the child, and the documented LOCAL developer setup sets
+# AIQA_MCP_ROLE=operator. Starting a tunnel from that shell would otherwise expose write tools
+# (e.g. apply_self_healing_fixes) through the tunnel. Pinned explicitly, inheritance cannot widen it.
+$env:AIQA_MCP_ROLE = 'observer'
 $ErrorActionPreference = "Stop"
 $Root = "C:\aiqa"
 $LogDir = Join-Path $env:LOCALAPPDATA "AIQA-Observer-Tunnel"
