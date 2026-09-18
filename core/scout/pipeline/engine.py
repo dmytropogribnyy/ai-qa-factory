@@ -85,7 +85,10 @@ class DeepQaSession:
                 finding_id=f.finding_id, page_url=f.url, tool="static_heuristic",
                 tool_version="scout-checks")
             item.verification_status = "VERIFIED"
-            item.client_safe = f.is_client_safe
+            # BOTH conditions, not just the finding's. An item whose own sanitisation was REJECTED
+            # (a secret-bearing payload: nothing stored, empty storage_ref) is never client-safe,
+            # whatever the finding says - the outreach gate reads only this flag.
+            item.client_safe = f.is_client_safe and item.is_client_safe
             f.evidence_ids = [item.evidence_id]
             evidence_items.append(item)
             self._persist_finding(f, item)

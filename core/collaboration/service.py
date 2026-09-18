@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.collaboration.budget import BudgetLedger, BudgetPolicy
 from core.collaboration.envelopes import make_envelope
@@ -74,13 +74,22 @@ def resolve_branch_head(repo_root: str, branch: str) -> str:
 def build_reviewer_driver(output_root: str, repo_root: str = ".", *,
                           reviewer_client: Optional[ReviewerClient] = None,
                           policy: Optional[BudgetPolicy] = None,
-                          reviewer_id: str = "gpt-reviewer") -> ReviewerDriver:
+                          reviewer_id: str = "gpt-reviewer",
+                          head_resolver: Optional[Callable[[], str]] = None) -> ReviewerDriver:
+    """`head_resolver` is injectable for the same reason every other collaborator here is.
+
+    The driver now refuses to review against a head it cannot verify, so a caller that is not
+    running inside a git checkout must say what the head IS rather than leaving it unknown. Nothing
+    is relaxed by injecting it: whatever it returns still has to be an exact 40-hex SHA and still
+    has to match the request.
+    """
     from core.collaboration.manifest import build_trusted_manifest
     store = CollaborationStore(output_root)
     budget = BudgetLedger(output_root, policy=policy or BudgetPolicy())
     client = reviewer_client or OpenAIReviewerClient()
+    resolver = head_resolver or (lambda: resolve_git_head(repo_root))
     return ReviewerDriver(store, budget, client, repo_root=repo_root,
-                          head_resolver=lambda: resolve_git_head(repo_root), reviewer_id=reviewer_id,
+                          head_resolver=resolver, reviewer_id=reviewer_id,
                           manifest_provider=lambda sha: build_trusted_manifest(output_root, repo_root, sha))
 
 
@@ -95,14 +104,16 @@ class CollaborationCycle:
                  reviewer_client: Optional[ReviewerClient] = None,
                  policy: Optional[BudgetPolicy] = None, reviewer_id: str = "gpt-reviewer",
                  registry: Optional[SessionRegistry] = None,
-                 delivery: Optional[ClaudeSessionDelivery] = None) -> None:
+                 delivery: Optional[ClaudeSessionDelivery] = None,
+                 head_resolver: Optional[Callable[[], str]] = None) -> None:
         self._store = CollaborationStore(output_root)
+        resolver = head_resolver or (lambda: resolve_git_head(repo_root))
         self._driver = build_reviewer_driver(output_root, repo_root, reviewer_client=reviewer_client,
-                                              policy=policy, reviewer_id=reviewer_id)
+                                              policy=policy, reviewer_id=reviewer_id,
+                                              head_resolver=resolver)
         self._registry = registry or SessionRegistry(_DEFAULT_REGISTRY)
         self._delivery = delivery or ClaudeSessionDelivery(
-            self._registry, output_root, workspace=repo_root,
-            head_resolver=lambda: resolve_git_head(repo_root))
+            self._registry, output_root, workspace=repo_root, head_resolver=resolver)
 
     def _deliver_pending(self) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []

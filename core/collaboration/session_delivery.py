@@ -245,9 +245,20 @@ class ClaudeSessionDelivery:
 
         # Re-check the exact branch head IMMEDIATELY before waking Claude: the branch may have moved
         # after the reviewer validated it. A stale decision must never wake the session (fail closed).
+        # Two fail-open branches lived in one condition. `if sha and ...` skipped the gate for a
+        # decision carrying NO reviewed SHA - an unbindable decision treated as bound - and
+        # `and current` skipped it whenever the head could not be resolved. Neither is a match;
+        # both now refuse before anything is woken.
         sha = str(decision.get("reviewed_sha") or decision.get("head_sha") or "").lower()
+        if not _FULL_SHA.fullmatch(sha):
+            return {"status": "unbound", "message_id": message_id, "reviewed_sha": sha,
+                    "reason": "the decision names no exact head SHA, so it cannot be shown current"}
         current = str(self._head_resolver() or "").lower()
-        if sha and current and sha != current:
+        if not _FULL_SHA.fullmatch(current):
+            return {"status": "head_unverifiable", "message_id": message_id, "reviewed_sha": sha,
+                    "reason": "the current branch head could not be determined; refusing to wake a "
+                              "session against an unverifiable head"}
+        if sha != current:
             return {"status": "stale", "message_id": message_id, "reviewed_sha": sha,
                     "current_head": current}
 
