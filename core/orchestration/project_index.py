@@ -18,6 +18,10 @@ _CLIENT_PROGRESS = {
     "WAITING_FOR_APPROVAL": 55, "READY_TO_EXECUTE": 60, "EXECUTING": 75, "EXECUTION_PARTIAL": 75,
     "VERIFYING": 85, "READY_FOR_REVIEW": 90, "READY_FOR_DELIVERY": 95, "DELIVERY_PREPARED": 98,
     "COMPLETED": 100, "BLOCKED": 40, "FAILED": 100, "CANCELLED": 100,
+    # Reached validation and failed it, so it sits in the VERIFYING band - it was absent from this
+    # map and therefore reported 0%, i.e. a project one step from delivery looked untouched.
+    "REPAIR_REQUIRED": 85,
+    "UNKNOWN": 0,          # no readable state is no evidence of progress
 }
 
 # Lifecycle band in which the intake questions are still genuinely blocking: the operator has not
@@ -111,10 +115,35 @@ class ProjectIndex:
 
     @staticmethod
     def _read_json(path: Path) -> Dict[str, Any]:
+        """Always a mapping. `null`, `[]`, `"done"` and `42` are all VALID JSON, and every caller
+        here immediately calls `.get` on the result - so a syntactically fine file of the wrong
+        shape raised `AttributeError` and took down the whole project index, which is the screen
+        that exists to surface trouble."""
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _read_state(path: Path):
+        """(data, unreadable). ABSENT and UNREADABLE are different facts.
+
+        `_read_json` collapses both to ``{}``, and the caller then turned ``{}`` into the definite
+        lifecycle state ``RECEIVED``. A project mid-execution whose state file was truncated
+        therefore reappeared as a fresh intake at 10% with health "ok" - invisible to the attention
+        inbox, and told the operator to "approve the plan to proceed". Corruption is the one thing
+        this screen must not hide.
+        """
+        if not path.exists():
+            return {}, False
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}, True
+        # Parsed is not the same as usable: a file holding `null`/`[]`/`"done"` is readable JSON
+        # that carries no state, which is UNKNOWN, not a fresh intake.
+        return (data, False) if isinstance(data, dict) else ({}, True)
 
     def _client_projects(self, include_diagnostics: bool = False) -> List[ProjectEntry]:
         from core.scout.canonical_runs import is_diagnostic_run
@@ -128,11 +157,11 @@ class ProjectIndex:
             if diagnostic and not include_diagnostics:
                 continue
             wp = self._read_json(ark / "WORK_PACKET.json")
-            rs = self._read_json(ark / "WORK_RUN_STATE.json")
+            rs, rs_unreadable = self._read_state(ark / "WORK_RUN_STATE.json")
             fr = self._read_json(ark / "FEASIBILITY_REPORT.json")
             if not wp and not rs:
                 continue
-            status = rs.get("status") or "RECEIVED"
+            status = "UNKNOWN" if rs_unreadable else (rs.get("status") or "RECEIVED")
             missing = list(wp.get("missing_information", []))
             # "Blockers" has exactly one meaning across the Dashboard: what is stopping this project
             # right now. Intake questions qualify only until the operator approves the plan (after
@@ -141,6 +170,11 @@ class ProjectIndex:
             ep = self._read_json(ark / "EXECUTION_PROGRESS.json")
             blockers = ([] if status not in _INTAKE_STATES else list(missing)) + \
                 list(ep.get("outcome", {}).get("blockers", []))
+            if rs_unreadable:
+                # Say it on the row itself. A state nobody can read is not a quiet condition: the
+                # operator must not be invited to act on a lifecycle this screen cannot establish.
+                blockers.insert(0, "WORK_RUN_STATE.json exists but could not be read - the "
+                                   "lifecycle state of this project is unknown")
             evidence = len(list((ark / "evidence").glob("*"))) if (ark / "evidence").is_dir() else 0
             out.append(ProjectEntry(
                 project_id=ark.parent.name, type="client_work",
@@ -154,7 +188,9 @@ class ProjectIndex:
                 deliverables=list(fr.get("expected_deliverables", [])),
                 selected_capabilities=list(wp.get("detected_capabilities", [])),
                 selected_tools=list(fr.get("selected_tools", [])),
-                operator_next_action=self._client_next_action(fr, status, blockers),
+                operator_next_action=("investigate the unreadable work state before acting on "
+                                      "this project" if rs_unreadable
+                                      else self._client_next_action(fr, status, blockers)),
                 diagnostic=diagnostic))
         return out
 
@@ -190,15 +226,22 @@ class ProjectIndex:
         base = self._out / "scout" / cid
         st = self._read_json(base / "state.json")
         cfg = self._read_json(base / "config.json")
-        report = base / "report"
-        evidence = len(list(report.glob("*.json"))) if report.is_dir() else 0
+        # NOT `report/*.json`: those are discovery PLANNING artifacts (DISCOVERY_PLAN.json,
+        # PROMOTED_TARGETS.json, ...), so every completed discovery campaign showed the same
+        # constant whether or not one screenshot was captured, while the Observer reported the real
+        # per-prospect count. One canonical source now serves both.
+        from core.scout.evidence_counts import campaign_evidence_counts
+        ev = campaign_evidence_counts(str(self._out), cid)
+        evidence = ev["total"]
         counts = st.get("counts", {}) if isinstance(st.get("counts"), dict) else {}
         # Lifecycle comes from the canonical view, never from `state.json`: the worker writes RUNNING
         # there at start and rewrites it only on a graceful finish, so a killed worker leaves RUNNING
         # behind for ever. That file stays the right source for what the worker counted — never for
         # whether it is still running.
         view = canonical_run_state(str(self._out), cid)
-        status = view["state"] or st.get("status") or ("COMPLETED" if report.is_dir() else "UNKNOWN")
+        # A `report/` directory is created on the worker's FIRST report write, so its existence
+        # said nothing about completion - a campaign killed mid-run presented as finished at 100%.
+        status = view["state"] or st.get("status") or "UNKNOWN"
         active = is_active_run(view)
         campaign_name = str(cfg.get("campaign_name") or "").strip()
         # Prefer the operator-chosen campaign name. Internal ids remain available in diagnostics,

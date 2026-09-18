@@ -34,6 +34,11 @@ _HEALTH = {
     "WAITING_FOR_INFORMATION": "attention", "READY_FOR_REVIEW": "attention",
     "READY_FOR_DELIVERY": "attention", "DELIVERY_PREPARED": "attention",
     "COMPLETED": "done", "CANCELLED": "done",
+    # An unreadable or unrecognised state is not healthy. The "ok" default below is right for the
+    # KNOWN in-flight states (RECEIVED ... VERIFYING) - they are progressing normally - but it must
+    # never absorb a state nobody classified. `test_every_work_run_state_is_classified` keeps this
+    # map complete as states are added.
+    "UNKNOWN": "attention",
 }
 # Attention titles per lifecycle state (Overview inbox).
 _ATTENTION = {
@@ -42,6 +47,7 @@ _ATTENTION = {
     "REPAIR_REQUIRED": "Validation failed - needs repair", "READY_FOR_REVIEW": "Ready for review",
     "READY_FOR_DELIVERY": "Delivery needs preparation",
     "DELIVERY_PREPARED": "Prepared package waiting to be sent",
+    "UNKNOWN": "State could not be read - needs investigation",
 }
 _ACTIVE_WORK = {"EXECUTING", "EXECUTION_PARTIAL", "VERIFYING", "READY_TO_EXECUTE"}
 # Scout campaign states that owe the operator a decision. RECOVERABLE belongs here: once it stops

@@ -23,11 +23,40 @@ _SERVER_VERSION = "1.0.0"
 _VALID_ROLES = {"worker", "reviewer"}
 
 
+# Only an explicit in-process declaration can select a role. The environment may be INHERITED -
+# a child of any parent carries its variables - which is exactly why the main MCP server stopped
+# reading `AIQA_MCP_ROLE` and took `--role` instead. The higher-privilege role here is `reviewer`:
+# it can post the GO/NO-GO the worker treats as authorisation to continue, so an inherited variable
+# granting it would let one actor review its own checkpoints.
+_DECLARED_ROLE: str | None = None
+
+
+def set_relay_role(role: str | None) -> str:
+    """Declare this process's relay role. Anything unrecognised clears the declaration."""
+    global _DECLARED_ROLE
+    candidate = str(role or "").strip().lower()
+    _DECLARED_ROLE = candidate if candidate in _VALID_ROLES else None
+    return _DECLARED_ROLE or ""
+
+
 def relay_role() -> str:
-    role = os.environ.get("AIQA_REVIEW_RELAY_ROLE", "").strip().lower()
-    if role not in _VALID_ROLES:
-        raise RuntimeError("AIQA_REVIEW_RELAY_ROLE must be worker or reviewer")
-    return role
+    """The active role: the explicit declaration, else the environment restricted to `worker`.
+
+    The environment can still select the LOWER-privilege role, so existing worker configuration
+    (`.vscode/mcp.json.example`, the worker stdio entry) keeps working unchanged. It can never
+    select `reviewer`: ambient configuration may restrict, never widen.
+    """
+    if _DECLARED_ROLE in _VALID_ROLES:
+        return _DECLARED_ROLE
+    ambient = os.environ.get("AIQA_REVIEW_RELAY_ROLE", "").strip().lower()
+    if ambient == "worker":
+        return "worker"
+    if ambient == "reviewer":
+        raise RuntimeError(
+            "the reviewer role cannot be granted by AIQA_REVIEW_RELAY_ROLE: an inherited "
+            "environment would let one actor review its own checkpoints. Pass --role reviewer "
+            "explicitly to the launcher instead")
+    raise RuntimeError("no relay role declared: pass --role worker|reviewer to the launcher")
 
 
 def _relay() -> ReviewRelay:

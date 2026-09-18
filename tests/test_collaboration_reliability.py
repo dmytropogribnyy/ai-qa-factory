@@ -155,7 +155,7 @@ def test_an_in_progress_delivery_is_reported_without_owner_action(tmp_path):
                                reviewer_client=FixtureReviewerClient(
                                    lambda m: {"decision_type": "RESPONSE", "message": "ok"}),
                                policy=BudgetPolicy(backoff_base_seconds=0.0),
-                               registry=reg, delivery=_StillRunningDelivery())
+                               registry=reg, delivery=_StillRunningDelivery(), head_resolver=lambda: _SHA)
     out = cycle.tick()
     assert [d["status"] for d in out["deliveries"]] == ["in_progress"]   # surfaced, not swallowed
     assert out["owner_action"] is False                                  # but not owner-actionable
@@ -176,7 +176,7 @@ def test_a_real_terminal_delivery_failure_is_still_owner_visible(tmp_path):
                                reviewer_client=FixtureReviewerClient(
                                    lambda m: {"decision_type": "RESPONSE", "message": "ok"}),
                                policy=BudgetPolicy(backoff_base_seconds=0.0),
-                               registry=reg, delivery=delivery)
+                               registry=reg, delivery=delivery, head_resolver=lambda: _SHA)
     cycle.tick()                                              # attempt 1 fails
     out = cycle.tick()                                        # now exhausted -> terminal
     assert out["owner_action"] is True
@@ -300,7 +300,7 @@ def _acking_cycle(tmp_path):
                                reviewer_client=FixtureReviewerClient(
                                    lambda m: {"decision_type": "RESPONSE", "message": "ok"}),
                                policy=BudgetPolicy(backoff_base_seconds=0.0),
-                               registry=reg, delivery=delivery)
+                               registry=reg, delivery=delivery, head_resolver=lambda: _SHA)
     return cycle, runs
 
 

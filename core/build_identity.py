@@ -24,7 +24,12 @@ _STALE_WARNING = "Restart required — Dashboard is serving older code"
 # The executable code this process actually runs. Docs, outputs, evidence, test data and the test
 # suite are deliberately excluded: editing them cannot change what the running server does, and
 # raising "restart required" for a docs edit teaches the operator to ignore the flag.
-_CODE_ROOTS = ("main.py", "core")
+# `integrations/` and `tools/` are in here because the MCP server the Observer serves IS
+# `integrations/mcp/server.py` launched by `tools/run_mcp_server.py`. The old comment justified the
+# exclusion with "editing them cannot change what the running server does", which was true of docs
+# and tests and false of exactly these two: an uncommitted edit to the role-scoped catalog stamped a
+# clean SHA, so the identity reported a build that was not the code being served.
+_CODE_ROOTS = ("main.py", "core", "integrations", "tools")
 
 # A commit SHA alone is a lie about a process started from a dirty tree, so the identity carries
 # both: the SHA it started from AND whether uncommitted code was on disk at that moment.

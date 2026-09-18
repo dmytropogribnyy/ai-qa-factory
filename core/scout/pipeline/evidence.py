@@ -54,8 +54,23 @@ class EvidenceItem:
     retention_deadline: str = ""
     notes: List[str] = field(default_factory=list)
 
+    @property
+    def is_client_safe(self) -> bool:
+        """Client-safe only when THIS item was sanitised and independently verified.
+
+        The stored ``client_safe`` flag is not the authority. It was assigned from the FINDING's
+        predicate, which knows nothing about this item's own sanitisation: `add_text` rejects a
+        secret-bearing payload, stores nothing and leaves ``storage_ref`` empty, yet the item could
+        still come out flagged client-safe and clear the outreach gate. This is the module
+        docstring's rule as one expression, mirroring `ScoutFinding.is_client_safe`.
+        """
+        return self.sanitization_status == "sanitized" and self.verification_status == "VERIFIED"
+
     def to_dict(self) -> Dict[str, Any]:
-        return dict(self.__dict__)
+        data = dict(self.__dict__)
+        # A property is not in __dict__, and the persisted record is what downstream gates read.
+        data["client_safe"] = bool(self.client_safe) and self.is_client_safe
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "EvidenceItem":

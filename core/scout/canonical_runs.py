@@ -132,7 +132,9 @@ def run_kind(output_dir: str, run_id: str) -> str:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return KIND_DIRECT
-    return KIND_CAMPAIGN if "candidates" in (state or {}) else KIND_DIRECT
+    # Same rule as `canonical_run_state` below: a non-mapping carries no candidate list. `"x" in 42`
+    # raises, so a state.json holding a bare number classified nothing and took the caller with it.
+    return KIND_CAMPAIGN if isinstance(state, dict) and "candidates" in state else KIND_DIRECT
 
 
 def canonical_run_state(output_dir: str, run_id: str) -> Dict[str, Any]:
@@ -178,6 +180,12 @@ def canonical_run_state(output_dir: str, run_id: str) -> Dict[str, Any]:
             raw = json.loads((Path(output_dir) / "scout" / run_id / "state.json")
                              .read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            raw = {}
+        # Parsed is not the same as usable. `null`, `[]`, `"done"` and `42` are all VALID JSON, so
+        # the `except` above never fired for them and `.get` raised out of the CANONICAL state
+        # reader - the one every consumer shares (Dashboard, Observer, ProjectIndex). A file that
+        # holds no mapping holds no state: that is UNKNOWN, reported, not a crash.
+        if not isinstance(raw, dict):
             raw = {}
         state = str(raw.get("status") or "")
         source = f"scout/{run_id}/state.json"
