@@ -3,6 +3,14 @@
 Status: current as of 2026-07-30. Canonical operational reference for reaching the read-only
 AI QA Factory Observer MCP from an external ChatGPT connector.
 
+
+> **The remote MCP role is read-only by provenance.** `operator` is reachable ONLY when the
+> serving process is started with an explicit `--role operator` flag, which the tunnel path never
+> passes. That is the primary control, chosen deliberately over an environment variable: a tunnel
+> child inherits its parent's environment, so an env-based pin could be widened by whoever
+> started the tunnel. As defence in depth the launchers also set `AIQA_MCP_ROLE=observer`, but
+> that pin is no longer what the guarantee rests on.
+
 ## The one rule
 
 **Do not re-derive this architecture from logs.** Run the existing profile, verify, done.

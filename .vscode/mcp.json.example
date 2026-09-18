@@ -41,6 +41,21 @@
         "AIQA_OUTPUT_ROOT": "${workspaceFolder}/outputs"
       },
       "disabled": true
+    },
+    // QA Factory MCP — OPERATOR role for the local developer agent (planning tools + Observer reads
+    // + active `deep` diagnostics). The catalog is role-scoped and FAILS CLOSED: operator is reachable
+    // ONLY through this explicit `--role` flag. It is deliberately not an environment variable — a
+    // tunnel child inherits its parent's environment, so an inherited value could otherwise hand
+    // write tools like `apply_self_healing_fixes` to the remote transport. Use it ONLY for a local,
+    // trusted, operator-side client.
+    "qa-factory": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["${workspaceFolder}/tools/run_mcp_server.py", "--role", "operator"],
+      "env": {
+        "AIQA_OUTPUT_ROOT": "${workspaceFolder}/outputs"
+      },
+      "disabled": true
     }
     // Resend/Gmail (external communication), Stripe (financial), BrowserStack (paid), Cloudflare/
     // Supabase (deployment) are intentionally omitted from this starter example — add them only

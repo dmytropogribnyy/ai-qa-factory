@@ -1,17 +1,26 @@
 # Observer MCP — read-only project observability (v3.3)
 
-A **thin, read-only** adapter that exposes the existing `core.scout.observer_api.ObserverAPI` as
-MCP tools on the **existing** `qa-factory` MCP server (`integrations/mcp/server.py`). No second
-server, no second data model — the same persisted source-of-truth the Dashboard uses. All tools are
-read-only, secret-redacted, evidence-root path-confined, and bounded. **No control/write tools in
-this increment.**
+A thin adapter that exposes the existing `core.scout.observer_api.ObserverAPI` as MCP tools on the
+**existing** `qa-factory` MCP server (`integrations/mcp/server.py`). No second server, no second data
+model — the same persisted source-of-truth the Dashboard uses. Tools are secret-redacted,
+evidence-root path-confined, and bounded.
+
+> **Read-only is a ROLE, not a property of every tool.** The catalog is an explicit read-only
+> **allowlist** and fails closed: without an explicit `--role operator` flag the server publishes only
+> the `observer` catalog, and any tool not named in the allowlist — including one added later — is
+> `operator`-only by default. `observer_export_ai_review_bundle` is withheld because it writes files; the `deep=true`
+> *mode* of `observer_get_system_readiness` is refused because it launches Chromium and network
+> probes. Every planning tool except `qa_factory_health` is `operator`-only — `qa_factory_health`
+> is the one planning tool published to the read-only role. See "Permission model" below.
 
 ## Local startup
 
 ```powershell
 pip install mcp                       # transport dependency (optional; handlers work without it)
 $env:AIQA_OUTPUT_ROOT = "D:\1QA AI\ai-qa-factory\outputs"   # server-side root (NOT a tool arg)
-python tools/run_mcp_server.py --list-tools                 # 27 tools: 7 planning + 20 observer
+python tools/run_mcp_server.py --list-tools                 # observer role catalog: 20 tools
+                                                            # (19 read-only observer tools + health)
+python tools/run_mcp_server.py --role operator --list-tools # operator role catalog: 27 tools
 python tools/run_mcp_server.py                              # start stdio MCP server
 ```
 
@@ -34,12 +43,15 @@ Claude Code / Claude Desktop / VS Code (`mcpServers`):
 }
 ```
 
-## Read-only tool catalog
+## Observer role catalog (read-only)
+
+These are the tools the `observer` role publishes: 19 read-only observer tools, plus
+`qa_factory_health`. Every one of them is non-mutating.
 
 | Tool | Purpose |
 |------|---------|
 | `observer_get_project_overview` | campaigns + analyzed-site counts |
-| `observer_get_system_readiness` | readiness probes (`deep=true` launches Chromium + network) |
+| `observer_get_system_readiness` | readiness probes (passive; `deep=true` is **refused** in this role — see below) |
 | `observer_get_release_readiness` | release-readiness summary |
 | `observer_get_storage_status` | evidence storage usage |
 | `observer_list_campaigns` | paginated campaigns + run state + counters + the serving process's exact `build` |
@@ -52,11 +64,35 @@ Claude Code / Claude Desktop / VS Code (`mcpServers`):
 | `observer_list_findings` / `observer_get_finding` | campaign findings |
 | `observer_get_evidence_manifest` / `observer_get_evidence_item` | evidence (relative refs; item = metadata + sha256) |
 | `observer_get_activity_log` | paginated event log |
-| `observer_export_ai_review_bundle` | write campaign-scoped JSON+MD bundle, return paths + integrity |
+
+### Operator-only — NOT in the observer role catalog
+
+Published only when the serving process is started with `--role operator`. They are listed here so
+the split is explicit; do not read them as part of the read-only catalog above.
+
+| Capability | Why it is not read-only |
+|------------|-------------------------|
+| `observer_export_ai_review_bundle` | writes a campaign-scoped JSON+MD bundle to disk |
+| `observer_get_system_readiness(deep=true)` | launches Chromium + network probes (active diagnostics) |
+| every planning tool except `qa_factory_health` (`analyze_project`, `run_quality_audit`, `run_flaky_test_analysis`, `propose_self_healing_fixes`, `apply_self_healing_fixes`, `generate_delivery_pack`) | plan or mutate project state; `apply_self_healing_fixes` writes spec files. `qa_factory_health` is the one planning tool published read-only |
 
 ## Permission model
 
-- **Read-only by default.** No control/write MCP tools exist in this increment.
+- **Role-scoped catalog, failing closed.** The role is `observer` unless the serving process is
+  started with an explicit `--role operator` flag (`tools/run_mcp_server.py --role operator`). It is
+  deliberately **not** selected by an environment variable: a tunnel child inherits its parent's
+  environment, so an inherited value could otherwise widen the remote catalog. Ambient environment can
+  never grant `operator`. The role gate runs at dispatch, so it holds on **every** transport — stdio
+  and authenticated HTTP alike — and a tool outside the active catalog is refused before any handler
+  runs.
+- **`observer` role = genuinely non-mutating only.** It excludes every planning tool (including
+  `apply_self_healing_fixes`, which writes into spec files when `dry_run=false`),
+  `observer_export_ai_review_bundle` (writes a bundle to disk), and `deep` readiness.
+- **Active diagnostics are not unlocked by a caller-supplied boolean.** `deep=true` is **refused**
+  under the `observer` role rather than silently downgraded — a downgrade would let the caller believe
+  a deep probe ran.
+- **`qa_factory_health.available_modules` reports only the active role's catalog**, so a read-only
+  caller is never advertised a tool it cannot call.
 - Secrets (Tavily key, tokens, cookies, credentials) are **redacted** by ObserverAPI.
 - Evidence access is **path-confined** to the output root; traversal returns a structured error.
 - Outputs are **bounded** (pagination + max event window + max evidence-item bytes).
@@ -88,7 +124,11 @@ to the project output dir.
 ## MCP status (honest)
 
 1. **MCP server implemented** — yes (existing `qa-factory` stdio server, extended additively).
-2. **Observer tools exposed** — yes (20 read-only tools; original 7 planning tools regression-safe).
+2. **Observer tools exposed** — yes. `OBSERVER_TOOL_SCHEMAS` has 20 entries; the `observer` role
+   publishes **19** of them and withholds only `observer_export_ai_review_bundle`, which writes files.
+   `deep` is a *mode* of `observer_get_system_readiness`, not a separate tool: that tool is published
+   to the `observer` role and its `deep=true` mode is refused there. The original 7 planning tools
+   remain available in the `operator` role and are regression-safe.
 3. **Compatible MCP client smoke-tested** — handler/dispatch/catalog verified deterministically;
    full stdio transport requires `pip install mcp`.
 4. **ChatGPT connection** — still requires operator/client configuration (not automatable here).

@@ -1,0 +1,340 @@
+"""Role-scoped MCP tool catalog (Issue #74, A3.5 control-plane hardening).
+
+The `qa-factory` MCP server published ONE catalog — `ALL_TOOL_SCHEMAS` = the read-only Observer tools
+PLUS the seven planning tools — on **both** stdio and authenticated HTTP. The transport documented and
+operated as a read-only Observer therefore exposed `apply_self_healing_fixes`, whose
+`approve_code_modification` and `outputs_root` are caller-supplied and which writes into spec files
+when `dry_run=false`.
+
+These tests pin the least-privilege contract, reusing the role-scoped catalog pattern the review-relay
+server already implements (one server, one logical implementation, a role-filtered catalog):
+
+- the default role is the RESTRICTED one, so an existing launcher that sets no role becomes safe
+  without being reconfigured;
+- the observer catalog contains only genuinely non-mutating tools;
+- a tool outside the active role's catalog is refused at dispatch, on every transport;
+- active diagnostics (`deep=true` launches Chromium + network) are an operator capability, and are
+  REFUSED rather than silently downgraded — a silent downgrade would let the caller believe a deep
+  probe ran.
+"""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from integrations.mcp import server as mcp_server
+
+@pytest.fixture(autouse=True)
+def _reset_role():
+    """The role is process state; leaking it between tests would make results order-dependent."""
+    mcp_server.set_role(None)
+    yield
+    mcp_server.set_role(None)
+
+
+# Tools that mutate state, write files, or launch active probes. None may appear in the observer role.
+MUTATING_TOOLS = {
+    "analyze_project",
+    "run_quality_audit",
+    "run_flaky_test_analysis",
+    "generate_delivery_pack",
+    "propose_self_healing_fixes",
+    "apply_self_healing_fixes",
+    "observer_export_ai_review_bundle",   # mkdir + write_text under <output_root>/scout/_bundles
+}
+
+
+def test_default_role_is_the_restricted_one(monkeypatch):
+    """Fail closed: a launcher that sets no role — including the live tunnel — gets the observer
+    catalog, so the fix takes effect without reconfiguring the running tunnel."""
+    monkeypatch.delenv("AIQA_MCP_ROLE", raising=False)
+    assert mcp_server.server_role() == "observer"
+
+
+def test_an_unknown_role_value_falls_back_to_observer(monkeypatch):
+    monkeypatch.setenv("AIQA_MCP_ROLE", "superuser")
+    assert mcp_server.server_role() == "observer"
+
+
+def test_observer_catalog_exposes_no_mutating_tool():
+    exposed = set(mcp_server.tool_names("observer"))
+    leaked = sorted(exposed & MUTATING_TOOLS)
+    assert leaked == [], f"mutating tools exposed on the read-only Observer role: {leaked}"
+
+
+def test_observer_catalog_still_exposes_the_read_only_surface():
+    exposed = set(mcp_server.tool_names("observer"))
+    # The external controller legitimately reads health and campaign state over this transport.
+    assert "qa_factory_health" in exposed
+    assert "observer_get_project_overview" in exposed
+    assert "observer_list_campaigns" in exposed
+    assert "observer_get_evidence_manifest" in exposed
+
+
+def test_operator_catalog_is_unchanged_and_complete():
+    """NEGATIVE control: least privilege must not remove capability from the operator role."""
+    exposed = set(mcp_server.tool_names("operator"))
+    for name in MUTATING_TOOLS:
+        assert name in exposed, f"operator role lost {name}"
+    assert "qa_factory_health" in exposed
+
+
+def test_a_tool_outside_the_active_role_is_refused_at_dispatch(monkeypatch):
+    monkeypatch.setenv("AIQA_MCP_ROLE", "observer")
+    out = json.loads(mcp_server._call_handler("apply_self_healing_fixes", {
+        "project_id": "p", "approve_code_modification": True, "dry_run": False}))
+    assert out["status"] == "blocked"
+    assert "role" in out.get("reason", "").lower()
+
+
+def test_the_same_tool_is_reachable_under_the_operator_role():
+    """Discriminating: the refusal above must come from the ROLE, not from the tool being broken."""
+    mcp_server.set_role("operator")
+    out = json.loads(mcp_server._call_handler("apply_self_healing_fixes", {}))
+    # Reaches the handler, which then applies its own guard — a different refusal than the role gate.
+    assert "role" not in out.get("reason", "").lower()
+
+
+def test_deep_readiness_is_refused_for_the_observer_role(monkeypatch):
+    """`deep=true` launches Chromium + network probes. It must not masquerade as passive read-only,
+    and must be REFUSED rather than silently downgraded to a shallow probe."""
+    monkeypatch.setenv("AIQA_MCP_ROLE", "observer")
+    out = json.loads(mcp_server._call_handler("observer_get_system_readiness", {"deep": True}))
+    assert out["status"] == "blocked"
+    assert "deep" in out.get("reason", "").lower()
+
+
+def test_shallow_readiness_remains_available_to_the_observer_role(monkeypatch):
+    monkeypatch.setenv("AIQA_MCP_ROLE", "observer")
+    out = json.loads(mcp_server._call_handler("observer_get_system_readiness", {"deep": False}))
+    assert out.get("status") != "blocked"
+
+
+def test_health_advertises_only_the_active_role_catalog(monkeypatch):
+    """`qa_factory_health.available_modules` previously listed all seven planning tools regardless of
+    exposure, advertising write tools to a read-only caller."""
+    monkeypatch.setenv("AIQA_MCP_ROLE", "observer")
+    out = json.loads(mcp_server._call_handler("qa_factory_health", {}))
+    assert "apply_self_healing_fixes" not in out.get("available_modules", [])
+
+
+@pytest.mark.parametrize("role", ["observer", "operator"])
+def test_every_exposed_tool_has_a_handler(role):
+    """A catalog entry with no handler would be a dead advertised capability."""
+    known = set(mcp_server.OBSERVER_HANDLERS) | set(mcp_server.HANDLERS)
+    missing = sorted(set(mcp_server.tool_names(role)) - known)
+    assert missing == [], f"exposed with no handler: {missing}"
+
+
+# --- review follow-up: least privilege must be an ALLOWLIST, not a denylist -------------------------
+def test_an_unknown_tool_defaults_to_operator_only(monkeypatch):
+    """A denylist silently exposes anything added later. A new Observer tool - a future write or
+    active probe - must NOT reach the read-only role just because nobody remembered to deny it."""
+    added = {"name": "observer_future_mutating_tool", "description": "x", "inputSchema": {}}
+    monkeypatch.setattr(mcp_server, "ALL_TOOL_SCHEMAS",
+                        list(mcp_server.ALL_TOOL_SCHEMAS) + [added])
+    assert "observer_future_mutating_tool" not in mcp_server.tool_names("observer")
+    assert "observer_future_mutating_tool" in mcp_server.tool_names("operator")
+
+
+def test_every_currently_exposed_read_only_tool_is_explicitly_classified():
+    """The allowlist must cover the real catalog, or a genuine read tool silently disappears."""
+    observer = set(mcp_server.tool_names("observer"))
+    assert len([n for n in observer if n.startswith("observer_")]) == 19
+    assert observer <= set(mcp_server.READ_ONLY_TOOLS)
+
+
+# --- review round 2: the default must not depend on the variable being ABSENT ------------------------
+def test_tunnel_launchers_pin_the_observer_role_explicitly():
+    """Fail-closed-by-default is only safe if nothing inherits `operator`.
+
+    The launchers hand their whole process environment to the child, and the documented local
+    developer setup now sets AIQA_MCP_ROLE=operator — so starting a tunnel from that shell would
+    publish write tools through the remote transport. The remote child must PIN the role, not rely on
+    the variable happening to be unset.
+    """
+    from pathlib import Path
+
+    tools = Path(__file__).resolve().parents[1] / "tools"
+    launchers = [p for p in tools.glob("*observer_tunnel*.ps1")]
+    assert launchers, "no tunnel launcher found"
+    missing = [p.name for p in launchers
+               if not _pins_role_executably(p.read_text(encoding="utf-8", errors="replace"))]
+    assert missing == [], f"these launchers do not pin the MCP role executably: {missing}"
+
+
+def _pins_role_executably(script: str) -> bool:
+    """True only when the assignment is real CODE.
+
+    Checking merely that "AIQA_MCP_ROLE" appears in the file is not enough: an insertion that lands
+    inside a `<# ... #>` comment-based help block, or on a `#` line, reads as present while being
+    completely inert. That exact mistake was made while writing this guard, and a substring check
+    happily passed it.
+    """
+    lines = script.splitlines()
+    in_block = False
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        if in_block:
+            if "#>" in line:
+                in_block = False
+            continue
+        if line.startswith("<#"):
+            in_block = "#>" not in line
+            continue
+        if line.startswith("#"):
+            continue
+        if "$env:AIQA_MCP_ROLE" in line and "=" in line and "observer" in line:
+            # PowerShell requires [CmdletBinding()] / param() to be the FIRST statement. A pin placed
+            # above one is not merely misplaced — it makes the whole script fail to parse, which is
+            # exactly the break introduced while writing this guard.
+            below = [ln.strip() for ln in lines[index + 1:]]
+            if any(ln.startswith("param(") or ln.startswith("[CmdletBinding()]") for ln in below):
+                return False
+            return True
+    return False
+
+
+def test_the_launcher_guard_rejects_a_pin_hidden_in_a_comment_block():
+    """NEGATIVE control for the guard itself — otherwise it would pass on an inert pin."""
+    assign = "$env:AIQA_MCP_ROLE = 'observer'"
+    # Built from line lists so the fixtures stay readable and need no escape juggling.
+    inert = "\n".join(["<#", assign, "#>", "$x = 1"])          # swallowed by the help block
+    commented = "\n".join(["# " + assign, "$x = 1"])           # commented out
+    real = "\n".join(["<#", ".SYNOPSIS", "#>", assign])        # genuinely executable
+    assert _pins_role_executably(inert) is False
+    assert _pins_role_executably(commented) is False
+    assert _pins_role_executably(real) is True
+    # ...and a pin above a param() block, which makes PowerShell refuse the whole script.
+    before_param = "\n".join(["<#", ".SYNOPSIS", "#>", assign, "[CmdletBinding()]", "param()"])
+    assert _pins_role_executably(before_param) is False
+
+
+def test_the_launcher_pins_remain_as_defence_in_depth(monkeypatch):
+    """The launcher pins are no longer the primary control — provenance is (see round 3) — but they
+    are kept: two independent reasons for the remote transport to be read-only is the point."""
+    monkeypatch.setenv("AIQA_MCP_ROLE", "operator")
+    assert mcp_server.server_role() == "observer"      # provenance wins regardless of the pin
+    mcp_server.set_role("operator")
+    assert mcp_server.server_role() == "operator"
+
+
+# --- review round 3: ambient environment must never WIDEN privilege ----------------------------------
+def test_inherited_environment_cannot_grant_the_operator_role(monkeypatch):
+    """A tunnel child inherits its parent's environment by definition, so an env-based pin is a patch
+    on the wrong layer. Operator must require an explicit argv flag on the serving process; an
+    inherited AIQA_MCP_ROLE=operator must not widen the catalog."""
+    mcp_server.set_role(None)
+    monkeypatch.setenv("AIQA_MCP_ROLE", "operator")
+    assert mcp_server.server_role() == "observer"
+    assert "apply_self_healing_fixes" not in mcp_server.tool_names()
+
+
+def test_an_explicit_flag_grants_the_operator_role(monkeypatch):
+    """Discriminating: the refusal above is about PROVENANCE, not about operator being unreachable."""
+    monkeypatch.delenv("AIQA_MCP_ROLE", raising=False)
+    try:
+        mcp_server.set_role("operator")
+        assert mcp_server.server_role() == "operator"
+        assert "apply_self_healing_fixes" in mcp_server.tool_names()
+    finally:
+        mcp_server.set_role(None)
+
+
+def _run_cli(*args):
+    """Run the REAL CLI as a subprocess, with AIQA_MCP_ROLE stripped from the environment."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    env = {k: v for k, v in os.environ.items() if k.upper() != "AIQA_MCP_ROLE"}
+    return subprocess.run([sys.executable, "tools/run_mcp_server.py", *args],
+                          cwd=str(repo), env=env, capture_output=True, text=True, timeout=120)
+
+
+def test_the_documented_operator_command_actually_starts():
+    """A substring check on the source is NOT enough, and that is not hypothetical: `--role` was
+    parsed by hand but never declared to argparse, so this exact command died with
+    `unrecognized arguments: --role operator` while a source grep reported it as present."""
+    proc = _run_cli("--role", "operator", "--list-tools")
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "unrecognized arguments" not in (proc.stdout + proc.stderr)
+    assert "apply_self_healing_fixes" in proc.stdout
+
+
+def test_the_default_cli_invocation_lists_only_the_read_only_catalog():
+    """The listing must not advertise a tool this process would refuse to run."""
+    proc = _run_cli("--list-tools")
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "apply_self_healing_fixes" not in proc.stdout
+    assert "observer_export_ai_review_bundle" not in proc.stdout
+    assert "qa_factory_health" in proc.stdout
+
+
+def test_the_default_diagnostic_does_not_advertise_write_tools():
+    """`--demo-health` called the raw handler, which reports available_modules regardless of role, so
+    the DEFAULT diagnostic advertised all seven planning tools while the process could dispatch none
+    of them. Health must have one meaning. This is the sibling of the --list-tools defect: fixing one
+    caller of a projection and leaving the other is how both got shipped."""
+    proc = _run_cli("--demo-health")
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "apply_self_healing_fixes" not in proc.stdout
+    assert "qa_factory_health" in proc.stdout
+
+
+def test_the_operator_diagnostic_still_reports_the_full_catalog():
+    """NEGATIVE control: the projection must narrow by ROLE, not unconditionally."""
+    proc = _run_cli("--role", "operator", "--demo-health")
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "apply_self_healing_fixes" in proc.stdout
+
+
+def test_an_invalid_role_value_is_rejected_by_the_cli():
+    proc = _run_cli("--role", "superuser", "--list-tools")
+    assert proc.returncode != 0
+    assert "invalid choice" in (proc.stdout + proc.stderr)
+def _load_mcp_smoke():
+    """The real module the canonical acceptance runs - not a re-executed copy of it."""
+    from tools import mcp_smoke
+    return mcp_smoke
+
+
+def test_the_smoke_forbidden_set_covers_everything_outside_the_read_only_catalogue():
+    """`NEVER_READ_ONLY` is a named set, and a named set rots. This is what stops it.
+
+    It is named rather than derived on purpose: it must still fail if `READ_ONLY_TOOLS` is widened
+    by mistake, which a derived set could not do. The cost is that adding a tool can leave it
+    incomplete - and that is exactly how the previous version came to name three tools while
+    `analyze_project`, `run_quality_audit`, `run_flaky_test_analysis` and
+    `propose_self_healing_fixes` could leak under a green PASS.
+    """
+    from integrations.mcp.observer_handlers import OBSERVER_TOOL_NAMES
+    from integrations.mcp.tool_handlers import TOOL_NAMES
+    smoke = _load_mcp_smoke()
+
+    registered = set(TOOL_NAMES) | set(OBSERVER_TOOL_NAMES)
+    outside = registered - set(mcp_server.READ_ONLY_TOOLS)
+    missing = sorted(outside - smoke.NEVER_READ_ONLY)
+    assert not missing, (
+        "these tools are registered but withheld from the read-only role, and the smoke would not "
+        "report them if they leaked onto the read-only transport: " + repr(missing))
+
+    # The mirror image: a forbidden tool that is also published read-only would make the smoke fail
+    # on a healthy tunnel. `qa_factory_health` is the live case - a planning tool that IS read-only.
+    contradiction = sorted(smoke.NEVER_READ_ONLY & set(mcp_server.READ_ONLY_TOOLS))
+    assert not contradiction, (
+        "these tools are both published to the read-only role and forbidden by the smoke, so the "
+        "canonical acceptance would report FAIL on a healthy tunnel: " + repr(contradiction))
+
+
+def test_the_smoke_expectation_is_the_declared_read_only_catalogue():
+    """The smoke must compare against the exact catalogue, not a count.
+
+    `len(observer) >= 19` is satisfied by a catalogue that ALSO carries a write tool, so a leak
+    could ride along under a green PASS.
+    """
+    smoke = _load_mcp_smoke()
+    assert smoke._expected_read_only_catalog() == set(mcp_server.READ_ONLY_TOOLS)

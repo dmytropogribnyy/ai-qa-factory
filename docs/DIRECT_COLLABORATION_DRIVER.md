@@ -45,6 +45,35 @@ models). `temperature` is omitted by default since GPT-5 reasoning models accept
 - Merge is executed only by the trusted local workflow after a validated exact-SHA GO (see the model doc,
   section 13); the driver itself cannot merge.
 
+## Trusted gate manifest — required for a CHECKPOINT GO
+
+A CHECKPOINT can only reach `GO` when a **trusted CI/test manifest** exists for the exact head SHA and
+reports success. This is deliberate: the reviewer must never authorize a GO on the worker's own claims.
+
+`core/collaboration/gate_producer.py` is the producer, run by the trusted local workflow:
+
+```
+python tools/collab_record_gate.py --sha <40-hex>
+```
+
+It accepts no evidence values — no `tests_ok`, no `audits_ok`, no `success`. It **derives** them:
+
+| Field | Derived from |
+|---|---|
+| identity | the SHA must be the repository's real current HEAD, on a **clean** tree — a dirty tree means the gates did not measure the committed SHA |
+| `ci_conclusion` | the real conclusion for that exact SHA; unavailable is **not** success |
+| `audits_ok` | the real exit codes of `docs_audit.py` and `agent_readiness_audit.py` |
+| `tests_ok`, counts | the real exit code and real parsed totals of the required suite |
+
+Because it runs the full required gate, it is a **material gate command**, not an inner-loop one. A
+recorded manifest with `success: false` is a valid outcome and is distinguished from a refusal (which
+means the evidence could not honestly describe that SHA at all).
+
+> **History:** between Issue #14 and Issue #74 this producer did not exist — `record_gate_manifest`
+> had no caller outside its own test. Every CHECKPOINT therefore escalated to `NEEDS_OWNER` with "no
+> trusted CI/test manifest for this exact SHA", while QUESTION and PROPOSAL worked normally. Do not
+> spend paid reviewer calls on a CHECKPOINT unless a manifest for that exact SHA has been recorded.
+
 ## Live E2E acceptance (all must pass before "ready" — Issue #14)
 
 1. `QUESTION → GPT RESPONSE → correct Claude session → ACK`, no owner copy/paste.

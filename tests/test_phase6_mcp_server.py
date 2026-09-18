@@ -723,14 +723,26 @@ class TestCLIRunMCPServer:
         )
         assert result.returncode == 0
 
-    def test_list_tools_shows_seven_tools(self):
+    def test_list_tools_shows_every_planning_tool_in_the_operator_role(self):
+        """The listing is role-scoped (Issue #74 A3.5), so the seven planning tools appear under the
+        operator role. Listing them by default would advertise tools the process refuses to run."""
+        result = subprocess.run(
+            [sys.executable, str(_CLI), "--role", "operator", "--list-tools"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        for name in TOOL_NAMES:
+            assert name in result.stdout
+
+    def test_list_tools_withholds_write_capable_tools_by_default(self):
+        """NEGATIVE control: the default (read-only) role must not advertise a write tool."""
         result = subprocess.run(
             [sys.executable, str(_CLI), "--list-tools"],
             capture_output=True, text=True,
         )
-        assert result.returncode == 0
-        for name in TOOL_NAMES:
-            assert name in result.stdout
+        assert result.returncode == 0, result.stderr
+        assert "qa_factory_health" in result.stdout
+        assert "apply_self_healing_fixes" not in result.stdout
 
     def test_demo_health_exits_zero(self):
         result = subprocess.run(

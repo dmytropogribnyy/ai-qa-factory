@@ -190,13 +190,106 @@ _TOOL_SCHEMAS: list[dict] = [
 ]
 
 
-# The full tool catalog = the original planning tools + the read-only Observer tools.
+# The full tool catalog = the original planning tools + the Observer tools.
 ALL_TOOL_SCHEMAS: list[dict] = _TOOL_SCHEMAS + OBSERVER_TOOL_SCHEMAS
+
+# --- role-scoped catalog ---------------------------------------------------------------------------
+# ONE server, ONE logical implementation, a role-filtered catalog — the same pattern
+# integrations/mcp/review_relay_server.py already uses. This exists because the transport documented
+# and operated as a read-only Observer previously published the WHOLE catalog, including
+# `apply_self_healing_fixes`, whose approval flag is a caller-supplied boolean and which writes into
+# spec files. Least privilege is enforced at dispatch, so it holds on every transport.
+_VALID_ROLES = {"observer", "operator"}
+# Fail closed. An existing launcher that sets no role — including the running tunnel — gets the
+# RESTRICTED catalog, so the correction takes effect without reconfiguring anything.
+_DEFAULT_ROLE = "observer"
+
+# An explicit ALLOWLIST of genuinely non-mutating tools, not a denylist of dangerous ones. A denylist
+# fails OPEN: a tool added to OBSERVER_TOOL_SCHEMAS later — a future write or active probe — would be
+# exposed to the read-only role until someone remembered to deny it. Anything not named here is
+# operator-only by default, so forgetting to classify a new tool is safe rather than a leak.
+READ_ONLY_TOOLS = frozenset({
+    # Pure health read; no filesystem or network side effect.
+    "qa_factory_health",
+    # Observer reads over persisted state. observer_export_ai_review_bundle is deliberately ABSENT
+    # (mkdir + write_text under <output_root>/scout/_bundles).
+    "observer_get_project_overview",
+    "observer_get_system_readiness",       # shallow only; deep=true is gated separately below
+    "observer_get_release_readiness",
+    "observer_get_storage_status",
+    "observer_list_campaigns",
+    "observer_campaign_counts",
+    "observer_get_campaign",
+    "observer_get_run_progress",
+    "observer_get_run_stop_reason",
+    "observer_get_updates_since",
+    "observer_list_targets",
+    "observer_get_target",
+    "observer_get_target_test_plan",
+    "observer_get_target_decision_history",
+    "observer_list_findings",
+    "observer_get_finding",
+    "observer_get_evidence_manifest",
+    "observer_get_evidence_item",
+    "observer_get_activity_log",
+})
+
+
+# Set only by the serving process itself, via `tools/run_mcp_server.py --role`. Deliberately NOT
+# readable from the ambient environment: a tunnel child inherits its parent's environment by
+# definition, so an inherited AIQA_MCP_ROLE=operator would hand write tools to the remote transport.
+# Environment may RESTRICT (it is already the restricted default) but can never WIDEN privilege.
+_EXPLICIT_ROLE: str | None = None
+
+
+def set_role(role: str | None) -> str:
+    """Declare the role for THIS process. Anything unrecognised clears back to the restricted role."""
+    global _EXPLICIT_ROLE
+    candidate = str(role or "").strip().lower()
+    _EXPLICIT_ROLE = candidate if candidate in _VALID_ROLES else None
+    return server_role()
+
+
+def server_role() -> str:
+    """The active role. Only an explicit in-process declaration can select `operator`."""
+    if _EXPLICIT_ROLE in _VALID_ROLES:
+        return _EXPLICIT_ROLE
+    return _DEFAULT_ROLE
+
+
+def tool_schemas(role: str | None = None) -> list[dict]:
+    selected = role or server_role()
+    if selected == "operator":
+        return list(ALL_TOOL_SCHEMAS)
+    return [s for s in ALL_TOOL_SCHEMAS if s["name"] in READ_ONLY_TOOLS]
+
+
+def tool_names(role: str | None = None) -> list[str]:
+    return [s["name"] for s in tool_schemas(role)]
 
 
 def _call_handler(name: str, arguments: dict) -> str:
-    """Dispatch tool call and return JSON string result. Read-only Observer tools are dispatched
-    to OBSERVER_HANDLERS; the original planning tools to HANDLERS."""
+    """Dispatch a tool call and return a JSON string result, enforcing the active role's catalog.
+
+    The role gate runs BEFORE any handler, so a tool outside the active catalog cannot execute on any
+    transport, and `deep` diagnostics cannot be unlocked by a caller-supplied boolean.
+    """
+    role = server_role()
+    arguments = arguments or {}
+
+    if name in OBSERVER_HANDLERS or name in HANDLERS:
+        if name not in tool_names(role):
+            return json.dumps({"status": "blocked",
+                               "reason": f"tool not exposed for the '{role}' MCP role"})
+
+    # `deep=true` launches Chromium + network probes — an active diagnostic, not a passive read.
+    # Refused, never silently downgraded: a downgrade would let the caller believe a deep probe ran.
+    if (name == "observer_get_system_readiness" and bool(arguments.get("deep", False))
+            and role != "operator"):
+        return json.dumps({"status": "blocked",
+                           "reason": ("deep readiness launches a browser and network probes and "
+                                      f"requires the 'operator' MCP role (active: '{role}')")})
+
     if name in OBSERVER_HANDLERS:
         try:
             return json.dumps(OBSERVER_HANDLERS[name](arguments), indent=2, default=str)
@@ -206,6 +299,9 @@ def _call_handler(name: str, arguments: dict) -> str:
         return json.dumps({"status": "error", "message": f"Unknown tool: {name}"})
     try:
         result = HANDLERS[name](arguments)  # type: ignore[operator]
+        if name == "qa_factory_health" and isinstance(result, dict):
+            # Advertise only what this role can actually call; the handler itself is role-agnostic.
+            result = {**result, "available_modules": tool_names(role), "mcp_role": role}
         return json.dumps(result, indent=2, default=str)
     except ValueError as exc:
         return json.dumps({"status": "blocked", "reason": str(exc)})
@@ -225,13 +321,15 @@ def build_server() -> "Server":
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
+        # Role-scoped: a caller must not even see a tool it cannot call. Resolved per request, so the
+        # advertised catalog can never drift from what _call_handler will accept.
         return [
             types.Tool(
                 name=t["name"],
                 description=t["description"],
                 inputSchema=t["inputSchema"],
             )
-            for t in ALL_TOOL_SCHEMAS
+            for t in tool_schemas()
         ]
 
     @server.call_tool()

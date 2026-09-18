@@ -31,6 +31,9 @@ async def _smoke(output_root: str) -> dict:
     repo = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
     env["AIQA_OUTPUT_ROOT"] = output_root
+    # This test asserts the DEFAULT role. Inheriting AIQA_MCP_ROLE=operator from a developer shell or
+    # a CI job would silently stop it testing that default.
+    env.pop("AIQA_MCP_ROLE", None)
     env.setdefault("PYTHONPATH", str(repo))
     params = StdioServerParameters(command=sys.executable,
                                    args=[str(repo / "tools" / "run_mcp_server.py")], env=env)
@@ -52,10 +55,20 @@ async def _smoke(output_root: str) -> dict:
 def test_stdio_transport_lists_and_calls_observer_tools(tmp_path):
     res = asyncio.run(_smoke(str(tmp_path)))
     names = res["names"]
-    # server starts (regression guard for the NotificationOptions fix) + full catalog is exposed
-    # (20 read-only observer tools incl. observer_campaign_counts, added in the canonical read-model)
-    assert len([n for n in names if n.startswith("observer_")]) == 20
+    # The subprocess sets no AIQA_MCP_ROLE, so it resolves to the default RESTRICTED role — the same
+    # situation as the live tunnel launcher. This asserts what that role may expose over a real
+    # transport: 19 genuinely read-only observer tools. observer_export_ai_review_bundle is the 20th
+    # and is deliberately absent because it writes files (mkdir + write_text).
+    observer_tools = [n for n in names if n.startswith("observer_")]
+    assert len(observer_tools) == 19
+    assert "observer_export_ai_review_bundle" not in names, \
+        "a file-writing tool must not be exposed to the default read-only role"
+    assert "observer_campaign_counts" in names          # canonical read-model tool still present
     assert "qa_factory_health" in names
+    # No planning/write tool reaches the restricted role over a real transport.
+    assert not [n for n in names if n in {
+        "analyze_project", "run_quality_audit", "run_flaky_test_analysis", "generate_delivery_pack",
+        "propose_self_healing_fixes", "apply_self_healing_fixes"}]
     # a real tool call reflects persisted state
     assert "analyzed_sites" in res["overview"]
     # no absolute path leaked via storage status (regression guard for the path-leak fix)

@@ -11,6 +11,7 @@ merge, write source, run shell, or send externally.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -47,14 +48,40 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _cost_from_usage(usage: Optional[Dict[str, Any]]) -> float:
-    """Truthful cost from REAL tokens and configured per-million-token pricing (0 when unpriced —
-    never a fabricated flat charge). The hard budget bound is the call count; spend is only shown as
-    actual once pricing is configured (AIQA_REVIEWER_PRICE_PER_MTOK_IN/OUT)."""
+def _cost_from_usage(usage: Optional[Dict[str, Any]]) -> Optional[float]:
+    """Truthful cost from REAL tokens and configured per-million-token pricing.
+
+    Returns **None** when the cost is genuinely unknown — no usage reported, or no pricing configured.
+    None is not 0.0: a real call with real tokens must never be recorded as free, because that made
+    the USD budget caps read as protection while being structurally unable to bind.
+
+    Prices are configuration (AIQA_REVIEWER_PRICE_PER_MTOK_IN/OUT), deliberately NOT a per-model table
+    baked into core logic — provider prices change and a stale hardcoded table is a lie with a version.
+    The hard bound remains the call count, which never depends on pricing.
+    """
     if not usage:
-        return 0.0
-    p_in = float(os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_IN", "0") or 0.0)
-    p_out = float(os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_OUT", "0") or 0.0)
+        return None
+    # The live client builds a usage dict even when the API reported none, so "usage is truthy" is not
+    # the same as "usage was metered". A real call always consumes input tokens; all-zero counts mean
+    # nothing was measured, and pricing that at $0 would report an unmetered call as free.
+    if int(usage.get("input_tokens") or 0) <= 0 and int(usage.get("output_tokens") or 0) <= 0:
+        return None
+    raw_in = os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_IN", "").strip()
+    raw_out = os.environ.get("AIQA_REVIEWER_PRICE_PER_MTOK_OUT", "").strip()
+    # BOTH prices are required. With only one configured, the other token class would be silently
+    # valued at $0 — a known-but-understated cost, which is worse than an honest unknown because it
+    # makes the USD cap look enforceable.
+    if not raw_in or not raw_out:
+        return None                                    # unpriced/partially priced -> cost unknown
+    try:
+        p_in = float(raw_in)
+        p_out = float(raw_out)
+    except ValueError:
+        return None                                    # malformed pricing -> unknown, not zero
+    # float() happily accepts nan/inf/negative. A NaN cost makes every `>= cap` comparison False, so
+    # the cap would stop blocking while the event was marked priced. Reject rather than admit.
+    if not all(math.isfinite(v) and v >= 0.0 for v in (p_in, p_out)):
+        return None
     return round(usage.get("input_tokens", 0) / 1e6 * p_in
                  + usage.get("output_tokens", 0) / 1e6 * p_out, 6)
 
@@ -127,6 +154,10 @@ class ReviewerDriver:
                                                     getattr(self._client, "reasoning_effort", "")),
                 "budget": {"daily_calls": daily["daily_calls"], "daily_usd": daily["daily_usd"],
                            "daily_tokens": daily["daily_tokens"],
+                           # Without these, tick() and run_collab_driver.py --once would still show
+                           # daily_usd 0.0 for unpriced calls, contradicting the ledger's honesty.
+                           "usd_known": daily.get("usd_known", False),
+                           "unpriced_calls": daily.get("unpriced_calls", 0),
                            "policy": {"daily_calls": self._budget.policy.daily_calls,
                                       "daily_usd": self._budget.policy.daily_usd}}}
 
@@ -218,7 +249,7 @@ class ReviewerDriver:
                                           message=request)
             except Exception as exc:  # noqa: BLE001 - a failed attempt still consumed an API call
                 last_exc = exc
-                self._budget.record(thread, calls=1, usd=0.0)
+                self._budget.record(thread, calls=1, usd=None)   # failed attempt: cost unknown
                 if i < attempts - 1:
                     self._sleep(self._budget.policy.backoff_base_seconds * (2 ** i))
                 continue

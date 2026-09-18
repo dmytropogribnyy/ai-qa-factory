@@ -5954,6 +5954,30 @@ _COLLAB_STATE_KIND = {"NEEDS_OWNER": "attention", "BLOCKED": "blocked", "FIXING"
                       "WAITING_FOR_CI": "attention", "DONE": "done"}
 
 
+def _spend_text(budget: dict) -> str:
+    """Render reviewer spend honestly.
+
+    An unpriced deployment records real calls with an unknown cost. Printing "$0.00" would tell the
+    operator the reviewer is free and that the USD cap is protecting them; neither is true. Show the
+    cost as unknown and say how many calls it covers, so the call-count cap stays the visible bound.
+    """
+    if budget.get("usd_known"):
+        return f'${float(budget.get("daily_usd", 0) or 0):.2f}'
+    unpriced = int(budget.get("unpriced_calls", 0) or 0)
+    return f'cost unknown ({unpriced} unpriced call{"" if unpriced == 1 else "s"})'
+
+
+def _spend_cap_text(budget: dict) -> str:
+    """Spend against its cap — but only show the cap as a bound when it is actually enforced.
+
+    Rendering "cost unknown (3 unpriced calls)/$10.00" would present a USD ceiling as an active
+    protection while BudgetLedger.check has disabled it for exactly that reason.
+    """
+    if budget.get("usd_known"):
+        return f'{_spend_text(budget)}/${float(budget.get("cap_usd", 0) or 0):.2f}'
+    return f'{_spend_text(budget)} — USD cap not enforced while cost is unknown'
+
+
 def _collab_body(snap: dict, *, show_completed: bool = False) -> str:
     """Render an operator-first collaboration monitor.
 
@@ -5978,12 +6002,12 @@ def _collab_body(snap: dict, *, show_completed: bool = False) -> str:
         '<div class="card"><h2 style="margin-top:0">Reviewer</h2>'
         f'<p>{_badge(d.get("stage","IDLE"))} {stale}</p>'
         f'<p class="muted">{int(d.get("processed",0))} items processed today · '
-        f'${float(b.get("daily_usd",0)):.2f} estimated usage</p>{err}'
+        f'{_spend_text(b)} estimated usage</p>{err}'
         '<details class="advanced"><summary>Technical details</summary>'
         f'<p>Heartbeat: {_esc(beat)} · model <code>{model}</code> · effort {effort}</p>'
         f'<p>{int(b.get("daily_calls",0))}/{int(b.get("cap_calls",0))} calls · '
         f'{int(b.get("daily_tokens",0))} tokens · '
-        f'${float(b.get("daily_usd",0)):.2f}/${float(b.get("cap_usd",0)):.2f}</p></details></div>')
+        f'{_spend_cap_text(b)}</p></details></div>')
 
     dl = snap.get("delivery", {})
     bsrc = dl.get("billing_source") or "unknown"

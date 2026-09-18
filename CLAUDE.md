@@ -19,6 +19,30 @@ universal orchestration + MCP-consumption layer (ARK). Read `docs/PRODUCT_VISION
   do not duplicate existing schemas.
 - Independent verification: never approve your own implementation.
 
+## Execution policy (mandatory — read before non-trivial work)
+
+[docs/ENGINEERING_EXECUTION_POLICY.md](docs/ENGINEERING_EXECUTION_POLICY.md) is canonical and
+permanent. It governs **how** work is executed here and applies to every session and agent. Load it
+before any bounded slice, review, checkpoint or autonomous run. In brief:
+
+- **Truth hierarchy** — fresh repo/runtime truth > canonical docs > control surfaces (issues/PRs) >
+  continuity material. A plan is intent; the repository is truth.
+- **Bounded work, one writer per seam.** Parallel work only on proven-disjoint seams. Don't widen
+  scope for attractive adjacent cleanup — record it instead.
+- **Checkpoints are recovery points, not waiting points.** Don't stop because a stage finished, tests
+  passed, CI went green or a defect was fixed. Repair and continue; stop only for the policy's §10 list.
+- **Verification cadence** — red first; focused/affected tests in the inner loop; the full suite and
+  broad CI are *material gates*, not inner-loop commands (see the fast local loop and tiered CI below,
+  which remain authoritative for the exact commands). Reuse still-valid exact-head evidence.
+- **Stationary checkpoints** carry exact HEAD/TREE, dirty state, changed paths, real test counts, and
+  an explicit **claims / non-claims** split.
+- **Fail closed** on uncertain scope, identity, authority, evidence, budget or state. Missing evidence
+  is not PASS; missing is not zero; health is not readiness.
+- **Subscription-first, API by exception**; respect budgets, never silently exceed them.
+- **Subagents** are bounded helpers, never gate authorities; summarise their output into the checkpoint.
+- **Browser work** is gated by consequence, not by each click (R0–R4 tiers); prefer authorised test
+  enablers over interrupting a human, and never present sandboxed execution as a real transaction.
+
 ## Per-phase quality gate (required before commit)
 
 1. `python -m ruff check .` — must be clean
@@ -74,6 +98,13 @@ write source, or send externally. When operating as the relay worker:
   owner-gated. GPT's GO is a review verdict (`merge_authorized=false`); the merge is executed by the
   trusted local workflow. A GO whose `reviewed_sha` no longer matches the branch head is stale — do not
   act on it. Canonical: `docs/COLLABORATIVE_AI_ENGINEERING_MODEL.md` §13.
+- **Durable program-scoped authorization** (owner/controller, Issue #74 comment 5726954249): a
+  directive recorded on the canonical control surface that bounds a named program **is** the "explicit
+  user authorization" that `.github/copilot-instructions.md` requires — *inside that program's scope
+  only*, and only while the slice's recorded exact-head admission conditions hold. It grants no blanket
+  authority outside the named program, and never covers the owner-gated actions listed above. There is
+  deliberately **no second governance system**: the eventual machine-enforced source of truth is GitHub
+  branch/ruleset protection, not a parallel custom approval platform.
 - **Direct Collaboration Driver v1** (`core/collaboration/`, Issue #14) removes manual Claude↔GPT
   copy/paste: SHA-bound envelopes over the same `_review_relay` store, a bounded OpenAI-backed reviewer
   driver, safe delivery into one bound Claude session, an owner-visible Dashboard `/collab` monitor, and

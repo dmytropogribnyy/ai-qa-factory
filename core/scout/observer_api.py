@@ -4,7 +4,12 @@ source-of-truth the Dashboard uses (no second data model, no duplicated logic).
 An external AI assistant (or the MCP adapter, or the Dashboard) can inspect campaigns, targets,
 Scout Brain decisions, scores, stop reasons, and storage — plus export a self-contained **AI Review
 Bundle** (JSON + Markdown) for environments where MCP is not yet connected. Everything is bounded,
-secret-redacted, and evidence-root path-confined. This module performs NO control actions.
+secret-redacted, and evidence-root path-confined.
+
+Scope honesty: this module performs no CONTROL actions (it starts, stops and mutates nothing),
+but it is not strictly side-effect-free. export_ai_review_bundle() writes the bundle to disk
+under the confined evidence root, and get_system_readiness(deep=True) launches a browser and
+network probes. Both are operator-role only at the MCP boundary.
 """
 from __future__ import annotations
 
