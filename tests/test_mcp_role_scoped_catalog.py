@@ -296,3 +296,45 @@ def test_an_invalid_role_value_is_rejected_by_the_cli():
     proc = _run_cli("--role", "superuser", "--list-tools")
     assert proc.returncode != 0
     assert "invalid choice" in (proc.stdout + proc.stderr)
+def _load_mcp_smoke():
+    """The real module the canonical acceptance runs - not a re-executed copy of it."""
+    from tools import mcp_smoke
+    return mcp_smoke
+
+
+def test_the_smoke_forbidden_set_covers_everything_outside_the_read_only_catalogue():
+    """`NEVER_READ_ONLY` is a named set, and a named set rots. This is what stops it.
+
+    It is named rather than derived on purpose: it must still fail if `READ_ONLY_TOOLS` is widened
+    by mistake, which a derived set could not do. The cost is that adding a tool can leave it
+    incomplete - and that is exactly how the previous version came to name three tools while
+    `analyze_project`, `run_quality_audit`, `run_flaky_test_analysis` and
+    `propose_self_healing_fixes` could leak under a green PASS.
+    """
+    from integrations.mcp.observer_handlers import OBSERVER_TOOL_NAMES
+    from integrations.mcp.tool_handlers import TOOL_NAMES
+    smoke = _load_mcp_smoke()
+
+    registered = set(TOOL_NAMES) | set(OBSERVER_TOOL_NAMES)
+    outside = registered - set(mcp_server.READ_ONLY_TOOLS)
+    missing = sorted(outside - smoke.NEVER_READ_ONLY)
+    assert not missing, (
+        "these tools are registered but withheld from the read-only role, and the smoke would not "
+        "report them if they leaked onto the read-only transport: " + repr(missing))
+
+    # The mirror image: a forbidden tool that is also published read-only would make the smoke fail
+    # on a healthy tunnel. `qa_factory_health` is the live case - a planning tool that IS read-only.
+    contradiction = sorted(smoke.NEVER_READ_ONLY & set(mcp_server.READ_ONLY_TOOLS))
+    assert not contradiction, (
+        "these tools are both published to the read-only role and forbidden by the smoke, so the "
+        "canonical acceptance would report FAIL on a healthy tunnel: " + repr(contradiction))
+
+
+def test_the_smoke_expectation_is_the_declared_read_only_catalogue():
+    """The smoke must compare against the exact catalogue, not a count.
+
+    `len(observer) >= 19` is satisfied by a catalogue that ALSO carries a write tool, so a leak
+    could ride along under a green PASS.
+    """
+    smoke = _load_mcp_smoke()
+    assert smoke._expected_read_only_catalog() == set(mcp_server.READ_ONLY_TOOLS)

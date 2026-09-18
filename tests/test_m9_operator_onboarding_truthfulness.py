@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import typing
 import urllib.request
 
 import pytest
@@ -170,10 +171,38 @@ def test_readme_points_a_new_operator_at_a_start_surface():
 
 # --- the MCP catalogue count must be pinned to the real registration -----------------------------
 
-def _registered_tool_counts() -> tuple[int, int]:
+class _Counts(typing.NamedTuple):
+    """The distinct quantities the documentation can claim. They are NOT interchangeable.
+
+    Before the Issue #74 A3.5 role split there were only two (planning, observer) and `total`. The
+    split introduced a third: the observer role withholds `observer_export_ai_review_bundle`, so
+    "20 registered observer tools" and "19 read-only observer tools" are different facts that
+    happened to be one number. A guard that knows only the registration passes
+    `Observer MCP adapter (read-only, 20 tools)` — a sentence that counts a file-writing tool as
+    read-only — because 20 == 20 for the wrong reason.
+    """
+    planning: int        # the legacy ARK planning tools
+    observer: int        # observer tools REGISTERED (schemas), including the one that writes
+    readonly: int        # observer tools actually PUBLISHED to the read-only role
+    observer_role: int   # the whole observer role catalog (readonly observer + qa_factory_health)
+    operator_role: int   # the whole operator role catalog
+
+    @property
+    def total(self) -> int:
+        return self.planning + self.observer
+
+
+def _registered_tool_counts() -> _Counts:
+    """Every number derived from the real registration — none of them arithmetic or hardcoded."""
     from integrations.mcp.observer_handlers import OBSERVER_TOOL_NAMES
+    from integrations.mcp.server import tool_names
     from integrations.mcp.tool_handlers import TOOL_NAMES
-    return len(TOOL_NAMES), len(OBSERVER_TOOL_NAMES)
+    observer_role = tool_names("observer")
+    return _Counts(planning=len(TOOL_NAMES),
+                   observer=len(OBSERVER_TOOL_NAMES),
+                   readonly=len([n for n in observer_role if n.startswith("observer_")]),
+                   observer_role=len(observer_role),
+                   operator_role=len(tool_names("operator")))
 
 
 def _stale_tool_counts(docs_root: pathlib.Path) -> list:
@@ -182,8 +211,8 @@ def _stale_tool_counts(docs_root: pathlib.Path) -> list:
     Taking the root as an argument is what lets the guard be exercised on synthetic documents, so
     its strictness is demonstrated rather than asserted.
     """
-    planning, observer = _registered_tool_counts()
-    total = planning + observer
+    c = _registered_tool_counts()
+    planning, observer, total = c.planning, c.observer, c.total
     stale = []
 
     def _classify(match, line: str):
@@ -197,19 +226,18 @@ def _stale_tool_counts(docs_root: pathlib.Path) -> list:
         unadjudicated rather than guessed at.
         """
         after, ctx = match.group(2).lower(), line.lower()
+        # 0. "read-only" names a DIFFERENT quantity from "observer" since the role split withheld
+        #    `observer_export_ai_review_bundle`. Resolving it to the registration total is exactly
+        #    how a sentence that counts a writer as read-only stayed green.
+        if "read-only" in after and "observer" in ctx:
+            return c.readonly, "read-only Observer"
         # 1. The words between the number and "tools" are the most reliable label.
         if "observer" in after:
             return observer, "Observer"
         if "planning" in after or "legacy" in after:
             return planning, "planning"
-        # 2. Then an explicit total, before looking backwards — otherwise "the 7 legacy planning
-        #    tools = 27 tools total" reads the PREVIOUS count's label onto this one.
-        tail = line[match.end():match.end() + 12].lower()
-        breakdown = re.search(r"\d+\s+planning", ctx) and re.search(r"\d+\s+observer", ctx)
-        if "total" in tail or breakdown:
-            return total, "catalogue"
-        # 3. Only then the words in front, stopping at the previous number so one count's label can
-        #    never be borrowed by the next.
+        # 2. The words in front, stopping at the previous number so one count's label can never be
+        #    borrowed by the next.
         prefix = line[:match.start()]
         cut = list(re.finditer(r"\d", prefix))
         prefix = prefix[cut[-1].end():] if cut else prefix
@@ -217,12 +245,25 @@ def _stale_tool_counts(docs_root: pathlib.Path) -> list:
         # its label further from the number than a short window reaches, and a claim whose sibling
         # on the same line IS checked should not go unchecked by accident of spacing.
         before = " ".join(prefix.split()[-8:]).lower()
+        # 3. A ROLE CATALOG is its own quantity. Keyed on the words immediately before the number,
+        #    never on the whole line: a sentence that merely mentions
+        #    `observer_export_ai_review_bundle` must not thereby read as an observer-role claim.
+        if "operator role" in before:
+            return c.operator_role, "operator role catalog"
+        if "observer role" in before:
+            return c.observer_role, "observer role catalog"
+        # 4. Then an explicit total — otherwise "the 7 legacy planning tools = 27 tools total"
+        #    reads the PREVIOUS count's label onto this one.
+        tail = line[match.end():match.end() + 12].lower()
+        breakdown = re.search(r"\d+\s+planning", ctx) and re.search(r"\d+\s+observer", ctx)
+        if "total" in tail or breakdown:
+            return total, "catalogue"
+        if "read-only" in before and "observer" in ctx:
+            return c.readonly, "read-only Observer"
         if "observer" in before:
             return observer, "Observer"
         if "planning" in before or "legacy" in before:
             return planning, "planning"
-        if "read-only" in before and "observer" in ctx:
-            return observer, "Observer"
         # 4. A sentence that says the server SERVES or LISTS N tools is claiming the whole
         #    catalogue, even without the word "total": `serves the SAME 27 tools`,
         #    `client lists 27 tools`. Classifying by "does the line mention observer" would be wrong
@@ -251,8 +292,11 @@ def _stale_tool_counts(docs_root: pathlib.Path) -> list:
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not re.search(r"(?i)mcp|observer|planning tool|list-tools|catalog", line):
                 continue
-            # `tools=N observer=M` is a literal smoke-output quotation: both halves are exact.
-            for key, expected in (("tools", total), ("observer", observer)):
+            # `tools=N observer=M` is a literal quotation of the smoke's own output. The smoke
+            # drives the DEFAULT transport, so it prints the observer ROLE catalog, not the
+            # registration total — checking it against the total is what let `tools=27 observer=20`
+            # stay green after the role split withheld a tool from that transport.
+            for key, expected in (("tools", c.observer_role), ("observer", c.readonly)):
                 for match in re.finditer(rf"\b{key}=(\d+)", line):
                     if int(match.group(1)) != expected:
                         stale.append(f"{path.name}:{lineno} quotes {key}={match.group(1)}, "
@@ -267,7 +311,10 @@ def _stale_tool_counts(docs_root: pathlib.Path) -> list:
                 if expected is not None and claimed != expected:
                     stale.append(
                         f"{path.name}:{lineno} claims {claimed} {qualifier}tools ({kind} count); "
-                        f"the registration is {planning} planning + {observer} observer = {total}")
+                        f"the real {kind} count is {expected} "
+                        f"(planning {planning}, observer registered {observer}, read-only observer "
+                        f"{c.readonly}, observer role {c.observer_role}, operator role "
+                        f"{c.operator_role})")
     return stale
 
 
@@ -293,8 +340,8 @@ def test_the_catalogue_guard_rejects_a_wrong_count_in_either_direction(tmp_path)
     labelled, so it only ever failed on the wrong numbers already present — a future
     `7 Observer tools` would have passed it.
     """
-    planning, observer = _registered_tool_counts()
-    total = planning + observer
+    c = _registered_tool_counts()
+    planning, observer, total = c.planning, c.observer, c.total
 
     must_fail = [
         f"{observer + 1} Observer MCP tools",              # inflated Observer count
@@ -335,22 +382,31 @@ def test_mutating_the_real_catalogue_claims_is_caught_in_both_directions(tmp_pat
     """
     import shutil
 
-    planning, observer = _registered_tool_counts()
-    total = planning + observer
+    c = _registered_tool_counts()
     src = _DOCS / "CHATGPT_OBSERVER_MCP_CONNECTION.md"
     shutil.copytree(_DOCS, tmp_path / "docs")
     target = tmp_path / "docs" / src.name
     original = src.read_text(encoding="utf-8")
 
-    # The two live wordings the guard used to miss, mutated in both directions.
-    shapes = ("serves the SAME {n} tools", "client lists {n} tools")
+    # The two live wordings the guard used to miss, mutated in both directions. Both describe what
+    # the REMOTE transport serves, which since the role split is the observer role catalogue and no
+    # longer the registration total.
+    right = c.observer_role
+    shapes = ("serves the SAME observer role catalog ({n} tools)",
+              "client lists the observer role catalog ({n} tools)")
     for shape in shapes:
-        for wrong in (total - 1, total + 1):
+        # A shape that no longer occurs makes `replace` a no-op and the mutation proof vacuous:
+        # the document would be checked against itself and pass. That is not hypothetical - both
+        # shapes silently stopped matching when this slice reworded them.
+        assert shape.format(n=right) in original, (
+            "the mutation fixture no longer matches the live document, so it proves nothing: "
+            + shape.format(n=right))
+        for wrong in (right - 1, right + 1):
             target.write_text(
-                original.replace(shape.format(n=total), shape.format(n=wrong)), encoding="utf-8")
+                original.replace(shape.format(n=right), shape.format(n=wrong)), encoding="utf-8")
             found = _stale_tool_counts(tmp_path / "docs")
             assert any(str(wrong) in f for f in found), (
-                "a wrong catalogue total went unreported for "
+                "a wrong catalogue count went unreported for "
                 + shape.format(n=wrong) + "; found=" + repr(found))
 
     # Unmutated, the same documents must be clean — otherwise the test above proves nothing.
@@ -367,19 +423,86 @@ def test_mutating_the_real_catalogue_claims_is_caught_in_both_directions(tmp_pat
 
 # The only tool-count sentences that may go unguarded: they describe a BROKEN state ("old build"),
 # so they are not claims about the catalogue and must not be validated as if they were.
+# Claims the guard deliberately leaves unadjudicated, keyed by (file, the exact sentence).
+#
+# This was keyed by (file, line number) and that was wrong. A line number is not the claim's
+# identity: every edit ABOVE a sentence re-breaks the entry although nothing about the claim
+# changed. One entry moved 98 -> 115 -> 118 -> 122 -> 124 inside a single slice and twice reddened
+# CI on a sentence nobody had touched. Worse, re-pointing it at the new number is indistinguishable
+# from silencing a real finding: when it finally broke on two lines at once, one of them
+# ("20 tools: the read-only observer") was NOT diagnostic at all but a live, genuinely unguarded
+# catalogue claim that a line bump would have buried.
+#
+# The sentence is the identity. It needs revisiting exactly when the sentence itself changes, which
+# is exactly when re-adjudication is wanted.
 _DIAGNOSTIC_CLAIMS = {
-    ("CHATGPT_OBSERVER_MCP_CONNECTION.md", 135),
-    # Moved 98 -> 115 -> 118 -> 122 across the Issue #74 A3.5 edits to this document. The
-    # sentence itself is unchanged: "--list-tools shows only 7 tools -> old build" still describes a
-    # BROKEN state, not a claim about the catalogue.
-    # NOTE: keying this allowlist by line number makes it brittle — any edit ABOVE the sentence
-    # re-breaks it even though nothing about the claim changed (this entry moved twice during one
-    # slice). Keying by the sentence text would be equally strict and would only need revisiting when
-    # the sentence itself changes, which is exactly when re-adjudication IS wanted. Left as-is here
-    # deliberately: changing a truthfulness guard's mechanism to make one's own change pass is the
-    # pattern this file exists to prevent, so it is recorded as a residual instead.
-    ("OBSERVER_MCP_V33.md", 122),
+    # Both describe a BROKEN state ("old build"), not a claim about the catalogue. A guard that
+    # reports a correct troubleshooting note as a defect gets the documentation edited instead.
+    ("CHATGPT_OBSERVER_MCP_CONNECTION.md",
+     "- `doctor` shows only 7 tools → old build; ensure "
+     "`integrations/mcp/observer_handlers.py` is present."),
+    ("OBSERVER_MCP_V33.md",
+     "- `--list-tools` shows only 7 tools → old build; ensure `observer_handlers` is "
+     "importable."),
 }
+
+
+class _Claim(typing.NamedTuple):
+    file: str
+    lineno: int
+    text: str       # the matched count, e.g. "20 tools"
+    sentence: str   # the whole stripped line — the claim's stable identity
+
+
+def _unguarded_claims(docs_root: pathlib.Path, work: pathlib.Path) -> list:
+    """Every tool-count claim in `docs_root` the guard could NOT report if it went wrong.
+
+    Taking the corpus root as an argument is what lets the walk be exercised on synthetic
+    documents, so that its discrimination is demonstrated rather than asserted.
+    """
+    import shutil
+
+    claims = []
+    for path in sorted(docs_root.rglob("*.md")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not re.search(r"(?i)mcp|observer|planning tool|list-tools|catalog", line):
+                continue
+            for match in re.finditer(r"\b(\d+)\s+((?:[A-Za-z][\w-]*\s+){0,4}?)tools?\b",
+                                     line, re.I):
+                claims.append((path, lineno, match.group(0), line.strip()))
+    assert claims, "no tool-count claims found at all — the scan is broken, not the docs"
+
+    # Copy the corpus ONCE and restore the single mutated file after each claim.
+    #
+    # The first version re-copied the tree every iteration, `rmtree(..., ignore_errors=True)`
+    # followed by `copytree` into the same destination. On Windows that makes correctness depend on
+    # deletion timing: when the removal does not complete (an open handle is enough), `rmtree`
+    # swallows it and `copytree` raises `FileExistsError` on the very next iteration. It passed in a
+    # worktree and on two green Windows CI runs, and failed deterministically in the canonical
+    # checkout — a green gate somewhere is not evidence of a test that survives anywhere.
+    shutil.copytree(docs_root, work)
+    pristine = {q: q.read_bytes() for q in work.rglob("*.md")}
+
+    unguarded = []
+    for path, lineno, text, sentence in claims:
+        target = work / path.relative_to(docs_root)
+        original = pristine[target]
+        try:
+            lines = original.decode("utf-8").splitlines()
+            n = int(re.match(r"(\d+)", text).group(1))
+            lines[lineno - 1] = lines[lineno - 1].replace(
+                text, text.replace(str(n), str(n + 5), 1), 1)
+            target.write_bytes(chr(10).join(lines).encode("utf-8"))
+            if not any(f"{path.name}:{lineno}" in f for f in _stale_tool_counts(work)):
+                unguarded.append(_Claim(path.name, lineno, text, sentence))
+        finally:
+            # Exact bytes, always — a half-mutated corpus would corrupt every later claim.
+            target.write_bytes(original)
+
+    # Residue check: "restored in `finally`" is worth nothing unless it is verified.
+    residue = [str(q.relative_to(work)) for q, b in pristine.items() if q.read_bytes() != b]
+    assert not residue, f"the mutation walk left the copied corpus modified: {residue}"
+    return unguarded
 
 
 def test_every_tool_count_claim_is_either_guarded_or_explicitly_diagnostic(tmp_path):
@@ -391,50 +514,62 @@ def test_every_tool_count_claim_is_either_guarded_or_explicitly_diagnostic(tmp_p
     requires the guard to report it; anything it cannot report must be on the diagnostic list above,
     with a reason.
     """
-    import shutil
-
-    claims = []
-    for path in sorted(_DOCS.rglob("*.md")):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not re.search(r"(?i)mcp|observer|planning tool|list-tools|catalog", line):
-                continue
-            for match in re.finditer(r"\b(\d+)\s+((?:[A-Za-z][\w-]*\s+){0,4}?)tools?\b", line, re.I):
-                claims.append((path, lineno, match.group(0)))
-    assert claims, "no tool-count claims found at all — the scan is broken, not the docs"
-
-    # Copy the corpus ONCE and restore the single mutated file after each claim.
-    #
-    # The first version re-copied the tree every iteration, `rmtree(..., ignore_errors=True)`
-    # followed by `copytree` into the same destination. On Windows that makes correctness depend on
-    # deletion timing: when the removal does not complete (an open handle is enough), `rmtree`
-    # swallows it and `copytree` raises `FileExistsError` on the very next iteration. It passed in a
-    # worktree and on two green Windows CI runs, and failed deterministically in the canonical
-    # checkout — a green gate somewhere is not evidence of a test that survives anywhere.
-    work = tmp_path / "docs"
-    shutil.copytree(_DOCS, work)
-    pristine = {p: p.read_bytes() for p in work.rglob("*.md")}
-
-    unguarded = []
-    for path, lineno, text in claims:
-        target = work / path.relative_to(_DOCS)
-        original = pristine[target]
-        try:
-            lines = original.decode("utf-8").splitlines()
-            n = int(re.match(r"(\d+)", text).group(1))
-            lines[lineno - 1] = lines[lineno - 1].replace(
-                text, text.replace(str(n), str(n + 5), 1), 1)
-            target.write_bytes(chr(10).join(lines).encode("utf-8"))
-            if not any(f"{path.name}:{lineno}" in f for f in _stale_tool_counts(work)):
-                unguarded.append((path.name, lineno, text))
-        finally:
-            # Exact bytes, always — a half-mutated corpus would silently corrupt every later claim.
-            target.write_bytes(original)
-
-    # Residue check: "restored in `finally`" is worth nothing unless it is verified.
-    residue = [str(p.relative_to(work)) for p, b in pristine.items() if p.read_bytes() != b]
-    assert not residue, f"the mutation walk left the copied corpus modified: {residue}"
-
-    unexplained = [u for u in unguarded if (u[0], u[1]) not in _DIAGNOSTIC_CLAIMS]
+    unguarded = _unguarded_claims(_DOCS, tmp_path / "docs")
+    unexplained = [u for u in unguarded if (u.file, u.sentence) not in _DIAGNOSTIC_CLAIMS]
     assert not unexplained, (
         "these tool-count claims could be changed to a wrong number without the guard reporting "
-        "it, and they are not on the diagnostic list: " + repr(unexplained))
+        "it, and they are not on the diagnostic list: "
+        + repr([(u.file, u.lineno, u.text) for u in unexplained]))
+
+
+def test_the_diagnostic_allowlist_is_keyed_to_the_sentence_not_to_its_position(tmp_path):
+    """The behavioural control for the re-keying: prove the key is the claim, not the line.
+
+    Without this, "keyed by sentence" is a claim about the source rather than a demonstrated
+    property — and a presence-of-text assertion has twice passed in this slice while the
+    behaviour was broken. Three properties, each with its own failure mode:
+
+      1. an unadjudicated claim IS reported, so the walk still exercises the guard;
+      2. the SAME sentence at a DIFFERENT line yields the SAME key — what the line-number key got
+         wrong, and the only reason CI went red twice on prose nobody had touched;
+      3. a DIFFERENT sentence carrying the SAME number is still reported — the key is the
+         sentence, not the digits, or one entry would silently excuse every claim sharing its count.
+    """
+    corpus = tmp_path / "src"
+    (corpus / "sub").mkdir(parents=True)
+    # Deliberately unadjudicable: no observer/planning/role/total label anywhere near the number.
+    sentence = "The MCP bundle ships 12 tools."
+    variant = "The MCP bundle ships 12 tools for review."
+    (corpus / "a.md").write_bytes(("# Heading\n" + sentence + "\n").encode("utf-8"))
+    (corpus / "sub" / "b.md").write_bytes(
+        ("# Heading\n\n<!-- padding -->\n\n" + sentence + "\n" + variant + "\n").encode("utf-8"))
+
+    found = _unguarded_claims(corpus, tmp_path / "work")
+    by_key = {(u.file, u.sentence): u for u in found}
+
+    # 1. both files' claims are reported, so the walk is actually exercising the guard.
+    assert ("a.md", sentence) in by_key, f"unadjudicated claim not reported: {sorted(by_key)}"
+    assert ("b.md", sentence) in by_key, f"unadjudicated claim not reported: {sorted(by_key)}"
+    # 2. same sentence, different line numbers, identical key.
+    assert by_key[("a.md", sentence)].lineno != by_key[("b.md", sentence)].lineno, \
+        "the fixture no longer places the same sentence at two different lines"
+    # 3. the same number in a different sentence is a DIFFERENT claim.
+    assert ("b.md", variant) in by_key, "a sentence sharing the number must be reported separately"
+
+    allowlisted = {("b.md", sentence)}
+    remaining = {k for k in by_key if k not in allowlisted}
+    assert ("b.md", sentence) not in remaining, "the entry did not suppress its own sentence"
+    assert ("b.md", variant) in remaining, \
+        "allowlisting one sentence must not excuse another that merely shares the number"
+    assert ("a.md", sentence) in remaining, \
+        "allowlisting a sentence in one file must not excuse the same sentence in another"
+
+
+def test_every_diagnostic_allowlist_entry_still_matches_a_live_sentence():
+    """A dead entry is a lie about the corpus: it records an adjudication for prose that is gone."""
+    live = {(q.name, line.strip())
+            for q in _DOCS.rglob("*.md")
+            for line in q.read_text(encoding="utf-8").splitlines()}
+    dead = [e for e in _DIAGNOSTIC_CLAIMS if e not in live]
+    assert not dead, ("these diagnostic-allowlist entries no longer match any sentence in docs/ "
+                      "— re-adjudicate or remove them: " + repr(dead))

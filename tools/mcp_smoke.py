@@ -22,8 +22,37 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 _ABS_PATH_RE = re.compile(r"[A-Za-z]:\\|(?:^|[\"'\s])/(?:etc|home|root|Users)/")
 _SECRET_RE = re.compile(r"tvly-[A-Za-z0-9._-]+|Bearer\s+\S+", re.I)
+
+
+# Tools that must NEVER appear on the read-only transport, whatever the role code says today.
+#
+# Deliberately a named set and NOT derived from READ_ONLY_TOOLS: derivation would make this check
+# restate the very thing it is meant to contradict, so widening that allowlist by mistake would
+# silently widen the acceptance too. `qa_factory_health` is absent on purpose - it is a planning
+# tool that is legitimately published read-only, and a leak check built from the whole planning set
+# would flag it and fail a healthy tunnel.
+#
+# The risk of a named set is that it rots as tools are added; that is pinned by
+# `test_mcp_smoke_forbids_everything_outside_the_read_only_catalogue`.
+NEVER_READ_ONLY = frozenset({
+    "analyze_project",
+    "run_quality_audit",
+    "run_flaky_test_analysis",
+    "propose_self_healing_fixes",
+    "apply_self_healing_fixes",
+    "generate_delivery_pack",
+    "observer_export_ai_review_bundle",
+})
+
+
+def _expected_read_only_catalog() -> set:
+    """The catalogue the read-only role declares, derived from the real registration."""
+    from integrations.mcp.server import READ_ONLY_TOOLS
+    return set(READ_ONLY_TOOLS)
 
 
 def _leaks(obj) -> list[str]:
@@ -62,15 +91,30 @@ async def _run(output_root: str) -> dict:
             tools = await session.list_tools()
             names = sorted(t.name for t in tools.tools)
             observer = [n for n in names if n.startswith("observer_")]
-            # The default transport is the READ-ONLY observer role (Issue #74 A3.5): 19 Observer
-            # tools + qa_factory_health. Expecting the full 27 here made a healthy read-only tunnel
-            # report FAIL, and asserting a write tool is present would contradict least privilege.
-            ok = len(observer) >= 19 and "qa_factory_health" in names
-            leaked = [n for n in names if n in {"apply_self_healing_fixes", "generate_delivery_pack",
-                                                "observer_export_ai_review_bundle"}]
-            step("list_tools", ok and not leaked,
-                 f"{len(names)} tools ({len(observer)} observer)"
-                 + (f"; UNEXPECTED write tools exposed: {leaked}" if leaked else ""))
+            # The default transport is the READ-ONLY observer role (Issue #74 A3.5). Two
+            # independent checks, because either alone can pass while least privilege is broken:
+            #
+            #   1. EXACT catalogue equality against the declared read-only set. A count check
+            #      (`len(observer) >= 19`) is satisfied by a catalogue that also carries a write
+            #      tool, so a leak could ride along under a green PASS.
+            #   2. A COMPLETE forbidden set (`NEVER_READ_ONLY`). The previous list named three
+            #      tools and omitted `analyze_project`, `run_quality_audit`,
+            #      `run_flaky_test_analysis` and `propose_self_healing_fixes`, so one of those
+            #      could leak while `len(observer) >= 19` still reported PASS. Check 2 is not
+            #      derived from the declared allowlist, so it still holds if that is widened.
+            expected = _expected_read_only_catalog()
+            missing = sorted(n for n in expected if n not in names)
+            unexpected = sorted(n for n in names if n not in expected)
+            leaked = sorted(set(names) & NEVER_READ_ONLY)
+            ok = not missing and not unexpected and not leaked
+            detail = f"{len(names)} tools ({len(observer)} observer)"
+            if missing:
+                detail += f"; MISSING from the read-only catalogue: {missing}"
+            if unexpected:
+                detail += f"; NOT in the read-only catalogue: {unexpected}"
+            if leaked:
+                detail += f"; UNEXPECTED write/planning tools exposed: {leaked}"
+            step("list_tools", ok, detail)
             report["tool_count"] = len(names)
             report["observer_tool_count"] = len(observer)
 

@@ -17,13 +17,23 @@ This module is that producer, and its whole point is **who decides**. It accepts
 
 It is invoked by the trusted local workflow (operator/launcher), never by the remote model, and never
 across the MCP boundary.
+
+**Known live limitation (owner decision, not a defect).** The CI half derives the REQUIRED-check set
+from the repository's own machine-readable rules - branch protection, then rulesets. This repository
+currently declares neither, so the producer fails closed: every manifest records
+`ci_conclusion=""` with "no machine-readable required-check set", and a CHECKPOINT still cannot
+reach GO. That is deliberate. The alternative - inferring which jobs "ought to be" required from
+`ci.yml` - would create a second required-check configuration beside the canonical one and let the
+two drift, which is the same class of trust hole this module exists to close. Configuring required
+status checks on the base branch is what turns the gate on, and it is an owner action.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.collaboration.manifest import record_gate_manifest
 
@@ -52,21 +62,136 @@ def _run_default(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, check=False, **kw)
 
 
-def _gh_ci_lookup(repo_root: str) -> Callable[[str], Dict[str, Any]]:
-    """Default CI lookup: the real conclusion for this exact SHA, from GitHub. Never a local claim."""
-    def lookup(sha: str) -> Dict[str, Any]:
+# A required check is satisfied when it completed and did not fail. `skipped`/`neutral` count as
+# satisfied because that is GitHub's own semantics for a required context, which is what the tiered
+# CI relies on: `windows-full` legitimately skips on a PR that does not touch platform code. Reading
+# a skip as a failure would invent a second, stricter required-check rule beside the canonical one.
+_SATISFIED = frozenset({"success", "skipped", "neutral"})
+
+
+def _gh_json(args: List[str], repo_root: str, timeout: int = 60):
+    """One `gh` call returning parsed JSON, or None for any failure. Never raises, never guesses."""
+    try:
+        proc = subprocess.run(["gh", *args], cwd=repo_root, capture_output=True, text=True,
+                              check=False, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if int(getattr(proc, "returncode", 1) or 0) != 0:
+        return None
+    try:
+        return json.loads(proc.stdout or "null")
+    except ValueError:
+        return None
+
+
+def _gh_required_contexts(repo_root: str, branch: str) -> Optional[List[str]]:
+    """The repository's OWN machine-readable required-check set, or None when it declares none.
+
+    Branch protection first, then rulesets. Nothing is derived from the workflow file: inferring
+    "which jobs ought to be required" from `ci.yml` would be a second required-check configuration
+    living beside the canonical one, and the two would drift.
+    """
+    data = _gh_json(["api", "repos/{owner}/{repo}/branches/" + branch
+                     + "/protection/required_status_checks"], repo_root)
+    if isinstance(data, dict):
+        raw = data.get("contexts")
+        if not raw:
+            raw = [c.get("context") for c in (data.get("checks") or []) if isinstance(c, dict)]
+        contexts = sorted({str(c) for c in (raw or []) if c})
+        if contexts:
+            return contexts
+
+    rules = _gh_json(["api", "repos/{owner}/{repo}/rules/branches/" + branch], repo_root)
+    if isinstance(rules, list):
+        contexts = []
+        for rule in rules:
+            if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+                continue
+            params = rule.get("parameters") or {}
+            for check in params.get("required_status_checks") or []:
+                if isinstance(check, dict) and check.get("context"):
+                    contexts.append(str(check["context"]))
+        if contexts:
+            return sorted(set(contexts))
+    return None
+
+
+def _gh_check_runs(repo_root: str, sha: str) -> Optional[List[Dict[str, Any]]]:
+    """Every check run recorded for this exact SHA, or None when the state could not be read."""
+    try:
+        proc = subprocess.run(
+            ["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs",
+             "--jq", ".check_runs[] | {name, status, conclusion, completed_at, id}"],
+            cwd=repo_root, capture_output=True, text=True, check=False, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if int(getattr(proc, "returncode", 1) or 0) != 0:
+        return None
+    runs = []
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
         try:
-            proc = subprocess.run(
-                ["gh", "run", "list", "--commit", sha, "--limit", "1",
-                 "--json", "conclusion,databaseId"],
-                cwd=repo_root, capture_output=True, text=True, check=False, timeout=60)
-            rows = json.loads(proc.stdout or "[]")
-        except (OSError, ValueError, subprocess.SubprocessError):
-            return {}
-        if not rows:
-            return {}
-        return {"conclusion": str(rows[0].get("conclusion") or ""),
-                "run_id": str(rows[0].get("databaseId") or "")}
+            runs.append(json.loads(line))
+        except ValueError:
+            return None  # a partially readable state is not a readable state
+    return runs
+
+
+def _ci_admission(required: Optional[List[str]],
+                  runs: Optional[List[Dict[str, Any]]]) -> tuple:
+    """(conclusion, detail) for the exact SHA. Only a satisfied REQUIRED set is `success`.
+
+    This replaces `gh run list --commit <sha> --limit 1`, which could not establish what it was
+    used for. A single SHA carries many workflow runs - on the head this was written against, the
+    Copilot review run succeeded while the CI run failed, so "the latest run succeeded" and
+    "required CI passed" were two different facts and the producer recorded the wrong one.
+    """
+    if required is None:
+        return "", ("no machine-readable required-check set: the repository declares neither "
+                    "branch protection nor a ruleset for the base branch, so nothing can say which "
+                    "checks are required - evidence is NOT admission-ready")
+    if runs is None:
+        return "", "the check-run state for this SHA could not be read"
+
+    # One SHA can carry several runs of the same check (a re-run leaves the earlier record in
+    # place), and they can disagree. Take the most recently completed record per name.
+    latest: Dict[str, Dict[str, Any]] = {}
+    for run in runs:
+        name = str(run.get("name") or "")
+        if not name:
+            continue
+        previous = latest.get(name)
+        if previous is None or str(run.get("completed_at") or "") >= str(
+                previous.get("completed_at") or ""):
+            latest[name] = run
+
+    problems = []
+    for context in required:
+        run = latest.get(context)
+        if run is None:
+            problems.append(f"{context}: no check run for this SHA")
+            continue
+        if str(run.get("status") or "") != "completed":
+            problems.append(f"{context}: {run.get('status') or 'unknown status'}")
+            continue
+        conclusion = str(run.get("conclusion") or "")
+        if conclusion not in _SATISFIED:
+            problems.append(f"{context}: {conclusion or 'no conclusion'}")
+    if problems:
+        return "", "required checks not satisfied: " + "; ".join(sorted(problems))
+    return "success", f"all {len(required)} required checks satisfied for this SHA"
+
+
+def _gh_ci_lookup(repo_root: str, base_branch: str = "main") -> Callable[[str], Dict[str, Any]]:
+    """Default CI lookup: the REQUIRED-check state for this exact SHA. Never a local claim."""
+    def lookup(sha: str) -> Dict[str, Any]:
+        required = _gh_required_contexts(repo_root, base_branch)
+        runs = _gh_check_runs(repo_root, sha) if required is not None else None
+        conclusion, detail = _ci_admission(required, runs)
+        return {"conclusion": conclusion, "run_id": "", "detail": detail,
+                "required": list(required or [])}
     return lookup
 
 
@@ -97,6 +222,37 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
     runner = run or _run_default
     lookup = ci_lookup or _gh_ci_lookup(repo_root)
 
+    def _tracked_tree(when: str) -> str:
+        """The tree object the manifest claims to describe."""
+        proc = runner(["git", "rev-parse", "HEAD^{tree}"], cwd=repo_root)
+        if int(getattr(proc, "returncode", 1) or 0) != 0:
+            raise GateEvidenceError(f"could not read the head tree ({when}); refusing to record a "
+                                    "manifest for an unidentified tree")
+        return (getattr(proc, "stdout", "") or "").strip()
+
+    def _tracked_watermark(when: str) -> float:
+        """The newest mtime among TRACKED files.
+
+        A clean `status --porcelain` before and after cannot see a tracked file that was modified
+        and restored while the gate ran: the bytes match again by the time it is asked, yet the
+        commands measured something that never existed as a commit. Content digests are equally
+        blind to it, for the same reason. The write itself is what leaves a trace, so this compares
+        the mtime watermark across the measurement window instead.
+        """
+        proc = runner(["git", "ls-files", "-z"], cwd=repo_root)
+        if int(getattr(proc, "returncode", 1) or 0) != 0:
+            raise GateEvidenceError(f"could not list tracked files ({when}); refusing to treat an "
+                                    "unverifiable worktree as stable")
+        newest = 0.0
+        for rel in (getattr(proc, "stdout", "") or "").split("\0"):
+            if not rel.strip():
+                continue
+            try:
+                newest = max(newest, os.stat(os.path.join(repo_root, rel)).st_mtime)
+            except OSError:
+                continue
+        return newest
+
     def _assert_identity(when: str) -> None:
         head_proc = runner(["git", "rev-parse", "HEAD"], cwd=repo_root)
         if int(getattr(head_proc, "returncode", 1) or 0) != 0:
@@ -122,6 +278,8 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
 
     # --- identity: the gates must measure the SHA the manifest names -------------------------------
     _assert_identity("before running the gate")
+    tree_before = _tracked_tree("before running the gate")
+    watermark_before = _tracked_watermark("before running the gate")
 
     # --- CI: external, exact-SHA, absent is not success --------------------------------------------
     ci = lookup(sha) or {}
@@ -147,8 +305,21 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
     # advanced or a tracked file changed meanwhile, the commands measured a different checkout and a
     # manifest written for `sha` would authorise an exact-SHA GO on mismatched evidence.
     _assert_identity("after running the gate")
+    tree_after = _tracked_tree("after running the gate")
+    if tree_after != tree_before:
+        raise GateEvidenceError(
+            f"the measured tree changed during the gate ({tree_before[:12]} -> "
+            f"{tree_after[:12]}); the commands did not all measure one tree")
+    watermark_after = _tracked_watermark("after running the gate")
+    if watermark_after != watermark_before:
+        raise GateEvidenceError(
+            "a tracked file was written while the gate was running, so the gates did not all "
+            "measure the same bytes; re-run the gate on a checkout nothing else is writing to")
 
-    detail = (f"ci={ci_conclusion or 'unavailable'}; tests rc={tests_rc} "
+    ci_detail = str(ci.get("detail") or "")
+    detail = (f"ci={ci_conclusion or 'unavailable'}"
+              + (f" ({ci_detail})" if ci_detail else "")
+              + f"; tree={tree_before[:12]}; tests rc={tests_rc} "
               f"{tests_passed}/{tests_total}; " + ", ".join(audit_notes))
     return record_gate_manifest(
         output_root, sha,

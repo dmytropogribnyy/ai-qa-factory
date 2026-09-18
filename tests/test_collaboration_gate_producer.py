@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
+import time
 
 import pytest
 
-from core.collaboration.gate_producer import GateEvidenceError, produce_gate_manifest
+from core.collaboration.gate_producer import (GateEvidenceError, _ci_admission,
+                                              produce_gate_manifest)
 from core.collaboration.manifest import build_trusted_manifest
 
 _SHA = "a" * 40
@@ -279,3 +282,159 @@ def test_a_failed_git_command_is_not_treated_as_a_clean_checkout(tmp_path, faili
     with pytest.raises(GateEvidenceError):
         produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(), run=_GitFails())
     assert not (tmp_path / "_review_relay" / "collab_gate" / f"{_SHA}.json").exists()
+# --- exact-SHA REQUIRED-check admission ---------------------------------------------------------
+#
+# The first version asked `gh run list --commit <sha> --limit 1` and treated the answer as "CI
+# passed". That cannot establish what it was used for: one SHA carries many workflow runs. On the
+# very head this was written against, the Copilot review run SUCCEEDED while the CI run FAILED, so
+# the single latest run was a review bot and the manifest would have unlocked an exact-SHA GO on a
+# red build. Each test below fails against that implementation.
+
+_REQUIRED = ["fast", "meta", "windows-full"]
+
+
+def _run(name, conclusion, status="completed", at="2026-09-18T11:00:00Z"):
+    return {"name": name, "status": status, "conclusion": conclusion, "completed_at": at}
+
+
+def test_an_unrelated_successful_run_never_satisfies_a_failed_required_check():
+    """The concrete shape observed on this PR: review bot green, required CI red."""
+    runs = [_run("Running Copilot Code Review", "success", at="2026-09-18T11:30:00Z"),
+            _run("fast", "failure"), _run("meta", "success"), _run("windows-full", "success")]
+    conclusion, detail = _ci_admission(_REQUIRED, runs)
+    assert conclusion != "success"
+    assert "fast" in detail and "failure" in detail
+
+
+def test_an_unrelated_successful_run_never_satisfies_an_in_progress_required_check():
+    runs = [_run("Running Copilot Code Review", "success", at="2026-09-18T11:30:00Z"),
+            _run("fast", None, status="in_progress", at=""),
+            _run("meta", "success"), _run("windows-full", "success")]
+    conclusion, detail = _ci_admission(_REQUIRED, runs)
+    assert conclusion != "success"
+    assert "in_progress" in detail
+
+
+def test_a_required_check_with_no_run_at_all_is_not_success():
+    """Absent evidence is the easiest thing to read as a pass, so it gets its own control."""
+    runs = [_run("Running Copilot Code Review", "success"), _run("fast", "success"),
+            _run("meta", "success")]
+    conclusion, detail = _ci_admission(_REQUIRED, runs)
+    assert conclusion != "success"
+    assert "windows-full" in detail and "no check run" in detail
+
+
+def test_all_required_green_with_an_intentional_skip_is_success():
+    """A skipped required context is GitHub's own "satisfied", which the tiered CI depends on."""
+    runs = [_run("Running Copilot Code Review", "failure"), _run("fast", "success"),
+            _run("meta", "success"), _run("windows-full", "skipped")]
+    conclusion, _ = _ci_admission(_REQUIRED, runs)
+    assert conclusion == "success"
+
+
+def test_the_most_recent_record_of_a_rerun_check_is_the_one_that_counts():
+    """A re-run leaves the earlier record in place, and the two disagree."""
+    runs = [_run("fast", "failure", at="2026-09-18T10:00:00Z"),
+            _run("fast", "success", at="2026-09-18T12:00:00Z"),
+            _run("meta", "success"), _run("windows-full", "success")]
+    assert _ci_admission(_REQUIRED, runs)[0] == "success"
+
+    stale_green = [_run("fast", "success", at="2026-09-18T10:00:00Z"),
+                   _run("fast", "failure", at="2026-09-18T12:00:00Z"),
+                   _run("meta", "success"), _run("windows-full", "success")]
+    assert _ci_admission(_REQUIRED, stale_green)[0] != "success"
+
+
+def test_without_a_machine_readable_required_set_the_evidence_is_not_admission_ready():
+    """Fail closed rather than invent a second required-check configuration beside the canonical one."""
+    runs = [_run("fast", "success"), _run("meta", "success")]
+    conclusion, detail = _ci_admission(None, runs)
+    assert conclusion != "success"
+    assert "no machine-readable required-check set" in detail
+
+
+def test_an_unreadable_check_state_is_not_success():
+    conclusion, detail = _ci_admission(_REQUIRED, None)
+    assert conclusion != "success"
+    assert "could not be read" in detail
+
+
+# --- the gate must measure ONE tree, and nothing may write to it while it runs -------------------
+
+class _RunsWithTree(_Runs):
+    """Answers `rev-parse HEAD^{tree}` from a script, so the tree can move mid-gate."""
+
+    def __init__(self, trees, **kw):
+        super().__init__(**kw)
+        self.trees = list(trees)
+
+    def __call__(self, cmd, **kw):
+        joined = " ".join(str(c) for c in cmd)
+        if "HEAD^{tree}" in joined:
+            self.calls.append(joined)
+            return _P(0, self.trees.pop(0) if len(self.trees) > 1 else self.trees[0])
+        return super().__call__(cmd, **kw)
+
+
+def test_a_tree_that_moves_during_the_gate_refuses_the_manifest(tmp_path):
+    with pytest.raises(GateEvidenceError, match="measured tree changed"):
+        produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(),
+                              run=_RunsWithTree(["c" * 40, "d" * 40]))
+
+
+def test_a_stable_tree_still_produces_a_manifest(tmp_path):
+    """The control for the test above: without the mutation it must still succeed."""
+    out = produce_gate_manifest(str(tmp_path), ".", _SHA, ci_lookup=_ci(),
+                                run=_RunsWithTree(["c" * 40]))
+    assert out["success"] is True
+
+
+def test_a_tracked_file_written_during_the_gate_refuses_the_manifest(tmp_path):
+    """The hole a before/after clean check cannot see.
+
+    A writer that modifies a tracked file and restores it before the final check leaves `status
+    --porcelain` clean and the content identical, while the gates measured different bytes. The
+    write itself is the evidence, so the mtime watermark is what closes it.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tracked = repo / "module.py"
+    tracked.write_bytes(b"original")
+
+    class _WritesMidGate(_Runs):
+        def __init__(self):
+            super().__init__()
+            self.listings = 0
+
+        def __call__(self, cmd, **kw):
+            joined = " ".join(str(c) for c in cmd)
+            if "ls-files" in joined:
+                self.listings += 1
+                if self.listings == 2:
+                    # modified and restored: same bytes, same status, different write
+                    tracked.write_bytes(b"original")
+                    later = time.time() + 30
+                    os.utime(tracked, (later, later))
+                return _P(0, "module.py\0")
+            return super().__call__(cmd, **kw)
+
+    with pytest.raises(GateEvidenceError, match="written while the gate was running"):
+        produce_gate_manifest(str(tmp_path / "out"), str(repo), _SHA,
+                              ci_lookup=_ci(), run=_WritesMidGate())
+
+
+def test_an_untouched_worktree_passes_the_watermark_check(tmp_path):
+    """Control: the watermark must not refuse a checkout nobody wrote to."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "module.py").write_bytes(b"original")
+
+    class _Quiet(_Runs):
+        def __call__(self, cmd, **kw):
+            if "ls-files" in " ".join(str(c) for c in cmd):
+                return _P(0, "module.py\0")
+            return super().__call__(cmd, **kw)
+
+    out = produce_gate_manifest(str(tmp_path / "out"), str(repo), _SHA,
+                                ci_lookup=_ci(), run=_Quiet())
+    assert out["success"] is True

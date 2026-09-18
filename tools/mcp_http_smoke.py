@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO))  # allow 'integrations.*' imports when run as a script
 
 
@@ -42,8 +44,9 @@ async def _client(url: str, token: str | None) -> dict:
             await session.initialize()
             tools = await session.list_tools()
             ov = await session.call_tool("observer_get_project_overview", {})
-            return {"tool_count": len(tools.tools),
-                    "observer": len([t for t in tools.tools if t.name.startswith("observer_")]),
+            names = sorted(t.name for t in tools.tools)
+            return {"tool_count": len(names), "names": names,
+                    "observer": len([n for n in names if n.startswith("observer_")]),
                     "overview": ov.content[0].text if ov.content else ""}
 
 
@@ -78,8 +81,25 @@ def main() -> int:
         step("server_started", server.started, f"loopback :{port}")
 
         authed = asyncio.run(_client(url, token))
-        step("authorized_initialize_list_call", authed["observer"] == 19,
-             f"{authed['tool_count']} tools ({authed['observer']} observer)")
+        # The SAME contract the stdio smoke enforces. This transport is the one that can be exposed
+        # remotely through a tunnel, and it was checking only `observer == 19`: a leaked
+        # `apply_self_healing_fixes` leaves that count untouched, so a write tool could reach an
+        # authenticated remote client under a green PASS. A count is not a catalogue.
+        from tools.mcp_smoke import NEVER_READ_ONLY, _expected_read_only_catalog
+        expected = _expected_read_only_catalog()
+        served = set(authed["names"])
+        missing = sorted(expected - served)
+        unexpected = sorted(served - expected)
+        http_leaked = sorted(served & NEVER_READ_ONLY)
+        detail = f"{authed['tool_count']} tools ({authed['observer']} observer)"
+        if missing:
+            detail += f"; MISSING from the read-only catalogue: {missing}"
+        if unexpected:
+            detail += f"; NOT in the read-only catalogue: {unexpected}"
+        if http_leaked:
+            detail += f"; UNEXPECTED write/planning tools exposed: {http_leaked}"
+        step("authorized_initialize_list_call",
+             not missing and not unexpected and not http_leaked, detail)
         step("overview_reflects_state", "analyzed_sites" in authed["overview"], "")
         report["leaks"] = ["absolute_path"] if str(REPO) in authed["overview"] else []
 

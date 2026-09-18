@@ -17,9 +17,9 @@ evidence-root path-confined, and bounded.
 ```powershell
 pip install mcp                       # transport dependency (optional; handlers work without it)
 $env:AIQA_OUTPUT_ROOT = "D:\1QA AI\ai-qa-factory\outputs"   # server-side root (NOT a tool arg)
-python tools/run_mcp_server.py --list-tools                 # 20 tools: the read-only observer
-                                                            # role (19 observer + health)
-python tools/run_mcp_server.py --role operator --list-tools # 27: adds the 7 planning tools
+python tools/run_mcp_server.py --list-tools                 # observer role catalog: 20 tools
+                                                            # (19 read-only observer tools + health)
+python tools/run_mcp_server.py --role operator --list-tools # operator role catalog: 27 tools
 python tools/run_mcp_server.py                              # start stdio MCP server
 ```
 
@@ -42,12 +42,15 @@ Claude Code / Claude Desktop / VS Code (`mcpServers`):
 }
 ```
 
-## Read-only tool catalog
+## Observer role catalog (read-only)
+
+These are the tools the `observer` role publishes: 19 read-only observer tools, plus
+`qa_factory_health`. Every one of them is non-mutating.
 
 | Tool | Purpose |
 |------|---------|
 | `observer_get_project_overview` | campaigns + analyzed-site counts |
-| `observer_get_system_readiness` | readiness probes (`deep=true` launches Chromium + network) |
+| `observer_get_system_readiness` | readiness probes (passive; `deep=true` is **refused** in this role — see below) |
 | `observer_get_release_readiness` | release-readiness summary |
 | `observer_get_storage_status` | evidence storage usage |
 | `observer_list_campaigns` | paginated campaigns + run state + counters + the serving process's exact `build` |
@@ -60,7 +63,17 @@ Claude Code / Claude Desktop / VS Code (`mcpServers`):
 | `observer_list_findings` / `observer_get_finding` | campaign findings |
 | `observer_get_evidence_manifest` / `observer_get_evidence_item` | evidence (relative refs; item = metadata + sha256) |
 | `observer_get_activity_log` | paginated event log |
-| `observer_export_ai_review_bundle` | write campaign-scoped JSON+MD bundle, return paths + integrity |
+
+### Operator-only — NOT in the observer role catalog
+
+Published only when the serving process is started with `--role operator`. They are listed here so
+the split is explicit; do not read them as part of the read-only catalog above.
+
+| Capability | Why it is not read-only |
+|------------|-------------------------|
+| `observer_export_ai_review_bundle` | writes a campaign-scoped JSON+MD bundle to disk |
+| `observer_get_system_readiness(deep=true)` | launches Chromium + network probes (active diagnostics) |
+| every planning tool except `qa_factory_health` (`analyze_project`, `run_quality_audit`, `run_flaky_test_analysis`, `propose_self_healing_fixes`, `apply_self_healing_fixes`, `generate_delivery_pack`) | plan or mutate project state; `apply_self_healing_fixes` writes spec files. `qa_factory_health` is the one planning tool published read-only |
 
 ## Permission model
 
