@@ -418,7 +418,7 @@ def test_a_tracked_file_written_during_the_gate_refuses_the_manifest(tmp_path):
                 return _P(0, "module.py\0")
             return super().__call__(cmd, **kw)
 
-    with pytest.raises(GateEvidenceError, match="written while the gate was running"):
+    with pytest.raises(GateEvidenceError, match="worktree was written to while the gate"):
         produce_gate_manifest(str(tmp_path / "out"), str(repo), _SHA,
                               ci_lookup=_ci(), run=_WritesMidGate())
 
@@ -438,3 +438,86 @@ def test_an_untouched_worktree_passes_the_watermark_check(tmp_path):
     out = produce_gate_manifest(str(tmp_path / "out"), str(repo), _SHA,
                                 ci_lookup=_ci(), run=_Quiet())
     assert out["success"] is True
+def test_an_in_progress_rerun_blocks_even_though_an_older_record_succeeded():
+    """The ordering hole: an active re-run has no `completed_at`, so it sorts BELOW the record it
+    supersedes. Selecting "the latest" and then testing its status would discard it and report
+    success for a required check that is at that moment still running.
+    """
+    runs = [_run("fast", "success", at="2026-09-18T10:00:00Z"),
+            _run("fast", None, status="in_progress", at=""),
+            _run("meta", "success"), _run("windows-full", "success")]
+    conclusion, detail = _ci_admission(_REQUIRED, runs)
+    assert conclusion != "success", "an active re-run of a required check must block"
+    assert "in_progress" in detail
+
+    # Control: the same records once the re-run has completed green.
+    finished = [_run("fast", "success", at="2026-09-18T10:00:00Z"),
+                _run("fast", "success", at="2026-09-18T12:00:00Z"),
+                _run("meta", "success"), _run("windows-full", "success")]
+    assert _ci_admission(_REQUIRED, finished)[0] == "success"
+
+
+def test_a_queued_rerun_blocks_for_the_same_reason():
+    runs = [_run("meta", "success", at="2026-09-18T10:00:00Z"),
+            _run("meta", None, status="queued", at=""),
+            _run("fast", "success"), _run("windows-full", "success")]
+    assert _ci_admission(_REQUIRED, runs)[0] != "success"
+
+
+def test_an_untracked_file_injected_and_removed_during_the_gate_refuses(tmp_path):
+    """The sibling of the tracked-file hole, and the one the first watermark missed.
+
+    A writer can ADD a `tests/*.py`, let `pytest tests/` collect it, and remove it before the final
+    check. No tracked mtime moves and the commit tree is unchanged, yet the gate measured bytes that
+    are not in the requested SHA. The trace a create-and-delete leaves is on the parent DIRECTORY,
+    which is why the watermark covers directories and not only files.
+    """
+    repo = tmp_path / "repo"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "tests" / "real.py").write_bytes(b"real")
+
+    class _InjectsUntracked(_Runs):
+        def __init__(self):
+            super().__init__()
+            self.listings = 0
+
+        def __call__(self, cmd, **kw):
+            joined = " ".join(str(c) for c in cmd)
+            if "ls-files" in joined:
+                self.listings += 1
+                if self.listings == 2:
+                    # created and removed while the gate ran: nothing is left to stat
+                    transient = repo / "tests" / "transient.py"
+                    transient.write_bytes(b"injected")
+                    transient.unlink()
+                    later = time.time() + 30
+                    os.utime(repo / "tests", (later, later))
+                return _P(0, "tests/real.py\0")
+            return super().__call__(cmd, **kw)
+
+    with pytest.raises(GateEvidenceError, match="worktree was written to while the gate"):
+        produce_gate_manifest(str(tmp_path / "out"), str(repo), _SHA,
+                              ci_lookup=_ci(), run=_InjectsUntracked())
+
+
+def test_the_watermark_enumerates_untracked_files_too(tmp_path):
+    """Structural: a tracked-only listing cannot see an untracked file that is still present."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "kept.py").write_bytes(b"x")
+    seen = []
+
+    class _Records(_Runs):
+        def __call__(self, cmd, **kw):
+            joined = " ".join(str(c) for c in cmd)
+            if "ls-files" in joined:
+                seen.append(joined)
+                return _P(0, "kept.py\0")
+            return super().__call__(cmd, **kw)
+
+    produce_gate_manifest(str(tmp_path / "out"), str(repo), _SHA, ci_lookup=_ci(), run=_Records())
+    assert seen, "the gate never listed the worktree"
+    for call in seen:
+        assert "--others" in call and "--exclude-standard" in call, (
+            "the watermark must include untracked-but-not-ignored files, or a file injected into "
+            "tests/ during the gate is invisible to it: " + call)

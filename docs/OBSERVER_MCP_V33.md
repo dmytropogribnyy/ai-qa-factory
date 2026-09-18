@@ -10,7 +10,8 @@ evidence-root path-confined, and bounded.
 > the `observer` catalog, and any tool not named in the allowlist — including one added later — is
 > `operator`-only by default. `observer_export_ai_review_bundle` is withheld because it writes files; the `deep=true`
 > *mode* of `observer_get_system_readiness` is refused because it launches Chromium and network
-> probes. The seven planning tools are `operator`-only. See "Permission model" below.
+> probes. Every planning tool except `qa_factory_health` is `operator`-only — `qa_factory_health`
+> is the one planning tool published to the read-only role. See "Permission model" below.
 
 ## Local startup
 

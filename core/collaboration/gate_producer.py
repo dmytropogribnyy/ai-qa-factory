@@ -121,7 +121,8 @@ def _gh_check_runs(repo_root: str, sha: str) -> Optional[List[Dict[str, Any]]]:
     try:
         proc = subprocess.run(
             ["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs",
-             "--jq", ".check_runs[] | {name, status, conclusion, completed_at, id}"],
+             "--jq", ".check_runs[] | "
+             "{name, status, conclusion, completed_at, started_at, id}"],
             cwd=repo_root, capture_output=True, text=True, check=False, timeout=120)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -155,28 +156,34 @@ def _ci_admission(required: Optional[List[str]],
     if runs is None:
         return "", "the check-run state for this SHA could not be read"
 
-    # One SHA can carry several runs of the same check (a re-run leaves the earlier record in
-    # place), and they can disagree. Take the most recently completed record per name.
-    latest: Dict[str, Dict[str, Any]] = {}
+    # One SHA can carry several records of the same check (a re-run leaves the earlier one in
+    # place), and they can disagree.
+    by_name: Dict[str, List[Dict[str, Any]]] = {}
     for run in runs:
         name = str(run.get("name") or "")
-        if not name:
-            continue
-        previous = latest.get(name)
-        if previous is None or str(run.get("completed_at") or "") >= str(
-                previous.get("completed_at") or ""):
-            latest[name] = run
+        if name:
+            by_name.setdefault(name, []).append(run)
 
     problems = []
     for context in required:
-        run = latest.get(context)
-        if run is None:
+        records = by_name.get(context) or []
+        if not records:
             problems.append(f"{context}: no check run for this SHA")
             continue
-        if str(run.get("status") or "") != "completed":
-            problems.append(f"{context}: {run.get('status') or 'unknown status'}")
+        # ANY record that has not completed blocks, whatever the ordering says.
+        #
+        # Selecting "the latest" and then testing its status is not enough, and the ordering is
+        # exactly where it breaks: an in-progress re-run has an EMPTY `completed_at`, so it sorts
+        # below the older successful record it supersedes and is discarded - the gate would report
+        # success for a required check that is at that moment still running. Blocking on any active
+        # record removes the decision's dependence on the sort key altogether.
+        active = [r for r in records if str(r.get("status") or "") != "completed"]
+        if active:
+            problems.append(f"{context}: {active[0].get('status') or 'unknown status'}")
             continue
-        conclusion = str(run.get("conclusion") or "")
+        newest = max(records, key=lambda r: (str(r.get("completed_at") or ""),
+                                             str(r.get("id") or "")))
+        conclusion = str(newest.get("conclusion") or "")
         if conclusion not in _SATISFIED:
             problems.append(f"{context}: {conclusion or 'no conclusion'}")
     if problems:
@@ -230,28 +237,50 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
                                     "manifest for an unidentified tree")
         return (getattr(proc, "stdout", "") or "").strip()
 
-    def _tracked_watermark(when: str) -> float:
-        """The newest mtime among TRACKED files.
+    def _worktree_watermark(when: str) -> tuple:
+        """(newest mtime, file count) over every non-ignored path, files AND their directories.
 
         A clean `status --porcelain` before and after cannot see a tracked file that was modified
         and restored while the gate ran: the bytes match again by the time it is asked, yet the
         commands measured something that never existed as a commit. Content digests are equally
-        blind to it, for the same reason. The write itself is what leaves a trace, so this compares
-        the mtime watermark across the measurement window instead.
+        blind, for the same reason. The write itself is what leaves a trace, so this compares an
+        mtime watermark across the measurement window.
+
+        Two refinements over watching tracked files only, both of which that version missed:
+
+        * `--others --exclude-standard` includes untracked-but-not-ignored files. A concurrent
+          writer can ADD a `tests/*.py`, let `pytest tests/` collect it, and remove it before the
+          final check: no tracked mtime moves and the commit tree is unchanged, yet the gate
+          measured bytes that are not in the requested SHA.
+        * directories are watermarked too, because a create-and-delete leaves no file behind to
+          stat - the trace it does leave is on the parent directory.
+
+        This DETECTS concurrent writes; it does not PREVENT them. A filesystem that does not update
+        directory mtimes, or a writer that restores them, would still evade it. Running the gate in
+        an isolated checkout that nothing else writes to remains the only complete guarantee, and
+        that is the direction this should move; the watermark is the fail-closed check until then.
         """
-        proc = runner(["git", "ls-files", "-z"], cwd=repo_root)
+        proc = runner(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                      cwd=repo_root)
         if int(getattr(proc, "returncode", 1) or 0) != 0:
-            raise GateEvidenceError(f"could not list tracked files ({when}); refusing to treat an "
+            raise GateEvidenceError(f"could not list worktree files ({when}); refusing to treat an "
                                     "unverifiable worktree as stable")
-        newest = 0.0
+        newest, seen, directories = 0.0, 0, {""}
         for rel in (getattr(proc, "stdout", "") or "").split("\0"):
             if not rel.strip():
                 continue
+            seen += 1
             try:
                 newest = max(newest, os.stat(os.path.join(repo_root, rel)).st_mtime)
             except OSError:
                 continue
-        return newest
+            directories.add(os.path.dirname(rel))
+        for rel in directories:
+            try:
+                newest = max(newest, os.stat(os.path.join(repo_root, rel)).st_mtime)
+            except OSError:
+                continue
+        return newest, seen
 
     def _assert_identity(when: str) -> None:
         head_proc = runner(["git", "rev-parse", "HEAD"], cwd=repo_root)
@@ -279,7 +308,7 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
     # --- identity: the gates must measure the SHA the manifest names -------------------------------
     _assert_identity("before running the gate")
     tree_before = _tracked_tree("before running the gate")
-    watermark_before = _tracked_watermark("before running the gate")
+    watermark_before = _worktree_watermark("before running the gate")
 
     # --- CI: external, exact-SHA, absent is not success --------------------------------------------
     ci = lookup(sha) or {}
@@ -310,10 +339,10 @@ def produce_gate_manifest(output_root: str, repo_root: str, head_sha: str, *,
         raise GateEvidenceError(
             f"the measured tree changed during the gate ({tree_before[:12]} -> "
             f"{tree_after[:12]}); the commands did not all measure one tree")
-    watermark_after = _tracked_watermark("after running the gate")
+    watermark_after = _worktree_watermark("after running the gate")
     if watermark_after != watermark_before:
         raise GateEvidenceError(
-            "a tracked file was written while the gate was running, so the gates did not all "
+            "the worktree was written to while the gate was running, so the commands did not all "
             "measure the same bytes; re-run the gate on a checkout nothing else is writing to")
 
     ci_detail = str(ci.get("detail") or "")
