@@ -2,12 +2,31 @@
 
 [![CI](https://github.com/dmytropogribnyy/ai-qa-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/dmytropogribnyy/ai-qa-factory/actions/workflows/ci.yml)
 
-> **Guided QA Automation Workbench**  
+> **AI-assisted QA · LLM output validation · Human-reviewed workflows**
+>
 > **AI drafts. Senior QA decides.**
 
-AI QA Factory is a local, senior-led system for structured QA consulting and bounded public-site quality analysis. It turns briefs and approved targets into reviewable QA plans, Playwright scaffolds, controlled execution decisions, evidence packages, and release-focused delivery material.
+AI QA Factory is a **local-first Python workbench** for AI-assisted quality engineering. It turns project briefs into reviewable QA plans and Playwright + TypeScript starter projects, and inspects approved public websites to produce findings with supporting evidence.
 
-The system is deliberately **not an unrestricted autopilot**. AI output is treated as a draft, risky actions require explicit approval, missing evidence is never invented, and public-site Scout execution remains bounded by fail-closed safety rules.
+The engineering focus is on making AI-assisted work **reviewable, testable, and traceable**: validating generated outputs, handling model failures, persisting workflow state, and requiring human approval before consequential actions.
+
+**Status:** an independent engineering project in active development, with implemented local workflows and a regression suite. Integrations have separate readiness requirements; passing deterministic tests does not establish live-provider acceptance or production readiness. See the [capability matrix](docs/CAPABILITY_MATRIX.md), [release notes](docs/releases/), and [open issues](https://github.com/dmytropogribnyy/ai-qa-factory/issues) for implementation boundaries and ongoing work.
+
+**Stack:** Python · LiteLLM · OpenAI / Anthropic integrations · Playwright / Chromium · TypeScript scaffolds · SQLite · MCP · pytest · GitHub Actions.
+
+## AI evaluation and reliability
+
+The project applies evaluation to its own generated artifacts and workflow decisions. It combines rule-based checks, deterministic scenario fixtures, and human review.
+
+| Engineering area | Implementation to explore |
+|---|---|
+| **Generated-output validation** | [Quality gate](core/quality_gate.py): checks for unsupported claims, invented-evidence language, hardcoded credentials, brittle selectors, and missing review notes |
+| **Scenario evaluation** | [Fixture evaluator](core/scenario_batch_evaluator.py): safety expectations, category rules, and structural checks over local scenarios, without executing external targets |
+| **Model routing and fallback** | [LLM router](core/llm_router.py) and [routing tests](tests/test_v509_llm_router.py): task-specific model selection, fallback behavior, and recorded usage metadata |
+| **Bounded collaboration** | [Budget controls](core/collaboration/budget.py): call limits, bounded retries, response caching, and spend limits when pricing is known |
+| **Human oversight and traceability** | [Execution lifecycle](core/orchestration/work_execution.py) and [approval model](docs/APPROVAL_MODEL.md): persisted approval decisions, validation, and evidence registration |
+
+These checks identify specific failure patterns; they do not establish general model accuracy, factual correctness, or legal compliance. Generated material and verified execution evidence remain distinct throughout the workflow.
 
 ## Product surfaces
 
@@ -26,17 +45,7 @@ The canonical runtime truth is maintained in the [Current Runtime Capability Mat
 
 ### Client work
 
-```text
-Brief or task
-  → classify context and risks
-  → build project blueprint
-  → draft QA strategy and test design
-  → generate Playwright + TypeScript scaffold
-  → request approval
-  → validate, review, and repair
-  → prepare evidence and delivery package
-  → senior QA review
-```
+The client workflow classifies a brief and its risks, builds a blueprint, drafts a QA strategy and test design, and generates a starter framework. Approval, validation, review, and repair precede delivery preparation and senior QA review.
 
 Typical outputs include:
 
@@ -51,20 +60,13 @@ Generated plans and scaffolds are **not proof that a client system was exercised
 
 ### Prospect QA Scout
 
-```text
-Campaign filters or approved URLs
-  → URL safety and suppression checks
-  → bounded static inspection
-  → optional qualified Deep Capture
-  → finding verification and prioritization
-  → exact-run evidence package
-  → operator review
-  → optional copy-only contact draft
-```
+Scout checks approved URLs against safety and suppression rules, performs bounded static inspection and optional Deep Capture, then verifies and prioritizes findings. An evidence package links the results to the exact run for operator review.
 
 The local dashboard supports campaign progress, pause/resume/stop controls, archived history, needs-attention handoffs, target detail, evidence download, and guarded cleanup workflows.
 
 Scout may surface source-attributed public contact addresses and prepare a factual copy-only draft for a completed target with an actionable finding. **Nothing is sent automatically.**
+
+A separate communication workflow supports individually reviewed and approved messages. External sending is disabled by default and requires provider setup and explicit controls; generating a QA finding never authorizes contact.
 
 ## Evidence and diagnostics
 
@@ -171,7 +173,8 @@ Never commit credentials, OAuth tokens, authenticated browser state, client data
 ## Validation
 
 ```bash
-python -m pytest -q
+python -m ruff check .
+python -m pytest tests/ -q
 python tools/docs_audit.py --no-write
 python tools/agent_readiness_audit.py
 ```
@@ -198,6 +201,6 @@ Exact per-release totals belong in versioned [release notes](docs/releases/) rat
 
 AI QA Factory demonstrates a practical quality-engineering operating model: structured intake, risk-aware planning, controlled automation, evidence discipline, and senior review. It is built to accelerate professional QA work without confusing generated material with verified execution or allowing automation to cross safety boundaries silently.
 
-Built and operated by [Dmytro Pogribnyy](https://dmytropogribnyy.github.io/) — Senior QA Automation Engineer / SDET.
+Developed by [Dmytro Pogribnyy](https://dmytropogribnyy.github.io/) — Senior SDET / QA Automation Engineer, with a focus on AI/LLM quality engineering and a PhD in Business Law.
 
 <!-- Compatibility anchors retained for regression tests: v5.0.8 model routing profiles; premium_hybrid -->
