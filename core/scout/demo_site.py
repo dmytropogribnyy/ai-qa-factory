@@ -15,7 +15,7 @@ from __future__ import annotations
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Dict, Iterator, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 _DOCTYPE = "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
 _VIEWPORT = "<meta name='viewport' content='width=device-width, initial-scale=1'>"
@@ -223,7 +223,13 @@ FIXTURE_PAGES: Dict[str, Tuple[int, str, str]] = {
 _REDIRECTS = {"/redirect/start.html": "/clean/index.html"}
 
 
-def make_handler():
+def make_handler(fixture_pages: Optional[Dict[str, Tuple[int, str, str]]] = None):
+    """Build the handler. ``fixture_pages`` (optional) replaces the shared FIXTURE_PAGES with a
+    caller-owned mapping read at request time, so one URL can change between two observations
+    without ever mutating the shared fixtures. The default behaviour is unchanged."""
+    pages = FIXTURE_PAGES if fixture_pages is None else fixture_pages
+    redirects = _REDIRECTS if fixture_pages is None else {}
+
     class _Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # silence
             return
@@ -244,10 +250,10 @@ def make_handler():
 
         def do_GET(self):
             path = self.path.split("?", 1)[0].split("#", 1)[0]
-            if path in _REDIRECTS:
-                self._send(301, "text/html", "", location=_REDIRECTS[path])
+            if path in redirects:
+                self._send(301, "text/html", "", location=redirects[path])
                 return
-            entry = FIXTURE_PAGES.get(path)
+            entry = pages.get(path)
             if entry is None:
                 self._send(404, "text/html", _page("<title>Not found</title>", "<h1>404</h1>"))
                 return
@@ -260,9 +266,10 @@ def make_handler():
 
 
 @contextmanager
-def serve_demo_site() -> Iterator[Tuple[str, str]]:
+def serve_demo_site(
+        fixture_pages: Optional[Dict[str, Tuple[int, str, str]]] = None) -> Iterator[Tuple[str, str]]:
     """Yield (base_url, allowed_host) for the running fixture server; shuts down on exit."""
-    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler())
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(fixture_pages))
     host, port = server.server_address
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
