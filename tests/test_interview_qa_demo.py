@@ -479,6 +479,51 @@ def test_valid_source_violation_lists_still_verify(violations, tmp_path):
     assert [v["id"] for v in after["axe_violations"]] == [v["rule"] for v in violations]
 
 
+# --- lifecycle commit marker: state.json is written last and must confirm the report -------------
+
+_STATE_DAMAGE = {
+    "missing": None,
+    "corrupt": b'{"status": "FIX_VER',
+    "null": b"null",
+    "list": b"[]",
+    "running_after_crash": lambda s: {k: v for k, v in {**s, "status": "RUNNING"}.items()
+                                      if k != "finished_at"},
+    "other_run_id": lambda s: {**s, "run_id": "demo-interview-someoneelse"},
+    "status_disagrees": lambda s: {**s, "status": "RETEST_FAILED"},
+    "finished_at_disagrees": lambda s: {**s, "finished_at": "2001-01-01T00:00:00+00:00"},
+    "finished_at_empty": lambda s: {**s, "finished_at": ""},
+    "started_after_finished": lambda s: {**s, "started_at": "2999-01-01T00:00:00+00:00"},
+}
+
+
+@pytest.mark.parametrize("damage", sorted(_STATE_DAMAGE))
+def test_report_without_matching_terminal_state_never_loads_as_success(damage, completed_run,
+                                                                      monkeypatch):
+    out, run_id, _result, _calls = completed_run
+    state_path = RunStore(out, run_id).root / "state.json"
+    change = _STATE_DAMAGE[damage]
+    if change is None:
+        state_path.unlink()
+    elif isinstance(change, bytes):
+        state_path.write_bytes(change)
+    else:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state_path.write_text(json.dumps(change(state)), encoding="utf-8")
+    rerun = _forbid_side_effects(monkeypatch)
+    loaded = load_qa_demo(out, run_id)
+    assert rerun == []  # a failed lifecycle check never re-executes the run
+    assert loaded["status"] == "BLOCKED", (damage, loaded)
+    assert "state" in loaded["reason"]
+
+
+def test_terminal_state_mirrors_the_report(completed_run):
+    out, run_id, result, _calls = completed_run
+    state = RunStore(out, run_id).load_state()
+    assert state["run_id"] == run_id and state["status"] == result["status"]
+    assert state["started_at"] == result["started_at"]
+    assert state["finished_at"] == result["finished_at"]
+
+
 # --- optional REAL local Chromium + axe acceptance ------------------------------------------------
 
 def _real_browser_skip_reason() -> str:

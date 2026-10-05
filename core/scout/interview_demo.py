@@ -278,6 +278,47 @@ def _verify_screenshot(store: RunStore, obs: Dict[str, Any], records: Dict[str, 
     return ""
 
 
+_TERMINAL = ("FIX_VERIFIED", "RETEST_FAILED", "BASELINE_NOT_REPRODUCED", "BLOCKED")
+
+
+def _parse_utc(value: Any):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _lifecycle_problem(store: RunStore, run_id: str, report: Dict[str, Any]) -> str:
+    """The terminal state.json is the commit marker: it is written LAST, so a report without a
+    matching terminal state belongs to a run that never finished and must not be accepted."""
+    try:
+        state = store.load_state()
+    except StoreError as exc:
+        return f"run state unreadable ({exc}); the run may not have finished"
+    if not isinstance(state, dict):
+        return "run state is not an object; the run may not have finished"
+    if state.get("run_id") != run_id:
+        return "run state belongs to a different run id"
+    status = state.get("status")
+    if status not in _TERMINAL:
+        return f"run state is not terminal ({status!r}); the run did not finish"
+    if status != report.get("status"):
+        return f"run state status {status!r} disagrees with the report"
+    finished, started = state.get("finished_at"), state.get("started_at")
+    if not _parse_utc(finished) or finished != report.get("finished_at"):
+        return "run state finished_at missing or disagrees with the report"
+    if not _parse_utc(started) or started != report.get("started_at"):
+        return "run state started_at missing or disagrees with the report"
+    try:
+        if _parse_utc(started) > _parse_utc(finished):
+            return "run state started_at is after finished_at"
+    except TypeError:
+        return "run state timestamps are not comparable"
+    return ""
+
+
 def load_qa_demo(output_dir: str, run_id: str) -> Dict[str, Any]:
     _validate_id(run_id)
     store = RunStore(output_dir, run_id)
@@ -291,6 +332,9 @@ def load_qa_demo(output_dir: str, run_id: str) -> Dict[str, Any]:
         return _blocked(run_id, "report missing or not this schema")
     if report.get("run_id") != run_id or report.get("targeted_rules") != list(TARGETS):
         return _blocked(run_id, "report identity or scope mismatch", report)
+    problem = _lifecycle_problem(store, run_id, report)
+    if problem:
+        return _blocked(run_id, problem, report)
     before, after, evidence = report.get("before"), report.get("after"), report.get("evidence")
     if not isinstance(before, dict) or not isinstance(after, dict) or not isinstance(evidence, list):
         return _blocked(run_id, "report structure incomplete", report)
