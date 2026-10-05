@@ -1,4 +1,4 @@
-"""Interview QA demo — a targeted before/after accessibility retest on an owned synthetic page.
+"""QA Evidence & Retest — a targeted before/after accessibility retest on an owned synthetic page.
 
 One command observes a local service-desk page carrying two deliberate defects (axe ``image-alt``
 and ``label``) in real Chromium + axe-core, applies a PREDEFINED repair to the SAME document at the
@@ -9,6 +9,10 @@ Reuses PlaywrightBackend.observe(deep_qa=True), serve_demo_site (isolated fixtur
 RunStore and EvidenceRecord. Fails closed: a missing browser/axe/navigation/screenshot is BLOCKED,
 never a substituted image or a success. ``load_qa_demo`` re-verifies the persisted run (paths,
 hashes, verdict); that detects accidental damage in a same-user file store, it is not tamper-proof.
+
+New runs use ``demo-qa-<id>`` and schema ``qa_evidence_retest/v1``. Runs saved before the naming
+change (``demo-interview-<id>``, schema ``interview_qa_demo/v1``) still load read-only and are
+never rewritten.
 """
 from __future__ import annotations
 
@@ -25,14 +29,16 @@ from core.scout.demo_site import _page, serve_demo_site
 from core.scout.store import RunStore, StoreError
 from core.scout.url_safety import UrlPolicy
 
-SCHEMA = "interview_qa_demo/v1"
-FIXTURE_REVISION = "service-desk-v1"
+SCHEMA = "qa_evidence_retest/v1"
+LEGACY_SCHEMAS = ("interview_qa_demo/v1",)   # accepted on load only
+FIXTURE_REVISION = "service-desk-v2"          # v2: page served under /retest/ instead of v1's path
 TARGETS = ("image-alt", "label")
 REPORT_ARTIFACT = "qa_demo_report.json"
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
-_RUN_ID = re.compile(r"demo-interview-[a-zA-Z0-9_-]+")
-_PAGE_PATH = "/interview/service-desk.html"
-_LOGO_PATH = "/interview/logo.svg"
+_RUN_ID = re.compile(r"demo-qa-[a-zA-Z0-9_-]+")
+_LEGACY_RUN_ID = re.compile(r"demo-interview-[a-zA-Z0-9_-]+")   # accepted on load only
+_PAGE_PATH = "/retest/service-desk.html"
+_LOGO_PATH = "/retest/logo.svg"
 LIMITATIONS = [
     "Targeted retest of two axe rules only (image-alt, label); other rules are listed as out-of-scope.",
     "Real local Chromium + axe-core on an owned synthetic page; not a client or production site.",
@@ -77,10 +83,11 @@ def _sha256(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def _validate_id(run_id: Any) -> str:
-    if not isinstance(run_id, str) or not _RUN_ID.fullmatch(run_id):
-        raise ValueError(f"refused run id {run_id!r}: must match demo-interview-[a-zA-Z0-9_-]+")
-    return run_id
+def _validate_id(run_id: Any, *, allow_legacy: bool = False) -> str:
+    if isinstance(run_id, str) and (_RUN_ID.fullmatch(run_id)
+                                    or (allow_legacy and _LEGACY_RUN_ID.fullmatch(run_id))):
+        return run_id
+    raise ValueError(f"refused run id {run_id!r}: must match demo-qa-[a-zA-Z0-9_-]+")
 
 
 # --- comparison ----------------------------------------------------------------------------------
@@ -183,7 +190,7 @@ def _observe(backend: PlaywrightBackend, url: str, side: str, store: RunStore,
                 path=out["screenshot_ref"], title=f"{side.capitalize()} screenshot",
                 description=f"Real Chromium capture of the synthetic fixture, {side} the "
                             "predefined repair.",
-                source_phase="interview_qa_demo", content_hash=_sha256(data),
+                source_phase="qa_evidence_retest", content_hash=_sha256(data),
                 notes=[f"url={url}", "synthetic owned target", "internal only"])
     if not out["screenshot_ref"] and not out["error"]:
         out["error"] = "no real screenshot was captured"
@@ -320,7 +327,7 @@ def _lifecycle_problem(store: RunStore, run_id: str, report: Dict[str, Any]) -> 
 
 
 def load_qa_demo(output_dir: str, run_id: str) -> Dict[str, Any]:
-    _validate_id(run_id)
+    _validate_id(run_id, allow_legacy=True)
     store = RunStore(output_dir, run_id)
     if not store.root.is_dir():
         return _blocked(run_id, "run not found")
@@ -328,7 +335,7 @@ def load_qa_demo(output_dir: str, run_id: str) -> Dict[str, Any]:
         report = store.load_artifact(REPORT_ARTIFACT)
     except StoreError as exc:
         return _blocked(run_id, str(exc))
-    if not isinstance(report, dict) or report.get("schema") != SCHEMA:
+    if not isinstance(report, dict) or report.get("schema") not in (SCHEMA, *LEGACY_SCHEMAS):
         return _blocked(run_id, "report missing or not this schema")
     if report.get("run_id") != run_id or report.get("targeted_rules") != list(TARGETS):
         return _blocked(run_id, "report identity or scope mismatch", report)
@@ -383,7 +390,7 @@ def _render_html(r: Dict[str, Any]) -> str:
     oos = r.get("out_of_scope", {})
     limits = "".join(f"<li>{_e(x)}</li>" for x in r["limitations"])
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-            f"<title>Interview QA demo {_e(r['run_id'])}</title></head><body>"
+            f"<title>QA Evidence &amp; Retest {_e(r['run_id'])}</title></head><body>"
             f"<h1>Targeted accessibility retest: {_e(r['status'])}</h1>"
             f"<p>Run {_e(r['run_id'])} · {_e(r['started_at'])} → {_e(r['finished_at'])}</p>"
             f"<p>{_e(r['reason'])}</p><p>Repair: {_e(r['repair'])}</p>"

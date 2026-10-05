@@ -1,11 +1,11 @@
-"""D1 — QA interview golden path: a targeted before/after accessibility retest (tests only).
+"""QA Evidence & Retest: a targeted before/after accessibility retest.
 
 The demo checks ONE owned synthetic page with two deliberate defects (axe ``image-alt`` and
 ``label``), applies a PREDEFINED fix to the SAME fixture URL, and retests. It is not AI-generated
 remediation and not a general accessibility audit: only the two target rules decide the verdict,
 and any other axe rule stays visible as out-of-scope.
 
-Contract pinned here for ``core.scout.interview_demo``:
+Contract pinned here for ``core.scout.qa_demo``:
 
 - ``compare_retest(before, after) -> {status, resolved, remaining, reason, ...}`` where status is
   FIX_VERIFIED | RETEST_FAILED | BASELINE_NOT_REPRODUCED | BLOCKED. Unknown, unavailable, failed or
@@ -13,9 +13,11 @@ Contract pinned here for ``core.scout.interview_demo``:
 - ``run_qa_demo(output_dir, run_id) -> dict`` with the compare keys at top level plus ``run_id``,
   ``before`` / ``after`` observations (``screenshot_ref`` relative to the RunStore root),
   ``evidence`` (canonical ``EvidenceRecord`` dicts), ``targeted_rules`` and ``limitations``.
-  Unsafe run ids raise ``ValueError`` before any side effect; an existing run is never overwritten.
+  New run ids are ``demo-qa-<id>``; unsafe ids (including the legacy ``demo-interview-`` prefix)
+  raise ``ValueError`` before any side effect; an existing run is never overwritten.
 - ``load_qa_demo(output_dir, run_id) -> dict`` returns the persisted result; a missing, malformed
-  or tampered run never loads as FIX_VERIFIED.
+  or tampered run never loads as FIX_VERIFIED. Runs saved under the legacy ``demo-interview-`` id
+  and ``interview_qa_demo/v1`` schema still load read-only.
 
 Unit tests use a fake ``PlaywrightBackend.observe`` that fetches the REAL local fixture server, so
 the defective -> repaired switch at one URL is exercised without a browser. The single real-browser
@@ -30,6 +32,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import struct
 import urllib.request
 import uuid
@@ -41,9 +44,9 @@ import pytest
 
 from core.schemas.evidence import EvidenceRecord
 from core.scout import demo_site
-from core.scout import interview_demo
+from core.scout import qa_demo
 from core.scout.backends import PageObservation, PlaywrightBackend
-from core.scout.interview_demo import compare_retest, load_qa_demo, run_qa_demo
+from core.scout.qa_demo import compare_retest, load_qa_demo, run_qa_demo
 from core.scout.store import RunStore, StoreError
 
 TARGETS = ["image-alt", "label"]
@@ -52,7 +55,7 @@ _FIXTURE_PAGES_AT_IMPORT = dict(demo_site.FIXTURE_PAGES)
 
 
 def _fresh_id() -> str:
-    return f"demo-interview-{uuid.uuid4().hex[:12]}"
+    return f"demo-qa-{uuid.uuid4().hex[:12]}"
 
 
 def _obs(*rules: str, **over) -> dict:
@@ -158,9 +161,10 @@ def test_out_of_scope_rules_stay_visible_and_never_count_as_resolved():
 
 # --- run_qa_demo: refusals before side effects ---------------------------------------------------
 
-_UNSAFE_IDS = ["", "demo-interview-", "../demo-interview-x", "demo-interview-x/../../escape",
-               "demo-interview-a\\b", "<ABS>", "/demo-interview-x", "scout-run-001",
-               "Demo-Interview-x", "demo-interview-x\n", "demo-interview-x y", "demo-interview-é"]
+_UNSAFE_IDS = ["", "demo-qa-", "../demo-qa-x", "demo-qa-x/../../escape",
+               "demo-qa-a\\b", "<ABS>", "/demo-qa-x", "scout-run-001",
+               "Demo-QA-x", "demo-qa-x\n", "demo-qa-x y", "demo-qa-é",
+               "../demo-interview-x", "demo-interview-x\n", "Demo-Interview-x"]
 
 
 def _forbid_side_effects(monkeypatch) -> list:
@@ -176,7 +180,7 @@ def _forbid_side_effects(monkeypatch) -> list:
 
     monkeypatch.setattr(PlaywrightBackend, "observe", _no_browser)
     monkeypatch.setattr(demo_site, "serve_demo_site", _no_server)
-    monkeypatch.setattr(interview_demo, "serve_demo_site", _no_server, raising=False)
+    monkeypatch.setattr(qa_demo, "serve_demo_site", _no_server, raising=False)
     monkeypatch.setattr(RunStore, "reset", lambda self: calls.append(("reset", self.root)))
     return calls
 
@@ -184,7 +188,7 @@ def _forbid_side_effects(monkeypatch) -> list:
 @pytest.mark.parametrize("raw_id", _UNSAFE_IDS)
 def test_unsafe_run_id_is_refused_before_any_side_effect(raw_id, tmp_path, monkeypatch):
     calls = _forbid_side_effects(monkeypatch)
-    run_id = str(tmp_path / "abs" / "demo-interview-x") if raw_id == "<ABS>" else raw_id
+    run_id = str(tmp_path / "abs" / "demo-qa-x") if raw_id == "<ABS>" else raw_id
     out = tmp_path / "out"
     for fn in (run_qa_demo, load_qa_demo):
         with pytest.raises(ValueError):
@@ -458,8 +462,8 @@ def _observe_after(tmp_path, violations) -> dict:
     store = RunStore(str(tmp_path / "out"), _fresh_id())
     (store.root / "evidence").mkdir(parents=True)
     (store.root / "evidence" / "after.png").write_bytes(_png(1))
-    after, _record = interview_demo._observe(_ControlledBackend(violations),
-                                             "http://127.0.0.1:1/x", "after", store, "demo-interview-x")
+    after, _record = qa_demo._observe(_ControlledBackend(violations),
+                                      "http://127.0.0.1:1/x", "after", store, "demo-qa-x")
     return after
 
 
@@ -488,7 +492,7 @@ _STATE_DAMAGE = {
     "list": b"[]",
     "running_after_crash": lambda s: {k: v for k, v in {**s, "status": "RUNNING"}.items()
                                       if k != "finished_at"},
-    "other_run_id": lambda s: {**s, "run_id": "demo-interview-someoneelse"},
+    "other_run_id": lambda s: {**s, "run_id": "demo-qa-someoneelse"},
     "status_disagrees": lambda s: {**s, "status": "RETEST_FAILED"},
     "finished_at_disagrees": lambda s: {**s, "finished_at": "2001-01-01T00:00:00+00:00"},
     "finished_at_empty": lambda s: {**s, "finished_at": ""},
@@ -522,6 +526,65 @@ def test_terminal_state_mirrors_the_report(completed_run):
     assert state["run_id"] == run_id and state["status"] == result["status"]
     assert state["started_at"] == result["started_at"]
     assert state["finished_at"] == result["finished_at"]
+
+
+# --- product-neutral naming with legacy read compatibility ---------------------------------------
+
+def test_new_runs_use_product_neutral_identifiers(completed_run):
+    out, run_id, result, _calls = completed_run
+    root = RunStore(out, run_id).root
+    assert run_id.startswith("demo-qa-") and result["schema"] == "qa_evidence_retest/v1"
+    assert {r["source_phase"] for r in result["evidence"]} == {"qa_evidence_retest"}
+    for p in root.rglob("*"):
+        if p.suffix in (".json", ".html"):
+            assert "interview" not in p.read_text(encoding="utf-8").lower(), p
+
+
+def test_new_runs_cannot_use_the_legacy_prefix(tmp_path, monkeypatch):
+    calls = _forbid_side_effects(monkeypatch)
+    with pytest.raises(ValueError):
+        run_qa_demo(str(tmp_path / "out"), "demo-interview-x")
+    assert calls == [] and not (tmp_path / "out").exists()
+
+
+def _as_legacy_run(out: str, run_id: str, schema: str = "interview_qa_demo/v1") -> str:
+    """Simulate a run saved before the naming change: legacy id prefix, schema and source_phase."""
+    legacy_id = "demo-interview-" + run_id.removeprefix("demo-qa-")
+    root = RunStore(out, legacy_id).root
+    shutil.copytree(RunStore(out, run_id).root, root)
+    for name in ("qa_demo_report.json", "state.json", "config.json"):
+        data = json.loads((root / name).read_text(encoding="utf-8"))
+        data["run_id"] = legacy_id
+        if "schema" in data:
+            data["schema"] = schema
+        for rec in data.get("evidence", []):
+            rec["source_phase"] = "interview_qa_demo"
+        (root / name).write_text(json.dumps(data), encoding="utf-8")
+    return legacy_id
+
+
+def test_legacy_saved_run_still_loads_and_verifies(completed_run, monkeypatch):
+    out, run_id, _result, _calls = completed_run
+    legacy_id = _as_legacy_run(out, run_id)
+    before = _tree(RunStore(out, legacy_id).root)
+    rerun = _forbid_side_effects(monkeypatch)
+    loaded = load_qa_demo(out, legacy_id)
+    assert rerun == []
+    assert loaded["status"] == "FIX_VERIFIED" and loaded["run_id"] == legacy_id
+    assert loaded["schema"] == "interview_qa_demo/v1"
+    _assert_screenshot_evidence(out, legacy_id, loaded)
+    assert _tree(RunStore(out, legacy_id).root) == before  # read-only: history is not rewritten
+
+
+def test_legacy_id_without_a_saved_run_is_blocked_not_refused(tmp_path):
+    loaded = load_qa_demo(str(tmp_path / "out"), "demo-interview-neverran")
+    assert loaded["status"] == "BLOCKED" and not (tmp_path / "out").exists()
+
+
+def test_unknown_schema_is_still_blocked(completed_run):
+    out, run_id, _result, _calls = completed_run
+    legacy_id = _as_legacy_run(out, run_id, schema="some_other_demo/v1")
+    assert load_qa_demo(out, legacy_id)["status"] == "BLOCKED"
 
 
 # --- optional REAL local Chromium + axe acceptance ------------------------------------------------
