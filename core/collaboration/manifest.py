@@ -10,11 +10,10 @@ explicitly successful for the exact SHA.
 from __future__ import annotations
 
 import json
-import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
@@ -27,36 +26,41 @@ SCHEMA = "collab-gate-manifest/v2"
 _EVIDENCE_FIELDS = ("ci_conclusion", "tests_passed", "tests_total", "tests_ok", "audits_ok")
 
 
-def _count(value: Any) -> Optional[int]:
-    """A test count, or None when the record does not carry a usable one.
+def _is_count(value: Any) -> bool:
+    """A native non-negative integer. `bool` is excluded: `True` is an `int` in Python, and
+    "tests passed: yes" is not a count. Strings, floats (even ``10.0``), NaN/Inf are not counts -
+    the lenient parser that accepted them turned ``1.75`` into ``1`` and ``"10"`` into evidence."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
-    `int(value or 0)` raised straight out of the trusted READ boundary for a record whose
-    `tests_passed` was a string or a list - a crash where the whole job is to decide whether
-    evidence may be believed. A record that cannot be understood is refused; refusing is not the
-    same as raising, and an unparseable count is certainly not a passing one. `bool` is excluded on
-    purpose: `True` is an `int` in Python, and "tests passed: yes" is not a count.
+
+def _evidence_problems(gate: Dict[str, Any]) -> List[str]:
+    """Field-specific reasons the evidence present in ``gate`` cannot be believed; empty if none.
+
+    Shared by both boundaries: the writer refuses these before persisting anything, the reader
+    refuses a record carrying them. `bool("false")` is True, so a flag is approval only when it is
+    the native boolean itself - never by truthiness.
     """
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value) if math.isfinite(value) else None
-    if isinstance(value, str):
-        try:
-            return int(value.strip())
-        except ValueError:
-            return None
-    return None
+    problems = []
+    for flag in ("tests_ok", "audits_ok"):
+        if flag in gate and not isinstance(gate[flag], bool):
+            problems.append(f"{flag} is not a boolean ({gate[flag]!r})")
+    for count in ("tests_passed", "tests_total"):
+        if count in gate and not _is_count(gate[count]):
+            problems.append(f"{count} is not a non-negative integer ({gate[count]!r})")
+    passed, total = gate.get("tests_passed"), gate.get("tests_total")
+    if _is_count(passed) and _is_count(total) and passed > total:
+        problems.append(f"tests_passed {passed} exceeds tests_total {total}")
+    return problems
 
 
 def _derive_success(gate: Dict[str, Any]) -> bool:
     """The ONE place a gate verdict is computed, used when writing and again when reading."""
-    passed = _count(gate.get("tests_passed"))
-    return (str(gate.get("ci_conclusion", "")).lower() == "success"
-            and bool(gate.get("tests_ok"))
-            and bool(gate.get("audits_ok"))
-            and passed is not None and passed > 0)
+    passed = gate.get("tests_passed")
+    return (not _evidence_problems(gate)
+            and str(gate.get("ci_conclusion", "")).lower() == "success"
+            and gate.get("tests_ok") is True
+            and gate.get("audits_ok") is True
+            and _is_count(passed) and passed > 0)
 
 
 def _gate_dir(output_root: str) -> Path:
@@ -75,14 +79,22 @@ def record_gate_manifest(output_root: str, head_sha: str, *, ci_conclusion: str 
     which made the "trusted" verdict a value the caller could simply state - the precise trust hole
     the producer above it exists to close. The verdict is derived here from the evidence, and
     derived again when the record is read.
+
+    Evidence is validated BEFORE anything is coerced or written: ``int(1.75)`` and
+    ``bool("false")`` used to turn malformed input into a successful record. Malformed evidence
+    raises ``ValueError`` and no record is created.
     """
     sha = str(head_sha or "").strip().lower()
     if not _FULL_SHA.fullmatch(sha):
         raise ValueError("gate manifest requires an exact full 40-char head SHA")
+    problems = _evidence_problems({"tests_passed": tests_passed, "tests_total": tests_total,
+                                   "tests_ok": tests_ok, "audits_ok": audits_ok})
+    if problems:
+        raise ValueError(f"gate manifest evidence is malformed: {'; '.join(problems)}")
     manifest = {"schema": SCHEMA,
                 "head_sha": sha, "ci_conclusion": str(ci_conclusion), "ci_run": str(ci_run),
-                "tests_passed": int(tests_passed), "tests_total": int(tests_total),
-                "tests_ok": bool(tests_ok), "audits_ok": bool(audits_ok),
+                "tests_passed": tests_passed, "tests_total": tests_total,
+                "tests_ok": tests_ok, "audits_ok": audits_ok,
                 "notes": str(notes)[:2000],
                 "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     manifest["success"] = _derive_success(manifest)
@@ -133,17 +145,27 @@ def build_trusted_manifest(output_root: str, repo_root: str, head_sha: str) -> D
                f"{gate.get('tests_passed', 0)}/{gate.get('tests_total', 0)} "
                f"ok={gate.get('tests_ok')}; audits ok={gate.get('audits_ok')}")
 
-    # A field present but unusable is as good as absent for a verdict that must be re-derivable.
-    unusable = [f for f in ("tests_passed", "tests_total")
-                if f in gate and _count(gate.get(f)) is None]
-    missing = [f for f in _EVIDENCE_FIELDS if f not in gate] + unusable
+    missing = [f for f in _EVIDENCE_FIELDS if f not in gate]
     if missing:
         return {"present": True, "success": False, "gate": gate,
                 "summary": f"{summary}; record is INCOMPLETE - missing evidence {missing}, so its "
                            "verdict cannot be re-derived"}
 
+    # A field present but malformed is as good as absent for a verdict that must be re-derivable.
+    problems = _evidence_problems(gate)
+    if problems:
+        return {"present": True, "success": False, "gate": gate,
+                "summary": f"{summary}; record is MALFORMED - {'; '.join(problems)} - refusing "
+                           "the record"}
+
+    stored = gate.get("success")
+    if not isinstance(stored, bool):
+        return {"present": True, "success": False, "gate": gate,
+                "summary": f"{summary}; stored verdict success={stored!r} is not a boolean - "
+                           "refusing the record"}
+
     derived = _derive_success(gate)
-    if bool(gate.get("success")) != derived:
+    if stored != derived:
         return {"present": True, "success": False, "gate": gate,
                 "summary": f"{summary}; stored verdict success={gate.get('success')} CONTRADICTS its "
                            f"own evidence (derived {derived}) - refusing the record"}
