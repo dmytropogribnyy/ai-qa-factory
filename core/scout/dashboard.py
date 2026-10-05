@@ -153,7 +153,11 @@ def cached_access_snapshot(refresh: bool = False) -> dict:
 
 
 def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token: str,
-                  operator_home: bool = False, challenge_manager=None):
+                  operator_home: bool = False, challenge_manager=None, demos=None):
+    if demos is None:
+        from core.dashboard.demos import DemoController
+        demos = DemoController(service.output_dir)
+
     class _Handler(BaseHTTPRequestHandler):
         server_version = f"ScoutDashboard/{SCOUT_VERSION}"
 
@@ -350,6 +354,8 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                     (q.get("domain") or [""])[0], (q.get("run") or [""])[0]))
             if path == "/work-evidence":
                 return self._work_evidence((q.get("project") or [""])[0], (q.get("path") or [""])[0])
+            if path in ("/demos", "/demos/run", "/demos/evidence", "/demos/export", "/api/demos/run"):
+                return self._demos_get(path, q)
             if path == "/" or path == "/index.html":
                 # The operator front door is stable: an active Scout run never replaces Overview.
                 # Run controls and results stay on the explicit Scout surfaces.
@@ -439,7 +445,54 @@ def _make_handler(service: ScoutService, launcher: CampaignLauncher, csrf_token:
                 return self._scout_start_client_work(parsed)
             if parsed.path.startswith("/api/work/"):
                 return self._work_action(parsed.path[len("/api/work/"):])
+            if parsed.path == "/api/demos/start":
+                return self._demos_start()
             return self._json(404, {"error": "not found"})
+
+        # --- Product Demos (core.dashboard.demos): reads never execute; one guarded start ---
+        def _demos_get(self, path, q):
+            run_id = (q.get("id") or [""])[0]
+            if path == "/demos":
+                body, script = demos.home_body()
+                return self._html(200, _page("Demos", "/demos", body,
+                                             "const CSRF=" + json.dumps(csrf_token) + ";" + script))
+            if path == "/api/demos/run":
+                return self._json(*demos.read(run_id))
+            if path == "/demos/run":
+                status, title, body = demos.detail(run_id)
+                return self._html(status, _page(title, "/demos", body))
+            if path == "/demos/evidence":
+                status, data = demos.evidence(run_id, (q.get("side") or [""])[0])
+                ctype, disposition = "image/png", None
+            else:
+                status, data = demos.export(run_id)
+                ctype = "text/html; charset=utf-8"
+                disposition = f'attachment; filename="{run_id}-report.html"'  # id is validated
+            if status != 200:
+                return self._json(status, data)
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if disposition:
+                self.send_header("Content-Disposition", disposition)
+                self.send_header("Content-Security-Policy",
+                                 "default-src 'none'; img-src data:; style-src 'unsafe-inline'; "
+                                 "sandbox")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(data)
+
+        def _demos_start(self):
+            body = self._read_json_body()
+            refusal = self._guard_mutation(body)
+            if refusal:
+                return self._json(*refusal)
+            if body is None:
+                return self._json(400, {"ok": False, "error": "invalid, oversized or non-object "
+                                                              "JSON body"})
+            return self._json(*demos.start(body))
 
         def _guard_mutation(self, body):
             """One shared guard for every state-changing endpoint (v3.1 M10): loopback bind (server)
@@ -2147,6 +2200,9 @@ function startCampaign(){{
                     f'<p class="muted">Approved projects that are ready to run, running, or being '
                     f'validated. Everything not yet finished lives in Open work.</p>'
                     f'{work_tbl}'
+                    f'<p id="demos-link" class="muted">Product demos: <a href="/demos">QA Evidence '
+                    f'&amp; Retest and LLM Output Evaluation</a> on owned synthetic and fixture '
+                    f'data.</p>'
                     f'{_system_ready_html(service.output_dir, hidden)}')
             script = ("const CSRF=" + json.dumps(csrf_token) + ";\n"
                       + self._poll_script(
@@ -5556,7 +5612,7 @@ def _theme_legacy(html: str) -> str:
 
 # "Scout" is the adaptive Discover Prospects workflow; the legacy seed scanner stays at /scout
 # (relabelled "Manual URL Scan"). The nav highlights Scout for any /scout* page.
-_NAV = (("Overview", "/"), ("Scout", "/scout/new"), ("Work", "/work"))
+_NAV = (("Overview", "/"), ("Scout", "/scout/new"), ("Work", "/work"), ("Demos", "/demos"))
 _MORE = (("Activity", "/activity"), ("Data management", "/data"),
          ("Collaboration", "/collab"), ("Settings", "/settings"), ("Help", "/docs"))
 
@@ -6222,9 +6278,13 @@ def start_dashboard(service: ScoutService, host: str = "127.0.0.1", port: int = 
     token = secrets.token_urlsafe(32) if csrf_token is None else csrf_token
     from core.scout.challenge_session import ChallengeSessionManager
     challenge_manager = ChallengeSessionManager(service.output_dir)
+    # One demo controller (and so one demo execution lock) per Dashboard.
+    from core.dashboard.demos import DemoController
+    demo_controller = DemoController(service.output_dir)
     server = ThreadingHTTPServer((host, port),
                                  _make_handler(service, launcher, token, operator_home,
-                                               challenge_manager))
+                                               challenge_manager, demo_controller))
+    server.demo_controller = demo_controller  # type: ignore[attr-defined]
     server.scout_csrf_token = token          # type: ignore[attr-defined]
     server.scout_launcher = launcher         # type: ignore[attr-defined]
     server.scout_challenge_manager = challenge_manager  # type: ignore[attr-defined]

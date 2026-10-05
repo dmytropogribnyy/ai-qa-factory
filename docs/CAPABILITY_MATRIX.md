@@ -32,6 +32,20 @@ Status vocabulary:
 | Scheduling | conditional | Existing local scheduler wrapper for operator-approved campaign commands | Depends on host scheduler support and local configuration |
 | Outbound email | conditional | Draft/review/approval pipeline and guarded provider path; dry-run by default | Requires separate credentials, exact recipient confirmation, reviewer approval, and enabled controls; QA findings never authorize sending |
 
+## Product demonstrations and output evaluation
+
+| Capability | Status | What is actually available | Boundary / evidence |
+|---|---|---|---|
+| Product Demos page | runtime | `/demos` starts QA or fixture evaluation through the existing Dashboard; persisted details, recent runs and self-contained HTML export | Existing loopback/Host/Origin/CSRF controls; one start at a time; no second store or service |
+| QA Evidence & Retest | conditional | Real before/after Chromium screenshots and axe checks of two deliberately defective fixture elements at the same local URL | Requires Playwright, Chromium and axe-core; predefined markup repair; only `image-alt` and `label` decide the verdict |
+| LLM output evaluation | runtime | Deterministic checks on raw answer strings: strict schema, abstention, normalized exact reference match, citation-id set and canary; baseline/candidate comparison | Bundled FIXTURE examples are constructed, not provider measurements. Reference matching is not semantic entailment; canary detection is not a complete injection defence |
+| Recorded-output import | runtime | CLI accepts bounded local response files for the bundled dataset and grades their actual contents | Provenance is user-declared, not authenticated; secret-like input is refused; no provider calls. Dashboard import and live model switching are not implemented |
+
+Implementation and commands: [Demo Guide](DEMO_GUIDE.md), [QA](QA_DEMO.md),
+[LLM evaluation](LLM_EVALUATION.md). A completed evaluation may return `REGRESSION_DETECTED`;
+execution completion and candidate acceptance are separate facts. Local hashes expose damage and
+inconsistency, not authenticated provenance against a same-user adversary.
+
 ## Generation and planning
 
 | Capability | Status | Honest interpretation |

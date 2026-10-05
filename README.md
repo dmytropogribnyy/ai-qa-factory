@@ -14,6 +14,33 @@ The engineering focus is on making AI-assisted work **reviewable, testable, and 
 
 **Stack:** Python · LiteLLM · OpenAI / Anthropic integrations · Playwright / Chromium · TypeScript scaffolds · SQLite · MCP · pytest · GitHub Actions.
 
+## Product demos
+
+Two self-contained workflows run inside the existing Dashboard. They need no model API key or
+Observer tunnel; the QA path requires the optional local browser dependencies.
+
+![AI QA Factory product demos: QA Evidence & Retest and LLM Output Evaluation](docs/assets/demos/product-demos.png)
+
+| Workflow | Run and inspect | What the result means |
+|---|---|---|
+| **QA Evidence & Retest** | Real Chromium + axe-core capture two deliberate defects on an owned synthetic page, apply a predefined markup repair at the same URL, then retest | A scoped result for `image-alt` and `label`, with before/after screenshots; not an overall accessibility certification |
+| **LLM Output Evaluation** | Grade constructed baseline/candidate outputs against 24 versioned cases, expand each check, and inspect per-case regressions | Fixture scores exercise the evaluator, not measured model performance; a higher average can still fail the comparison policy |
+
+From the repository root on Windows:
+
+```powershell
+# One-time setup for both demos (downloads browser dependencies)
+scripts\setup-local.ps1 -DeepCapture
+# Start the existing local Dashboard
+scripts\start-local.ps1
+```
+
+Open **http://127.0.0.1:8765/demos**. Each Run creates a fresh result; reloading never re-executes it.
+The full regression suite is not a prerequisite for viewing the demos.
+See the [demo guide](docs/DEMO_GUIDE.md) for the walkthrough, CLI commands, exports and troubleshooting.
+Importing recorded responses is available through the [LLM evaluation CLI](docs/LLM_EVALUATION.md);
+the Dashboard launches fixture mode only.
+
 ## AI evaluation and reliability
 
 The project applies evaluation to its own generated artifacts and workflow decisions. It combines rule-based checks, deterministic scenario fixtures, and human review.
@@ -22,6 +49,7 @@ The project applies evaluation to its own generated artifacts and workflow decis
 |---|---|
 | **Generated-output validation** | [Quality gate](core/quality_gate.py): checks for unsupported claims, invented-evidence language, hardcoded credentials, brittle selectors, and missing review notes |
 | **Scenario evaluation** | [Fixture evaluator](core/scenario_batch_evaluator.py): safety expectations, category rules, and structural checks over local scenarios, without executing external targets |
+| **Output evaluation and regression** | [Output evaluator](core/llm_eval_demo.py): strict JSON schema, abstention, normalized reference matching, citation-id sets and canary checks over raw answers; same-input baseline/candidate comparison |
 | **Model routing and fallback** | [LLM router](core/llm_router.py) and [routing tests](tests/test_v509_llm_router.py): task-specific model selection, fallback behavior, and recorded usage metadata |
 | **Bounded collaboration** | [Budget controls](core/collaboration/budget.py): call limits, bounded retries, response caching, and spend limits when pricing is known |
 | **Human oversight and traceability** | [Execution lifecycle](core/orchestration/work_execution.py) and [approval model](docs/APPROVAL_MODEL.md): persisted approval decisions, validation, and evidence registration |
@@ -124,11 +152,12 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest -q
 python main.py system-health
 python main.py capabilities
 python main.py dashboard
 ```
+
+For QA capture on other platforms, install `requirements-deep-capture.txt` and Chromium as described in the [demo guide](docs/DEMO_GUIDE.md).
 
 The deterministic test suite runs without API keys. Real model providers and conditional integrations require separate local configuration.
 
@@ -185,6 +214,7 @@ Exact per-release totals belong in versioned [release notes](docs/releases/) rat
 
 | Document | Purpose |
 |---|---|
+| [Product Demo Guide](docs/DEMO_GUIDE.md) | Run both demos, inspect evidence, and understand the comparison policy |
 | [Operator Quickstart](docs/QUICKSTART_OPERATOR.md) | Fast local setup and daily workflow |
 | [Client Work Operator Guide](docs/CLIENT_WORK_OPERATOR_GUIDE.md) | Senior-led brief-to-delivery workflow |
 | [Scout Operator Guide](docs/SCOUT_OPERATOR_GUIDE.md) | **Start here for a manual seed scan** (`/scout`) — you already know the websites |
