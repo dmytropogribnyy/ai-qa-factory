@@ -9,6 +9,7 @@ data source. The Dashboard renderer escapes untrusted text; these DTOs carry raw
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -151,6 +152,8 @@ class CollaborationMonitor:
         base = Path(self._out) / "_review_relay" / "collab_delivery"
         delivered = 0
         cost = 0.0
+        unpriced = 0
+        unreadable = 0
         model = ""
         if base.is_dir():
             for path in base.glob("*.json"):
@@ -159,14 +162,34 @@ class CollaborationMonitor:
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
+                    # A dropped record makes a total wrong while it is still presented as right.
+                    unreadable += 1
                     continue
                 if not isinstance(data, dict) or "delivered_at" not in data:
+                    unreadable += 1
                     continue
                 delivered += 1
-                cost += float(data.get("claude_cost_usd") or 0.0)
+                raw = data.get("claude_cost_usd")
+                usable = (isinstance(raw, (int, float)) and not isinstance(raw, bool)
+                          and math.isfinite(raw) and raw >= 0.0)
+                # A marker written before `cost_known` existed needs judging on its value. The
+                # fabricated default was exactly 0.0, so a legacy zero is UNPRICED - counting it as
+                # a known zero is what made unknown cost look free. A legacy NON-zero could only
+                # have come from a real parsed price, and discarding it would erase real spend.
+                legacy = "cost_known" not in data
+                priced = usable and (bool(data.get("cost_known", False))
+                                     or (legacy and float(raw) > 0.0))
+                if priced:
+                    cost += float(raw)
+                else:
+                    unpriced += 1
                 model = data.get("claude_model") or model
         bm = billing_mode()
         return {"delivered": delivered, "claude_cost_usd": round(cost, 6), "claude_model": model,
+                # The totals above are only trustworthy when `cost_known` is True. An unreadable
+                # marker counts against it too: it may have carried a cost nobody can now see.
+                "unpriced_deliveries": unpriced, "unreadable_markers": unreadable,
+                "cost_known": unpriced == 0 and unreadable == 0,
                 "billing_source": bm.get("source"), "billing_plan": bm.get("plan", "")}
 
     def _supervisor(self) -> Dict[str, Any]:

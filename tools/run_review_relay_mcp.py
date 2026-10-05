@@ -9,16 +9,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))  # noqa: E402
 
-from integrations.mcp.review_relay_server import relay_role, run_http_server, run_server, tool_names  # noqa: E402
+from integrations.mcp.review_relay_server import (relay_role, run_http_server,  # noqa: E402
+                                                  run_server, set_relay_role, tool_names)
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="AI QA Factory Review Relay MCP")
+    # Declared, never inherited: see `review_relay_server.relay_role`.
+    parser.add_argument("--role", choices=("worker", "reviewer"), default=None)
     parser.add_argument("--list-tools", action="store_true")
     parser.add_argument("--http", action="store_true")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8775)
     args = parser.parse_args(argv)
+    if args.role:
+        set_relay_role(args.role)
     try:
         role = relay_role()
     except RuntimeError as exc:

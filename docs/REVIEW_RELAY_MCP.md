@@ -66,9 +66,12 @@ Use a separate token from the Observer token:
 
 ```powershell
 $env:AIQA_OUTPUT_ROOT = "C:\aiqa\outputs"
-$env:AIQA_REVIEW_RELAY_ROLE = "reviewer"
 $env:AIQA_RELAY_MCP_TOKEN = "<strong random token from user environment>"
-.venv\Scripts\python.exe tools\run_review_relay_mcp.py --http --host 127.0.0.1 --port 8775
+# The reviewer role is DECLARED on the command line, never inherited. A child process carries its
+# parent's environment, so an inherited AIQA_REVIEW_RELAY_ROLE=reviewer would let one actor post the
+# GO on its own checkpoints; the server refuses it. `worker` may still come from the environment —
+# ambient configuration may restrict, never widen.
+.venv\Scripts\python.exe tools\run_review_relay_mcp.py --role reviewer --http --host 127.0.0.1 --port 8775
 ```
 
 Expose the loopback endpoint only through the same authenticated, operator-managed tunnel approach used

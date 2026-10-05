@@ -86,15 +86,25 @@ def test_text_redacts_before_truncating_at_the_limit_boundary():
 
 def test_runtime_role_both_is_rejected(monkeypatch):
     # A production process is strictly one role; there is no runtime "both".
-    from integrations.mcp.review_relay_server import relay_role
+    # (A4.5: the wording changed when the environment stopped being able to grant `reviewer`.
+    # The property under test is unchanged - an unrecognised role is refused, never defaulted.)
+    from integrations.mcp.review_relay_server import relay_role, set_relay_role
+    set_relay_role(None)
     monkeypatch.setenv("AIQA_REVIEW_RELAY_ROLE", "both")
-    with pytest.raises(RuntimeError, match="worker or reviewer"):
+    with pytest.raises(RuntimeError):
         relay_role()
 
 
 def test_reviewer_identity_is_server_side_not_client(tmp_path, monkeypatch):
     monkeypatch.setenv("AIQA_OUTPUT_ROOT", str(tmp_path))
-    monkeypatch.setenv("AIQA_REVIEW_RELAY_ROLE", "reviewer")
+    # A4.5: `reviewer` is DECLARED, never inherited - an inherited environment would let one actor
+    # review its own checkpoints. This test is about the reviewer IDENTITY being server-side, which
+    # is unchanged; only how the role is selected moved from the environment to an explicit call.
+    from integrations.mcp import review_relay_server as relay
+    # monkeypatch, not `set_relay_role`, so the declaration is restored when this test ends - a
+    # module global left set would silently grant `reviewer` to every later test in the session.
+    monkeypatch.setattr(relay, "_DECLARED_ROLE", "reviewer")
+    monkeypatch.delenv("AIQA_REVIEW_RELAY_ROLE", raising=False)
     monkeypatch.setenv("AIQA_RELAY_REVIEWER_ID", "gpt-5-reviewer")
     cp = ReviewRelay(str(tmp_path)).submit_checkpoint(
         slice_name="s", branch="b", head_sha="a" * 40, summary="x")

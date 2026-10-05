@@ -131,16 +131,32 @@ class ObserverAPI:
 
     # -- overview / readiness --------------------------------------------------------------------
     def get_project_overview(self) -> Dict[str, Any]:
+        from core.scout.canonical_runs import campaign_counts
         camps = self.list_campaigns(limit=1000)["campaigns"]
         reg = AnalyzedSiteRegistry(self.output_dir)
+        # `limit=1000` is clamped to 500 inside `list_campaigns`, so `len(camps)` reported 500 for
+        # ever once the repository passed that many, and a RUNNING campaign past index 500 was
+        # invisible in `active_campaigns`. The count comes from the exact persisted run-control
+        # tally instead, split production/diagnostic the way `observer_campaign_counts` already
+        # reports it, so the two Observer tools cannot disagree.
+        counts = campaign_counts(self.output_dir)
         return redact({
             "api_version": OBSERVER_API_VERSION, "at": _now(),
-            "campaign_count": len(camps),
+            "campaign_count": counts["total"],
+            "campaign_counts": counts,
+            "campaigns_listed": len(camps),
+            "campaigns_truncated": len(camps) < counts["total"],
             # The shared predicate, not a literal of its own. This list counted `paused` as active,
             # which ACTIVE_STATES never did — so a parked run was active here and parked everywhere
             # else.
             "active_campaigns": [c["campaign_id"] for c in camps if c["active"]],
-            "analyzed_sites": reg.counts(),
+            # Unique canonical domains in PRODUCTION scope; diagnostic reported separately rather
+            # than folded in. The raw registry tally counted every entry including
+            # diagnostic-only ones, so this number disagreed with the History total and with
+            # `observer_list_targets`, which both apply the production filter.
+            "analyzed_sites": reg.scoped_counts(production_only=True),
+            "analyzed_sites_diagnostic": reg.scoped_counts(production_only=False,
+                                                           diagnostic_only=True),
         })
 
     def get_system_readiness(self, *, deep: bool = False) -> Dict[str, Any]:

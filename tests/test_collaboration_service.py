@@ -32,7 +32,7 @@ def _bound_cycle(tmp_path, responder, *, session="b93d32d1-7c96-4489-945b-2a49df
     cycle = CollaborationCycle(str(tmp_path), str(tmp_path),
                                reviewer_client=FixtureReviewerClient(responder),
                                policy=BudgetPolicy(backoff_base_seconds=0.0),
-                               registry=reg, delivery=delivery)
+                               registry=reg, delivery=delivery, head_resolver=lambda: _SHA)
     return cycle, reg, runs
 
 
@@ -61,9 +61,13 @@ def test_build_reviewer_driver_wires_a_working_loop(tmp_path):
     submit_worker_message(str(tmp_path), kind="QUESTION", thread_id="t-1", body="retry policy?",
                           head_sha=_SHA, branch="feat/x")
     client = FixtureReviewerClient(lambda m: {"decision_type": "RESPONSE", "message": "use backoff"})
+    # The head is stated explicitly. This used to read git in tmp_path (not a repo) -> "" -> the
+    # stale check was SKIPPED and the review proceeded; the comment here described that fail-open
+    # branch as if it were the design. An unverifiable head now refuses, so a caller outside a
+    # checkout must say what the head is.
     driver = build_reviewer_driver(str(tmp_path), str(tmp_path), reviewer_client=client,
-                                   policy=BudgetPolicy(backoff_base_seconds=0.0))
-    # head_resolver reads git in tmp_path (not a repo) -> "" -> stale check skipped, review proceeds.
+                                   policy=BudgetPolicy(backoff_base_seconds=0.0),
+                                   head_resolver=lambda: _SHA)
     out = driver.process_once()
     assert out["status"] == "reviewed"
     kinds = [m["kind"] for m in CollaborationStore(str(tmp_path)).thread("t-1")["messages"]]

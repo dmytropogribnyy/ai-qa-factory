@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,7 @@ CANONICAL_REVIEWER_CONTRACT = (
     "claims; never assume capabilities that are not evidenced. Respond ONLY with the required JSON object."
 )
 
+_FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _REPLY_KIND = {"RESPONSE": "RESPONSE", "CRITIQUE": "CRITIQUE",
                "RECOMMENDATION": "RECOMMENDATION", "DECISION": "DECISION"}
 
@@ -172,8 +174,19 @@ class ReviewerDriver:
         self._save_state(stage="REVIEWING", current_thread=thread, last_error="")
 
         # Stale head: never fabricate a fresh decision for a moved branch head.
+        #
+        # An UNVERIFIABLE head is not a matching head. This was `if current_head and <mismatch>`, so
+        # when git could not answer - missing, timed out, or replying with an error string - the
+        # check was SKIPPED and a paid review proceeded against a head nobody had confirmed. UNKNOWN
+        # is the one state in which neither "current" nor "stale" can be claimed, so it refuses and
+        # names the cause. The liveness cost (no git, no collaboration) is the correct trade here.
         current_head = str(self._head_resolver() or "").lower()
-        if current_head and str(request.get("head_sha", "")).lower() != current_head:
+        if not _FULL_SHA.fullmatch(current_head):
+            self._escalate(request, "cannot determine the current branch head (git returned "
+                                    f"{current_head[:40]!r}); refusing to review against an "
+                                    "unverifiable head")
+            return {"status": "head_unverifiable"}
+        if str(request.get("head_sha", "")).lower() != current_head:
             self._escalate(request, f"checkpoint head {request['head_sha'][:12]} is stale; branch is "
                                     f"now at {current_head[:12]} — resubmit for the current head")
             return {"status": "stale"}

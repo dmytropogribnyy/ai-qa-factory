@@ -34,15 +34,27 @@ class CampaignRunLock:
             self._held = True
             return
         except FileExistsError:
+            # The lock EXISTS - that is what FileExistsError proves. Anything we cannot read about
+            # it leaves the lease state UNKNOWN, and an unknown lease is HELD, not free: reclaiming
+            # it starts a second concurrent run against the same targets, which is the one thing
+            # this lock exists to prevent. The writer is `os.open` + `os.write` with no fsync, so a
+            # crash mid-write leaves exactly the partial JSON that used to be read as "expired".
+            #
+            # `float()` is inside the guarded block too: it used to sit outside, so `until: null`
+            # raised TypeError and `until: "soon"` raised ValueError straight out of `acquire`
+            # instead of failing closed.
             try:
                 info = json.loads(self._path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                info = {}
-            if float(info.get("until", 0)) > now:
+                until = float(info["until"])
+            except (OSError, ValueError, TypeError, KeyError):
+                raise CampaignBusy(
+                    "a campaign lock exists but its lease could not be read; refusing to reclaim "
+                    "it - an unreadable lock is held, not expired") from None
+            if until > now:
                 raise CampaignBusy(
                     f"campaign is already running (lock held until {info.get('until')}); "
                     "no overlapping run is started") from None
-            # stale lease -> reclaim
+            # genuinely expired lease -> reclaim
             self._path.write_text(json.dumps({"pid": os.getpid(), "until": now + self._lease_s}),
                                   encoding="utf-8")
             self._held = True

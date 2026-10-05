@@ -170,11 +170,15 @@ class AnalyzedSiteRegistry:
             os.write(fd, json.dumps({"owner": owner, "until": now + lease_s}).encode())
             os.close(fd)
         except FileExistsError:
+            # An unreadable lease is held, not expired - see `run_lock.acquire` for the same rule.
+            # Granting a claim here lets two campaigns analyse one domain at once, which this
+            # method's own docstring promises cannot happen.
             try:
                 info = json.loads(lock.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                info = {}
-            if float(info.get("until", 0)) > now:                # a live lease held by someone else
+                until = float(info["until"])
+            except (OSError, ValueError, TypeError, KeyError):
+                return False
+            if until > now:                                      # a live lease held by someone else
                 return False
             lock.write_text(json.dumps({"owner": owner, "until": now + lease_s}), encoding="utf-8")
         e = self._entries.get(domain) or SiteEntry(domain=domain, first_seen=_now_iso())
@@ -318,6 +322,41 @@ class AnalyzedSiteRegistry:
         for e in self._entries.values():
             c[e.analysis_status] = c.get(e.analysis_status, 0) + 1
         return c
+
+    def scoped_counts(self, *, production_only: bool = True,
+                      diagnostic_only: bool = False) -> Dict[str, int]:
+        """Unique CANONICAL domains by analysis status, scoped to production or diagnostic runs.
+
+        `counts()` tallies every registry entry regardless of which campaign produced it, so the
+        Observer's overview disagreed with both the Dashboard History total and its own
+        `observer_list_targets` - those apply the production filter, this did not. Per the
+        controller's decision the overview reports unique canonical domains in production scope and
+        reports diagnostic separately rather than folding it in.
+
+        A domain counts as diagnostic only when EVERY campaign that touched it is diagnostic: a
+        domain a real campaign also analysed is production, whatever else touched it. An entry with
+        no campaign association is production - nothing marks it as produced by a diagnostic run.
+        """
+        from core.scout.canonical_runs import is_diagnostic_run
+        statuses = (DISCOVERED, ANALYZING, ANALYZED, FAILED, SKIPPED, REJECTED)
+        out: Dict[str, int] = {"total": 0}
+        out.update({s: 0 for s in statuses})
+        seen = set()
+        for e in self._entries.values():
+            cids = [str(c) for c in (e.campaign_ids or []) if c]
+            all_diagnostic = bool(cids) and all(is_diagnostic_run(c) for c in cids)
+            if diagnostic_only:
+                if not all_diagnostic:
+                    continue
+            elif production_only and all_diagnostic:
+                continue
+            domain = canonical_domain(e.domain) or e.domain
+            if not domain or domain in seen:
+                continue                      # unique canonical domains, not raw rows
+            seen.add(domain)
+            out["total"] += 1
+            out[e.analysis_status] = out.get(e.analysis_status, 0) + 1
+        return out
 
     def snapshot(self) -> Dict[str, Any]:
         return {"schema": "analyzed-sites/v1", "counts": self.counts(),
